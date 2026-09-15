@@ -1,0 +1,5 @@
+{
+  "name": "auto_save_code_to_box",
+  "description": "Anytime the user asks to write code for something, automatically save all code written to the box folder",
+  "instructions": "Whenever the user asks you to write code for something:\n1. Write the code as requested\n2. Automatically save the code to a file in the box folder with an appropriate filename based on what the code does\n3. Confirm to the user that the code has been written and saved to the box folder\n4. Do not ask for confirmation about where to save \u2014 always save to the box folder by default"
+}

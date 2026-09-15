@@ -166,6 +166,21 @@ Jarvis connects to every configured server once, lazily, on first voice command 
 
 Requires Node/npx for most published MCP servers (`node --version` to check) and the `mcp` Python package (`pip install mcp`, already in `requirements.txt`).
 
+**Also connected:** Google Calendar via `@cocal/google-calendar-mcp` (reuses the same `gcp-oauth.keys.json` as Gmail — just enable the Calendar API in the same Google Cloud project and run its own `auth` command once).
+
+### Discord — a self-bot, not a normal integration (real ban risk)
+
+`discord_selfbot_server.py` (in this repo, not a third-party package) lets Jarvis act as your actual Discord account — read your DMs and servers, send messages as you. **This is fundamentally different from every other integration here.** A legitimate Discord integration is a bot: it only sees servers it's invited to, via Discord's official Bot API, no ban risk. Making Jarvis act as *you* means automating your personal account outside that official API (a "self-bot"), which explicitly violates Discord's Terms of Service. Official client libraries (`discord.js` 11.4+, `discord.py`) deliberately dropped support for this specifically to stop it, and Discord has run enforcement waves terminating accounts caught doing it. `discord.py-self` is the unofficial fork that restores it — there's no maintained, ToS-compliant equivalent for "read my own DMs."
+
+This was built anyway at explicit, twice-confirmed user request, the same posture as the WhatsApp Web reading feature in the sibling `jarvis_assistant` project.
+
+**Setup:**
+1. Log into discord.com in a browser, open DevTools (F12) → Application → Local Storage → `https://discord.com` → copy the `token` value.
+2. Put it in `mcp_servers.json`'s `discord` entry, `env.DISCORD_USER_TOKEN` — **never anywhere else.** Unlike an OAuth token, this is unscoped, unrevocable-without-changing-your-password access to your entire account.
+3. That's it — `jarvis.py`'s MCP client launches `discord_selfbot_server.py` itself.
+
+Exposes 5 tools: `list_servers`, `list_dm_channels`, `find_dm_with_user`, `read_messages`, `send_message`. Not self-tested end-to-end for the same reason `delegate_to_claude_code` wasn't — I don't have (and shouldn't ask for) a token to test with. Tool *registration* was verified directly; the actual Discord connection needs a live test from you.
+
 ### Delegating real coding work (`delegate_to_claude_code`)
 
 For actual development tasks — not a one-off shell command, but "add a feature," "fix this bug," "run the tests" — Jarvis hands off to a full headless Claude Code agent instead of doing it itself with `run_shell`/`write_file`. It runs `claude -p "<task>" --output-format json --dangerously-skip-permissions` in the target repo (`repo_path`, defaulting to this project's own folder) and speaks back the result. `--dangerously-skip-permissions` is necessary because nothing is present to click "allow" from a voice session; the same catastrophic-command tripwire used for `run_shell`/`run_python` is applied to the task text first, but it can't see what the delegated agent decides to do partway through — accept that as part of the same full-trust posture as everything else in this project, not an oversight.

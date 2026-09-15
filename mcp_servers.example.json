@@ -20,5 +20,19 @@
     "_comment": "One-time setup before this works: enable the Gmail API in Google Cloud Console, create an OAuth client (type: Desktop app), download it as gcp-oauth.keys.json into ~/.gmail-mcp/, then run `npx @gongrzhe/server-gmail-autoauth-mcp auth` once to consent via browser. After that, jarvis.py just needs this entry.",
     "command": "npx",
     "args": ["@gongrzhe/server-gmail-autoauth-mcp"]
+  },
+
+  "calendar": {
+    "_comment": "Reuses the same gcp-oauth.keys.json as gmail above (same Google Cloud project) -- just also enable the Google Calendar API, then run `npx @cocal/google-calendar-mcp auth` once.",
+    "command": "npx",
+    "args": ["@cocal/google-calendar-mcp"],
+    "env": { "GOOGLE_OAUTH_CREDENTIALS": "C:\\Users\\YOU\\.gmail-mcp\\gcp-oauth.keys.json" }
+  },
+
+  "discord": {
+    "_comment": "WARNING: this is a self-bot -- it acts as your personal Discord account (DMs, servers you're in), which violates Discord's Terms of Service and carries real account-ban risk (see README). Server implementation: discord_selfbot_server.py in this repo, not a third-party package. Get your token from discord.com -> DevTools (F12) -> Application -> Local Storage -> the \"token\" value. Never share this token anywhere else -- it's full, unscoped account access.",
+    "command": "python",
+    "args": ["discord_selfbot_server.py"],
+    "env": { "DISCORD_USER_TOKEN": "..." }
   }
 }
