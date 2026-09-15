@@ -1372,10 +1372,12 @@ def _load_skills() -> list[dict]:
             name = str(data.get("name") or path.stem).strip()
             description = str(data.get("description") or "").strip()
             instructions = str(data.get("instructions") or "").strip()
+            schedule = data.get("schedule")
             if name and instructions:
-                skills.append(
-                    {"name": name, "description": description, "instructions": instructions}
-                )
+                skill: dict = {"name": name, "description": description, "instructions": instructions}
+                if isinstance(schedule, dict):
+                    skill["schedule"] = schedule
+                skills.append(skill)
             else:
                 log.warning("Skipping skill file %s: missing name/instructions.", path)
         except Exception as e:
