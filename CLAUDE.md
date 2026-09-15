@@ -1,3 +1,13 @@
+## Git
+
+This repo is pushed to https://github.com/HerocalypseDev/jarvis-main2 (private). Push changes
+after every phase of work (each meaningful chunk — a feature, a fix, a batch of related
+changes), not only when explicitly asked: commit with a clear message and `git push`. Review
+`git status`/`git diff` before staging, and never commit anything that looks like a real
+credential, token, or PIN (check new files under `skills/` in particular — a skill can contain
+things like typed passcodes). `jarvis_assistant/` is a separate, unrelated project and stays
+out of this repo's history.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
