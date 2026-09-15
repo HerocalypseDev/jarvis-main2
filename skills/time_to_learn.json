@@ -1,0 +1,5 @@
+{
+  "name": "time_to_learn",
+  "description": "When the user says \"time to land\", open Telegram, enable Do Not Disturb mode to block all notifications, and send a notification",
+  "instructions": "1. Open Telegram using run_shell to launch the Telegram application\n2. Enable Do Not Disturb mode using run_shell with the Windows settings command to turn on Focus Assist or Do Not Disturb\n3. Send a notification to confirm the \"time to land\" routine has been activated"
+}

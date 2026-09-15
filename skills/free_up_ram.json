@@ -1,0 +1,5 @@
+{
+  "name": "free_up_ram",
+  "description": "Use when the user asks what's using their RAM/memory, wants to free up memory, or asks what's slowing the machine down.",
+  "instructions": "Run a run_shell command to list the top RAM-consuming processes, e.g.: Get-Process | Sort-Object WorkingSet -Descending | Select-Object -First 10 Name, @{Name='RAM_MB';Expression={[math]::Round($_.WorkingSet/1MB,2)}} | Format-Table. Report the top offenders by name and RAM usage in plain spoken sentences (no markdown, no raw numbers formatting). Never close or kill a process yourself unless the user explicitly names which one(s) to close in this same request — otherwise just report the list and ask which, if any, they'd like closed."
+}

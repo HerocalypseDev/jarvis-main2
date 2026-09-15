@@ -1,0 +1,5 @@
+{
+  "name": "q_key_ram_scan",
+  "description": "When the user presses Q, scan the system for top RAM-consuming processes and ask for confirmation before closing",
+  "instructions": "1. When Q key is pressed, use run_shell to execute: Get-Process | Sort-Object WorkingSet -Descending | Select-Object -First 10 Name, @{Name='RAM_MB';Expression={[math]::Round($_.WorkingSet/1MB,2)}} | Format-Table\n2. Report the top 10 RAM-consuming processes by name and RAM usage in plain spoken sentences\n3. Ask the user which process, if any, they'd like to close\n4. Wait for the user's confirmation about which process to close\n5. Only after the user confirms and specifies which process(es) to close, use run_shell with Stop-Process -Name [processname] -Force to close it\n6. Confirm the process has been closed"
+}

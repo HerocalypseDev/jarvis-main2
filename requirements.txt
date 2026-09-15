@@ -1,0 +1,12 @@
+numpy>=1.24,<3
+sounddevice>=0.4.6,<0.6
+python-dotenv>=1.0,<2
+faster-whisper>=1.0,<2
+keyboard>=0.13,<1
+Pillow>=10,<12
+psutil>=5.9,<8
+pyperclip>=1.8,<2
+pyautogui>=0.9,<1
+PyGetWindow>=0.0.9,<1
+piper-tts>=1.8,<2
+mcp>=1.0
