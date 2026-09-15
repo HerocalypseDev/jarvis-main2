@@ -8,3 +8,5 @@ jarvis_assistant/
 .claude/*.lock
 skills/unlock_typing.json
 .playwright-mcp/
+jarvis_memory.db.corrupted-*.bak
+*.png

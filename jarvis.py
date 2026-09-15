@@ -1173,8 +1173,7 @@ def _memory_db_path() -> Path:
     return Path(__file__).resolve().parent / "jarvis_memory.db"
 
 
-def _memory_db_connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_memory_db_path())
+def _create_memory_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS memory_turns ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -1211,6 +1210,38 @@ def _memory_db_connect() -> sqlite3.Connection:
         "skill_name TEXT PRIMARY KEY, "
         "last_run_at TEXT NOT NULL)"
     )
+
+
+def _quarantine_corrupt_memory_db(db_path: Path) -> None:
+    """Renames a corrupted memory DB aside (never deletes) so a fresh one can take its place.
+    Corruption here is a real, observed failure mode — forcibly killing jarvis.py mid-write
+    (e.g. taskkill /F, or a backgrounding harness killing the process) can corrupt SQLite's
+    file — and without this, every future call would keep hitting the exact same
+    'database disk image is malformed' error forever, silently killing every voice command."""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = db_path.with_name(f"{db_path.name}.corrupted-{ts}.bak")
+    try:
+        db_path.rename(backup_path)
+        log.warning(
+            "Memory DB at %s was corrupted; backed up to %s and starting fresh. "
+            "Conversation history/facts before this point may be unrecoverable.",
+            db_path,
+            backup_path,
+        )
+    except OSError as e:
+        log.warning("Memory DB at %s is corrupted and could not be backed up: %s", db_path, e)
+
+
+def _memory_db_connect() -> sqlite3.Connection:
+    db_path = _memory_db_path()
+    conn = sqlite3.connect(db_path)
+    try:
+        _create_memory_tables(conn)
+    except sqlite3.DatabaseError:
+        conn.close()
+        _quarantine_corrupt_memory_db(db_path)
+        conn = sqlite3.connect(db_path)  # fresh file, since the old one was just moved aside
+        _create_memory_tables(conn)
     return conn
 
 
