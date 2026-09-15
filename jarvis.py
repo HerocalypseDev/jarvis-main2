@@ -708,6 +708,12 @@ Any tools named "mcp_<server>_..." below are live integrations (Gmail, Calendar,
 depending on what's configured) reached the same way Claude Code reaches its own integrations — \
 use them directly like any other tool.
 
+For actual software development work — writing code, fixing a bug, adding a feature, running a \
+test suite — use delegate_to_claude_code instead of doing it yourself with run_shell/write_file. \
+It hands the task to a full Claude Code agent with a much larger, purpose-built toolset and will \
+do a meaningfully better job on anything beyond a one-liner. It runs synchronously and can take \
+several minutes; say so in your reply rather than leaving the user wondering about the pause.
+
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
 profile. If a run_shell or run_python call would do one of those, it gets staged instead of run — \
@@ -1071,6 +1077,37 @@ AGENT_TOOLS = [
                 },
             },
             "required": ["name", "instructions"],
+        },
+    },
+    {
+        "name": "delegate_to_claude_code",
+        "description": (
+            "Delegate a real software development task — writing code, fixing a bug, adding a "
+            "feature, refactoring, running tests — to a full headless Claude Code agent, "
+            "instead of doing it yourself with run_shell/write_file. Claude Code has a far "
+            "larger toolset built for exactly this (repo-wide search, diff-aware editing, "
+            "git/test awareness) and will do a better job on anything beyond a one-off command. "
+            "This runs synchronously and can take several minutes for a real task — mention "
+            "that in your reply so the user isn't left wondering about the pause. Reach for "
+            "this for actual coding/repo work; use run_shell/run_python directly for quick "
+            "one-liners."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "what to build/fix/change, as a clear, complete instruction",
+                },
+                "repo_path": {
+                    "type": "string",
+                    "description": (
+                        "absolute path to the project/repo to work in; omit to default to "
+                        "this Jarvis project's own folder"
+                    ),
+                },
+            },
+            "required": ["task"],
         },
     },
 ]
@@ -2829,6 +2866,64 @@ def _http_request_tool(url: str, method: str, headers: dict | None, body: str | 
     return f"status={status}\n{text}"
 
 
+# --- Claude Code delegation: real development work (multi-file changes, repo-wide search, ---
+# --- tests) goes to a full headless Claude Code agent instead of Jarvis's own run_shell/ ---
+# --- write_file — a much larger toolset and a design built for exactly this. Runs with ---
+# --- --dangerously-skip-permissions since no human is present to click "allow" from a voice ---
+# --- session; the same catastrophic-command tripwire used for run_shell/run_python is applied ---
+# --- to the task text as a first line of defense, though it can't see what the delegated agent ---
+# --- decides to do autonomously partway through the task — that's a real, accepted gap, not an ---
+# --- oversight, consistent with this whole tool being full-trust by design. ---
+CLAUDE_CODE_TIMEOUT_S = 900
+
+
+def _delegate_to_claude_code(task: str, repo_path: str) -> str:
+    task = (task or "").strip()
+    if not task:
+        return "No task given."
+    reason = _catastrophic_reason(task)
+    if reason:
+        return (
+            f"That task reads as though it would {reason} — refusing to delegate it "
+            "automatically. Ask explicitly via run_shell/run_python if this is really wanted; "
+            "that path still has its own confirmation step for this tier."
+        )
+    cwd = Path(repo_path).expanduser() if repo_path else Path(__file__).resolve().parent
+    if not cwd.is_dir():
+        return f"{cwd} is not a valid directory."
+    try:
+        popen_kw: dict = {}
+        if os.name == "nt":
+            popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        proc = subprocess.run(
+            ["claude", "-p", task, "--output-format", "json", "--dangerously-skip-permissions"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=CLAUDE_CODE_TIMEOUT_S,
+            **popen_kw,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Claude Code timed out after {CLAUDE_CODE_TIMEOUT_S} seconds."
+    except FileNotFoundError:
+        return "The `claude` CLI isn't installed or isn't on PATH."
+    except Exception as e:
+        return f"Failed to run Claude Code: {e}"
+
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()[:MAX_TOOL_RESULT_CHARS]
+        return f"Claude Code exited with an error (code {proc.returncode}): {err or 'no output'}"
+
+    try:
+        data = json.loads(proc.stdout)
+        result = str(data.get("result") or "").strip()
+    except (json.JSONDecodeError, TypeError):
+        result = (proc.stdout or "").strip()
+    if len(result) > MAX_TOOL_RESULT_CHARS:
+        result = result[:MAX_TOOL_RESULT_CHARS] + f"... [truncated, {len(result)} chars total]"
+    return result or "Claude Code finished with no result text."
+
+
 def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result: str) -> None:
     now = datetime.now().isoformat(timespec="seconds")
     with _memory_db_lock:
@@ -3031,6 +3126,10 @@ def _execute_tool(
                 str(inp.get("description") or ""),
                 str(inp.get("instructions") or ""),
                 schedule if isinstance(schedule, dict) else None,
+            )
+        elif tool_name == "delegate_to_claude_code":
+            result = _delegate_to_claude_code(
+                str(inp.get("task") or ""), str(inp.get("repo_path") or "")
             )
     except Exception as e:
         log.warning("Tool %r raised: %s", tool_name, e)

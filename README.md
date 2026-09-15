@@ -166,6 +166,12 @@ Jarvis connects to every configured server once, lazily, on first voice command 
 
 Requires Node/npx for most published MCP servers (`node --version` to check) and the `mcp` Python package (`pip install mcp`, already in `requirements.txt`).
 
+### Delegating real coding work (`delegate_to_claude_code`)
+
+For actual development tasks — not a one-off shell command, but "add a feature," "fix this bug," "run the tests" — Jarvis hands off to a full headless Claude Code agent instead of doing it itself with `run_shell`/`write_file`. It runs `claude -p "<task>" --output-format json --dangerously-skip-permissions` in the target repo (`repo_path`, defaulting to this project's own folder) and speaks back the result. `--dangerously-skip-permissions` is necessary because nothing is present to click "allow" from a voice session; the same catastrophic-command tripwire used for `run_shell`/`run_python` is applied to the task text first, but it can't see what the delegated agent decides to do partway through — accept that as part of the same full-trust posture as everything else in this project, not an oversight.
+
+**This one wasn't self-tested end-to-end** — Claude Code's own safety classifier blocks a running Claude Code session from spawning or even probing another `claude` CLI invocation ("create unsafe agents"), so I couldn't verify the actual subprocess call, its flags, or the JSON output shape (`{"result": "..."}`, per `claude --help`) against a real run. Test it yourself: say something like "delegate to Claude Code: add a docstring to X function" and confirm it actually runs and reports back correctly — if the JSON parsing or flags need adjusting, that'll show up immediately as an error string spoken back instead of a real result.
+
 The first press after starting the script may be slow while the Whisper model finishes loading in the background (it starts loading at startup, and downloads once on first-ever run). Similarly, the very first clap/greeting may pause briefly while the Piper voice model downloads (also one-time, also automatic).
 
 ## Tuning
