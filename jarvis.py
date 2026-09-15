@@ -1787,8 +1787,17 @@ def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
 
 
 def build_system_prompt() -> str:
+    # Computed fresh on every call (every agent-loop iteration) rather than relying on a
+    # get-current-time tool call staying in the 6-message history window — observed live:
+    # a calendar event created several turns after the last such tool call landed on the
+    # wrong year and the wrong day for "Friday", because that fact had already scrolled out
+    # of history by then. Putting it directly in the system prompt makes it structurally
+    # impossible to lose track of, for calendar events or anything else date-relative.
+    now = datetime.now()
+    current_time_line = f"\n\nRight now it is {now.strftime('%A, %Y-%m-%d %H:%M')} (local time)."
     return (
         AGENT_SYSTEM_PROMPT
+        + current_time_line
         + get_user_profile_context()
         + get_active_facts_context()
         + get_skills_context()
