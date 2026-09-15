@@ -7,3 +7,4 @@ __pycache__/
 jarvis_assistant/
 .claude/*.lock
 skills/unlock_typing.json
+.playwright-mcp/

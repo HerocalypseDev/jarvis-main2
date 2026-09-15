@@ -1750,7 +1750,14 @@ def ensure_mcp_started() -> None:
         log.warning("mcp_servers.json is configured but the `mcp` package isn't installed (pip install mcp).")
         return
     try:
-        _mcp_run_coro(_mcp_connect_all_async(configs), timeout=MCP_STARTUP_TIMEOUT_S)
+        # _mcp_connect_all_async connects servers one at a time, each with its own internal
+        # MCP_STARTUP_TIMEOUT_S budget — this outer bound must cover the whole sequence, not
+        # a single server's worth, or a later server (observed live: a first-time `npx`
+        # package download) gets truncated before it's even reached once earlier servers eat
+        # into the budget.
+        _mcp_run_coro(
+            _mcp_connect_all_async(configs), timeout=MCP_STARTUP_TIMEOUT_S * len(configs)
+        )
     except Exception as e:
         log.warning("MCP startup failed: %s", e)
 

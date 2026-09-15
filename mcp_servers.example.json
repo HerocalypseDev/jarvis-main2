@@ -34,5 +34,11 @@
     "command": "python",
     "args": ["discord_selfbot_server.py"],
     "env": { "DISCORD_USER_TOKEN": "..." }
+  },
+
+  "browser": {
+    "_comment": "No credentials needed. Official Microsoft package -- real browser automation (navigate, click, type, fill forms, screenshots, page snapshots).",
+    "command": "npx",
+    "args": ["@playwright/mcp@latest"]
   }
 }

@@ -166,7 +166,7 @@ Jarvis connects to every configured server once, lazily, on first voice command 
 
 Requires Node/npx for most published MCP servers (`node --version` to check) and the `mcp` Python package (`pip install mcp`, already in `requirements.txt`).
 
-**Also connected:** Google Calendar via `@cocal/google-calendar-mcp` (reuses the same `gcp-oauth.keys.json` as Gmail — just enable the Calendar API in the same Google Cloud project and run its own `auth` command once).
+**Also connected:** Google Calendar via `@cocal/google-calendar-mcp` (reuses the same `gcp-oauth.keys.json` as Gmail — just enable the Calendar API in the same Google Cloud project and run its own `auth` command once); real browser automation via Microsoft's official `@playwright/mcp` (26 tools: navigate, click, type, fill forms, screenshots, page snapshots — no credentials needed, verified live against a real page). Browser snapshots/screenshots land in `.playwright-mcp/` (gitignored).
 
 ### Discord — a self-bot, not a normal integration (real ban risk)
 
