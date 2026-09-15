@@ -1140,7 +1140,11 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
             transient = e.code in (429, 500, 502, 503, 504, 529)
-            log.warning("Claude request failed (attempt %d): HTTP %d", attempt, e.code)
+            try:
+                detail = e.read().decode(errors="replace")[:1000]
+            except Exception:
+                detail = "(could not read response body)"
+            log.warning("Claude request failed (attempt %d): HTTP %d: %s", attempt, e.code, detail)
             if not transient or attempt == CLAUDE_MAX_ATTEMPTS:
                 return None
             time.sleep(CLAUDE_RETRY_DELAY_S)
@@ -1716,6 +1720,16 @@ async def _mcp_connect_all_async(configs: dict) -> None:
             log.info("Connected MCP server %r (%d tools).", server_name, len(handle.tools))
         except Exception as e:
             log.warning("Skipping malformed MCP server config %r: %s", server_name, e)
+
+
+def _preload_mcp_async() -> None:
+    """Connects to configured MCP servers in the background at startup — without this, the
+    *first* voice command after launch blocks on ensure_mcp_started() inside run_agent_loop,
+    and a slow/hung server (observed live: Gmail's stdio server timing out) means a real
+    command sits in dead silence for the full MCP_STARTUP_TIMEOUT_S before Jarvis does
+    anything at all, indistinguishable from a hang. Preloading here means that wait, if any,
+    happens before the user ever speaks."""
+    threading.Thread(target=ensure_mcp_started, daemon=True, name="mcp-preload").start()
 
 
 def ensure_mcp_started() -> None:
@@ -2767,6 +2781,15 @@ def type_text(text: str) -> None:
 SHELL_TIMEOUT_S = 60
 MAX_TOOL_RESULT_CHARS = 4000
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[@-Z\\-_]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strips ANSI/VT100 escape sequences (color codes, cursor movement) that a subprocess
+    (PowerShell, the `claude` CLI, anything meant for a terminal) writes to its output —
+    raw control bytes have no business reaching Claude as tool_result content."""
+    return _ANSI_ESCAPE_RE.sub("", text)
+
 
 def _run_shell_command(command: str) -> str:
     try:
@@ -2780,8 +2803,8 @@ def _run_shell_command(command: str) -> str:
             timeout=SHELL_TIMEOUT_S,
             **popen_kw,
         )
-        out = (proc.stdout or "").strip()[:MAX_TOOL_RESULT_CHARS]
-        err = (proc.stderr or "").strip()[:MAX_TOOL_RESULT_CHARS]
+        out = _strip_ansi((proc.stdout or "").strip())[:MAX_TOOL_RESULT_CHARS]
+        err = _strip_ansi((proc.stderr or "").strip())[:MAX_TOOL_RESULT_CHARS]
         result = f"exit_code={proc.returncode}"
         if out:
             result += f"\nstdout:\n{out}"
@@ -2806,8 +2829,8 @@ def _run_python_code(code: str) -> str:
             timeout=SHELL_TIMEOUT_S,
             **popen_kw,
         )
-        out = (proc.stdout or "").strip()[:MAX_TOOL_RESULT_CHARS]
-        err = (proc.stderr or "").strip()[:MAX_TOOL_RESULT_CHARS]
+        out = _strip_ansi((proc.stdout or "").strip())[:MAX_TOOL_RESULT_CHARS]
+        err = _strip_ansi((proc.stderr or "").strip())[:MAX_TOOL_RESULT_CHARS]
         result = f"exit_code={proc.returncode}"
         if out:
             result += f"\nstdout:\n{out}"
@@ -2911,7 +2934,7 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
         return f"Failed to run Claude Code: {e}"
 
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()[:MAX_TOOL_RESULT_CHARS]
+        err = _strip_ansi((proc.stderr or proc.stdout or "").strip())[:MAX_TOOL_RESULT_CHARS]
         return f"Claude Code exited with an error (code {proc.returncode}): {err or 'no output'}"
 
     try:
@@ -2919,6 +2942,7 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
         result = str(data.get("result") or "").strip()
     except (json.JSONDecodeError, TypeError):
         result = (proc.stdout or "").strip()
+    result = _strip_ansi(result)
     if len(result) > MAX_TOOL_RESULT_CHARS:
         result = result[:MAX_TOOL_RESULT_CHARS] + f"... [truncated, {len(result)} chars total]"
     return result or "Claude Code finished with no result text."
@@ -3179,9 +3203,16 @@ def run_agent_loop(transcript: str) -> str:
         if not tool_uses or data.get("stop_reason") != "tool_use":
             break
 
+        # Every tool_use block above MUST get a matching tool_result, or Anthropic's API
+        # rejects the next request with an HTTP 400 ("tool_use ids were found without
+        # tool_result blocks") — so an over-the-cap request still gets a (skipped) result
+        # rather than being silently dropped from this list.
         tool_results = []
-        for tu in tool_uses[:MAX_TOOL_CALLS_PER_TURN]:
-            result_text = _execute_tool(tu.get("name", ""), tu.get("input") or {}, transcript)
+        for i, tu in enumerate(tool_uses):
+            if i < MAX_TOOL_CALLS_PER_TURN:
+                result_text = _execute_tool(tu.get("name", ""), tu.get("input") or {}, transcript)
+            else:
+                result_text = "Skipped: too many tool calls requested in a single turn."
             tool_results.append(
                 {"type": "tool_result", "tool_use_id": tu.get("id"), "content": result_text}
             )
@@ -3548,6 +3579,7 @@ def main() -> int:
         )
         _preload_whisper_async()
 
+    _preload_mcp_async()
     _start_scheduler()
 
     input_idx = _choose_input_device(blocksize)
