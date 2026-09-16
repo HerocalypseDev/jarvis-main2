@@ -66,6 +66,7 @@ import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
 import jarvis_filewatcher as filewatcher
+import jarvis_window_control as window_control
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -827,6 +828,10 @@ the background and already announces large ones (over 100MB) unprompted — use 
 list_watched_folders/get_recent_file_events/remove_watched_folder only when the user asks about \
 watched folders directly, not proactively.
 
+For window management, use control_window (minimize/maximize/restore/close/snap by title \
+substring), arrange_windows to lay out several at once, and save_window_layout/ \
+restore_window_layout to name and recall a set of window positions later.
+
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
 profile. If a run_shell or run_python call would do one of those, it gets staged instead of run — \
@@ -1489,6 +1494,79 @@ AGENT_TOOLS = [
             "type": "object",
             "properties": {"limit": {"type": "integer", "description": "max events to return, default 20"}},
         },
+    },
+    {
+        "name": "list_open_windows",
+        "description": "List titles of all visible open windows.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "control_window",
+        "description": (
+            "Minimize, maximize, restore, close, or snap a single open window by a substring "
+            "of its title. For snap, pass a side: left, right, top, bottom, top-left, "
+            "top-right, bottom-left, bottom-right, maximize, or center."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "window_title": {"type": "string", "description": "substring of the target window's title"},
+                "action": {
+                    "type": "string",
+                    "enum": ["minimize", "maximize", "restore", "close", "snap"],
+                },
+                "side": {
+                    "type": "string",
+                    "enum": list(window_control.SNAP_SIDES),
+                    "description": "required when action is snap",
+                },
+            },
+            "required": ["window_title", "action"],
+        },
+    },
+    {
+        "name": "arrange_windows",
+        "description": (
+            "Arrange two or more open windows (matched by title substring) into a layout: "
+            "side-by-side (columns), grid, or cascade."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "window_titles": {"type": "array", "items": {"type": "string"}},
+                "layout": {"type": "string", "enum": list(window_control.ARRANGE_LAYOUTS)},
+            },
+            "required": ["window_titles"],
+        },
+    },
+    {
+        "name": "save_window_layout",
+        "description": (
+            "Save the position/size/state of currently open windows under a name, to restore "
+            "later. Omit window_titles to snapshot every visible window."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "window_titles": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "restore_window_layout",
+        "description": "Restore a previously saved window layout by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "list_window_layouts",
+        "description": "List saved window layout names.",
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "analyze_error",
@@ -5121,6 +5199,35 @@ def _execute_tool(
         elif tool_name == "get_recent_file_events":
             limit = inp.get("limit")
             result = filewatcher.get_recent_file_events(int(limit) if limit else 20)
+        elif tool_name == "list_open_windows":
+            result = window_control.list_open_windows()
+        elif tool_name == "control_window":
+            title = str(inp.get("window_title") or "")
+            action = str(inp.get("action") or "")
+            if action == "minimize":
+                result = window_control.minimize_window(title)
+            elif action == "maximize":
+                result = window_control.maximize_window(title)
+            elif action == "restore":
+                result = window_control.restore_window(title)
+            elif action == "close":
+                result = window_control.close_window(title)
+            elif action == "snap":
+                result = window_control.snap_window(title, str(inp.get("side") or ""))
+            else:
+                result = f"{action!r} is not a known window action."
+        elif tool_name == "arrange_windows":
+            result = window_control.arrange_windows(
+                list(inp.get("window_titles") or []), str(inp.get("layout") or "side-by-side")
+            )
+        elif tool_name == "save_window_layout":
+            result = window_control.save_layout(
+                str(inp.get("name") or ""), inp.get("window_titles")
+            )
+        elif tool_name == "restore_window_layout":
+            result = window_control.restore_layout(str(inp.get("name") or ""))
+        elif tool_name == "list_window_layouts":
+            result = window_control.list_layouts()
         elif tool_name == "analyze_error":
             result = tech_understanding.format_error_report(
                 tech_understanding.parse_error(str(inp.get("error_text") or ""))
