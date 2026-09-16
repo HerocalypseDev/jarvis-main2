@@ -23,7 +23,7 @@ from pathlib import Path
 log = logging.getLogger("jarvis.filewatcher")
 
 DEFAULT_POLL_INTERVAL_S = 15
-DEFAULT_LARGE_FILE_MB = 100
+DEFAULT_LARGE_FILE_MB = 100  # 104857600 bytes — only events >= this size get announced
 MAX_FILES_PER_SCAN = 20_000  # safety cap so a huge folder can't hang a poll tick
 
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".cache", "$RECYCLE.BIN", "System Volume Information"}
@@ -180,12 +180,14 @@ class FileWatcher:
     def _announce(self, event: dict) -> None:
         size_mb = event["size"] / (1024 * 1024)
         verb = "New file" if event["kind"] == "new" else "File changed"
-        if event["large"]:
-            text = f"{verb} in a watched folder: {event['path']} ({size_mb:.0f} MB) — that's a large one."
-            log.info("Large file event: %s", text)
-        else:
-            text = f"{verb}: {event['path']} ({size_mb:.1f} MB)."
-            log.info("File event: %s", text)
+        if not event["large"]:
+            # Still recorded in the event log (see recent_events), just not announced —
+            # only files at/above large_file_bytes are worth interrupting for.
+            log.info("File event (below announce threshold, not announced): %s %s (%.1f MB)",
+                      event["kind"], event["path"], size_mb)
+            return
+        text = f"{verb} in a watched folder: {event['path']} ({size_mb:.0f} MB) — that's a large one."
+        log.info("Large file event: %s", text)
         if self.notifier:
             try:
                 self.notifier(text, event["large"])
