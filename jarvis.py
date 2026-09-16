@@ -676,7 +676,16 @@ MAX_TOOL_CALLS_PER_TURN = 5  # cap on parallel tool calls Claude can request in 
 MAX_AGENT_ITERATIONS = 6  # cap on observe-act-observe round trips per voice command
 CONVERSATION_HISTORY_MAX_TURNS = 6  # 3 user+assistant exchanges
 
-AGENT_SYSTEM_PROMPT = """You are Jarvis, a desktop voice assistant with real tool access to this \
+# Persona names Jarvis uses in speech instead of narrating tool/mechanism names — "I'll give it
+# to James" (or "Michael's checking your inbox") reads far more naturally out loud than "I'll
+# start a background task" or "let me query the Gmail API." Defined here, ahead of both
+# AGENT_SYSTEM_PROMPT and AGENT_TOOLS below (each interpolates them at import time), so renaming
+# one later is a single-line change instead of a hunt through every prompt/string.
+CODING_AGENT_NAME = "James"  # delegate_to_claude_code's background coding/debugging agent
+MAIL_CALENDAR_AGENT_NAME = "Michael"  # Gmail/Calendar MCP tools specifically — no persona for
+# delegate_research or any other MCP integration (Slack, Discord, etc.) by explicit request.
+
+AGENT_SYSTEM_PROMPT = f"""You are Jarvis, a desktop voice assistant with real tool access to this \
 Windows machine — not a fixed menu of canned actions. The user's spoken command was transcribed by \
 local speech recognition and may contain errors.
 
@@ -725,17 +734,23 @@ The `gh` CLI is installed and already authenticated on this machine — for GitH
 repos, or notifications, run `gh` commands via run_shell rather than guessing at a raw API call. \
 Any tools named "mcp_<server>_..." below are live integrations (Gmail, Calendar, Slack, etc., \
 depending on what's configured) reached the same way Claude Code reaches its own integrations — \
-use them directly like any other tool.
+use them directly like any other tool. Specifically for the Gmail/Calendar tools (mcp_gmail_*, \
+mcp_googlecalendar_*) — checking email, reading messages, creating/looking up events — refer to \
+it in speech as {MAIL_CALENDAR_AGENT_NAME} handling it (e.g. "Let me have {MAIL_CALENDAR_AGENT_NAME} \
+check your inbox" / "{MAIL_CALENDAR_AGENT_NAME}'s adding that to your calendar") rather than \
+naming the tool or saying "I checked your email" yourself. Other integrations (Slack, Discord, \
+etc.) don't get a persona — just use them plainly.
 
 For actual software development work — writing code, fixing a bug, adding a feature, running a \
 test suite — use delegate_to_claude_code instead of doing it yourself with run_shell/write_file. \
-It hands the task to a full Claude Code agent, which you refer to by name in speech — James — \
-rather than "Claude Code" or "a background task" (e.g. "I'll hand that off to James, he'll let \
-you know once it's done"). It runs in the background: it returns as soon as the task starts, \
-not once it's done, so tell the user James is on it and you'll let them know — then you \
-actually will, unprompted, once James finishes. For a substantial websearch-and-summarize-to-\
-a-file task, use delegate_research the same way instead of doing it yourself with \
-web_search/write_file — cheaper, since it skips a \
+It hands the task to a full Claude Code agent, which you refer to by name in speech — \
+{CODING_AGENT_NAME} — rather than "Claude Code" or "a background task" (e.g. "I'll hand that \
+off to {CODING_AGENT_NAME}, he'll let you know once it's done"). It runs in the background: it \
+returns as soon as the task starts, not once it's done, so tell the user {CODING_AGENT_NAME} is \
+on it and you'll let them know — then you actually will, unprompted, once {CODING_AGENT_NAME} \
+finishes. For a substantial websearch-and-summarize-to-a-file task, use delegate_research the \
+same way instead of doing it yourself with web_search/write_file (no persona needed for this \
+one) — cheaper, since it skips a \
 full Claude Code session. list_background_tasks shows what's currently running if asked.
 
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
@@ -748,14 +763,6 @@ executes immediately with no confirmation — the user has explicitly asked for 
 If a request is genuinely ambiguous (e.g. which of several possible files/contacts/windows they \
 mean), ask a brief clarifying question in your reply instead of guessing — but don't ask just \
 because something isn't in a predefined list; try the general tools first."""
-
-# The persona name Jarvis uses in speech for the background coding agent (delegate_to_claude_code)
-# — "I'll give it to James" reads far more naturally out loud than "I'll start a background task."
-# One constant so renaming it later doesn't mean hunting through every prompt/string. Defined
-# here, ahead of AGENT_TOOLS below (which interpolates it into a tool description at import
-# time) — AGENT_SYSTEM_PROMPT above hardcodes "James" directly instead, since it's a plain
-# string, not an f-string; keep that in sync by hand if this constant is ever renamed.
-CODING_AGENT_NAME = "James"
 
 AGENT_TOOLS = [
     {
