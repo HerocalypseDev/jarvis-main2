@@ -108,6 +108,17 @@ CLAUDE_MODEL = (
     os.environ.get("CLAUDE_MODEL") or "claude-haiku-4-5-20251001"
 ).strip() or "claude-haiku-4-5-20251001"
 
+# Typed commands: hold JARVIS_TEXT_HOTKEY_KEY for JARVIS_TEXT_HOTKEY_HOLD_S seconds to pop up
+# a small always-on-top text box; Enter sends the text through the same Claude tool loop as a
+# voice command (no Whisper involved), Escape/closing the box cancels. Unlike push-to-talk,
+# this isn't gated behind the clap activation — typing has none of the false-trigger risk a
+# live mic has, so it works immediately.
+JARVIS_TEXT_HOTKEY_ENABLED = True
+JARVIS_TEXT_HOTKEY_KEY = (
+    os.environ.get("JARVIS_TEXT_HOTKEY_KEY") or "right ctrl"
+).strip() or "right ctrl"
+JARVIS_TEXT_HOTKEY_HOLD_S = float(os.environ.get("JARVIS_TEXT_HOTKEY_HOLD_S") or 2.0)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -3270,6 +3281,32 @@ def run_agent_loop(transcript: str) -> str:
     return reply
 
 
+def handle_text_command(transcript: str) -> None:
+    """Runs one already-transcribed command (typed or spoken) through the confirmation
+    gate and the Claude tool loop, then speaks the reply. Shared by handle_voice_command
+    (after Whisper) and the typed-command hotkey (which skips transcription entirely)."""
+    if not transcript:
+        return
+
+    with _pending_action_lock:
+        pending = _pending_action
+    if pending is not None:
+        if _is_confirmation_yes(transcript):
+            step = _take_pending_action()
+            if step:
+                _execute_confirmed_action(step)
+            return
+        _take_pending_action()
+        log.info(
+            "Dropped pending confirmation (%r); treating this as a new command.",
+            pending.get("tool_name"),
+        )
+
+    reply = run_agent_loop(transcript)
+    if reply:
+        speak_text(reply)
+
+
 def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
     if audio.size == 0:
         return
@@ -3282,24 +3319,89 @@ def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
         log.info("Push-to-talk: heard nothing.")
         return
     log.info("Heard: %r", transcript)
+    handle_text_command(transcript)
 
-    with _pending_action_lock:
-        pending = _pending_action
-    if pending is not None:
-        if _is_confirmation_yes(transcript):
-            step = _take_pending_action()
-            if step:
-                _execute_confirmed_action(step)
-            return
-        _take_pending_action()
-        log.info(
-            "Dropped pending confirmation (%r); treating this utterance as a new command.",
-            pending.get("tool_name"),
-        )
 
-    reply = run_agent_loop(transcript)
-    if reply:
-        speak_text(reply)
+_text_hotkey_popup_open = threading.Event()
+
+
+def _show_text_command_popup() -> None:
+    """Small always-on-top Tkinter input box: Enter submits and runs the typed text through
+    the same agent loop as a voice command, Escape/closing the window cancels. Runs its own
+    Tk mainloop on this (dedicated, short-lived) thread — fine on Windows as long as no other
+    Tk root is ever alive on another thread at the same time, which _text_hotkey_popup_open
+    guarantees by refusing to open a second box while one is already up."""
+    import tkinter as tk
+
+    typed = {"text": None}
+
+    def submit(_event=None) -> None:
+        typed["text"] = entry.get()
+        root.destroy()
+
+    def cancel(_event=None) -> None:
+        typed["text"] = None
+        root.destroy()
+
+    root = tk.Tk()
+    root.title("Jarvis")
+    root.attributes("-topmost", True)
+    try:
+        root.overrideredirect(True)  # borderless — just the input strip, no title bar
+    except tk.TclError:
+        pass
+    width, height = 480, 44
+    screen_w = root.winfo_screenwidth()
+    root.geometry(f"{width}x{height}+{(screen_w - width) // 2}+80")
+
+    entry = tk.Entry(root, font=("Segoe UI", 14))
+    entry.insert(0, "")
+    entry.pack(fill="both", expand=True, padx=8, pady=8)
+    entry.bind("<Return>", submit)
+    entry.bind("<Escape>", cancel)
+    entry.bind("<FocusOut>", cancel)
+    root.protocol("WM_DELETE_WINDOW", cancel)
+    root.lift()
+    root.focus_force()
+    entry.focus_set()
+
+    root.mainloop()
+
+    _text_hotkey_popup_open.clear()
+    text = (typed["text"] or "").strip()
+    if not text:
+        log.info("Text command box closed with no input.")
+        return
+    log.info("Typed command: %r", text)
+    threading.Thread(target=handle_text_command, args=(text,), daemon=True).start()
+
+
+def _text_hotkey_watch_loop() -> None:
+    """Polls JARVIS_TEXT_HOTKEY_KEY; once it's been held continuously for
+    JARVIS_TEXT_HOTKEY_HOLD_S seconds, opens the typed-command popup (once per hold — the
+    key must be released and pressed again to reopen it)."""
+    held_since: float | None = None
+    fired_this_hold = False
+    poll_s = 0.05
+    while True:
+        time.sleep(poll_s)
+        pressed = _keyboard_is_pressed(JARVIS_TEXT_HOTKEY_KEY)
+        if not pressed:
+            held_since = None
+            fired_this_hold = False
+            continue
+        if held_since is None:
+            held_since = time.monotonic()
+            continue
+        if fired_this_hold:
+            continue
+        if (time.monotonic() - held_since) < JARVIS_TEXT_HOTKEY_HOLD_S:
+            continue
+        fired_this_hold = True
+        if _text_hotkey_popup_open.is_set():
+            continue
+        _text_hotkey_popup_open.set()
+        threading.Thread(target=_show_text_command_popup, daemon=True).start()
 
 
 def _chrome_executable() -> str | None:
@@ -3625,6 +3727,15 @@ def main() -> int:
             CLAUDE_MODEL,
         )
         _preload_whisper_async()
+
+    if JARVIS_TEXT_HOTKEY_ENABLED:
+        log.info(
+            "Typed commands: hold '%s' for %.1fs to open a text box (no clap needed, "
+            "no mic involved).",
+            JARVIS_TEXT_HOTKEY_KEY,
+            JARVIS_TEXT_HOTKEY_HOLD_S,
+        )
+        threading.Thread(target=_text_hotkey_watch_loop, daemon=True).start()
 
     _preload_mcp_async()
     _start_scheduler()

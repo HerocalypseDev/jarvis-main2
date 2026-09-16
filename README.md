@@ -59,6 +59,19 @@ python jarvis.py
 
 Allow the microphone if Windows prompts you. Stop with **Ctrl+C**.
 
+## Typing to Jarvis (text hotkey)
+
+Don't want to talk out loud? Hold **Right Ctrl** (or your `JARVIS_TEXT_HOTKEY_KEY`) for 2 seconds and a small always-on-top text box pops up. Type your command and press **Enter** — it goes straight into the same Claude tool loop as a voice command (no Whisper, no mic) and Jarvis speaks the reply via Piper as usual. Press **Escape**, click away, or close the box to cancel without sending anything.
+
+Unlike push-to-talk, this isn't locked behind the clap activation — since there's no live mic involved, there's no risk of a stray sound being misread as a command, so it works as soon as Jarvis starts.
+
+| Variable | Purpose |
+| -------- | ------- |
+| `JARVIS_TEXT_HOTKEY_KEY` | Hotkey name, per the `keyboard` package (default `right ctrl`). |
+| `JARVIS_TEXT_HOTKEY_HOLD_S` | Seconds to hold before the box appears (default `2.0`). |
+
+Set `JARVIS_TEXT_HOTKEY_ENABLED = False` at the top of `jarvis.py` to disable it.
+
 ## Talking to Jarvis (push-to-talk)
 
 Clap twice (serious mode) or three times rapidly (normal mode) first — push-to-talk is locked until Jarvis is activated by one of those patterns. Then hold **Left Shift** (or your `JARVIS_PTT_KEY`), say a command, then release. On release:
