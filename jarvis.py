@@ -251,12 +251,18 @@ def _take_pending_action() -> dict | None:
     return step
 
 
-def _execute_confirmed_action(step: dict) -> None:
+def _execute_confirmed_action(step: dict, reply_sink=None) -> None:
     tool_name = str(step.get("tool_name") or "")
     tool_input = step.get("tool_input") or {}
     log.info("Confirmed by user: executing staged %s(%r)", tool_name, tool_input)
     result = _execute_tool(tool_name, tool_input, transcript="", skip_confirmation=True)
-    speak_text(result or "Done.")
+    reply = result or "Done."
+    # A phone-originated command already got its "Message received." ack up front, in
+    # handle_text_command — the full result goes back to the phone only, not spoken locally.
+    if reply_sink:
+        reply_sink(reply)
+    else:
+        speak_text(reply)
 
 
 def block_samples() -> int:
@@ -2325,7 +2331,9 @@ def _ntfy_listen_loop() -> None:
                     text = (event.get("message") or "").strip()
                     if text:
                         log.info("ntfy command received: %r", text)
-                        handle_text_command(text)
+                        # Reply goes to the main (notification) topic, not -cmd, so it lands
+                        # wherever you're already subscribed to see it, not the inbound-only one.
+                        handle_text_command(text, reply_sink=lambda r: _ntfy_publish(r, title="Jarvis"))
         except Exception as e:
             log.warning("ntfy listener error (reconnecting): %s", e)
             time.sleep(5)
@@ -2355,7 +2363,7 @@ def _telegram_listen_loop() -> None:
                     continue
                 if text:
                     log.info("Telegram command received: %r", text)
-                    handle_text_command(text)
+                    handle_text_command(text, reply_sink=lambda r: _telegram_send(r))
         except Exception as e:
             log.warning("Telegram listener error (reconnecting): %s", e)
             time.sleep(5)
@@ -5156,10 +5164,17 @@ def run_agent_loop(transcript: str) -> str:
     return reply
 
 
-def handle_text_command(transcript: str) -> None:
+def handle_text_command(transcript: str, reply_sink=None) -> None:
     """Runs one already-transcribed command (typed or spoken) through the confirmation
     gate and the Claude tool loop, then speaks the reply. Shared by handle_voice_command
-    (after Whisper) and the typed-command hotkey (which skips transcription entirely)."""
+    (after Whisper) and the typed-command hotkey (which skips transcription entirely).
+
+    reply_sink, if given, marks this as a phone-originated command (from
+    _ntfy_listen_loop/_telegram_listen_loop): instead of speaking the full reply locally,
+    Jarvis gives a brief spoken "Message received." ack up front (so anyone in the room knows
+    something's happening) and sends the *actual* answer only to reply_sink — the room and the
+    phone get different things, on purpose, instead of reading the whole answer out loud into
+    an empty room."""
     if not transcript:
         return
 
@@ -5168,13 +5183,16 @@ def handle_text_command(transcript: str) -> None:
     # health check or scheduled skill happens to notice.
     flush_pending_notifications()
 
+    if reply_sink:
+        speak_text("Message received.")
+
     with _pending_action_lock:
         pending = _pending_action
     if pending is not None:
         if _is_confirmation_yes(transcript):
             step = _take_pending_action()
             if step:
-                _execute_confirmed_action(step)
+                _execute_confirmed_action(step, reply_sink)
             return
         _take_pending_action()
         log.info(
@@ -5185,7 +5203,10 @@ def handle_text_command(transcript: str) -> None:
     record_recent_task(transcript)
     reply = run_agent_loop(transcript)
     if reply:
-        speak_text(reply)
+        if reply_sink:
+            reply_sink(reply)
+        else:
+            speak_text(reply)
 
 
 def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
