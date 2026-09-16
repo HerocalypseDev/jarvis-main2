@@ -1,0 +1,6 @@
+{
+  "name": "morning_briefing",
+  "description": "Runs automatically every morning at 8am to give a full daily briefing: unread Gmail, today's Google Calendar events, and daily anime news. Also usable on request (\"give me my morning briefing\", \"what's on my plate today\").",
+  "instructions": "Give a single spoken briefing covering three things, in this order: (1) Unread Gmail — use the mcp_gmail tools to check the inbox for unread messages; report roughly how many there are and call out sender + subject for anything that looks important or time-sensitive, skipping routine newsletters/promos unless asked. (2) Today's calendar — use the mcp_calendar tools to list today's events on the user's Google Calendar; report each event's time and title in chronological order, or say the day is clear if there's nothing on it. (3) Daily anime news — use web_search for today's anime news (new episode releases, announcements, simulcast schedule) and summarize the 2-4 most relevant headlines. If the Gmail or Calendar tools aren't available (server not connected/authenticated), skip that section, mention briefly that it couldn't be checked, and continue with the rest rather than failing the whole briefing. Keep the whole thing tight and conversational since it's spoken aloud, not read.",
+  "schedule": { "daily_at": "08:00" }
+}
