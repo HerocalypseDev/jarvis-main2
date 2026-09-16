@@ -92,7 +92,7 @@ FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP = True
 OPEN_NEW_CURSOR_ON_DOUBLE_CLAP = False
 CURSOR_OPEN_FULLSCREEN = False
 
-JARVIS_WELCOME_ENABLED = True
+JARVIS_WELCOME_ENABLED = False
 # Triple clap (3 in a row): normal mode.
 JARVIS_WELCOME_PHRASE = "Hey boss, how can I help you today?"
 # Double clap: serious mode — a different greeting, then an immediate weather + time report.
