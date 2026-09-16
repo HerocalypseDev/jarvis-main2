@@ -730,8 +730,12 @@ use them directly like any other tool.
 For actual software development work — writing code, fixing a bug, adding a feature, running a \
 test suite — use delegate_to_claude_code instead of doing it yourself with run_shell/write_file. \
 It hands the task to a full Claude Code agent with a much larger, purpose-built toolset and will \
-do a meaningfully better job on anything beyond a one-liner. It runs synchronously and can take \
-several minutes; say so in your reply rather than leaving the user wondering about the pause.
+do a meaningfully better job on anything beyond a one-liner. It now runs in the background: it \
+returns as soon as the task starts, not once it's done, so tell the user it's running in the \
+background and that you'll let them know — then you actually will, unprompted, once it \
+finishes. For a substantial websearch-and-summarize-to-a-file task, use delegate_research the \
+same way instead of doing it yourself with web_search/write_file — cheaper, since it skips a \
+full Claude Code session. list_background_tasks shows what's currently running if asked.
 
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
@@ -1196,10 +1200,12 @@ AGENT_TOOLS = [
             "instead of doing it yourself with run_shell/write_file. Claude Code has a far "
             "larger toolset built for exactly this (repo-wide search, diff-aware editing, "
             "git/test awareness) and will do a better job on anything beyond a one-off command. "
-            "This runs synchronously and can take several minutes for a real task — mention "
-            "that in your reply so the user isn't left wondering about the pause. Reach for "
-            "this for actual coding/repo work; use run_shell/run_python directly for quick "
-            "one-liners."
+            "This runs in the background and returns immediately once the task is *started*, "
+            "not once it's finished — tell the user it's running in the background rather than "
+            "making them wait, and that you'll let them know when it's done (you will — this "
+            "reports back on its own, as a toast plus a spoken summary, once it finishes). "
+            "list_background_tasks shows what's still running if asked. Reach for this for "
+            "actual coding/repo work; use run_shell/run_python directly for quick one-liners."
         ),
         "input_schema": {
             "type": "object",
@@ -1217,6 +1223,53 @@ AGENT_TOOLS = [
                 },
             },
             "required": ["task"],
+        },
+    },
+    {
+        "name": "delegate_research",
+        "description": (
+            "Run a websearch-and-summarize task in the background and save the findings to a "
+            "file, without blocking — reach for this instead of web_search+write_file "
+            "yourself when the task is substantial enough that the user wants to keep talking "
+            "to you while it runs. Cheaper and faster than delegate_to_claude_code since it "
+            "doesn't spin up a full Claude Code session; use delegate_to_claude_code instead "
+            "for anything that needs actual repo/code work. Like delegate_to_claude_code, this "
+            "returns immediately once started and reports back on its own when done."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "what to research and summarize, as a clear, complete instruction",
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": (
+                        "absolute path to save the summary to; omit to default to a "
+                        "timestamped file under ~/Jarvis_Research/"
+                    ),
+                },
+            },
+            "required": ["task"],
+        },
+    },
+    {
+        "name": "list_background_tasks",
+        "description": (
+            "List background tasks started with delegate_to_claude_code or delegate_research "
+            "— what's currently running and (optionally) what already finished. Use this if "
+            "the user asks \"is that done yet\" or \"what's still running\" instead of just "
+            "waiting for the completion notification."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_finished": {
+                    "type": "boolean",
+                    "description": "true to also show recently finished/failed tasks, not just running ones",
+                },
+            },
         },
     },
 ]
@@ -1329,6 +1382,17 @@ def _create_memory_tables(conn: sqlite3.Connection) -> None:
         "created_at TEXT NOT NULL, "
         "delivered_at TEXT, "
         "cancelled_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS background_tasks ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "kind TEXT NOT NULL, "
+        "task TEXT NOT NULL, "
+        "target TEXT, "
+        "status TEXT NOT NULL DEFAULT 'running', "
+        "started_at TEXT NOT NULL, "
+        "finished_at TEXT, "
+        "result_summary TEXT)"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects ("
@@ -2074,6 +2138,10 @@ def quick_recall() -> str:
     if upcoming and upcoming != "No upcoming reminders.":
         parts.append("Upcoming reminders: " + upcoming.replace("\n", "; "))
 
+    running_tasks = list_background_tasks(include_finished=False)
+    if running_tasks and running_tasks != "No background tasks running.":
+        parts.append("Background tasks in progress: " + running_tasks.replace("\n", "; "))
+
     if not parts:
         return "Nothing tracked yet — no ongoing projects, recent tasks, or reminders."
     return " ".join(parts)
@@ -2269,12 +2337,14 @@ def _scheduler_loop() -> None:
                 if _skill_is_due(skill, now):
                     _run_scheduled_skill(skill)
             _check_due_reminders(now)
+            _check_background_tasks(now)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
 
 
 def _start_scheduler() -> None:
+    _recover_interrupted_background_tasks()
     threading.Thread(target=_scheduler_loop, daemon=True, name="skill-scheduler").start()
 
 
@@ -3788,6 +3858,169 @@ def _http_request_tool(url: str, method: str, headers: dict | None, body: str | 
 CLAUDE_CODE_TIMEOUT_S = 900
 
 
+# --- FEATURE: background tasks — delegate_to_claude_code (real coding/debugging work, via a ---
+# --- detached `claude -p` subprocess) and delegate_research (websearch-and-summarize, via a ---
+# --- plain background thread running the same run_agent_loop a voice command uses) both let ---
+# --- Jarvis keep taking new commands immediately instead of blocking on the task. Both are ---
+# --- tracked in the background_tasks table and report back through the same ---
+# --- queue_or_deliver_notification/toast pipeline reminders already use — see ---
+# --- background_agents_plan.md for the design this implements. ---
+_background_tasks_lock = threading.Lock()
+# In-memory only: maps a background_tasks row id to (its live Popen handle, spawn time), for
+# polling and stale-process detection by _check_background_tasks. Doesn't survive a restart —
+# see _recover_interrupted_background_tasks.
+_RUNNING_BACKGROUND_PROCS: dict[int, tuple[subprocess.Popen, float]] = {}
+# Caps concurrent *coding* background tasks (each a full `claude -p` session) — these draw from
+# the same shared Pro/Max usage pool as interactive Claude Code/app usage, unlike research tasks
+# (cheap Haiku tool calls), so it's worth capping rather than letting requests pile up unbounded.
+MAX_CONCURRENT_BACKGROUND_CODE_TASKS = 2
+
+
+def _background_tasks_dir(task_id: int) -> Path:
+    d = Path(__file__).resolve().parent / ".jarvis_tasks" / str(task_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _insert_background_task(task: str, kind: str, target: str) -> int:
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            cur = conn.execute(
+                "INSERT INTO background_tasks (kind, task, target, status, started_at) "
+                "VALUES (?, ?, ?, 'running', ?)",
+                (kind, task, target, now_iso),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+        finally:
+            conn.close()
+
+
+def _count_running_background_tasks(kind: str) -> int:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM background_tasks WHERE kind = ? AND status = 'running'",
+                (kind,),
+            ).fetchone()
+        finally:
+            conn.close()
+    return int(row[0]) if row else 0
+
+
+def _finish_background_task(task_id: int, status: str, summary: str) -> None:
+    """Marks a background_tasks row done/failed and reports it exactly like a reminder: a
+    Windows toast plus a spoken message through the same busy-aware notification gate."""
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            conn.execute(
+                "UPDATE background_tasks SET status = ?, finished_at = ?, result_summary = ? "
+                "WHERE id = ?",
+                (status, now_iso, summary, task_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    verb = "finished" if status == "done" else "failed"
+    message = f"Background task #{task_id} {verb}: {summary}"
+    send_windows_toast("Jarvis — background task done", message[:250])
+    queue_or_deliver_notification(message)
+    record_recent_task(f"background task #{task_id} {verb}")
+
+
+def list_background_tasks(include_finished: bool = False) -> str:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            sql = "SELECT id, kind, task, status, started_at, result_summary FROM background_tasks"
+            if not include_finished:
+                sql += " WHERE status = 'running'"
+            sql += " ORDER BY id DESC LIMIT 20"
+            rows = conn.execute(sql).fetchall()
+        finally:
+            conn.close()
+    if not rows:
+        return "No background tasks running." if not include_finished else "No background tasks recorded."
+    lines = []
+    for tid, kind, task, status, started_at, summary in rows:
+        detail = f" — {summary}" if status != "running" and summary else ""
+        lines.append(f"#{tid} [{status}] ({kind}, started {started_at}): {task}{detail}")
+    return "\n".join(lines)
+
+
+def _recover_interrupted_background_tasks() -> None:
+    """Called once at startup, before the scheduler starts. A row still 'running' from a
+    previous process has no live Popen/thread behind it — that state is in-memory only and
+    doesn't survive a restart, and a headless Claude Code session can't reliably be resumed
+    mid-execution anyway (transcript continuity isn't the same as the original OS process
+    still existing) — so mark it failed honestly instead of pretending it might still finish."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            cur = conn.execute(
+                "UPDATE background_tasks SET status = 'failed', finished_at = ?, "
+                "result_summary = 'interrupted by a Jarvis restart' WHERE status = 'running'",
+                (datetime.now().isoformat(timespec="seconds"),),
+            )
+            conn.commit()
+            if cur.rowcount:
+                log.warning(
+                    "Marked %d background task(s) failed (interrupted by restart).", cur.rowcount
+                )
+        finally:
+            conn.close()
+
+
+def _check_background_tasks(now: datetime) -> None:
+    """Called once per scheduler tick. Polls the OS processes backing running 'code' tasks
+    (started by _delegate_to_claude_code); 'research' tasks (path B, a plain background
+    thread) report their own completion via _finish_background_task instead, since there's
+    no subprocess here to poll for those."""
+    with _background_tasks_lock:
+        items = list(_RUNNING_BACKGROUND_PROCS.items())
+    for task_id, (proc, started_at) in items:
+        if proc.poll() is None:
+            if time.monotonic() - started_at > CLAUDE_CODE_TIMEOUT_S:
+                log.warning(
+                    "Background task #%d exceeded %ds; killing it.", task_id, CLAUDE_CODE_TIMEOUT_S
+                )
+                proc.kill()
+                with _background_tasks_lock:
+                    _RUNNING_BACKGROUND_PROCS.pop(task_id, None)
+                _finish_background_task(
+                    task_id, "failed", f"timed out after {CLAUDE_CODE_TIMEOUT_S} seconds and was killed"
+                )
+            continue  # still running
+        with _background_tasks_lock:
+            _RUNNING_BACKGROUND_PROCS.pop(task_id, None)
+
+        output_path = _background_tasks_dir(task_id) / "output.json"
+        try:
+            raw = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            raw = ""
+        raw = _strip_ansi(raw).strip()
+
+        if proc.returncode != 0:
+            summary = f"exited with an error (code {proc.returncode}): {raw[:MAX_TOOL_RESULT_CHARS] or 'no output'}"
+            _finish_background_task(task_id, "failed", summary)
+            continue
+
+        try:
+            data = json.loads(raw)
+            result = str(data.get("result") or "").strip()
+        except (json.JSONDecodeError, TypeError):
+            result = raw
+        if len(result) > MAX_TOOL_RESULT_CHARS:
+            result = result[:MAX_TOOL_RESULT_CHARS] + f"... [truncated, {len(result)} chars total]"
+        _finish_background_task(task_id, "done", result or "finished with no result text")
+
+
 def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     task = (task or "").strip()
     if not task:
@@ -3802,50 +4035,99 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     cwd = Path(repo_path).expanduser() if repo_path else Path(__file__).resolve().parent
     if not cwd.is_dir():
         return f"{cwd} is not a valid directory."
-    try:
-        popen_kw: dict = {}
-        if os.name == "nt":
-            popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-        # Strip API-key-style credentials before handing the subprocess its environment: the
-        # `claude` CLI's own auth resolution tries ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN before
-        # ever falling back to a `claude login` OAuth session, so leaving Jarvis's own key in
-        # this child's environment would silently bill the delegated task per-token against that
-        # key instead of using a Pro/Max subscription login — even though Jarvis's own brain
-        # legitimately needs that same env var for its own direct API calls.
-        child_env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-        }
-        proc = subprocess.run(
-            ["claude", "-p", task, "--output-format", "json", "--dangerously-skip-permissions"],
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=CLAUDE_CODE_TIMEOUT_S,
-            env=child_env,
-            **popen_kw,
+
+    running = _count_running_background_tasks("code")
+    if running >= MAX_CONCURRENT_BACKGROUND_CODE_TASKS:
+        return (
+            f"Already running {running} background coding task(s) (cap is "
+            f"{MAX_CONCURRENT_BACKGROUND_CODE_TASKS}, to stay within the shared Pro/Max usage "
+            "pool) — ask again once one finishes; list_background_tasks shows what's running."
         )
-    except subprocess.TimeoutExpired:
-        return f"Claude Code timed out after {CLAUDE_CODE_TIMEOUT_S} seconds."
+
+    task_id = _insert_background_task(task, "code", str(cwd))
+    output_path = _background_tasks_dir(task_id) / "output.json"
+
+    popen_kw: dict = {}
+    if os.name == "nt":
+        popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    # Strip API-key-style credentials before handing the subprocess its environment: the
+    # `claude` CLI's own auth resolution tries ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN before
+    # ever falling back to a `claude login` OAuth session, so leaving Jarvis's own key in
+    # this child's environment would silently bill the delegated task per-token against that
+    # key instead of using a Pro/Max subscription login — even though Jarvis's own brain
+    # legitimately needs that same env var for its own direct API calls.
+    child_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+    }
+    try:
+        # Opening the file only for the Popen call (not kept open in this process) is
+        # deliberate: the child gets its own duplicated handle at spawn time, so closing our
+        # copy when the `with` block exits doesn't touch the child's ability to keep writing.
+        with open(output_path, "w", encoding="utf-8") as out_f:
+            proc = subprocess.Popen(
+                ["claude", "-p", task, "--output-format", "json", "--dangerously-skip-permissions"],
+                cwd=str(cwd),
+                stdout=out_f,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=child_env,
+                **popen_kw,
+            )
     except FileNotFoundError:
+        _finish_background_task(task_id, "failed", "the `claude` CLI isn't installed or isn't on PATH")
         return "The `claude` CLI isn't installed or isn't on PATH."
     except Exception as e:
-        return f"Failed to run Claude Code: {e}"
+        _finish_background_task(task_id, "failed", f"failed to start: {e}")
+        return f"Failed to start Claude Code: {e}"
 
-    if proc.returncode != 0:
-        err = _strip_ansi((proc.stderr or proc.stdout or "").strip())[:MAX_TOOL_RESULT_CHARS]
-        return f"Claude Code exited with an error (code {proc.returncode}): {err or 'no output'}"
+    with _background_tasks_lock:
+        _RUNNING_BACKGROUND_PROCS[task_id] = (proc, time.monotonic())
+    record_recent_task(f"started background coding task #{task_id}: {task}")
+    return (
+        f"Started background task #{task_id} in {cwd}: {task}. I'll keep taking other "
+        "commands and let you know when it's done."
+    )
 
-    try:
-        data = json.loads(proc.stdout)
-        result = str(data.get("result") or "").strip()
-    except (json.JSONDecodeError, TypeError):
-        result = (proc.stdout or "").strip()
-    result = _strip_ansi(result)
-    if len(result) > MAX_TOOL_RESULT_CHARS:
-        result = result[:MAX_TOOL_RESULT_CHARS] + f"... [truncated, {len(result)} chars total]"
-    return result or "Claude Code finished with no result text."
+
+def _delegate_research(task: str, output_path: str) -> str:
+    task = (task or "").strip()
+    if not task:
+        return "No research task given."
+    reason = _catastrophic_reason(task)
+    if reason:
+        return f"That task reads as though it would {reason} — refusing to run it automatically."
+
+    output_path = (output_path or "").strip()
+    if not output_path:
+        default_dir = Path.home() / "Jarvis_Research"
+        default_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        output_path = str(default_dir / f"research-{stamp}.md")
+
+    task_id = _insert_background_task(task, "research", output_path)
+    synthetic_transcript = (
+        "(This is a background research task the user asked you to run while they do other "
+        "things — they are not watching this. Research the following and write your findings "
+        f"to the file {output_path!r} using write_file, then reply with a one-sentence summary "
+        "of what you found and saved.) " + task
+    )
+
+    def _run() -> None:
+        try:
+            reply = run_agent_loop(synthetic_transcript)
+        except Exception as e:
+            _finish_background_task(task_id, "failed", f"research task raised an error: {e}")
+            return
+        _finish_background_task(task_id, "done", reply.strip() or f"finished, saved to {output_path}")
+
+    threading.Thread(target=_run, daemon=True, name=f"research-task-{task_id}").start()
+    record_recent_task(f"started background research task #{task_id}: {task}")
+    return (
+        f"Started background research task #{task_id}, saving to {output_path}. I'll keep "
+        "taking other commands and let you know when it's done."
+    )
 
 
 def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result: str) -> None:
@@ -4076,6 +4358,12 @@ def _execute_tool(
             result = _delegate_to_claude_code(
                 str(inp.get("task") or ""), str(inp.get("repo_path") or "")
             )
+        elif tool_name == "delegate_research":
+            result = _delegate_research(
+                str(inp.get("task") or ""), str(inp.get("output_path") or "")
+            )
+        elif tool_name == "list_background_tasks":
+            result = list_background_tasks(bool(inp.get("include_finished")))
     except Exception as e:
         log.warning("Tool %r raised: %s", tool_name, e)
         result = f"Tool failed: {e}"

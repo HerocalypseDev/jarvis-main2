@@ -1,5 +1,6 @@
 .env
 .cache/
+.jarvis_tasks/
 jarvis_memory.db
 session_state.json
 proactive_suggestions.log
