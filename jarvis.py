@@ -59,6 +59,13 @@ from dotenv import load_dotenv
 import numpy as np
 import sounddevice as sd
 
+# Modular improvements — each is self-contained (owns its own DB tables/connection,
+# no import-time dependency back on this module) and exposed here as extra agent tools.
+import jarvis_workflow as workflow
+import jarvis_proactive as proactive
+import jarvis_tech_understanding as tech_understanding
+import jarvis_memory_enhance as memory_enhance
+
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
 BLOCK_MS = 40
@@ -771,6 +778,19 @@ after each one, and respects the ordering you give it via depends_on. Don't use 
 simple 1-2 step ask — just do those directly. No persona for set_plan itself; the steps \
 inside it still use James/{MAIL_CALENDAR_AGENT_NAME} where those tools apply.
 
+For real technical/coding work, reach for these proactively rather than only when explicitly \
+asked: get_workflow_status to ground yourself in the current repo's actual git branch/state before \
+starting or picking up a task (any workspace context already known is shown below); \
+check_project_health before/after significant coding work to catch bare excepts, hardcoded \
+secrets, leftover merge markers, and similar issues early rather than after they cause a real bug; \
+analyze_error whenever the user reads or pastes an error/traceback back to you, instead of just \
+repeating it; analyze_code and trace_dependencies when asked to review a file or judge the impact \
+of changing/removing something across a multi-file project. Use remember_decision (not just \
+remember_fact) when the user explains *why* they chose something, and remember_code_pattern when \
+they state or demonstrate a coding convention they want followed consistently — both make future \
+suggestions better-informed. semantic_recall is recall_facts' sibling for when the right memory \
+probably exists but the wording won't literally match a keyword search.
+
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
 profile. If a run_shell or run_python call would do one of those, it gets staged instead of run — \
@@ -1357,6 +1377,141 @@ AGENT_TOOLS = [
                 },
             },
             "required": ["steps"],
+        },
+    },
+    {
+        "name": "get_workflow_status",
+        "description": (
+            "Report on the current development workspace: detected stack, git branch and "
+            "uncommitted-change count, whether this is a context switch from the last "
+            "workspace worked in, and concrete suggestions (e.g. commit before switching, "
+            "pull before continuing). Use this when the user asks what they were working on "
+            "technically, or before starting a coding task, to ground yourself in the repo's "
+            "actual state instead of guessing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "project folder to inspect; omit to use the last-touched workspace",
+                },
+            },
+        },
+    },
+    {
+        "name": "check_project_health",
+        "description": (
+            "Proactively scan a project folder (or a single file) for concrete bug-risk, "
+            "security, and performance red flags — bare excepts, swallowed exceptions, "
+            "leftover merge-conflict markers, hardcoded secrets/keys, eval/exec on dynamic "
+            "input, shell=True subprocess calls, string-built SQL, suspicious nested loops. "
+            "Findings are tracked across scans so repeat calls show what's new, what's still "
+            "open, and what got fixed. Use this before/after significant coding work, or "
+            "whenever the user asks you to check a project for problems."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"root_path": {"type": "string", "description": "folder or file to scan"}},
+            "required": ["root_path"],
+        },
+    },
+    {
+        "name": "analyze_error",
+        "description": (
+            "Parse a raw error message or traceback (Python, JavaScript/Node, or a bare HTTP "
+            "status) into a structured explanation: error type, likely cause, a concrete "
+            "suggested fix, and the failure location. Use this whenever the user pastes/reads "
+            "an error back to you, instead of just repeating the raw text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"error_text": {"type": "string"}},
+            "required": ["error_text"],
+        },
+    },
+    {
+        "name": "analyze_code",
+        "description": (
+            "Structural analysis of a single Python file via its AST: functions/classes "
+            "found, and flags for long functions, high branch-complexity, and missing "
+            "docstrings on public names. Use this when the user asks you to review or "
+            "understand a specific Python file's structure."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "path to a .py file"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "trace_dependencies",
+        "description": (
+            "Build the import graph for a Python project directory. Omit 'target' for an "
+            "overview (module count, most-imported modules); pass 'target' (a module or file "
+            "name) to see what it imports and, just as importantly, what else in the project "
+            "imports it — use this before changing or removing something, to see the blast "
+            "radius across files."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "root_path": {"type": "string", "description": "project root to walk"},
+                "target": {"type": "string", "description": "optional module/file name to trace"},
+            },
+            "required": ["root_path"],
+        },
+    },
+    {
+        "name": "remember_decision",
+        "description": (
+            "Record a decision along with its rationale and the alternatives considered — "
+            "richer than remember_fact, meant for choices worth revisiting later (an "
+            "architecture call, a tool choice, a tradeoff). Call this when the user explains "
+            "*why* they chose something, not just what they chose."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string"},
+                "rationale": {"type": "string", "description": "why this was chosen"},
+                "alternatives": {"type": "string", "description": "what else was considered, if mentioned"},
+                "project": {"type": "string", "description": "optional project this decision belongs to"},
+            },
+            "required": ["decision"],
+        },
+    },
+    {
+        "name": "remember_code_pattern",
+        "description": (
+            "Record a code style or convention the user prefers (e.g. \"uses early returns "
+            "over nested if/else\", \"prefers dataclasses over plain dicts for config\"). Call "
+            "this when the user states or demonstrates a coding preference worth applying "
+            "consistently later."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "the preferred pattern/convention"},
+                "language": {"type": "string", "description": "optional language/framework it applies to"},
+                "example": {"type": "string", "description": "optional short code example"},
+                "note": {"type": "string", "description": "optional extra context"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "semantic_recall",
+        "description": (
+            "Search remembered facts, decisions, and code patterns by meaning rather than "
+            "exact keyword overlap (unlike recall_facts, which is a literal SQL LIKE match). "
+            "Use this when the user asks to recall something related to a topic but the exact "
+            "wording likely differs from how it was originally phrased."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
         },
     },
 ]
@@ -2712,6 +2867,7 @@ def build_system_prompt() -> str:
         + get_active_facts_context()
         + get_projects_context()
         + get_skills_context()
+        + workflow.get_context_summary()
     )
 
 
@@ -4204,6 +4360,10 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     cwd = Path(repo_path).expanduser() if repo_path else Path(__file__).resolve().parent
     if not cwd.is_dir():
         return f"{cwd} is not a valid directory."
+    try:
+        workflow.touch_workspace(str(cwd))
+    except Exception as e:
+        log.debug("workflow.touch_workspace failed for %s: %s", cwd, e)
 
     running = _count_running_background_tasks("code")
     if running >= MAX_CONCURRENT_BACKGROUND_CODE_TASKS:
@@ -4730,6 +4890,38 @@ def _execute_tool(
             result = list_background_tasks(bool(inp.get("include_finished")))
         elif tool_name == "set_plan":
             result = _set_plan(transcript, inp.get("steps") or [])
+        elif tool_name == "get_workflow_status":
+            result = workflow.get_workflow_status(str(inp.get("path") or ""))
+        elif tool_name == "check_project_health":
+            result = proactive.check_project_health(str(inp.get("root_path") or ""))
+        elif tool_name == "analyze_error":
+            result = tech_understanding.format_error_report(
+                tech_understanding.parse_error(str(inp.get("error_text") or ""))
+            )
+        elif tool_name == "analyze_code":
+            result = tech_understanding.format_analysis_report(
+                tech_understanding.analyze_python_file(str(inp.get("path") or ""))
+            )
+        elif tool_name == "trace_dependencies":
+            result = tech_understanding.trace_dependencies(
+                str(inp.get("root_path") or ""), str(inp.get("target") or "")
+            )
+        elif tool_name == "remember_decision":
+            result = memory_enhance.remember_decision(
+                str(inp.get("decision") or ""),
+                str(inp.get("rationale") or ""),
+                str(inp.get("alternatives") or ""),
+                str(inp.get("project") or ""),
+            )
+        elif tool_name == "remember_code_pattern":
+            result = memory_enhance.remember_code_pattern(
+                str(inp.get("pattern") or ""),
+                str(inp.get("language") or ""),
+                str(inp.get("example") or ""),
+                str(inp.get("note") or ""),
+            )
+        elif tool_name == "semantic_recall":
+            result = memory_enhance.semantic_recall(str(inp.get("query") or ""))
     except Exception as e:
         log.warning("Tool %r raised: %s", tool_name, e)
         result = f"Tool failed: {e}"
