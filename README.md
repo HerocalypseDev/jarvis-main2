@@ -203,7 +203,7 @@ Requires Node/npx for most published MCP servers (`node --version` to check) and
 
 `discord_selfbot_server.py` (in this repo, not a third-party package) lets Jarvis act as your actual Discord account — read your DMs and servers, send messages as you. **This is fundamentally different from every other integration here.** A legitimate Discord integration is a bot: it only sees servers it's invited to, via Discord's official Bot API, no ban risk. Making Jarvis act as *you* means automating your personal account outside that official API (a "self-bot"), which explicitly violates Discord's Terms of Service. Official client libraries (`discord.js` 11.4+, `discord.py`) deliberately dropped support for this specifically to stop it, and Discord has run enforcement waves terminating accounts caught doing it. `discord.py-self` is the unofficial fork that restores it — there's no maintained, ToS-compliant equivalent for "read my own DMs."
 
-This was built anyway at explicit, twice-confirmed user request, the same posture as the WhatsApp Web reading feature in the sibling `jarvis_assistant` project.
+This was built anyway at explicit, twice-confirmed user request.
 
 **Setup:**
 1. Log into discord.com in a browser, open DevTools (F12) → Application → Local Storage → `https://discord.com` → copy the `token` value.

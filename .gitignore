@@ -7,7 +7,6 @@ proactive_suggestions.log
 mcp_servers.json
 __pycache__/
 *.pyc
-jarvis_assistant/
 .claude/*.lock
 .playwright-mcp/
 jarvis_memory.db.corrupted-*.bak
