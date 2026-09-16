@@ -673,7 +673,13 @@ ALLOWED_MOUSE_BUTTONS = ("left", "right", "middle")
 ALLOWED_MODES = ("serious", "normal")
 MEMORY_FACT_CATEGORIES = ("preference", "decision", "directive", "goal", "relationship", "fact")
 MAX_TOOL_CALLS_PER_TURN = 5  # cap on parallel tool calls Claude can request in one turn
-MAX_AGENT_ITERATIONS = 6  # cap on observe-act-observe round trips per voice command
+# Cap on observe-act-observe round trips per command. Each round trip resends the full
+# message history, so cost per round trip grows with how far into the task you are — but
+# it's only spent on commands complex enough to actually need that many tool calls; a
+# simple command still stops as soon as Claude replies without a tool_use. Was 6, which a
+# compound multi-step instruction (search email, build a file, send it, confirm) could
+# exhaust and get cut off mid-task even with nothing going wrong.
+MAX_AGENT_ITERATIONS = 12
 CONVERSATION_HISTORY_MAX_TURNS = 6  # 3 user+assistant exchanges
 
 # Persona names Jarvis uses in speech instead of narrating tool/mechanism names — "I'll give it
@@ -1299,6 +1305,34 @@ CLAUDE_MAX_ATTEMPTS = 3
 CLAUDE_RETRY_DELAY_S = 1.5
 
 
+def _urlopen_hard_timeout(req: urllib.request.Request, timeout: int) -> bytes:
+    """urlopen(timeout=...) is supposed to bound the whole call, but a wedged TLS connection
+    has been observed in practice to hang well past its declared socket timeout (seen right
+    after an SSLV3_ALERT_BAD_RECORD_MAC on this machine — the retry that followed never timed
+    out or logged anything, silently hanging the agent loop for minutes). Enforce the cap from
+    the outside with a watchdog thread instead of trusting urlopen alone. If the request thread
+    is still alive after the deadline, it's abandoned (daemon, so it dies with the process) and
+    this raises TimeoutError — leaking one stuck socket is a fine trade against hanging the
+    caller forever."""
+    outcome: dict = {}
+
+    def _do() -> None:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                outcome["data"] = resp.read()
+        except Exception as e:
+            outcome["error"] = e
+
+    t = threading.Thread(target=_do, daemon=True)
+    t.start()
+    t.join(timeout + 5)  # small grace period past urlopen's own timeout
+    if t.is_alive():
+        raise TimeoutError(f"Claude request wedged past {timeout}s (urlopen's own timeout didn't fire)")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("data", b"")
+
+
 def _claude_request(body: dict, timeout: int) -> dict | None:
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
@@ -1317,8 +1351,7 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read())
+            return json.loads(_urlopen_hard_timeout(req, timeout))
         except urllib.error.HTTPError as e:
             transient = e.code in (429, 500, 502, 503, 504, 529)
             try:
