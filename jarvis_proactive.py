@@ -134,9 +134,19 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+# This module's own source is excluded from scanning (see _iter_source_files below): its
+# _PATTERNS table necessarily spells out the exact words/syntax it's looking for (TODO, FIXME,
+# eval(, exec(, ...) in both the regex source and the human-readable message text, so scanning
+# this file matches its own detection rules against themselves — not a finding about the
+# codebase, just the detector describing itself. Confirmed via a real scan: this previously
+# surfaced "TODO/FIXME/HACK marker present" and "eval()/exec() on dynamic input" findings
+# against this file's own pattern table, with no actual eval/exec/TODO anywhere else in it.
+_SELF_PATH = Path(__file__).resolve()
+
+
 def _iter_source_files(root: Path):
     if root.is_file():
-        if root.suffix.lower() in _SOURCE_EXTS:
+        if root.suffix.lower() in _SOURCE_EXTS and root.resolve() != _SELF_PATH:
             yield root
         return
     count = 0
@@ -145,6 +155,8 @@ def _iter_source_files(root: Path):
         for name in filenames:
             p = Path(dirpath) / name
             if p.suffix.lower() not in _SOURCE_EXTS:
+                continue
+            if p.resolve() == _SELF_PATH:
                 continue
             try:
                 if p.stat().st_size > MAX_FILE_BYTES:
