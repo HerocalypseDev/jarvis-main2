@@ -126,6 +126,30 @@ JARVIS_TEXT_HOTKEY_KEY = (
 ).strip() or "right ctrl"
 JARVIS_TEXT_HOTKEY_HOLD_S = float(os.environ.get("JARVIS_TEXT_HOTKEY_HOLD_S") or 2.0)
 
+# Phone integration: two independent, optionally-both-enabled channels. Both push every
+# proactive notification (reminders, background-task completions, health-check suggestions —
+# anything that already goes through queue_or_deliver_notification) to your phone immediately,
+# bypassing the busy/work-hours queueing that gates the in-room spoken announcement, since a
+# silent push doesn't interrupt anything the way audio would. Both also let you send a message
+# back that runs through the exact same command pipeline as the text-hotkey box — full tool
+# access, same confirmation gate for the catastrophic-action tier, nothing else held back.
+#
+# ntfy.sh: free, no account. NTFY_TOPIC is really a shared secret on the free public service —
+# anyone who learns the topic name can publish to your command topic and run arbitrary Jarvis
+# commands, so pick (or generate) a long random one, never something guessable, and never
+# commit it — this reads it from .env like everything else. Outbound alerts go to
+# {NTFY_TOPIC}; inbound commands are read from a *separate* {NTFY_TOPIC}-cmd topic so Jarvis's
+# own outbound pushes can't loop back in as commands.
+NTFY_TOPIC = (os.environ.get("NTFY_TOPIC") or "").strip()
+NTFY_SERVER = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").strip().rstrip("/")
+
+# Telegram bot: needs a one-time setup (message @BotFather to create a bot and get a token,
+# then message your own bot once to learn your chat ID) but is authenticated by the bot token
+# itself, not a guessable topic name, and only TELEGRAM_CHAT_ID's messages are ever accepted —
+# a stronger boundary than the ntfy command channel.
+TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -2097,6 +2121,7 @@ def queue_or_deliver_notification(text: str, urgent: bool = False) -> None:
     text = (text or "").strip()
     if not text:
         return
+    _notify_phone(text)
     refresh_session_context()
     if urgent or not (user_is_actively_working() and _is_preferred_work_hours()):
         speak_text(text)
@@ -2193,6 +2218,147 @@ def send_windows_toast(title: str, message: str) -> bool:
     except Exception as e:
         log.warning("Could not show Windows toast: %s", e)
         return False
+
+
+# --- FEATURE: phone integration — ntfy.sh and/or a Telegram bot, either or both, configured ---
+# --- entirely via NTFY_TOPIC/TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID in .env (silently inert if ---
+# --- unset). Outbound: _notify_phone fires from queue_or_deliver_notification so every ---
+# --- existing proactive message (reminders, background-task completions, health suggestions) ---
+# --- reaches the phone with no extra call sites to maintain. Inbound: two long-polling ---
+# --- listener threads (started from main(), see _ntfy_listen_loop/_telegram_listen_loop) feed ---
+# --- whatever you send from your phone into handle_text_command — the exact same command ---
+# --- pipeline the text-hotkey box uses, full tool access included. ---
+_NTFY_PRIORITIES = {"min": 1, "low": 2, "default": 3, "high": 4, "urgent": 5}
+
+
+def _ntfy_publish(message: str, title: str = "Jarvis", priority: str = "default") -> bool:
+    """Best-effort push via ntfy's JSON publish endpoint (not the raw-body+headers form —
+    headers can't safely carry arbitrary unicode, JSON can). Never raises.
+
+    priority must be an int 1-5 on this endpoint — the string names ntfy's docs show (e.g.
+    "default") are only accepted on the header-based publish form, not this JSON one; sending
+    a string here gets a flat "request body must be valid JSON" 400 with no field named,
+    confirmed against the live API."""
+    if not NTFY_TOPIC:
+        return False
+    message = (message or "").strip()
+    if not message:
+        return False
+    payload = json.dumps(
+        {
+            "topic": NTFY_TOPIC,
+            "message": message[:4000],
+            "title": title,
+            "priority": _NTFY_PRIORITIES.get(priority, 3),
+        }
+    ).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{NTFY_SERVER}/",
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        return True
+    except Exception as e:
+        log.warning("ntfy publish failed: %s", e)
+        return False
+
+
+def _telegram_send(message: str) -> bool:
+    """Best-effort push via Telegram's sendMessage. Never raises."""
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
+        return False
+    message = (message or "").strip()
+    if not message:
+        return False
+    payload = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": message[:4000]}).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        return True
+    except Exception as e:
+        log.warning("Telegram send failed: %s", e)
+        return False
+
+
+def _notify_phone(text: str, title: str = "Jarvis") -> None:
+    """Pushes to every configured phone channel. Called from queue_or_deliver_notification —
+    unconditionally, ahead of its busy/work-hours gate, since a silent phone push doesn't
+    interrupt anything the way the in-room spoken announcement would."""
+    if NTFY_TOPIC:
+        _ntfy_publish(text, title=title)
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        _telegram_send(text)
+
+
+def _ntfy_listen_loop() -> None:
+    """Long-polls a *separate* {NTFY_TOPIC}-cmd topic (never the outbound one, so Jarvis's own
+    pushes can't loop back in as commands) and runs each message through handle_text_command.
+    ntfy sends periodic keepalive events on this stream specifically so a stalled connection is
+    detectable; any error (including a keepalive-free timeout) just reconnects after a short
+    pause rather than giving up."""
+    topic = f"{NTFY_TOPIC}-cmd"
+    url = f"{NTFY_SERVER}/{topic}/json?poll=false"
+    log.info("ntfy command listener watching topic %r", topic)
+    while True:
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url), timeout=90) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if event.get("event") != "message":
+                        continue
+                    text = (event.get("message") or "").strip()
+                    if text:
+                        log.info("ntfy command received: %r", text)
+                        handle_text_command(text)
+        except Exception as e:
+            log.warning("ntfy listener error (reconnecting): %s", e)
+            time.sleep(5)
+
+
+def _telegram_listen_loop() -> None:
+    """Long-polls Telegram's getUpdates and runs each message through handle_text_command —
+    but only from TELEGRAM_CHAT_ID; a message from any other chat is logged and dropped, since
+    a bot's username is discoverable and knowing it shouldn't be enough to run commands on this
+    machine the way knowing an ntfy topic name is (see _ntfy_listen_loop's caveat)."""
+    offset = 0
+    base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    log.info("Telegram command listener running for chat %s", TELEGRAM_CHAT_ID)
+    while True:
+        try:
+            url = f"{base}/getUpdates?timeout=50&offset={offset}"
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                data = json.loads(resp.read())
+            for update in data.get("result", []):
+                offset = update["update_id"] + 1
+                msg = update.get("message") or {}
+                chat_id = str((msg.get("chat") or {}).get("id") or "")
+                text = (msg.get("text") or "").strip()
+                if chat_id != TELEGRAM_CHAT_ID:
+                    if chat_id:
+                        log.warning("Ignoring Telegram message from unauthorized chat %s", chat_id)
+                    continue
+                if text:
+                    log.info("Telegram command received: %r", text)
+                    handle_text_command(text)
+        except Exception as e:
+            log.warning("Telegram listener error (reconnecting): %s", e)
+            time.sleep(5)
 
 
 # --- FEATURE: reminders — one-off or repeating "tell me about this later", distinct from a ---
@@ -5451,6 +5617,16 @@ def main() -> int:
             JARVIS_TEXT_HOTKEY_HOLD_S,
         )
         threading.Thread(target=_text_hotkey_watch_loop, daemon=True).start()
+
+    if NTFY_TOPIC:
+        log.info(
+            "Phone (ntfy): pushing notifications to topic %r; commands read from %r.",
+            NTFY_TOPIC, f"{NTFY_TOPIC}-cmd",
+        )
+        threading.Thread(target=_ntfy_listen_loop, daemon=True, name="ntfy-listener").start()
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        log.info("Phone (Telegram): pushing notifications and listening for chat %s.", TELEGRAM_CHAT_ID)
+        threading.Thread(target=_telegram_listen_loop, daemon=True, name="telegram-listener").start()
 
     _preload_mcp_async()
     _start_scheduler()
