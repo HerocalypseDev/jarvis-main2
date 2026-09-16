@@ -67,6 +67,7 @@ import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
 import jarvis_filewatcher as filewatcher
 import jarvis_window_control as window_control
+import jarvis_task_scheduler as task_scheduler
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -832,6 +833,12 @@ For window management, use control_window (minimize/maximize/restore/close/snap 
 substring), arrange_windows to lay out several at once, and save_window_layout/ \
 restore_window_layout to name and recall a set of window positions later.
 
+For something the user wants done "sometime today" rather than at an exact time, use \
+queue_task (not create_reminder, which is for an exact time) then plan_task_queue to give it \
+a slot — if the user has Calendar access connected, fetch their events first and pass them as \
+plan_task_queue's busy_intervals so queued tasks land in real free time instead of over a \
+meeting. list_task_queue/cancel_queued_task manage what's already queued.
+
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
 profile. If a run_shell or run_python call would do one of those, it gets staged instead of run — \
@@ -1256,6 +1263,70 @@ AGENT_TOOLS = [
             "type": "object",
             "properties": {"reminder_id": {"type": "integer"}},
             "required": ["reminder_id"],
+        },
+    },
+    {
+        "name": "queue_task",
+        "description": (
+            "Add a task to the free-time queue — for something that should happen 'at some "
+            "point during free time' rather than at an exact time (use create_reminder for "
+            "an exact time). Call plan_task_queue afterward to actually give it a slot. If "
+            "instructions is given, Jarvis runs it itself (like a scheduled skill) when its "
+            "slot arrives; otherwise it just becomes a spoken nudge to go do it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"},
+                "estimate_minutes": {"type": "integer", "description": "how long this should take, default 30"},
+                "priority": {"type": "string", "enum": list(task_scheduler.PRIORITY_LEVELS)},
+                "instructions": {"type": "string", "description": "optional — what Jarvis itself should do when the slot arrives"},
+                "earliest_start": {"type": "string", "description": "optional ISO datetime — don't schedule before this"},
+                "deadline": {"type": "string", "description": "optional ISO datetime — must finish by this"},
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "plan_task_queue",
+        "description": (
+            "Fit every pending queued task into free time slots. Pass busy_intervals fetched "
+            "from the user's calendar (e.g. via mcp_googlecalendar_* tools) as a list of "
+            "{start, end} ISO datetimes so tasks don't land on top of real events; omit it to "
+            "plan against a plain 9am-9pm workday with no calendar awareness. Call this after "
+            "queue_task, or to replan after checking the calendar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "busy_intervals": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"start": {"type": "string"}, "end": {"type": "string"}},
+                    },
+                    "description": "busy time blocks to schedule around, e.g. from the calendar",
+                },
+                "day_start": {"type": "string", "description": "e.g. '09:00', default 09:00"},
+                "day_end": {"type": "string", "description": "e.g. '21:00', default 21:00"},
+            },
+        },
+    },
+    {
+        "name": "list_task_queue",
+        "description": "List queued tasks and their planned time slots (or all, including finished, if asked).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"include_done": {"type": "boolean"}},
+        },
+    },
+    {
+        "name": "cancel_queued_task",
+        "description": "Cancel a pending or scheduled queued task by its id, as shown by list_task_queue.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "integer"}},
+            "required": ["task_id"],
         },
     },
     {
@@ -2911,6 +2982,25 @@ def _run_scheduled_skill(skill: dict) -> None:
         _set_last_skill_run(skill["name"], datetime.now())
 
 
+def _run_queued_task(description: str, instructions: str) -> None:
+    """task_scheduler's run_callback — same shape as _run_scheduled_skill above, so a queued
+    task with instructions is executed exactly like a scheduled skill (full tool access,
+    reply delivered through the interrupt gate)."""
+    log.info("Running queued task %r.", description)
+    _set_scheduled_task_running(True)
+    record_recent_task(f"queued task: {description}")
+    synthetic_transcript = (
+        f"(This is a scheduled, proactive run of a queued task: \"{description}\" — the user "
+        f"didn't just ask for this out loud, act on it now.) {instructions}"
+    )
+    try:
+        reply = run_agent_loop(synthetic_transcript)
+        if reply:
+            queue_or_deliver_notification(reply)
+    finally:
+        _set_scheduled_task_running(False)
+
+
 def _scheduler_loop() -> None:
     while True:
         try:
@@ -2920,6 +3010,7 @@ def _scheduler_loop() -> None:
                     _run_scheduled_skill(skill)
             _check_due_reminders(now)
             _check_background_tasks(now)
+            task_scheduler.tick(now, _run_queued_task, queue_or_deliver_notification)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -5166,6 +5257,26 @@ def _execute_tool(
         elif tool_name == "cancel_reminder":
             rid = inp.get("reminder_id")
             result = cancel_reminder(int(rid)) if rid is not None else "Missing reminder_id."
+        elif tool_name == "queue_task":
+            result = task_scheduler.queue_task(
+                str(inp.get("description") or ""),
+                estimate_minutes=inp.get("estimate_minutes"),
+                priority=str(inp.get("priority") or "normal"),
+                instructions=inp.get("instructions"),
+                earliest_start=inp.get("earliest_start"),
+                deadline=inp.get("deadline"),
+            )
+        elif tool_name == "plan_task_queue":
+            result = task_scheduler.plan_task_queue(
+                busy_intervals=inp.get("busy_intervals"),
+                day_start=str(inp.get("day_start") or task_scheduler.DEFAULT_DAY_START),
+                day_end=str(inp.get("day_end") or task_scheduler.DEFAULT_DAY_END),
+            )
+        elif tool_name == "list_task_queue":
+            result = task_scheduler.list_task_queue(bool(inp.get("include_done")))
+        elif tool_name == "cancel_queued_task":
+            tid = inp.get("task_id")
+            result = task_scheduler.cancel_task(int(tid)) if tid is not None else "Missing task_id."
         elif tool_name == "update_project_status":
             result = update_project_status(
                 str(inp.get("name") or ""),
