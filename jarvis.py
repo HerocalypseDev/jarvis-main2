@@ -729,12 +729,13 @@ use them directly like any other tool.
 
 For actual software development work — writing code, fixing a bug, adding a feature, running a \
 test suite — use delegate_to_claude_code instead of doing it yourself with run_shell/write_file. \
-It hands the task to a full Claude Code agent with a much larger, purpose-built toolset and will \
-do a meaningfully better job on anything beyond a one-liner. It now runs in the background: it \
-returns as soon as the task starts, not once it's done, so tell the user it's running in the \
-background and that you'll let them know — then you actually will, unprompted, once it \
-finishes. For a substantial websearch-and-summarize-to-a-file task, use delegate_research the \
-same way instead of doing it yourself with web_search/write_file — cheaper, since it skips a \
+It hands the task to a full Claude Code agent, which you refer to by name in speech — James — \
+rather than "Claude Code" or "a background task" (e.g. "I'll hand that off to James, he'll let \
+you know once it's done"). It runs in the background: it returns as soon as the task starts, \
+not once it's done, so tell the user James is on it and you'll let them know — then you \
+actually will, unprompted, once James finishes. For a substantial websearch-and-summarize-to-\
+a-file task, use delegate_research the same way instead of doing it yourself with \
+web_search/write_file — cheaper, since it skips a \
 full Claude Code session. list_background_tasks shows what's currently running if asked.
 
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
@@ -747,6 +748,14 @@ executes immediately with no confirmation — the user has explicitly asked for 
 If a request is genuinely ambiguous (e.g. which of several possible files/contacts/windows they \
 mean), ask a brief clarifying question in your reply instead of guessing — but don't ask just \
 because something isn't in a predefined list; try the general tools first."""
+
+# The persona name Jarvis uses in speech for the background coding agent (delegate_to_claude_code)
+# — "I'll give it to James" reads far more naturally out loud than "I'll start a background task."
+# One constant so renaming it later doesn't mean hunting through every prompt/string. Defined
+# here, ahead of AGENT_TOOLS below (which interpolates it into a tool description at import
+# time) — AGENT_SYSTEM_PROMPT above hardcodes "James" directly instead, since it's a plain
+# string, not an f-string; keep that in sync by hand if this constant is ever renamed.
+CODING_AGENT_NAME = "James"
 
 AGENT_TOOLS = [
     {
@@ -1201,11 +1210,14 @@ AGENT_TOOLS = [
             "larger toolset built for exactly this (repo-wide search, diff-aware editing, "
             "git/test awareness) and will do a better job on anything beyond a one-off command. "
             "This runs in the background and returns immediately once the task is *started*, "
-            "not once it's finished — tell the user it's running in the background rather than "
-            "making them wait, and that you'll let them know when it's done (you will — this "
-            "reports back on its own, as a toast plus a spoken summary, once it finishes). "
-            "list_background_tasks shows what's still running if asked. Reach for this for "
-            "actual coding/repo work; use run_shell/run_python directly for quick one-liners."
+            "not once it's finished. In your spoken reply, refer to this agent by name — "
+            f"{CODING_AGENT_NAME} — instead of saying \"Claude Code\" or \"a background task\" "
+            f"(e.g. \"I'll hand that off to {CODING_AGENT_NAME}, he'll let you know once it's "
+            "done\"), then move on — the user can keep talking to you about other things while "
+            f"{CODING_AGENT_NAME} works. It reports back on its own (toast plus a spoken "
+            "summary) once it finishes; list_background_tasks shows what's still running if "
+            "asked. Reach for this for actual coding/repo work; use run_shell/run_python "
+            "directly for quick one-liners."
         ),
         "input_schema": {
             "type": "object",
@@ -3911,9 +3923,11 @@ def _count_running_background_tasks(kind: str) -> int:
     return int(row[0]) if row else 0
 
 
-def _finish_background_task(task_id: int, status: str, summary: str) -> None:
+def _finish_background_task(task_id: int, status: str, summary: str, kind: str = "") -> None:
     """Marks a background_tasks row done/failed and reports it exactly like a reminder: a
-    Windows toast plus a spoken message through the same busy-aware notification gate."""
+    Windows toast plus a spoken message through the same busy-aware notification gate. A
+    'code' task is reported in James's voice (the coding-agent persona) since that's who the
+    user was told is doing it; other kinds (research) stay generic since no persona was named."""
     now_iso = datetime.now().isoformat(timespec="seconds")
     with _memory_db_lock:
         conn = _memory_db_connect()
@@ -3926,11 +3940,16 @@ def _finish_background_task(task_id: int, status: str, summary: str) -> None:
             conn.commit()
         finally:
             conn.close()
-    verb = "finished" if status == "done" else "failed"
-    message = f"Background task #{task_id} {verb}: {summary}"
+    ok = status == "done"
+    if kind == "code":
+        who = f"{CODING_AGENT_NAME} (background task #{task_id})"
+        lead = f"{who} is done:" if ok else f"{who} ran into a problem:"
+    else:
+        lead = f"Background task #{task_id} finished:" if ok else f"Background task #{task_id} failed:"
+    message = f"{lead} {summary}"
     send_windows_toast("Jarvis — background task done", message[:250])
     queue_or_deliver_notification(message)
-    record_recent_task(f"background task #{task_id} {verb}")
+    record_recent_task(f"background task #{task_id} {'finished' if ok else 'failed'}")
 
 
 def list_background_tasks(include_finished: bool = False) -> str:
@@ -3993,7 +4012,10 @@ def _check_background_tasks(now: datetime) -> None:
                 with _background_tasks_lock:
                     _RUNNING_BACKGROUND_PROCS.pop(task_id, None)
                 _finish_background_task(
-                    task_id, "failed", f"timed out after {CLAUDE_CODE_TIMEOUT_S} seconds and was killed"
+                    task_id,
+                    "failed",
+                    f"timed out after {CLAUDE_CODE_TIMEOUT_S} seconds and was killed",
+                    kind="code",
                 )
             continue  # still running
         with _background_tasks_lock:
@@ -4008,7 +4030,7 @@ def _check_background_tasks(now: datetime) -> None:
 
         if proc.returncode != 0:
             summary = f"exited with an error (code {proc.returncode}): {raw[:MAX_TOOL_RESULT_CHARS] or 'no output'}"
-            _finish_background_task(task_id, "failed", summary)
+            _finish_background_task(task_id, "failed", summary, kind="code")
             continue
 
         try:
@@ -4018,7 +4040,7 @@ def _check_background_tasks(now: datetime) -> None:
             result = raw
         if len(result) > MAX_TOOL_RESULT_CHARS:
             result = result[:MAX_TOOL_RESULT_CHARS] + f"... [truncated, {len(result)} chars total]"
-        _finish_background_task(task_id, "done", result or "finished with no result text")
+        _finish_background_task(task_id, "done", result or "finished with no result text", kind="code")
 
 
 def _delegate_to_claude_code(task: str, repo_path: str) -> str:
@@ -4039,7 +4061,7 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     running = _count_running_background_tasks("code")
     if running >= MAX_CONCURRENT_BACKGROUND_CODE_TASKS:
         return (
-            f"Already running {running} background coding task(s) (cap is "
+            f"{CODING_AGENT_NAME} already has {running} background task(s) running (cap is "
             f"{MAX_CONCURRENT_BACKGROUND_CODE_TASKS}, to stay within the shared Pro/Max usage "
             "pool) — ask again once one finishes; list_background_tasks shows what's running."
         )
@@ -4076,18 +4098,19 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
                 **popen_kw,
             )
     except FileNotFoundError:
-        _finish_background_task(task_id, "failed", "the `claude` CLI isn't installed or isn't on PATH")
-        return "The `claude` CLI isn't installed or isn't on PATH."
+        msg = "the `claude` CLI isn't installed or isn't on PATH"
+        _finish_background_task(task_id, "failed", msg, kind="code")
+        return f"Couldn't hand this to {CODING_AGENT_NAME} — {msg}."
     except Exception as e:
-        _finish_background_task(task_id, "failed", f"failed to start: {e}")
-        return f"Failed to start Claude Code: {e}"
+        _finish_background_task(task_id, "failed", f"failed to start: {e}", kind="code")
+        return f"Couldn't hand this to {CODING_AGENT_NAME} — failed to start: {e}"
 
     with _background_tasks_lock:
         _RUNNING_BACKGROUND_PROCS[task_id] = (proc, time.monotonic())
     record_recent_task(f"started background coding task #{task_id}: {task}")
     return (
-        f"Started background task #{task_id} in {cwd}: {task}. I'll keep taking other "
-        "commands and let you know when it's done."
+        f"Handed this off to {CODING_AGENT_NAME} (background task #{task_id}) in {cwd}: {task}. "
+        f"I'll keep taking other commands — {CODING_AGENT_NAME} will let you know once it's done."
     )
 
 
