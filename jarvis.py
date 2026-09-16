@@ -1774,6 +1774,77 @@ def flush_pending_notifications() -> None:
             log.warning("Could not speak queued notification: %s", e)
 
 
+# --- Windows toast notifications: a real, visible Action Center banner for reminders, so one ---
+# --- isn't missed just because nobody was in earshot of Piper's spoken announcement. Shells out ---
+# --- to a static PowerShell script (WinRT's ToastNotificationManager) rather than a new pip ---
+# --- dependency. Uses PowerShell's own registered AppUserModelID rather than an arbitrary ---
+# --- string, since a toast fired under an unregistered AUMID can silently fail or raise ---
+# --- "element not found" on stricter Windows builds. Title/message are passed as PowerShell ---
+# --- -File arguments (never interpolated into the script text) so reminder text can never be ---
+# --- read as PowerShell code, only as a string value. ---
+_TOAST_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+_TOAST_PS_SCRIPT = r"""
+param(
+    [string]$Title = "Jarvis",
+    [string]$Message = "",
+    [string]$AppId
+)
+$ErrorActionPreference = 'Stop'
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+
+$safeTitle = [System.Security.SecurityElement]::Escape($Title)
+$safeMessage = [System.Security.SecurityElement]::Escape($Message)
+$xmlText = "<toast><visual><binding template=`"ToastGeneric`"><text>$safeTitle</text><text>$safeMessage</text></binding></visual></toast>"
+
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml($xmlText)
+$toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId).Show($toast)
+"""
+
+
+def _toast_script_path() -> Path:
+    base = Path(__file__).resolve().parent / ".cache"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / "show_toast.ps1"
+    if not path.is_file():
+        path.write_text(_TOAST_PS_SCRIPT, encoding="utf-8")
+    return path
+
+
+def send_windows_toast(title: str, message: str) -> bool:
+    """Shows a native Windows Action Center toast. Best-effort — logs and returns False on
+    any failure (non-Windows, PowerShell missing, WinRT unavailable) rather than raising,
+    since a missed toast should never take down reminder delivery."""
+    if sys.platform != "win32":
+        return False
+    message = (message or "").strip()
+    if not message:
+        return False
+    title = (title or "Jarvis").strip() or "Jarvis"
+    try:
+        script_path = _toast_script_path()
+        proc = subprocess.run(
+            [
+                "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                "-File", str(script_path),
+                "-Title", title, "-Message", message, "-AppId", _TOAST_APP_ID,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if proc.returncode != 0:
+            log.warning("Windows toast script failed: %s", (proc.stderr or proc.stdout or "").strip()[:300])
+            return False
+        return True
+    except Exception as e:
+        log.warning("Could not show Windows toast: %s", e)
+        return False
+
+
 # --- FEATURE: reminders — one-off or repeating "tell me about this later", distinct from a ---
 # --- skill (which re-derives what to do from instructions every run). A reminder is just a ---
 # --- fixed piece of text and a due time, persisted in the same memory DB as everything else, ---
@@ -1897,6 +1968,10 @@ def _check_due_reminders(now: datetime) -> None:
         finally:
             conn.close()
     for rid, text, repeat, urgent in rows:
+        # The toast fires immediately and unconditionally — unlike the spoken announcement,
+        # a silent visual banner doesn't talk over anything, so it doesn't need to wait out
+        # queue_or_deliver_notification's busy-gate to avoid being missed.
+        send_windows_toast("Jarvis Reminder", text)
         queue_or_deliver_notification(f"Reminder: {text}", urgent=bool(urgent))
         record_recent_task(f"reminder delivered: {text}")
         with _memory_db_lock:
