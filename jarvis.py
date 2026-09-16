@@ -3731,12 +3731,24 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
         popen_kw: dict = {}
         if os.name == "nt":
             popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        # Strip API-key-style credentials before handing the subprocess its environment: the
+        # `claude` CLI's own auth resolution tries ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN before
+        # ever falling back to a `claude login` OAuth session, so leaving Jarvis's own key in
+        # this child's environment would silently bill the delegated task per-token against that
+        # key instead of using a Pro/Max subscription login — even though Jarvis's own brain
+        # legitimately needs that same env var for its own direct API calls.
+        child_env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+        }
         proc = subprocess.run(
             ["claude", "-p", task, "--output-format", "json", "--dangerously-skip-permissions"],
             cwd=str(cwd),
             capture_output=True,
             text=True,
             timeout=CLAUDE_CODE_TIMEOUT_S,
+            env=child_env,
             **popen_kw,
         )
     except subprocess.TimeoutExpired:
