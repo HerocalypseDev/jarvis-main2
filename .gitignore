@@ -1,6 +1,8 @@
 .env
 .cache/
 jarvis_memory.db
+session_state.json
+proactive_suggestions.log
 mcp_servers.json
 __pycache__/
 *.pyc

@@ -713,6 +713,14 @@ so it's available in every future session too. Pass save_skill a "schedule" when
 something to happen on its own — a daily briefing, a periodic check — instead of only when asked; \
 a scheduled skill runs automatically and speaks its result unprompted.
 
+For a one-off or repeating nudge rather than a full recurring procedure, use create_reminder \
+instead of save_skill — "remind me in 20 minutes to stretch," "don't let me forget my 3pm call," \
+"don't forget your afternoon work session." list_reminders/cancel_reminder manage existing ones. \
+Ongoing projects/tasks the user is tracking with you (any "ongoing projects" list below, kept via \
+update_project_status) are what makes quick_recall — and future sessions — actually know what's \
+going on; call update_project_status whenever the user mentions progress or what's next on \
+something, and reach for quick_recall when they ask what you were doing or want to jump back in.
+
 The `gh` CLI is installed and already authenticated on this machine — for GitHub issues, PRs, \
 repos, or notifications, run `gh` commands via run_shell rather than guessing at a raw API call. \
 Any tools named "mcp_<server>_..." below are live integrations (Gmail, Calendar, Slack, etc., \
@@ -1091,6 +1099,96 @@ AGENT_TOOLS = [
         },
     },
     {
+        "name": "create_reminder",
+        "description": (
+            "Schedule a reminder Jarvis will bring up on its own later, at a specific time "
+            "(\"due_at\") or after a delay (\"due_in_minutes\"), optionally repeating. Use this "
+            "whenever the user asks to be reminded, nudged, or followed up with later (e.g. "
+            "\"remind me in 30 minutes to take a break\", \"don't let me forget my 3pm call\", "
+            "\"check in on that project every couple hours\", \"don't forget your afternoon work "
+            "session\"). Delivered through the same interrupt-aware channel as other proactive "
+            "notices — it won't talk over the user mid-focus-block, but is never lost, and gets "
+            "spoken as soon as they next talk to Jarvis if it was held back."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "what to remind the user about"},
+                "due_at": {
+                    "type": "string",
+                    "description": (
+                        "an absolute local date/time, e.g. \"2026-09-16 15:00\" — use this for a "
+                        "specific time the user named"
+                    ),
+                },
+                "due_in_minutes": {
+                    "type": "number",
+                    "description": "minutes from now — use this for a relative delay instead of due_at",
+                },
+                "repeat_every_minutes": {
+                    "type": "number",
+                    "description": "optional — repeat this reminder on this interval instead of firing once",
+                },
+                "urgent": {
+                    "type": "boolean",
+                    "description": "true to speak it immediately even during the user's focus hours",
+                },
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": "List upcoming (or all) reminders that have been scheduled.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_delivered": {
+                    "type": "boolean",
+                    "description": "true to also show already-delivered ones",
+                },
+            },
+        },
+    },
+    {
+        "name": "cancel_reminder",
+        "description": "Cancel a scheduled reminder by its id, as shown by list_reminders.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"reminder_id": {"type": "integer"}},
+            "required": ["reminder_id"],
+        },
+    },
+    {
+        "name": "update_project_status",
+        "description": (
+            "Record or update the status and next step of an ongoing project or task the user "
+            "is tracking with you. Call this whenever the user mentions progress, a milestone, "
+            "or what's next on something they're working on — this is what makes quick_recall "
+            "and future sessions actually know what's going on, instead of the user having to "
+            "re-explain. Facts here persist across restarts and show up in every future prompt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "short project/task name"},
+                "status": {"type": "string", "description": "current status in a few words"},
+                "next_step": {"type": "string", "description": "the next concrete action, if known"},
+            },
+            "required": ["name", "status"],
+        },
+    },
+    {
+        "name": "quick_recall",
+        "description": (
+            "Summarize where things were left off: ongoing projects and their next steps, "
+            "recently run commands or skills, the last thing the user was active in, and any "
+            "upcoming reminders. Use this when the user asks something like \"what were we "
+            "doing\", \"catch me up\", or \"where did we leave off\"."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "delegate_to_claude_code",
         "description": (
             "Delegate a real software development task — writing code, fixing a bug, adding a "
@@ -1220,6 +1318,25 @@ def _create_memory_tables(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS scheduled_skill_runs ("
         "skill_name TEXT PRIMARY KEY, "
         "last_run_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS reminders ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "text TEXT NOT NULL, "
+        "due_at TEXT NOT NULL, "
+        "repeat_every_minutes REAL, "
+        "urgent INTEGER NOT NULL DEFAULT 0, "
+        "created_at TEXT NOT NULL, "
+        "delivered_at TEXT, "
+        "cancelled_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projects ("
+        "name TEXT PRIMARY KEY, "
+        "status TEXT NOT NULL, "
+        "next_step TEXT, "
+        "created_at TEXT NOT NULL, "
+        "updated_at TEXT NOT NULL)"
     )
 
 
@@ -1428,6 +1545,465 @@ def get_active_facts_context() -> str:
     return "\n\nThings you've learned and remembered about the user over time:\n" + "\n".join(lines)
 
 
+# --- FEATURE 1: session context — "what is the user doing right now", persisted across restarts ---
+# --- so the proactive systems below (scheduled skills, health-check suggestions) can decide ---
+# --- whether to interrupt immediately or hold a notification until the user is actually free, ---
+# --- instead of always talking over whatever the user is doing the moment something fires. ---
+SESSION_STATE_PATH = Path(__file__).resolve().parent / "session_state.json"
+RECENT_TASK_WINDOW_HOURS = 4.0
+# The user's stated preference: an afternoon focus block where casual interruptions should be
+# held back rather than spoken immediately.
+PREFERRED_WORK_HOUR_START = 13  # 1pm
+PREFERRED_WORK_HOUR_END = 17  # 5pm
+# How recently the keyboard/mouse must have been touched (system-wide, via GetLastInputInfo) to
+# count the user as "actively working" — a much more reliable signal than polling the foreground
+# window, since someone can sit reading a window without touching anything.
+ACTIVE_IDLE_THRESHOLD_S = 60.0
+
+_session_context_lock = threading.Lock()
+
+
+def _default_session_context() -> dict:
+    return {
+        "last_active_window": None,
+        "last_active_project": None,
+        "preferences": {
+            "preferred_work_hour_start": PREFERRED_WORK_HOUR_START,
+            "preferred_work_hour_end": PREFERRED_WORK_HOUR_END,
+        },
+        "recent_tasks": [],  # [{"task": str, "at": iso timestamp}, ...], pruned to the last
+        # RECENT_TASK_WINDOW_HOURS on every refresh
+        "scheduled_task_running": False,
+        "pending_notifications": [],  # [{"text": str, "queued_at": iso timestamp}, ...]
+        "updated_at": None,
+    }
+
+
+def _load_session_context() -> dict:
+    """Reads session_state.json if present; a missing or corrupt file just means a fresh
+    default context, not a crash — this is best-effort context, not durable memory."""
+    if not SESSION_STATE_PATH.is_file():
+        return _default_session_context()
+    try:
+        data = json.loads(SESSION_STATE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("session_state.json did not contain a JSON object")
+    except (OSError, ValueError) as e:
+        log.warning("Could not read session state %s (starting fresh): %s", SESSION_STATE_PATH, e)
+        return _default_session_context()
+    merged = _default_session_context()
+    merged.update(data)
+    merged["preferences"] = {**merged["preferences"], **(data.get("preferences") or {})}
+    return merged
+
+
+# Loaded once at import time and mutated in place under _session_context_lock thereafter.
+_session_context: dict = _load_session_context()
+
+
+def _save_session_context_locked() -> None:
+    """Caller must already hold _session_context_lock. Writes to a temp file and replaces
+    atomically, so a crash mid-write can never leave a half-written, unparseable
+    session_state.json behind for the next load."""
+    tmp = SESSION_STATE_PATH.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(_session_context, indent=2), encoding="utf-8")
+        tmp.replace(SESSION_STATE_PATH)
+    except OSError as e:
+        log.warning("Could not save session state: %s", e)
+
+
+def _safe_parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _get_idle_seconds() -> float | None:
+    """Seconds since the last system-wide keyboard/mouse input, via GetLastInputInfo. None on
+    non-Windows platforms or if the API call fails — callers treat "unknown" as "can't confirm
+    the user is busy," so notifications don't end up silently stuck forever on a platform we
+    can't measure idle time on."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    class _LastInputInfo(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+    lii = _LastInputInfo()
+    lii.cbSize = ctypes.sizeof(_LastInputInfo)
+    try:
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+            return None
+        idle_ms = ctypes.windll.kernel32.GetTickCount() - lii.dwTime
+        return max(idle_ms, 0) / 1000.0
+    except Exception as e:
+        log.warning("Could not read system idle time: %s", e)
+        return None
+
+
+def _get_active_window_title() -> str | None:
+    """Best-effort title of the current foreground window (Windows only) — used purely to
+    infer what project/document the user was last looking at, not as the busy/idle signal."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return None
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        return buf.value.strip() or None
+    except Exception as e:
+        log.warning("Could not read active window title: %s", e)
+        return None
+
+
+def _guess_project_from_window_title(title: str | None) -> str | None:
+    """Best-effort project/document name from a window title such as "jarvis.py -
+    jarvis-main2-enhanced - Cursor" — just the first " - "-separated segment."""
+    if not title:
+        return None
+    return title.split(" - ", 1)[0].strip() or None
+
+
+def user_is_actively_working() -> bool:
+    """True if the user touched the keyboard/mouse within ACTIVE_IDLE_THRESHOLD_S seconds.
+    Unknown (non-Windows, or the API call failed) is treated as "not actively working," so a
+    platform we can't measure never ends up queuing every notification forever."""
+    idle = _get_idle_seconds()
+    return idle is not None and idle < ACTIVE_IDLE_THRESHOLD_S
+
+
+def _is_preferred_work_hours(now: datetime | None = None) -> bool:
+    """Whether `now` (default: current time) falls in the user's stated afternoon focus
+    window (default 1pm-5pm, overridable via session_state.json's "preferences")."""
+    now = now or datetime.now()
+    with _session_context_lock:
+        prefs = _session_context.get("preferences") or {}
+        start = int(prefs.get("preferred_work_hour_start", PREFERRED_WORK_HOUR_START))
+        end = int(prefs.get("preferred_work_hour_end", PREFERRED_WORK_HOUR_END))
+    return start <= now.hour < end
+
+
+def refresh_session_context() -> None:
+    """Updates last-active-window/project and prunes recent_tasks older than
+    RECENT_TASK_WINDOW_HOURS, then persists. Cheap enough (two Windows API calls, no
+    subprocess) to call right before every interrupt decision instead of needing a dedicated
+    polling thread."""
+    title = _get_active_window_title()
+    now = datetime.now()
+    cutoff = now - timedelta(hours=RECENT_TASK_WINDOW_HOURS)
+    with _session_context_lock:
+        if title:
+            _session_context["last_active_window"] = title
+            _session_context["last_active_project"] = _guess_project_from_window_title(title)
+        _session_context["recent_tasks"] = [
+            t
+            for t in _session_context.get("recent_tasks", [])
+            if (parsed := _safe_parse_iso(t.get("at"))) is not None and parsed >= cutoff
+        ]
+        _session_context["updated_at"] = now.isoformat(timespec="seconds")
+        _save_session_context_locked()
+
+
+def record_recent_task(task: str) -> None:
+    """Appends a task (a voice/text command, or a scheduled skill run) to the rolling
+    last-4-hours window — the "what has the user been doing lately" half of session context."""
+    task = (task or "").strip()
+    if not task:
+        return
+    with _session_context_lock:
+        _session_context.setdefault("recent_tasks", []).append(
+            {"task": task, "at": datetime.now().isoformat(timespec="seconds")}
+        )
+        _save_session_context_locked()
+
+
+def _set_scheduled_task_running(running: bool) -> None:
+    with _session_context_lock:
+        _session_context["scheduled_task_running"] = running
+        _save_session_context_locked()
+
+
+def queue_or_deliver_notification(text: str, urgent: bool = False) -> None:
+    """The interrupt gate every proactive message (scheduled skills, health-check suggestions)
+    goes through, instead of calling speak_text directly: speaks immediately unless the user
+    looks actively busy (touched the keyboard/mouse in the last ACTIVE_IDLE_THRESHOLD_S
+    seconds) during their stated afternoon focus hours, in which case it's queued and only
+    delivered the next time they actually talk to Jarvis (see flush_pending_notifications,
+    called from handle_text_command) — never interrupting mid-focus-block for something
+    non-urgent, but never getting lost either."""
+    text = (text or "").strip()
+    if not text:
+        return
+    refresh_session_context()
+    if urgent or not (user_is_actively_working() and _is_preferred_work_hours()):
+        speak_text(text)
+        return
+    with _session_context_lock:
+        _session_context.setdefault("pending_notifications", []).append(
+            {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds")}
+        )
+        _save_session_context_locked()
+    log.info("Queued non-urgent notification (user busy in preferred work hours): %r", text)
+
+
+def flush_pending_notifications() -> None:
+    """Speaks any notifications queued while the user was busy. Called at the start of every
+    real command (handle_text_command) — the user talking to Jarvis is itself proof they're
+    available to listen right now."""
+    with _session_context_lock:
+        pending = _session_context.get("pending_notifications") or []
+        _session_context["pending_notifications"] = []
+        _save_session_context_locked()
+    for item in pending:
+        try:
+            speak_text(item.get("text", ""))
+        except Exception as e:
+            log.warning("Could not speak queued notification: %s", e)
+
+
+# --- FEATURE: reminders — one-off or repeating "tell me about this later", distinct from a ---
+# --- skill (which re-derives what to do from instructions every run). A reminder is just a ---
+# --- fixed piece of text and a due time, persisted in the same memory DB as everything else, ---
+# --- checked once per scheduler tick, and delivered through the same interrupt-aware ---
+# --- queue_or_deliver_notification gate scheduled skills already use. ---
+def _parse_due_at(due_at: str) -> datetime | None:
+    """Accepts the ISO-ish formats a model is likely to produce ("2026-09-16 15:00",
+    "2026-09-16T15:00", with or without seconds) rather than requiring one exact format."""
+    s = (due_at or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def create_reminder(
+    text: str,
+    due_at: str = "",
+    due_in_minutes: float | None = None,
+    repeat_every_minutes: float | None = None,
+    urgent: bool = False,
+) -> str:
+    """Schedules a reminder for an absolute time (due_at) or a delay from now
+    (due_in_minutes) — exactly one should be given; due_in_minutes wins if both are. An
+    optional repeat_every_minutes re-arms the same reminder after each delivery instead of
+    firing once."""
+    text = (text or "").strip()
+    if not text:
+        return "No reminder text given."
+    when: datetime | None = None
+    if due_in_minutes is not None:
+        try:
+            when = datetime.now() + timedelta(minutes=float(due_in_minutes))
+        except (TypeError, ValueError):
+            when = None
+    if when is None and due_at:
+        when = _parse_due_at(due_at)
+    if when is None:
+        return "Couldn't understand when to remind you — give a specific time or a number of minutes from now."
+    repeat: float | None = None
+    if repeat_every_minutes:
+        try:
+            repeat = float(repeat_every_minutes)
+        except (TypeError, ValueError):
+            repeat = None
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            conn.execute(
+                "INSERT INTO reminders (text, due_at, repeat_every_minutes, urgent, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (text, when.isoformat(timespec="seconds"), repeat, int(bool(urgent)), now_iso),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    when_desc = (
+        when.strftime("%A %H:%M") if when.date() != datetime.now().date() else when.strftime("%H:%M")
+    )
+    return f"Reminder set for {when_desc}: {text}."
+
+
+def list_reminders(include_delivered: bool = False) -> str:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            sql = (
+                "SELECT id, text, due_at, repeat_every_minutes, delivered_at FROM reminders "
+                "WHERE cancelled_at IS NULL"
+            )
+            if not include_delivered:
+                sql += " AND delivered_at IS NULL"
+            sql += " ORDER BY due_at"
+            rows = conn.execute(sql).fetchall()
+        finally:
+            conn.close()
+    if not rows:
+        return "No upcoming reminders."
+    lines = []
+    for rid, text, due_at, repeat, delivered_at in rows:
+        tag = " [delivered]" if delivered_at else ""
+        repeat_note = f", repeating every {repeat:.0f} min" if repeat else ""
+        lines.append(f"#{rid} at {due_at}{repeat_note}: {text}{tag}")
+    return "\n".join(lines)
+
+
+def cancel_reminder(reminder_id: int) -> str:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            cur = conn.execute(
+                "UPDATE reminders SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL",
+                (datetime.now().isoformat(timespec="seconds"), reminder_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return f"Cancelled reminder #{reminder_id}." if cur.rowcount else f"No active reminder #{reminder_id}."
+
+
+def _check_due_reminders(now: datetime) -> None:
+    """Called once per scheduler tick. A due, non-repeating reminder is marked delivered; a
+    repeating one is re-armed for now + its interval instead, so it keeps firing."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, text, repeat_every_minutes, urgent FROM reminders "
+                "WHERE cancelled_at IS NULL AND delivered_at IS NULL AND due_at <= ?",
+                (now.isoformat(timespec="seconds"),),
+            ).fetchall()
+        finally:
+            conn.close()
+    for rid, text, repeat, urgent in rows:
+        queue_or_deliver_notification(f"Reminder: {text}", urgent=bool(urgent))
+        record_recent_task(f"reminder delivered: {text}")
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                if repeat:
+                    next_due = (now + timedelta(minutes=float(repeat))).isoformat(timespec="seconds")
+                    conn.execute("UPDATE reminders SET due_at = ? WHERE id = ?", (next_due, rid))
+                else:
+                    conn.execute(
+                        "UPDATE reminders SET delivered_at = ? WHERE id = ?",
+                        (now.isoformat(timespec="seconds"), rid),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+
+# --- FEATURE: project tracking + quick recall — "what am I working on and what's next", so a ---
+# --- new session (or a context switch back after hours away) can pick up where things were ---
+# --- left off instead of the user re-explaining. A project is deliberately just a name/status/ ---
+# --- next-step triple, the same lightweight shape as the memory_facts table above, updated ---
+# --- via update_project_status and surfaced both in every system prompt and via quick_recall. ---
+def update_project_status(name: str, status: str, next_step: str = "") -> str:
+    name = (name or "").strip()
+    status = (status or "").strip()
+    if not name or not status:
+        return "Need both a project name and a status."
+    next_step = (next_step or "").strip() or None
+    now = datetime.now().isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            conn.execute(
+                "INSERT INTO projects (name, status, next_step, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET status = excluded.status, "
+                "next_step = COALESCE(excluded.next_step, projects.next_step), "
+                "updated_at = excluded.updated_at",
+                (name, status, next_step, now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    suffix = f" — next: {next_step}" if next_step else ""
+    return f"Updated project {name!r}: {status}{suffix}"
+
+
+def _fetch_projects(limit: int = 20) -> list[tuple]:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            return conn.execute(
+                "SELECT name, status, next_step, updated_at FROM projects "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+
+def get_projects_context() -> str:
+    """Formats tracked projects for the system prompt — same always-in-context pattern as
+    get_active_facts_context(), so Claude knows what's ongoing without a tool call."""
+    rows = _fetch_projects()
+    if not rows:
+        return ""
+    lines = [
+        f"- {name}: {status}" + (f" (next: {next_step})" if next_step else "")
+        for name, status, next_step, _ in rows
+    ]
+    return "\n\nOngoing projects you're tracking for the user:\n" + "\n".join(lines)
+
+
+def quick_recall() -> str:
+    """Synthesizes 'where we left off': tracked projects and their next steps, recently run
+    commands/skills, the last window/project the user was active in, and any upcoming
+    reminders — everything needed to jump back into work without the user re-explaining
+    context. Backing tool for the quick_recall action ("what were we doing", "catch me up")."""
+    parts: list[str] = []
+
+    projects = _fetch_projects(limit=10)
+    if projects:
+        proj_lines = [
+            f"{name} ({status}" + (f", next step: {next_step})" if next_step else ")")
+            for name, status, next_step, _ in projects
+        ]
+        parts.append("Ongoing projects: " + "; ".join(proj_lines) + ".")
+
+    with _session_context_lock:
+        recent_tasks = list(_session_context.get("recent_tasks", []))
+        last_project = _session_context.get("last_active_project")
+    if recent_tasks:
+        recent_desc = "; ".join(t["task"] for t in recent_tasks[-5:])
+        parts.append(f"Recently: {recent_desc}.")
+    if last_project:
+        parts.append(f"You were last active in {last_project}.")
+
+    upcoming = list_reminders(include_delivered=False)
+    if upcoming and upcoming != "No upcoming reminders.":
+        parts.append("Upcoming reminders: " + upcoming.replace("\n", "; "))
+
+    if not parts:
+        return "Nothing tracked yet — no ongoing projects, recent tasks, or reminders."
+    return " ".join(parts)
+
+
 # --- skills: user- or Claude-authored procedures dropped into skills/*.json, loaded fresh on ---
 # --- every system prompt build (not cached) so a new file takes effect with no restart and no ---
 # --- code edit — the "skill library" layer, distinct from the built-in tools above. ---
@@ -1588,6 +2164,11 @@ def _skill_is_due(skill: dict, now: datetime) -> bool:
 
 def _run_scheduled_skill(skill: dict) -> None:
     log.info("Running scheduled skill %r.", skill["name"])
+    # Session context: mark a scheduled task as in-flight so anything checking
+    # "is the user free right now" (e.g. queue_or_deliver_notification) can see it, and
+    # record it as a recent task for the session_context history.
+    _set_scheduled_task_running(True)
+    record_recent_task(f"scheduled skill: {skill['name']}")
     synthetic_transcript = (
         f"(This is a scheduled, proactive run of your \"{skill['name']}\" skill — the user "
         f"didn't just ask for this out loud, act on the schedule instead.) {skill['instructions']}"
@@ -1595,10 +2176,13 @@ def _run_scheduled_skill(skill: dict) -> None:
     try:
         reply = run_agent_loop(synthetic_transcript)
         if reply:
-            speak_text(reply)
+            # Route through the interrupt gate instead of speaking immediately — a scheduled
+            # skill is exactly the kind of unprompted interrupt session context exists for.
+            queue_or_deliver_notification(reply)
     except Exception as e:
         log.warning("Scheduled skill %r failed: %s", skill["name"], e)
     finally:
+        _set_scheduled_task_running(False)
         _set_last_skill_run(skill["name"], datetime.now())
 
 
@@ -1609,6 +2193,7 @@ def _scheduler_loop() -> None:
             for skill in _load_skills():
                 if _skill_is_due(skill, now):
                     _run_scheduled_skill(skill)
+            _check_due_reminders(now)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -1849,6 +2434,7 @@ def build_system_prompt() -> str:
         + current_time_line
         + get_user_profile_context()
         + get_active_facts_context()
+        + get_projects_context()
         + get_skills_context()
     )
 
@@ -2486,6 +3072,175 @@ def system_status() -> str:
         return "Sorry, I couldn't gather system stats just now."
     log.info("Full system status report: %s", report)
     return _craft_system_status_summary(report)
+
+
+# --- FEATURE 2: proactive system health monitoring — runs on its own in the background (no ---
+# --- voice command needed) and speaks up when it spots something worth flagging, instead of ---
+# --- only reporting stats when the user explicitly asks via the system_status tool. Builds on ---
+# --- the same psutil metrics as system_status()/get_system_status_report(), and mirrors the ---
+# --- free_up_ram skill's "top RAM processes" idea but acting on it proactively rather than ---
+# --- waiting for the user to ask what's slowing the machine down. ---
+HEALTH_CHECK_INTERVAL_S = 15 * 60  # run every 15 minutes
+PROACTIVE_SUGGESTIONS_LOG_PATH = Path(__file__).resolve().parent / "proactive_suggestions.log"
+TOP_PROCESS_COUNT = 5
+RAM_JUMP_ALERT_POINTS = 20.0  # alert if overall RAM percent jumps by this many points since the last check
+RAM_SINGLE_PROCESS_ALERT_MB = 1024.0  # a single process over this size gets called out by name
+DISK_USAGE_ALERT_PERCENT = 90.0  # a drive at/above this percent full is "approaching capacity"
+CPU_LOAD_ALERT_PERCENT = 90.0
+
+_health_lock = threading.Lock()
+_last_health_snapshot: dict | None = None
+
+
+def _top_ram_processes(limit: int = TOP_PROCESS_COUNT) -> list[dict]:
+    """Top `limit` processes by resident memory — same data free_up_ram's Get-Process
+    one-liner reports, gathered here in-process via psutil so the health monitor can act on
+    it without shelling out. A process that exits mid-scan or can't be read (permissions) is
+    just skipped, not treated as a failure of the whole scan."""
+    import psutil
+
+    procs: list[dict] = []
+    for p in psutil.process_iter(["pid", "name", "memory_info"]):
+        try:
+            info = p.info
+            mem_info = info.get("memory_info")
+            if mem_info is None:
+                continue
+            procs.append(
+                {"pid": info.get("pid"), "name": info.get("name") or "?", "rss_mb": _bytes_to_mb(mem_info.rss)}
+            )
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    procs.sort(key=lambda p: p["rss_mb"], reverse=True)
+    return procs[:limit]
+
+
+def _log_proactive_suggestion(text: str, timestamp: str) -> None:
+    """Appends one line per suggestion to proactive_suggestions.log — a durable record of
+    everything the health monitor has ever flagged, independent of whether it actually got
+    spoken (see queue_or_deliver_notification, which may hold it back)."""
+    try:
+        with open(PROACTIVE_SUGGESTIONS_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} {text}\n")
+    except OSError as e:
+        log.warning("Could not write to proactive suggestions log: %s", e)
+
+
+def check_system_health() -> dict:
+    """One health-check pass: gathers the top RAM-consuming processes, CPU load, and disk
+    usage, compares against the previous pass to spot trends (e.g. a sudden RAM jump), and
+    returns {"snapshot": ..., "suggestions": [...]}. Every metric is gathered independently
+    so one failure (e.g. psutil missing, or a permission error on one drive) never blocks the
+    rest — mirrors the defensive per-section pattern in get_system_status_report()."""
+    global _last_health_snapshot
+
+    try:
+        import psutil
+    except ImportError:
+        log.warning("psutil not installed; skipping system health check.")
+        return {"snapshot": None, "suggestions": []}
+
+    now = datetime.now()
+    timestamp = now.isoformat(timespec="seconds")
+    suggestions: list[str] = []
+
+    try:
+        top_procs = _top_ram_processes()
+    except Exception as e:
+        log.warning("Could not list top RAM processes: %s", e)
+        top_procs = []
+
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.5)
+    except Exception as e:
+        log.warning("Could not read CPU load: %s", e)
+        cpu_percent = None
+
+    try:
+        ram_percent = psutil.virtual_memory().percent
+    except Exception as e:
+        log.warning("Could not read RAM usage: %s", e)
+        ram_percent = None
+
+    disks_near_capacity: list[dict] = []
+    try:
+        for part in psutil.disk_partitions(all=False):
+            try:
+                usage = psutil.disk_usage(part.mountpoint)
+            except (PermissionError, OSError):
+                continue  # e.g. an empty CD/card reader
+            if usage.percent >= DISK_USAGE_ALERT_PERCENT:
+                disks_near_capacity.append(
+                    {"device": part.device, "percent": usage.percent, "free_gb": _bytes_to_gb(usage.free)}
+                )
+    except Exception as e:
+        log.warning("Could not read disk usage: %s", e)
+
+    snapshot = {
+        "timestamp": timestamp,
+        "top_processes": top_procs,
+        "cpu_percent": cpu_percent,
+        "ram_percent": ram_percent,
+    }
+
+    with _health_lock:
+        previous = _last_health_snapshot
+        _last_health_snapshot = snapshot
+
+    # Trend-based alert: RAM usage jumped sharply since the last 15-minute check.
+    if (
+        previous
+        and previous.get("ram_percent") is not None
+        and ram_percent is not None
+        and (ram_percent - previous["ram_percent"]) >= RAM_JUMP_ALERT_POINTS
+    ):
+        suggestions.append(
+            f"Heads up, RAM usage jumped from {previous['ram_percent']:.0f} percent to "
+            f"{ram_percent:.0f} percent since the last check. Might be worth freeing some up."
+        )
+
+    # Smart cleanup suggestions: call out any single process using a lot of RAM by name,
+    # e.g. "Firefox is using 1200 megabytes, would you like to close it?" — same spirit as
+    # the free_up_ram skill, just offered before the user has to ask.
+    for proc in top_procs:
+        if proc["rss_mb"] >= RAM_SINGLE_PROCESS_ALERT_MB:
+            suggestions.append(
+                f"{proc['name']} is using about {proc['rss_mb']:.0f} megabytes of RAM. "
+                f"Want me to close it?"
+            )
+
+    for disk in disks_near_capacity:
+        suggestions.append(
+            f"Drive {disk['device']} is at {disk['percent']:.0f} percent full, only "
+            f"{disk['free_gb']:.1f} gigabytes free. Might want to clear some space soon."
+        )
+
+    if cpu_percent is not None and cpu_percent >= CPU_LOAD_ALERT_PERCENT:
+        suggestions.append(f"CPU load is at {cpu_percent:.0f} percent right now.")
+
+    for suggestion in suggestions:
+        _log_proactive_suggestion(suggestion, timestamp)
+
+    return {"snapshot": snapshot, "suggestions": suggestions}
+
+
+def _health_monitor_loop() -> None:
+    """Runs check_system_health() every HEALTH_CHECK_INTERVAL_S and speaks up (through the
+    session-context interrupt gate, so it won't talk over a focused work session) whenever a
+    pass produces suggestions — the proactive half of this feature; system_status()/
+    check_system_health() itself stays available on-demand too."""
+    while True:
+        try:
+            result = check_system_health()
+            for suggestion in result.get("suggestions", []):
+                queue_or_deliver_notification(suggestion)
+        except Exception as e:
+            log.warning("System health check failed: %s", e)
+        time.sleep(HEALTH_CHECK_INTERVAL_S)
+
+
+def _start_health_monitor() -> None:
+    threading.Thread(target=_health_monitor_loop, daemon=True, name="health-monitor").start()
 
 
 # --- disk usage: find large files and folders (read-only, never deletes anything) -----
@@ -3209,6 +3964,27 @@ def _execute_tool(
                 str(inp.get("instructions") or ""),
                 schedule if isinstance(schedule, dict) else None,
             )
+        elif tool_name == "create_reminder":
+            result = create_reminder(
+                str(inp.get("text") or ""),
+                str(inp.get("due_at") or ""),
+                inp.get("due_in_minutes"),
+                inp.get("repeat_every_minutes"),
+                bool(inp.get("urgent")),
+            )
+        elif tool_name == "list_reminders":
+            result = list_reminders(bool(inp.get("include_delivered")))
+        elif tool_name == "cancel_reminder":
+            rid = inp.get("reminder_id")
+            result = cancel_reminder(int(rid)) if rid is not None else "Missing reminder_id."
+        elif tool_name == "update_project_status":
+            result = update_project_status(
+                str(inp.get("name") or ""),
+                str(inp.get("status") or ""),
+                str(inp.get("next_step") or ""),
+            )
+        elif tool_name == "quick_recall":
+            result = quick_recall()
         elif tool_name == "delegate_to_claude_code":
             result = _delegate_to_claude_code(
                 str(inp.get("task") or ""), str(inp.get("repo_path") or "")
@@ -3288,6 +4064,11 @@ def handle_text_command(transcript: str) -> None:
     if not transcript:
         return
 
+    # Session context: the user talking to Jarvis is itself proof they're available, so
+    # deliver anything queued earlier right now instead of leaving it stuck until the next
+    # health check or scheduled skill happens to notice.
+    flush_pending_notifications()
+
     with _pending_action_lock:
         pending = _pending_action
     if pending is not None:
@@ -3302,6 +4083,7 @@ def handle_text_command(transcript: str) -> None:
             pending.get("tool_name"),
         )
 
+    record_recent_task(transcript)
     reply = run_agent_loop(transcript)
     if reply:
         speak_text(reply)
@@ -3739,6 +4521,12 @@ def main() -> int:
 
     _preload_mcp_async()
     _start_scheduler()
+    _start_health_monitor()
+    log.info(
+        "Proactive system health monitor running every %d minutes (suggestions logged to %s).",
+        HEALTH_CHECK_INTERVAL_S // 60,
+        PROACTIVE_SUGGESTIONS_LOG_PATH,
+    )
 
     input_idx = _choose_input_device(blocksize)
 
