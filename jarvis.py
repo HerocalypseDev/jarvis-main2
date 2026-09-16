@@ -68,6 +68,7 @@ import jarvis_memory_enhance as memory_enhance
 import jarvis_filewatcher as filewatcher
 import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
+import jarvis_voice_tone as voice_tone
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -838,6 +839,11 @@ queue_task (not create_reminder, which is for an exact time) then plan_task_queu
 a slot — if the user has Calendar access connected, fetch their events first and pass them as \
 plan_task_queue's busy_intervals so queued tasks land in real free time instead of over a \
 meeting. list_task_queue/cancel_queued_task manage what's already queued.
+
+Jarvis already reads a rough emotional tone off spoken/typed commands (frustrated, urgent, \
+curious, sad, positive) and folds it into this very prompt as "Voice tone detected" when \
+confident enough — there's no tool for this, just let it shape how you respond (terser when \
+frustrated, more explanatory when curious, etc.) without narrating that you detected it.
 
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
@@ -3238,7 +3244,7 @@ def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
     return f"MCP tool reported an error: {text}" if getattr(result, "is_error", False) else text
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(tone_line: str = "") -> str:
     # Computed fresh on every call (every agent-loop iteration) rather than relying on a
     # get-current-time tool call staying in the 6-message history window — observed live:
     # a calendar event created several turns after the last such tool call landed on the
@@ -3250,6 +3256,7 @@ def build_system_prompt() -> str:
     return (
         AGENT_SYSTEM_PROMPT
         + current_time_line
+        + tone_line
         + get_user_profile_context()
         + get_active_facts_context()
         + get_projects_context()
@@ -5376,10 +5383,14 @@ def _execute_tool(
     return result
 
 
-def run_agent_loop(transcript: str) -> str:
+def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
     """Real observe-act-observe loop: Claude picks tools, sees each result, and decides
     what (if anything) to do next, up to MAX_AGENT_ITERATIONS round trips, before giving a
-    final spoken reply. Replaces the old single forced perform_actions tool call."""
+    final spoken reply. Replaces the old single forced perform_actions tool call.
+
+    tone, if given (see jarvis_voice_tone.analyze_tone), is folded into the system prompt
+    for every round trip of this call so the reply's tone/approach can adapt — e.g. terser
+    when the user sounds frustrated, more explanatory when curious."""
     if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
         log.warning("Set ANTHROPIC_API_KEY in the environment for voice command interpretation.")
         return ""
@@ -5387,13 +5398,14 @@ def run_agent_loop(transcript: str) -> str:
     messages: list[dict] = _history_snapshot() + [{"role": "user", "content": transcript}]
     reply_parts: list[str] = []
     tools = AGENT_TOOLS + get_mcp_tool_schemas()
+    tone_line = voice_tone.tone_context_line(tone) if tone else ""
 
     for _ in range(MAX_AGENT_ITERATIONS):
         data = _claude_request(
             {
                 "model": CLAUDE_MODEL,
                 "max_tokens": 1536,
-                "system": build_system_prompt(),
+                "system": build_system_prompt(tone_line),
                 "messages": messages,
                 "tools": tools,
             },
@@ -5435,7 +5447,7 @@ def run_agent_loop(transcript: str) -> str:
     return reply
 
 
-def handle_text_command(transcript: str, reply_sink=None) -> None:
+def handle_text_command(transcript: str, reply_sink=None, tone: dict | None = None) -> None:
     """Runs one already-transcribed command (typed or spoken) through the confirmation
     gate and the Claude tool loop, then speaks the reply. Shared by handle_voice_command
     (after Whisper) and the typed-command hotkey (which skips transcription entirely).
@@ -5445,7 +5457,11 @@ def handle_text_command(transcript: str, reply_sink=None) -> None:
     Jarvis gives a brief spoken "Message received." ack up front (so anyone in the room knows
     something's happening) and sends the *actual* answer only to reply_sink — the room and the
     phone get different things, on purpose, instead of reading the whole answer out loud into
-    an empty room."""
+    an empty room.
+
+    tone, if given, comes from handle_voice_command (text + raw audio, so it can factor in
+    loudness/pace). Callers without audio (typed hotkey, phone) leave it unset and this
+    falls back to a text-only read of the same transcript."""
     if not transcript:
         return
 
@@ -5471,8 +5487,11 @@ def handle_text_command(transcript: str, reply_sink=None) -> None:
             pending.get("tool_name"),
         )
 
+    if tone is None:
+        tone = voice_tone.analyze_tone(transcript)
+
     record_recent_task(transcript)
-    reply = run_agent_loop(transcript)
+    reply = run_agent_loop(transcript, tone=tone)
     if reply:
         if reply_sink:
             reply_sink(reply)
@@ -5491,8 +5510,11 @@ def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
     if not transcript:
         log.info("Push-to-talk: heard nothing.")
         return
+    tone = voice_tone.analyze_tone(transcript, audio, sample_rate)
+    if tone.get("tone") != "neutral":
+        log.info("Voice tone: %s (confidence %.0f%%).", tone["tone"], tone["confidence"] * 100)
     log.info("Heard: %r", transcript)
-    handle_text_command(transcript)
+    handle_text_command(transcript, tone=tone)
 
 
 _text_hotkey_popup_open = threading.Event()
