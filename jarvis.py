@@ -1432,7 +1432,7 @@ def get_active_facts_context() -> str:
 # --- every system prompt build (not cached) so a new file takes effect with no restart and no ---
 # --- code edit — the "skill library" layer, distinct from the built-in tools above. ---
 SKILLS_DIR_NAME = "skills"
-MAX_SKILLS_CONTEXT_CHARS = 6000
+MAX_SKILLS_CONTEXT_CHARS = 16000
 
 
 def _skills_dir() -> Path:
