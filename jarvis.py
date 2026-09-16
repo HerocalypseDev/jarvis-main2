@@ -65,6 +65,7 @@ import jarvis_workflow as workflow
 import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
+import jarvis_filewatcher as filewatcher
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -821,6 +822,11 @@ they state or demonstrate a coding convention they want followed consistently �
 suggestions better-informed. semantic_recall is recall_facts' sibling for when the right memory \
 probably exists but the wording won't literally match a keyword search.
 
+Jarvis watches Downloads (and any folder added via add_watched_folder) for new/changed files in \
+the background and already announces large ones (over 100MB) unprompted — use \
+list_watched_folders/get_recent_file_events/remove_watched_folder only when the user asks about \
+watched folders directly, not proactively.
+
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
 profile. If a run_shell or run_python call would do one of those, it gets staged instead of run — \
@@ -1444,6 +1450,44 @@ AGENT_TOOLS = [
             "type": "object",
             "properties": {"root_path": {"type": "string", "description": "folder or file to scan"}},
             "required": ["root_path"],
+        },
+    },
+    {
+        "name": "list_watched_folders",
+        "description": (
+            "List the folders Jarvis is currently watching for new/changed files (Downloads "
+            "by default). Use this when the user asks what's being watched."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "add_watched_folder",
+        "description": "Start watching an additional folder for new/changed files.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "folder to watch"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "remove_watched_folder",
+        "description": "Stop watching a folder for new/changed files.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "folder to stop watching"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "get_recent_file_events",
+        "description": (
+            "Report recent new/changed files seen in watched folders, most recent first, "
+            "flagging anything large. Use this when the user asks what showed up in Downloads "
+            "(or another watched folder) recently."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "description": "max events to return, default 20"}},
         },
     },
     {
@@ -5068,6 +5112,15 @@ def _execute_tool(
             result = workflow.get_workflow_status(str(inp.get("path") or ""))
         elif tool_name == "check_project_health":
             result = proactive.check_project_health(str(inp.get("root_path") or ""))
+        elif tool_name == "list_watched_folders":
+            result = filewatcher.list_watched_folders()
+        elif tool_name == "add_watched_folder":
+            result = filewatcher.add_watched_folder(str(inp.get("path") or ""))
+        elif tool_name == "remove_watched_folder":
+            result = filewatcher.remove_watched_folder(str(inp.get("path") or ""))
+        elif tool_name == "get_recent_file_events":
+            limit = inp.get("limit")
+            result = filewatcher.get_recent_file_events(int(limit) if limit else 20)
         elif tool_name == "analyze_error":
             result = tech_understanding.format_error_report(
                 tech_understanding.parse_error(str(inp.get("error_text") or ""))
@@ -5652,6 +5705,11 @@ def main() -> int:
     _preload_mcp_async()
     _start_scheduler()
     _start_health_monitor()
+    filewatcher.start_watching(
+        notifier=lambda text, urgent: queue_or_deliver_notification(text, urgent=urgent)
+    )
+    log.info("File watcher running (%s, poll every %ds).",
+              ", ".join(filewatcher.watcher.list_paths()), filewatcher.watcher.poll_interval)
     log.info(
         "Proactive system health monitor running every %d minutes (suggestions logged to %s).",
         HEALTH_CHECK_INTERVAL_S // 60,
