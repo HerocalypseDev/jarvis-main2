@@ -1,4 +1,16 @@
-# Multi-step task execution — research (draft, not built yet)
+# Multi-step task execution — research
+
+**Status: step 1 of the suggested build order is implemented.** `set_plan` (jarvis.py
+`AGENT_TOOLS`), `_set_plan`/`_run_plan`/`_run_plan_step` (jarvis.py, after `_delegate_research`),
+and the `plan_steps` table now exist — Claude can emit an ordered, dependency-aware step list
+for a compound instruction, which runs as a checkpointed background `background_tasks` row
+(`kind='plan'`) instead of inline in one growing conversation. `list_background_tasks` shows
+live `step N/M` progress. Smoke-tested directly against `_set_plan` (bypassing voice/MCP) with
+a 3-step dependency chain (0 → 1 → 2, with step 2 depending on both 0 and 1) — steps ran in the
+correct order, each was checkpointed individually in `plan_steps`, and the aggregate result
+came back correct. Not yet exercised against a real compound voice/text command end-to-end.
+Steps 3-4 of the build order (surfacing per-step status in `quick_recall`, and revisiting
+parallelism) are still open.
 
 ## What prompted this
 

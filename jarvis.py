@@ -680,6 +680,10 @@ MAX_TOOL_CALLS_PER_TURN = 5  # cap on parallel tool calls Claude can request in 
 # compound multi-step instruction (search email, build a file, send it, confirm) could
 # exhaust and get cut off mid-task even with nothing going wrong.
 MAX_AGENT_ITERATIONS = 12
+# Cap on round trips for a single set_plan step (jarvis.py _run_plan_step). Deliberately
+# small — a step is meant to be one focused sub-task, not a whole task in itself; if a step
+# needs more than this it should probably have been split into two steps in the plan.
+MAX_STEP_ITERATIONS = 4
 CONVERSATION_HISTORY_MAX_TURNS = 6  # 3 user+assistant exchanges
 
 # Persona names Jarvis uses in speech instead of narrating tool/mechanism names — "I'll give it
@@ -758,6 +762,14 @@ finishes. For a substantial websearch-and-summarize-to-a-file task, use delegate
 same way instead of doing it yourself with web_search/write_file (no persona needed for this \
 one) — cheaper, since it skips a \
 full Claude Code session. list_background_tasks shows what's currently running if asked.
+
+For a compound instruction that's really several distinct sub-tasks chained together (roughly \
+3+ actions — e.g. "find the attachment, summarize it, save a PDF, email it back, then delete \
+the old email and send the update"), use set_plan instead of working through every step \
+inline here: it runs each step as its own focused background request, checkpoints progress \
+after each one, and respects the ordering you give it via depends_on. Don't use it for a \
+simple 1-2 step ask — just do those directly. No persona for set_plan itself; the steps \
+inside it still use James/{MAIL_CALENDAR_AGENT_NAME} where those tools apply.
 
 One narrow tier of action stays gated: shutting down/restarting/signing out the machine, \
 reformatting or repartitioning a disk, and recursively wiping an entire drive or the user's whole \
@@ -1282,10 +1294,10 @@ AGENT_TOOLS = [
     {
         "name": "list_background_tasks",
         "description": (
-            "List background tasks started with delegate_to_claude_code or delegate_research "
-            "— what's currently running and (optionally) what already finished. Use this if "
-            "the user asks \"is that done yet\" or \"what's still running\" instead of just "
-            "waiting for the completion notification."
+            "List background tasks started with delegate_to_claude_code, delegate_research, "
+            "or set_plan — what's currently running (a plan shows \"step N/M\" progress) and "
+            "(optionally) what already finished. Use this if the user asks \"is that done yet\" "
+            "or \"what's still running\" instead of just waiting for the completion notification."
         ),
         "input_schema": {
             "type": "object",
@@ -1295,6 +1307,56 @@ AGENT_TOOLS = [
                     "description": "true to also show recently finished/failed tasks, not just running ones",
                 },
             },
+        },
+    },
+    {
+        "name": "set_plan",
+        "description": (
+            "For a compound instruction made of multiple distinct sub-tasks — e.g. \"check the "
+            "attached file, summarize it, save it as a PDF, email it back, then delete the old "
+            "email and send the update\" — break it into an ordered list of steps instead of "
+            "working through them all inline in this conversation. Each step then runs in the "
+            "background as its own small, focused request against a slim context (not the "
+            "whole growing history), and progress is checkpointed after every step so a crash "
+            "or a stuck request only loses the one in-flight step, not the whole task. Use "
+            "depends_on to encode real ordering constraints (e.g. \"delete the old email\" has "
+            "no prerequisite, but if the old one must be gone before the new one sends, give "
+            "the send step a depends_on on the delete step) — don't just chain every step "
+            "after the previous one by default; only add a dependency where the order actually "
+            "matters. Only reach for this for genuinely multi-step requests (roughly 3+ "
+            "distinct actions); a 1-2 step request should just be done directly with the "
+            "normal tools instead. After calling this, tell the user you've started working "
+            "through it in the background and will let them know when it's done — don't also "
+            "try to perform the steps yourself in this same turn."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": "ordered list of sub-tasks that make up the full request",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {
+                                "type": "string",
+                                "description": "one concrete, self-contained sub-task",
+                            },
+                            "depends_on": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "description": (
+                                    "0-based indices of steps in this same list that must "
+                                    "complete before this one starts; omit or leave empty if "
+                                    "this step has no prerequisites"
+                                ),
+                            },
+                        },
+                        "required": ["description"],
+                    },
+                },
+            },
+            "required": ["steps"],
         },
     },
 ]
@@ -1443,6 +1505,23 @@ def _create_memory_tables(conn: sqlite3.Connection) -> None:
         "target TEXT, "
         "status TEXT NOT NULL DEFAULT 'running', "
         "started_at TEXT NOT NULL, "
+        "finished_at TEXT, "
+        "result_summary TEXT)"
+    )
+    conn.execute(
+        # One row per step of a background_tasks row with kind='plan' (see set_plan/_run_plan).
+        # depends_on is a JSON list of step_index values that must be 'done' before this step
+        # starts — kept as a plain column rather than a join table since a plan's step count is
+        # small and the dependency set never needs its own query.
+        "CREATE TABLE IF NOT EXISTS plan_steps ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "task_id INTEGER NOT NULL, "
+        "step_index INTEGER NOT NULL, "
+        "description TEXT NOT NULL, "
+        "depends_on TEXT NOT NULL DEFAULT '[]', "
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        "created_at TEXT NOT NULL, "
+        "started_at TEXT, "
         "finished_at TEXT, "
         "result_summary TEXT)"
     )
@@ -3926,6 +4005,9 @@ _RUNNING_BACKGROUND_PROCS: dict[int, tuple[subprocess.Popen, float]] = {}
 # the same shared Pro/Max usage pool as interactive Claude Code/app usage, unlike research tasks
 # (cheap Haiku tool calls), so it's worth capping rather than letting requests pile up unbounded.
 MAX_CONCURRENT_BACKGROUND_CODE_TASKS = 2
+# Caps concurrent *plan* background tasks (set_plan) — each step is its own Claude request, so
+# several plans running at once could otherwise stack up a lot of concurrent API traffic.
+MAX_CONCURRENT_PLAN_TASKS = 2
 
 
 def _background_tasks_dir(task_id: int) -> Path:
@@ -4001,14 +4083,29 @@ def list_background_tasks(include_finished: bool = False) -> str:
                 sql += " WHERE status = 'running'"
             sql += " ORDER BY id DESC LIMIT 20"
             rows = conn.execute(sql).fetchall()
+            # For a running 'plan' task, "running" alone doesn't say how far along it is —
+            # look up step completion so quick_recall/list_background_tasks can show "step 3/6"
+            # instead of leaving the user guessing.
+            plan_progress: dict[int, str] = {}
+            for tid, kind, _task, status, _started_at, _summary in rows:
+                if kind == "plan" and status == "running":
+                    total = conn.execute(
+                        "SELECT COUNT(*) FROM plan_steps WHERE task_id = ?", (tid,)
+                    ).fetchone()[0]
+                    done = conn.execute(
+                        "SELECT COUNT(*) FROM plan_steps WHERE task_id = ? AND status = 'done'",
+                        (tid,),
+                    ).fetchone()[0]
+                    plan_progress[tid] = f"step {done}/{total}"
         finally:
             conn.close()
     if not rows:
         return "No background tasks running." if not include_finished else "No background tasks recorded."
     lines = []
     for tid, kind, task, status, started_at, summary in rows:
+        progress = f", {plan_progress[tid]}" if tid in plan_progress else ""
         detail = f" — {summary}" if status != "running" and summary else ""
-        lines.append(f"#{tid} [{status}] ({kind}, started {started_at}): {task}{detail}")
+        lines.append(f"#{tid} [{status}] ({kind}{progress}, started {started_at}): {task}{detail}")
     return "\n".join(lines)
 
 
@@ -4021,10 +4118,20 @@ def _recover_interrupted_background_tasks() -> None:
     with _memory_db_lock:
         conn = _memory_db_connect()
         try:
+            now_iso = datetime.now().isoformat(timespec="seconds")
             cur = conn.execute(
                 "UPDATE background_tasks SET status = 'failed', finished_at = ?, "
                 "result_summary = 'interrupted by a Jarvis restart' WHERE status = 'running'",
-                (datetime.now().isoformat(timespec="seconds"),),
+                (now_iso,),
+            )
+            # A plan's steps have no live thread behind them either once the process
+            # restarts — leave completed ones as a record of real progress, but stop any
+            # step still 'pending'/'running' from looking like it's still in flight.
+            conn.execute(
+                "UPDATE plan_steps SET status = 'failed', finished_at = ?, "
+                "result_summary = 'interrupted by a Jarvis restart' "
+                "WHERE status IN ('pending', 'running')",
+                (now_iso,),
             )
             conn.commit()
             if cur.rowcount:
@@ -4190,6 +4297,200 @@ def _delegate_research(task: str, output_path: str) -> str:
     return (
         f"Started background research task #{task_id}, saving to {output_path}. I'll keep "
         "taking other commands and let you know when it's done."
+    )
+
+
+# --- FEATURE: set_plan — an explicit, checkpointed step list for compound instructions, ---
+# --- instead of working through every sub-task inline in one growing run_agent_loop ---
+# --- conversation (see MULTITASKING_RESEARCH.md for why: cost grows with history length, ---
+# --- a wedged request or a hit MAX_AGENT_ITERATIONS silently drops the whole task, and ---
+# --- there's no way to express "this step must happen before that one"). A plan is just ---
+# --- another background_tasks row (kind='plan'); its steps live in plan_steps, checkpointed ---
+# --- one at a time, and it reports back through the same notification pipeline as everything ---
+# --- else in this file. ---
+def _mark_plan_step(task_id: int, step_index: int, status: str, summary: str = "") -> None:
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            if status == "running":
+                conn.execute(
+                    "UPDATE plan_steps SET status = ?, started_at = ? "
+                    "WHERE task_id = ? AND step_index = ?",
+                    (status, now_iso, task_id, step_index),
+                )
+            else:
+                conn.execute(
+                    "UPDATE plan_steps SET status = ?, finished_at = ?, result_summary = ? "
+                    "WHERE task_id = ? AND step_index = ?",
+                    (status, now_iso, summary, task_id, step_index),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _run_plan_step(step_description: str, prior_context: str) -> str:
+    """Runs one plan step as its own small agent loop against a slim context — just this
+    step's description plus a short summary of what its dependency step(s) produced, not the
+    whole plan's running transcript. This (not just checkpointing) is what keeps a multi-step
+    plan's per-step cost flat instead of compounding the way run_agent_loop's full-history
+    resend does across a long chain. set_plan itself is excluded from the toolset here so a
+    step can't recursively spawn its own sub-plan."""
+    intro = (
+        "(This is one step of a multi-step plan you created for the user's request. Do just "
+        "this step, using tools as needed, then reply with a short one or two sentence summary "
+        "of what you did or found — that summary is what the next dependent step sees, not "
+        "this whole exchange, so make it self-contained.)"
+    )
+    if prior_context:
+        intro += f" Relevant results from earlier steps this one depends on: {prior_context}"
+    messages: list[dict] = [{"role": "user", "content": f"{intro}\n\nStep: {step_description}"}]
+    reply_parts: list[str] = []
+    tools = [t for t in AGENT_TOOLS if t["name"] != "set_plan"] + get_mcp_tool_schemas()
+
+    for _ in range(MAX_STEP_ITERATIONS):
+        data = _claude_request(
+            {
+                "model": CLAUDE_MODEL,
+                "max_tokens": 1024,
+                "system": build_system_prompt(),
+                "messages": messages,
+                "tools": tools,
+            },
+            timeout=60,
+        )
+        if data is None:
+            return " ".join(reply_parts).strip() or "step failed: could not reach Claude"
+
+        content = data.get("content", [])
+        messages.append({"role": "assistant", "content": content})
+        reply_parts.extend(
+            b.get("text", "") for b in content if b.get("type") == "text" and b.get("text")
+        )
+
+        tool_uses = [b for b in content if b.get("type") == "tool_use"]
+        if not tool_uses or data.get("stop_reason") != "tool_use":
+            break
+
+        tool_results = []
+        for i, tu in enumerate(tool_uses):
+            if i < MAX_TOOL_CALLS_PER_TURN:
+                result_text = _execute_tool(tu.get("name", ""), tu.get("input") or {}, step_description)
+            else:
+                result_text = "Skipped: too many tool calls requested in a single turn."
+            tool_results.append(
+                {"type": "tool_result", "tool_use_id": tu.get("id"), "content": result_text}
+            )
+        messages.append({"role": "user", "content": tool_results})
+
+    return " ".join(p.strip() for p in reply_parts if p.strip()) or "step finished with no summary text"
+
+
+def _run_plan(task_id: int) -> None:
+    """Background-thread entry point (like _delegate_research's _run): works through a plan's
+    steps in dependency order, one at a time, persisting each step's result before moving on
+    so a crash or a hung request only loses the one in-flight step, not the whole plan.
+    Fail-fast — one failed step stops the plan rather than running the rest against a
+    dependency that never produced its result, since later steps' context would be wrong."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            rows = conn.execute(
+                "SELECT step_index, description, depends_on FROM plan_steps "
+                "WHERE task_id = ? ORDER BY step_index",
+                (task_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+    steps = {idx: (desc, json.loads(deps or "[]")) for idx, desc, deps in rows}
+    results: dict[int, str] = {}
+    done: set[int] = set()
+    remaining = set(steps.keys())
+
+    while remaining:
+        ready = sorted(i for i in remaining if all(d in done for d in steps[i][1]))
+        if not ready:
+            stuck = sorted(remaining)
+            _finish_background_task(
+                task_id,
+                "failed",
+                f"stuck: step(s) {stuck} depend on a step that never completed (cycle or bad index)",
+                kind="plan",
+            )
+            return
+
+        step_idx = ready[0]
+        description, deps = steps[step_idx]
+        _mark_plan_step(task_id, step_idx, "running")
+        prior_context = "; ".join(f"step {d}: {results[d]}" for d in deps if d in results)
+        try:
+            summary = _run_plan_step(description, prior_context)
+        except Exception as e:
+            summary = f"raised an error: {e}"
+            _mark_plan_step(task_id, step_idx, "failed", summary)
+            _finish_background_task(
+                task_id, "failed", f"step {step_idx} ({description}) {summary}", kind="plan"
+            )
+            return
+
+        _mark_plan_step(task_id, step_idx, "done", summary)
+        results[step_idx] = summary
+        done.add(step_idx)
+        remaining.discard(step_idx)
+
+    final_summary = " ".join(f"step {i}: {results[i]}" for i in sorted(results))
+    if len(final_summary) > MAX_TOOL_RESULT_CHARS:
+        final_summary = final_summary[:MAX_TOOL_RESULT_CHARS] + "... [truncated]"
+    _finish_background_task(task_id, "done", final_summary or "all steps finished", kind="plan")
+
+
+def _set_plan(transcript: str, steps: list) -> str:
+    """Handles the set_plan tool call: validates and persists an ordered step list, then hands
+    it to a background thread (_run_plan) instead of executing it inline — the calling
+    run_agent_loop turn just confirms the plan started and moves on, exactly like
+    delegate_to_claude_code/delegate_research already do for their own background work."""
+    cleaned: list[dict] = []
+    for i, s in enumerate(steps or []):
+        desc = str((s or {}).get("description") or "").strip()
+        if not desc:
+            continue
+        deps = sorted({int(d) for d in (s.get("depends_on") or []) if isinstance(d, (int, float))})
+        cleaned.append({"step": i, "description": desc, "depends_on": deps})
+
+    if len(cleaned) < 2:
+        return "That's not really a multi-step plan — just do it directly instead of calling set_plan."
+    valid_indices = {s["step"] for s in cleaned}
+    for s in cleaned:
+        s["depends_on"] = [d for d in s["depends_on"] if d in valid_indices and d != s["step"]]
+
+    running = _count_running_background_tasks("plan")
+    if running >= MAX_CONCURRENT_PLAN_TASKS:
+        return (
+            f"Already {running} plan(s) running (cap is {MAX_CONCURRENT_PLAN_TASKS}) — ask "
+            "again once one finishes; list_background_tasks shows what's running."
+        )
+
+    task_id = _insert_background_task(transcript, "plan", json.dumps(cleaned))
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            for s in cleaned:
+                conn.execute(
+                    "INSERT INTO plan_steps (task_id, step_index, description, depends_on, "
+                    "status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)",
+                    (task_id, s["step"], s["description"], json.dumps(s["depends_on"]), now_iso),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    threading.Thread(target=_run_plan, args=(task_id,), daemon=True, name=f"plan-task-{task_id}").start()
+    record_recent_task(f"started background plan #{task_id} with {len(cleaned)} steps: {transcript}")
+    return (
+        f"Started background plan #{task_id} with {len(cleaned)} steps. I'll work through them "
+        "in order and let you know when it's done — list_background_tasks shows progress if asked."
     )
 
 
@@ -4427,6 +4728,8 @@ def _execute_tool(
             )
         elif tool_name == "list_background_tasks":
             result = list_background_tasks(bool(inp.get("include_finished")))
+        elif tool_name == "set_plan":
+            result = _set_plan(transcript, inp.get("steps") or [])
     except Exception as e:
         log.warning("Tool %r raised: %s", tool_name, e)
         result = f"Tool failed: {e}"
