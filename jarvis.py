@@ -33,6 +33,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import wave
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 import webbrowser
@@ -493,7 +494,19 @@ def transcribe_pcm(pcm: np.ndarray, sample_rate: int) -> str:
     return " ".join(seg.text.strip() for seg in segments).strip()
 
 
-# --- text-to-speech: local, offline, free (Piper) --------------------------
+# --- text-to-speech: Fish Audio (cloud) primary, Piper (local/offline/free) fallback -------
+# Double-checked (2026-09-18, user request — locked in: free s2.1-pro-free tier, user's own
+# reference_id voice, automatic fallback to Piper on any Fish Audio failure): cost is zero on
+# the free tier; data exposure is every spoken reply's text leaving the machine to Fish Audio's
+# API (same category as every Claude API call already does, not a new kind of exposure);
+# reliability is covered by the Piper fallback below, so a network/API outage degrades the
+# *voice*, not into silence.
+FISH_AUDIO_API_KEY = (os.environ.get("FISH_AUDIO_API_KEY") or "").strip()
+FISH_AUDIO_VOICE_ID = (os.environ.get("FISH_AUDIO_VOICE_ID") or "").strip()
+FISH_AUDIO_MODEL = (os.environ.get("FISH_AUDIO_MODEL") or "s2.1-pro-free").strip() or "s2.1-pro-free"
+FISH_AUDIO_TTS_URL = "https://api.fish.audio/v1/tts"
+FISH_AUDIO_TIMEOUT_S = 20
+
 PIPER_VOICE = (os.environ.get("PIPER_VOICE") or "en_US-lessac-medium").strip() or "en_US-lessac-medium"
 
 _piper_voice_obj = None
@@ -543,6 +556,37 @@ def _piper_synthesize(text: str, syn_overrides: dict | None = None) -> tuple[byt
         return b"", voice.config.sample_rate
     raw = b"".join(ch.audio_int16_bytes for ch in chunks)
     return raw, chunks[0].sample_rate
+
+
+def _fish_audio_synthesize(text: str, prosody_overrides: dict | None = None) -> tuple[bytes, int]:
+    """Calls Fish Audio's TTS REST API and returns (pcm_int16_bytes, sample_rate) — the exact
+    same contract as _piper_synthesize, so speak_text can use either interchangeably. Requests
+    WAV (not raw PCM) specifically so the sample rate is read from the response's own header
+    instead of guessed/hardcoded — a WAV file is self-describing, raw PCM isn't. Raises on any
+    failure (missing key, network error, non-2xx, malformed audio); the caller decides whether
+    to fall back to Piper."""
+    if not FISH_AUDIO_API_KEY:
+        raise RuntimeError("FISH_AUDIO_API_KEY is not set")
+    body: dict = {"text": text, "format": "wav"}
+    if FISH_AUDIO_VOICE_ID:
+        body["reference_id"] = FISH_AUDIO_VOICE_ID
+    if prosody_overrides:
+        body["prosody"] = prosody_overrides
+    req = urllib.request.Request(
+        FISH_AUDIO_TTS_URL,
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {FISH_AUDIO_API_KEY}",
+            "Content-Type": "application/json",
+            "model": FISH_AUDIO_MODEL,
+        },
+    )
+    raw_wav = _urlopen_hard_timeout(req, FISH_AUDIO_TIMEOUT_S)
+    with wave.open(io.BytesIO(raw_wav), "rb") as wf:
+        sample_rate = wf.getframerate()
+        pcm = wf.readframes(wf.getnframes())
+    return pcm, sample_rate
 
 
 def _play_pcm_bytes(raw: bytes, sample_rate: int) -> None:
@@ -596,18 +640,33 @@ def _sanitize_for_speech(text: str) -> str:
 
 
 def speak_text(text: str) -> None:
-    """Speak arbitrary dynamic text (voice-command replies). Uses Sleep Mode's calmer/slower
-    voice settings (see jarvis_sleep_mode.tts_overrides) when Sleep Mode is active."""
+    """Speak arbitrary dynamic text (voice-command replies). Fish Audio (cloud) is the primary
+    voice when FISH_AUDIO_API_KEY is set; Piper (local/offline/free) is the automatic fallback
+    if Fish Audio errors for any reason (no key, network down, rate limited, bad response) —
+    a TTS-provider failure degrades the *voice*, not into silence. Uses Sleep Mode's
+    calmer/slower voice settings (see jarvis_sleep_mode.tts_overrides/
+    fish_audio_prosody_overrides) when Sleep Mode is active."""
     t = _sanitize_for_speech(text)
     if not t:
         return
-    try:
-        raw, sample_rate = _piper_synthesize(t, sleep_mode.tts_overrides())
-    except Exception as e:
-        log.warning("Piper TTS failed: %s", e)
-        return
+
+    raw, sample_rate = b"", 0
+    if FISH_AUDIO_API_KEY:
+        try:
+            raw, sample_rate = _fish_audio_synthesize(t, sleep_mode.fish_audio_prosody_overrides())
+        except Exception as e:
+            log.warning("Fish Audio TTS failed, falling back to Piper: %s", e)
+            raw = b""
+
     if not raw:
-        log.warning("Piper returned empty audio.")
+        try:
+            raw, sample_rate = _piper_synthesize(t, sleep_mode.tts_overrides())
+        except Exception as e:
+            log.warning("Piper TTS failed: %s", e)
+            return
+
+    if not raw:
+        log.warning("TTS returned empty audio.")
         return
     _play_pcm_bytes(raw, sample_rate)
 

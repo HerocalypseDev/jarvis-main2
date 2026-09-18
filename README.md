@@ -1,6 +1,6 @@
 # Jarvis desktop voice assistant
 
-Python script offering **push-to-talk voice commands** (hold a key, speak, release) plus a typed-command hotkey, both running local Whisper transcription and a real Claude tool-use loop against this machine. Local Whisper transcribes, Claude decides what to do, **Piper** (local, offline, free — no account, no API key) speaks the reply. See constants at the top of `jarvis.py` for behavior and tuning.
+Python script offering **push-to-talk voice commands** (hold a key, speak, release) plus a typed-command hotkey, both running local Whisper transcription and a real Claude tool-use loop against this machine. Local Whisper transcribes, Claude decides what to do, **Fish Audio** (cloud TTS) speaks the reply, with **Piper** (local, offline, free) as an automatic fallback if Fish Audio ever fails. See constants at the top of `jarvis.py` for behavior and tuning.
 
 ## Setup
 
@@ -14,9 +14,9 @@ python -m pip install -r requirements.txt
 
 The script loads a **`.env` file** in the same folder as `jarvis.py` (via `python-dotenv`). You can also set variables in the shell.
 
-### Text-to-speech: Piper (local, free, no key needed)
+### Text-to-speech: Fish Audio (primary, cloud) with Piper (local, free) as fallback
 
-Spoken output — voice-command replies — uses [Piper](https://github.com/OHF-Voice/piper1-gpl), a local neural TTS engine. It runs entirely on your CPU: no account, no API key, no internet needed after the one-time voice model download (~60MB, automatic on first use), and it can never bill you or rate-limit you. See `PIPER_VOICE` below to pick a different voice.
+Spoken output — voice-command replies — uses [Fish Audio](https://fish.audio)'s TTS API as the primary voice when `FISH_AUDIO_API_KEY` is set (the free `s2.1-pro-free` tier is unlimited under fair use). If Fish Audio ever fails for any reason — no key, no internet, rate limited, API error — it automatically falls back to [Piper](https://github.com/OHF-Voice/piper1-gpl), a local neural TTS engine that runs entirely on your CPU with no account/key/internet needed. Leave `FISH_AUDIO_API_KEY` unset to skip Fish Audio entirely and always use Piper.
 
 ### Required (push-to-talk voice commands)
 
@@ -30,6 +30,9 @@ Without this, holding the push-to-talk key still transcribes locally but no acti
 
 | Variable | Purpose |
 | -------- | ------- |
+| `FISH_AUDIO_API_KEY` | API key from [fish.audio](https://fish.audio) — makes Fish Audio the primary voice. Unset = Piper only. |
+| `FISH_AUDIO_VOICE_ID` | A specific voice's `reference_id` from fish.audio (browse/clone voices there). Unset = the model's default voice. |
+| `FISH_AUDIO_MODEL` | Fish Audio model id (default `s2.1-pro-free`, the free unlimited tier). Other options: `s1`, `s2-pro`, `s2.1-pro`, `drama-3-preview`. |
 | `PIPER_VOICE` | Piper voice model name (default `en_US-lessac-medium`). Browse options at the [Piper voice samples page](https://rhasspy.github.io/piper-samples/). Downloaded automatically on first use. |
 | `PIPER_VOICES_DIR` | Custom folder for downloaded Piper voice models (default: `.cache/piper_voices/` under the project). |
 | `JARVIS_MEMORY_DB_PATH` | Custom path for the SQLite memory database (default: `jarvis_memory.db` in the project folder). |
@@ -55,7 +58,7 @@ Allow the microphone if Windows prompts you. Stop with **Ctrl+C**.
 
 ## Typing to Jarvis (text hotkey)
 
-Don't want to talk out loud? Hold **Right Ctrl** (or your `JARVIS_TEXT_HOTKEY_KEY`) for 2 seconds and a small always-on-top text box pops up. Type your command and press **Enter** — it goes straight into the same Claude tool loop as a voice command (no Whisper, no mic) and Jarvis speaks the reply via Piper as usual. Press **Escape**, click away, or close the box to cancel without sending anything.
+Don't want to talk out loud? Hold **Right Ctrl** (or your `JARVIS_TEXT_HOTKEY_KEY`) for 2 seconds and a small always-on-top text box pops up. Type your command and press **Enter** — it goes straight into the same Claude tool loop as a voice command (no Whisper, no mic) and Jarvis speaks the reply as usual. Press **Escape**, click away, or close the box to cancel without sending anything.
 
 Unlike push-to-talk, there's no live mic involved, so there's no risk of a stray sound being misread as a command — it works as soon as Jarvis starts.
 
@@ -72,7 +75,7 @@ Hold **Left Shift** (or your `JARVIS_PTT_KEY`), say a command, then release. On 
 
 1. **Local Whisper** transcribes what you said (no cloud call, no cost).
 2. The transcript goes to **Claude** running a real tool-use loop (`run_agent_loop` in `jarvis.py`): Claude picks a tool, sees the result, and decides what to do next — it can call several tools in a row before replying, up to `MAX_AGENT_ITERATIONS` round trips. This is **not** a fixed menu anymore.
-3. Jarvis speaks Claude's final reply back via Piper once the loop finishes.
+3. Jarvis speaks Claude's final reply back once the loop finishes.
 
 ### ⚠️ Full system access, by design
 
@@ -156,7 +159,7 @@ or
 ```json
 { "schedule": { "every_minutes": 30 } }
 ```
-A background thread checks every 60 seconds (`SCHEDULER_TICK_S`) for a due skill, runs it through the same agent loop as a voice command (full tool access, memory, other skills), and speaks the result via Piper. Runs are tracked in a `scheduled_skill_runs` table so a `daily_at` skill fires once per day and an `every_minutes` skill respects its interval even across restarts. Ask out loud — "give me a briefing every morning at 8" — and Claude calls `save_skill` with a schedule itself. No skill is scheduled by default; you opt in per skill.
+A background thread checks every 60 seconds (`SCHEDULER_TICK_S`) for a due skill, runs it through the same agent loop as a voice command (full tool access, memory, other skills), and speaks the result. Runs are tracked in a `scheduled_skill_runs` table so a `daily_at` skill fires once per day and an `every_minutes` skill respects its interval even across restarts. Ask out loud — "give me a briefing every morning at 8" — and Claude calls `save_skill` with a schedule itself. No skill is scheduled by default; you opt in per skill.
 
 **Notification gate (`session_state.json`):** every proactive message — a scheduled skill's result, a reminder, a system-health suggestion — goes through `queue_or_deliver_notification` instead of speaking immediately. It checks system-wide idle time (`GetLastInputInfo`) against your stated afternoon focus window (`preferred_work_hour_start`/`_end` in `session_state.json`, default 1pm-5pm): if you're actively at the keyboard during that window, non-urgent notices are queued instead of interrupting, and get spoken the next time you actually talk to Jarvis (`flush_pending_notifications`, called at the start of every command). Pass `urgent: true` (e.g. on `create_reminder`) to bypass the gate and speak immediately regardless. State (last active window/project, recent tasks, queued notifications) persists in `session_state.json` in the project folder (gitignored) across restarts.
 
@@ -244,7 +247,7 @@ Edit the constants at the top of `jarvis.py`:
 
 - **Wrong or quiet mic:** On startup the script probes your default Windows input. If it is silent, it **auto-selects** the loudest working mic. To force a specific device, set `JARVIS_INPUT_DEVICE` in `.env` (index or name substring from `sounddevice.query_devices()`).
 - **PortAudio / audio errors:** Update audio drivers or try another `SAMPLE_RATE`.
-- **No speech / TTS errors:** Check the log for a Piper download or load failure — confirm `piper-tts` installed correctly (`pip show piper-tts`) and that `.cache/piper_voices/` has both the `.onnx` and `.onnx.json` files for `PIPER_VOICE`.
+- **No speech / TTS errors:** Check the log for `Fish Audio TTS failed, falling back to Piper` (a Fish Audio problem, but should still speak via Piper) or a Piper download/load failure right after it (both TTS paths down) — confirm `FISH_AUDIO_API_KEY`/`FISH_AUDIO_VOICE_ID` are correct, and for Piper confirm `piper-tts` installed correctly (`pip show piper-tts`) and that `.cache/piper_voices/` has both the `.onnx` and `.onnx.json` files for `PIPER_VOICE`.
 - **Push-to-talk key does nothing:** The `keyboard` package's global hook can be blocked by Windows permissions; try running the terminal as Administrator. Also confirm `JARVIS_PTT_KEY` matches a name `keyboard` recognizes (e.g. `f8`, `caps lock`, `right ctrl`).
 - **Voice commands transcribe but nothing happens:** Set `ANTHROPIC_API_KEY` in `.env`.
 - **First push-to-talk is slow:** The local Whisper model downloads once (~150 MB for `base`) and loads into memory on first use; subsequent presses are fast.

@@ -140,6 +140,27 @@ Rules:
   of being given up on for the rest of the process's life — previously the only way to recover
   from a transient failure (npx cold-start, brief network hiccup) was restarting Jarvis.
 
+## Text-to-speech: Fish Audio primary, Piper fallback (2026-09-18)
+
+- Double-checked and locked in with the user: Fish Audio's free `s2.1-pro-free` tier (zero
+  ongoing cost), the user's own `reference_id` voice, Piper kept installed as an automatic
+  fallback rather than removed. Credentials live in `.env` only (`FISH_AUDIO_API_KEY`,
+  `FISH_AUDIO_VOICE_ID`, gitignored, never in code or committed) — if you ever need to rotate
+  them, that's the only place they live.
+- `speak_text()` tries `_fish_audio_synthesize()` first when `FISH_AUDIO_API_KEY` is set (a
+  plain `urllib.request` POST to `https://api.fish.audio/v1/tts`, no new pip dependency);
+  requests `format: "wav"` specifically (not raw `pcm`) so the sample rate comes from the
+  response's own header via stdlib `wave`, instead of being guessed/hardcoded. Any failure
+  (missing key, network error, bad response) falls back to the existing local Piper path —
+  never straight to silence. Verified live: a real API call end-to-end through `speak_text()`
+  (including actual playback), and a simulated Fish Audio outage confirmed the Piper fallback
+  actually plays audio rather than going quiet.
+- Sleep Mode's calmer-at-night TTS tuning now has two parallel functions in
+  `jarvis_sleep_mode.py`: `tts_overrides()` (Piper's `length_scale`/linear `volume`, unchanged)
+  and the new `fish_audio_prosody_overrides()` (Fish's `speed` 0.5–2.0 / `volume` in dB) — same
+  "slower and quieter" intent, not an exact unit conversion between the two engines' different
+  parameter shapes.
+
 ## Reliability fixes from real usage (2026-09-18)
 
 - **Silent replies, root-caused**: `run_agent_loop` could return an empty string when Claude

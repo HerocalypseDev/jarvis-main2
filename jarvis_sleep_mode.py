@@ -33,6 +33,7 @@ filtering YouTube/streaming recommendations, and calendar UI changes.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sqlite3
 import sys
@@ -186,6 +187,18 @@ def tts_overrides() -> dict | None:
     if not is_active():
         return None
     return {"length_scale": SLEEP_LENGTH_SCALE, "volume": SLEEP_TTS_VOLUME}
+
+
+def fish_audio_prosody_overrides() -> dict | None:
+    """Fish Audio's prosody equivalent of tts_overrides() above — same calmer/quieter-at-night
+    intent, translated from Piper's length_scale (a slowdown multiplier, higher = slower) and
+    linear 0-1 volume into Fish Audio's speed (0.5-2.0, lower = slower) and volume in dB. Not a
+    precise unit conversion between the two engines, just the same intent carried over."""
+    if not is_active():
+        return None
+    speed = (1.0 / SLEEP_LENGTH_SCALE) if SLEEP_LENGTH_SCALE else 1.0
+    volume_db = 20 * math.log10(SLEEP_TTS_VOLUME) if SLEEP_TTS_VOLUME > 0 else 0.0
+    return {"speed": max(0.5, min(2.0, speed)), "volume": volume_db}
 
 
 # --- Windows dark mode (real registry toggle) -------------------------------------------
