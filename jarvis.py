@@ -1,39 +1,24 @@
 #!/usr/bin/env python3
 """
-Desktop clap listener: reads the default microphone and logs when two loud transients
-(a double clap) are detected within a short time window.
+Jarvis desktop voice assistant: push-to-talk (hold a key, speak, release) plus a typed-command
+hotkey, both running local Whisper transcription and Claude tool-use against this machine.
 
 Run:
   python -m pip install -r requirements.txt
-  python clap_listen.py
+  python jarvis.py
 
 Tuning (constants below):
   SAMPLE_RATE   — usually 44100 or 48000; match your device if needed.
-  BLOCK_MS      — analysis window size; smaller = snappier, noisier.
-  SPIKE_RATIO   — how many times louder than the noise floor counts as a clap;
-                    raise if false triggers; lower if claps are missed.
-  COOLDOWN_S    — minimum seconds between double-clap logs (debounce).
-  MIN_DOUBLE_GAP_S / MAX_DOUBLE_GAP_S — allowed time between the two claps.
-  RETRIGGER_RATIO — audio must fall below threshold * this before another hit counts.
-  NOISE_FLOOR_ALPHA — closer to 1 = slower baseline adaptation to room noise.
-  MIN_RMS       — ignore spikes below this absolute level (float audio ~ [-1, 1]).
-  FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP — if True, launch Cursor without -n (reuse / focus existing instance).
-  OPEN_NEW_CURSOR_ON_DOUBLE_CLAP — if True, also launch Cursor with -n (extra new window; runs after focus launch if both).
+  BLOCK_MS      — analysis window size for audio capture.
+  FOCUS_EXISTING_CURSOR_WINDOW — if True, focus an existing Cursor instance instead of a new one.
+  OPEN_NEW_CURSOR_WINDOW — if True, also launch a new Cursor window (-n).
   CURSOR_OPEN_FULLSCREEN — Windows: after focus/launch, send F11 to enter Cursor/VS Code-style fullscreen (toggle off with F11).
-  JARVIS_WELCOME_* — TTS on double clap (Piper, local/offline/free). Configure via PIPER_VOICE
-    in the environment or a `.env` file next to this script (default en_US-lessac-medium).
-    With JARVIS_WELCOME_CACHE_ENABLED, audio is saved under `.cache/jarvis_welcome/` (WAV) and
-    replayed when phrase + voice + model + format match—no repeat API call. Delete that folder
-    or set JARVIS_WELCOME_CACHE_ENABLED=False to force a fresh fetch.
-  The welcome sequence runs only once per process. The assistant speaks in the background so Cursor
-    opens without waiting for playback to finish (restart the script to run again).
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import io
 import json
 import logging
@@ -48,10 +33,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import wave
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
-from zoneinfo import ZoneInfo
 import webbrowser
 from pathlib import Path
 
@@ -69,44 +52,21 @@ import jarvis_filewatcher as filewatcher
 import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
 import jarvis_voice_tone as voice_tone
+import jarvis_sleep_mode as sleep_mode
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
 BLOCK_MS = 40
 CHANNELS = 1
 
-SPIKE_RATIO = 9.0
-COOLDOWN_S = 0.45
-MIN_DOUBLE_GAP_S = 0.05
-MAX_DOUBLE_GAP_S = 0.35
-RETRIGGER_RATIO = 0.55
-NOISE_FLOOR_ALPHA = 0.992
-MIN_RMS = 0.012
-QUIET_GATE_MULT = 2.2  # update noise floor only when below floor * this
 # Startup mic probe: if default input RMS stays below this, scan for a louder device.
 INPUT_PROBE_S = 0.5
 INPUT_SILENT_RMS = 0.001
 
-# Cursor: focus existing instance (no -n). Set OPEN_NEW_CURSOR_ON_DOUBLE_CLAP for a new window as well.
-FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP = True
-OPEN_NEW_CURSOR_ON_DOUBLE_CLAP = False
+# Cursor: focus existing instance (no -n). Set OPEN_NEW_CURSOR_WINDOW for a new window as well.
+FOCUS_EXISTING_CURSOR_WINDOW = True
+OPEN_NEW_CURSOR_WINDOW = False
 CURSOR_OPEN_FULLSCREEN = False
-
-JARVIS_WELCOME_ENABLED = False
-# Triple clap (3 in a row): normal mode.
-JARVIS_WELCOME_PHRASE = "Hey boss, how can I help you today?"
-# Double clap: serious mode — a different greeting, then an immediate weather + time report.
-JARVIS_SERIOUS_MODE_PHRASE = "Serious mode activated. I'm in serious mode right now."
-JARVIS_SERIOUS_MODE_LOCATION = "Ganmo, Ilorin, Kwara State, Nigeria"
-# wttr.in doesn't have a "Ganmo" entry; Ilorin (the nearest city, a few km away) is the
-# closest queryable location and shares the same weather/timezone.
-JARVIS_SERIOUS_MODE_WEATHER_QUERY = "Ilorin,Nigeria"
-JARVIS_SERIOUS_MODE_TIMEZONE = "Africa/Lagos"  # all of Nigeria uses this one timezone
-# Serious mode also opens two Opera GX windows split-screen on the primary display.
-JARVIS_SERIOUS_MODE_OPERA_LEFT_URL = "https://animeheaven.me"
-JARVIS_SERIOUS_MODE_OPERA_RIGHT_URL = "https://www.youtube.com"
-# Save Piper PCM as WAV under .cache/jarvis_welcome/; replay skips re-synthesis when unchanged.
-JARVIS_WELCOME_CACHE_ENABLED = True
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -121,9 +81,7 @@ CLAUDE_MODEL = (
 
 # Typed commands: hold JARVIS_TEXT_HOTKEY_KEY for JARVIS_TEXT_HOTKEY_HOLD_S seconds to pop up
 # a small always-on-top text box; Enter sends the text through the same Claude tool loop as a
-# voice command (no Whisper involved), Escape/closing the box cancels. Unlike push-to-talk,
-# this isn't gated behind the clap activation — typing has none of the false-trigger risk a
-# live mic has, so it works immediately.
+# voice command (no Whisper involved), Escape/closing the box cancels.
 JARVIS_TEXT_HOTKEY_ENABLED = True
 JARVIS_TEXT_HOTKEY_KEY = (
     os.environ.get("JARVIS_TEXT_HOTKEY_KEY") or "right ctrl"
@@ -159,11 +117,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger("clap_listen")
+log = logging.getLogger("jarvis")
 
 # Set while any Jarvis TTS audio is actually playing through the speakers. The main loop
-# skips clap/PTT detection while this is set, so the mic can't hear Jarvis's own voice
-# bleed through and misread it as a new clap or command (an audio feedback loop that would
+# skips PTT detection while this is set, so the mic can't hear Jarvis's own voice
+# bleed through and misread it as a new command (an audio feedback loop that would
 # otherwise cut playback off mid-word and restart it, since sd.play() stops prior playback).
 jarvis_speaking = threading.Event()
 # Multiple push-to-talk commands can run concurrently on separate threads (see
@@ -512,75 +470,18 @@ def _preload_piper_async() -> None:
     threading.Thread(target=_get_piper_voice, daemon=True).start()
 
 
-def _piper_synthesize(text: str) -> tuple[bytes, int]:
+def _piper_synthesize(text: str, syn_overrides: dict | None = None) -> tuple[bytes, int]:
     voice = _get_piper_voice()
-    chunks = list(voice.synthesize(text))
+    syn_config = None
+    if syn_overrides:
+        from piper.config import SynthesisConfig
+
+        syn_config = SynthesisConfig(**syn_overrides)
+    chunks = list(voice.synthesize(text, syn_config=syn_config))
     if not chunks:
         return b"", voice.config.sample_rate
     raw = b"".join(ch.audio_int16_bytes for ch in chunks)
     return raw, chunks[0].sample_rate
-
-
-def _jarvis_welcome_cache_dir() -> Path:
-    base = Path(__file__).resolve().parent
-    override = (os.environ.get("JARVIS_WELCOME_CACHE_DIR") or "").strip()
-    if override:
-        return Path(override).expanduser().resolve()
-    return base / ".cache" / "jarvis_welcome"
-
-
-def _jarvis_welcome_cache_path(
-    text: str, voice_id: str, model_id: str, sample_rate: int
-) -> Path:
-    key = f"{text}|{voice_id}|{model_id}|{sample_rate}".encode()
-    digest = hashlib.sha256(key).hexdigest()[:24]
-    return _jarvis_welcome_cache_dir() / f"{digest}.wav"
-
-
-def _play_pcm_wav_file(path: Path) -> bool:
-    try:
-        with wave.open(str(path), "rb") as wf:
-            ch = wf.getnchannels()
-            sw = wf.getsampwidth()
-            rate = wf.getframerate()
-            if ch != 1 or sw != 2:
-                log.warning("Unsupported cached WAV (channels=%s, width=%s).", ch, sw)
-                return False
-            raw = wf.readframes(wf.getnframes())
-    except (OSError, wave.Error) as e:
-        log.warning("Could not read cached welcome audio: %s", e)
-        return False
-    if not raw:
-        return False
-    pcm_i16 = np.frombuffer(raw, dtype=np.int16)
-    pcm_f = pcm_i16.astype(np.float32) / 32768.0
-    with _playback_lock:
-        jarvis_speaking.set()
-        try:
-            sd.play(pcm_f, rate)
-            sd.wait()
-        except Exception as e:
-            log.warning("Could not play cached welcome audio: %s", e)
-            return False
-        finally:
-            jarvis_speaking.clear()
-    return True
-
-
-def _save_pcm_wav_file(path: Path, pcm_bytes: bytes, sample_rate: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    try:
-        with wave.open(str(tmp), "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(pcm_bytes)
-        tmp.replace(path)
-    except OSError:
-        if tmp.is_file():
-            tmp.unlink(missing_ok=True)
-        raise
 
 
 def _play_pcm_bytes(raw: bytes, sample_rate: int) -> None:
@@ -634,50 +535,19 @@ def _sanitize_for_speech(text: str) -> str:
 
 
 def speak_text(text: str) -> None:
-    """Speak arbitrary dynamic text (voice-command replies) — not cached, unlike the welcome line."""
+    """Speak arbitrary dynamic text (voice-command replies). Uses Sleep Mode's calmer/slower
+    voice settings (see jarvis_sleep_mode.tts_overrides) when Sleep Mode is active."""
     t = _sanitize_for_speech(text)
     if not t:
         return
     try:
-        raw, sample_rate = _piper_synthesize(t)
+        raw, sample_rate = _piper_synthesize(t, sleep_mode.tts_overrides())
     except Exception as e:
         log.warning("Piper TTS failed: %s", e)
         return
     if not raw:
         log.warning("Piper returned empty audio.")
         return
-    _play_pcm_bytes(raw, sample_rate)
-
-
-def speak_cached_phrase(phrase: str) -> None:
-    """Speak a fixed phrase (a clap-triggered greeting), using the on-disk WAV cache — keyed
-    on the phrase text itself — to skip repeat synthesis for phrases said more than once."""
-    if not JARVIS_WELCOME_ENABLED or not phrase.strip():
-        return
-    text = phrase.strip()
-    pcm_rate = _get_piper_voice().config.sample_rate
-
-    cache_path = _jarvis_welcome_cache_path(text, PIPER_VOICE, "piper", pcm_rate)
-    if JARVIS_WELCOME_CACHE_ENABLED and cache_path.is_file():
-        log.info("Playing cached phrase: %s", cache_path)
-        if _play_pcm_wav_file(cache_path):
-            return
-        log.warning("Cache miss after read failure; re-synthesizing with Piper.")
-
-    try:
-        raw, sample_rate = _piper_synthesize(text)
-    except Exception as e:
-        log.warning("Piper TTS failed: %s", e)
-        return
-    if not raw:
-        log.warning("Piper returned empty audio.")
-        return
-    if JARVIS_WELCOME_CACHE_ENABLED:
-        try:
-            _save_pcm_wav_file(cache_path, raw, sample_rate)
-            log.info("Saved phrase audio to cache: %s", cache_path)
-        except OSError as e:
-            log.warning("Could not save phrase cache: %s", e)
     _play_pcm_bytes(raw, sample_rate)
 
 
@@ -711,7 +581,6 @@ ALLOWED_SYSTEM_ACTIONS = (
     "media_stop",
 )
 ALLOWED_MOUSE_BUTTONS = ("left", "right", "middle")
-ALLOWED_MODES = ("serious", "normal")
 MEMORY_FACT_CATEGORIES = ("preference", "decision", "directive", "goal", "relationship", "fact")
 MAX_TOOL_CALLS_PER_TURN = 5  # cap on parallel tool calls Claude can request in one turn
 # Cap on observe-act-observe round trips per command. Each round trip resends the full
@@ -1008,13 +877,54 @@ AGENT_TOOLS = [
         },
     },
     {
-        "name": "switch_mode",
-        "description": "Switch Jarvis between serious mode and normal mode, replaying that mode's greeting.",
+        "name": "sleep_mode",
+        "description": (
+            "Turn Jarvis's Sleep Mode on, off, or check its status. Sleep Mode quiets "
+            "non-urgent notifications and reminders (family/whitelisted senders and urgent "
+            "items still get through), switches to dark mode, lowers system volume, "
+            "auto-pauses media after a while, blocks distracting sites, speaks more softly "
+            "and briefly, and logs how long you slept."
+        ),
         "input_schema": {
             "type": "object",
-            "properties": {"mode": {"type": "string", "enum": list(ALLOWED_MODES)}},
-            "required": ["mode"],
+            "properties": {"action": {"type": "string", "enum": ["on", "off", "toggle", "status"]}},
+            "required": ["action"],
         },
+    },
+    {
+        "name": "schedule_sleep_wakeup",
+        "description": (
+            "Set a smart wake-up alarm for when Sleep Mode is on: volume gradually ramps up "
+            "before the target time, Jarvis speaks a short morning greeting, and Sleep Mode "
+            "turns itself off."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "wake_time": {"type": "string", "description": "24h HH:MM, e.g. '07:30'"},
+                "ramp_minutes": {
+                    "type": "integer",
+                    "description": "how many minutes before wake_time to start the volume ramp, default 10",
+                },
+            },
+            "required": ["wake_time"],
+        },
+    },
+    {
+        "name": "play_ambient_sound",
+        "description": "Play calming ambient/sleep sounds to help you fall asleep.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(sleep_mode.AMBIENT_SOUNDS.keys())},
+            },
+            "required": ["kind"],
+        },
+    },
+    {
+        "name": "guided_breathing_exercise",
+        "description": "Speak a short guided breathing exercise to help you relax before sleep.",
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "send_whatsapp_message",
@@ -2328,6 +2238,14 @@ def queue_or_deliver_notification(text: str, urgent: bool = False) -> None:
         return
     _notify_phone(text)
     refresh_session_context()
+    if sleep_mode.should_suppress(urgent):
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds")}
+            )
+            _save_session_context_locked()
+        log.info("Queued non-urgent notification (Sleep Mode active): %r", text)
+        return
     if urgent or not (user_is_actively_working() and _is_preferred_work_hours()):
         speak_text(text)
         return
@@ -3017,6 +2935,7 @@ def _scheduler_loop() -> None:
             _check_due_reminders(now)
             _check_background_tasks(now)
             task_scheduler.tick(now, _run_queued_task, queue_or_deliver_notification)
+            sleep_mode.check_wakeup(now, _run_system_action, speak_text)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -3262,6 +3181,7 @@ def build_system_prompt(tone_line: str = "") -> str:
         + get_projects_context()
         + get_skills_context()
         + workflow.get_context_summary()
+        + sleep_mode.system_prompt_context_line()
     )
 
 
@@ -5166,16 +5086,30 @@ def _execute_tool(
                 )
             else:
                 result = "Missing window_title."
-        elif tool_name == "switch_mode":
-            mode = str(inp.get("mode") or "").strip()
-            if mode in ALLOWED_MODES:
-                if mode == "serious":
-                    run_serious_mode_actions()
-                else:
-                    run_normal_mode_actions()
-                result = f"Switched to {mode} mode."
+        elif tool_name == "sleep_mode":
+            action = str(inp.get("action") or "").strip().lower()
+            if action == "on":
+                result = sleep_mode.enable(_run_system_action, speak_text)
+            elif action == "off":
+                result = sleep_mode.disable()
+            elif action == "toggle":
+                result = sleep_mode.toggle(_run_system_action, speak_text)
+            elif action == "status":
+                result = sleep_mode.status()
             else:
-                result = f"{mode!r} is not a known mode."
+                result = f"{action!r} is not a known sleep_mode action."
+        elif tool_name == "schedule_sleep_wakeup":
+            result = sleep_mode.schedule_wakeup(
+                str(inp.get("wake_time") or ""), inp.get("ramp_minutes")
+            )
+        elif tool_name == "play_ambient_sound":
+            result = sleep_mode.play_ambient(str(inp.get("kind") or "rain"))
+        elif tool_name == "guided_breathing_exercise":
+            for line, pause_s in sleep_mode.guided_breathing_steps():
+                speak_text(line)
+                if pause_s:
+                    time.sleep(pause_s)
+            result = "Guided breathing exercise complete."
         elif tool_name == "send_whatsapp_message":
             contact = str(inp.get("contact_name") or "").strip()
             message = str(inp.get("message") or "").strip()
@@ -5614,16 +5548,6 @@ def _chrome_executable() -> str | None:
     return shutil.which("google-chrome") or shutil.which("chrome")
 
 
-def _opera_gx_executable() -> str | None:
-    if sys.platform == "win32":
-        local = os.environ.get("LOCALAPPDATA", "")
-        if local:
-            p = os.path.join(local, "Programs", "Opera GX", "opera.exe")
-            if os.path.isfile(p):
-                return p
-    return shutil.which("opera")
-
-
 def _primary_screen_size() -> tuple[int, int]:
     if sys.platform == "win32":
         import ctypes
@@ -5631,37 +5555,6 @@ def _primary_screen_size() -> tuple[int, int]:
         user32 = ctypes.windll.user32
         return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
     return (1920, 1080)
-
-
-def open_opera_gx_split_screen(url_left: str, url_right: str) -> None:
-    """Two Opera GX windows, side by side, each covering half the primary screen."""
-    exe = _opera_gx_executable()
-    if not exe:
-        log.warning("Could not find Opera GX (install it or add it to PATH).")
-        return
-    w, h = _primary_screen_size()
-    half_w = w // 2
-    popen_kw: dict = {
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
-    if sys.platform == "win32":
-        popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-    for x, url in ((0, url_left), (half_w, url_right)):
-        try:
-            subprocess.Popen(
-                [
-                    exe,
-                    "--new-window",
-                    f"--window-position={x},0",
-                    f"--window-size={half_w},{h}",
-                    url,
-                ],
-                **popen_kw,
-            )
-        except OSError as e:
-            log.warning("Could not open Opera GX for %s: %s", url, e)
 
 
 def _cursor_executable() -> str | None:
@@ -5771,62 +5664,8 @@ def _focus_existing_cursor_window_win32() -> bool:
     return True
 
 
-def run_normal_mode_actions() -> None:
-    """Triple clap: normal greeting + open Cursor. Runs outside the mic loop so it never
-    stalls capture; the greeting is spoken first so it doesn't overlap other audio."""
-    speak_cached_phrase(JARVIS_WELCOME_PHRASE)
-    open_cursor_window()
-
-
-def _fetch_live_weather(location_query: str) -> str:
-    """Live current conditions via wttr.in (free, no key). A web search's static result
-    snippets never contain the actual live reading, so that path can't give a real answer."""
-    url = "https://wttr.in/" + urllib.parse.quote(location_query) + "?format=j1"
-    req = urllib.request.Request(url, headers={"User-Agent": "curl/8"})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read())
-        cur = data["current_condition"][0]
-        desc = cur["weatherDesc"][0]["value"]
-        temp_c = cur["temp_C"]
-        feels_c = cur["FeelsLikeC"]
-        humidity = cur["humidity"]
-        return f"{desc}, {temp_c} degrees Celsius, feels like {feels_c}, {humidity} percent humidity"
-    except Exception as e:
-        log.warning("Could not fetch weather: %s", e)
-        return ""
-
-
-def _current_local_time_str(tz_name: str) -> str:
-    try:
-        now_local = datetime.now(ZoneInfo(tz_name))
-        return now_local.strftime("%I:%M %p").lstrip("0")
-    except Exception as e:
-        log.warning("Could not compute local time for %s: %s", tz_name, e)
-        return ""
-
-
-def run_serious_mode_actions() -> None:
-    """Double clap: serious-mode greeting, two split-screen Opera GX windows, then an
-    immediate weather + time report for JARVIS_SERIOUS_MODE_LOCATION. Runs outside the mic
-    loop so it never stalls capture."""
-    speak_cached_phrase(JARVIS_SERIOUS_MODE_PHRASE)
-    open_opera_gx_split_screen(
-        JARVIS_SERIOUS_MODE_OPERA_LEFT_URL, JARVIS_SERIOUS_MODE_OPERA_RIGHT_URL
-    )
-    weather = _fetch_live_weather(JARVIS_SERIOUS_MODE_WEATHER_QUERY)
-    time_str = _current_local_time_str(JARVIS_SERIOUS_MODE_TIMEZONE)
-    parts = []
-    if weather:
-        parts.append(f"The weather in {JARVIS_SERIOUS_MODE_LOCATION} is {weather}.")
-    if time_str:
-        parts.append(f"The local time there is {time_str}.")
-    report = " ".join(parts)
-    speak_text(report or "Sorry, I couldn't get the weather or time just now.")
-
-
 def open_cursor_window() -> None:
-    if not FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP and not OPEN_NEW_CURSOR_ON_DOUBLE_CLAP:
+    if not FOCUS_EXISTING_CURSOR_WINDOW and not OPEN_NEW_CURSOR_WINDOW:
         return
     exe = _cursor_executable()
     if not exe:
@@ -5842,13 +5681,13 @@ def open_cursor_window() -> None:
     if sys.platform == "win32":
         popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        if FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP:
+        if FOCUS_EXISTING_CURSOR_WINDOW:
             focused = (
                 sys.platform == "win32" and _focus_existing_cursor_window_win32()
             )
             if not focused:
                 subprocess.Popen([exe], **popen_kw)
-        if OPEN_NEW_CURSOR_ON_DOUBLE_CLAP:
+        if OPEN_NEW_CURSOR_WINDOW:
             subprocess.Popen([exe, "-n"], **popen_kw)
     except OSError as e:
         log.warning("Could not start or focus Cursor: %s", e)
@@ -5864,59 +5703,23 @@ def open_cursor_window() -> None:
 
 def main() -> int:
     blocksize = block_samples()
-    noise_floor = 1e-4
-    spike_armed = True
-    # Claps are counted as a burst: each clap within MAX_DOUBLE_GAP_S of the previous one
-    # extends the current burst; the burst is only "finished" once that much silence has
-    # passed, at which point the total count decides what happens (2 = serious mode,
-    # 3 = normal mode, anything else is ignored).
-    clap_count = 0
-    last_clap_time: float | None = None
-    last_mode_trigger_time = 0.0
-    # Push-to-talk stays locked until the first recognized clap pattern activates Jarvis,
-    # so the very first thing the script reacts to is a clap — not a stray command spoken
-    # beforehand.
-    jarvis_activated = False
-    ptt_locked_notice_shown = False
     ptt_active = False
     ptt_buffer: list[np.ndarray] = []
 
-    log.info(
-        "Listening (2 claps = serious mode, 3 claps = normal mode, %.2f–%.2fs apart, "
-        "rate=%d, block=%d ms, spike_ratio=%.1f, cooldown=%.2fs). Ctrl+C to stop.",
-        MIN_DOUBLE_GAP_S,
-        MAX_DOUBLE_GAP_S,
-        SAMPLE_RATE,
-        BLOCK_MS,
-        SPIKE_RATIO,
-        COOLDOWN_S,
-    )
-    if FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP:
+    if FOCUS_EXISTING_CURSOR_WINDOW:
         log.info(
-            "Normal mode (triple clap) will foreground an existing Cursor window "
-            "(Windows API); falls back to launching Cursor if none is running."
+            "Opening Cursor will foreground an existing instance (Windows API); "
+            "falls back to launching it if none is running."
         )
-    if OPEN_NEW_CURSOR_ON_DOUBLE_CLAP:
-        log.info("Normal mode (triple clap) will also open a new Cursor window (-n).")
+    if OPEN_NEW_CURSOR_WINDOW:
+        log.info("Opening Cursor will also open a new window (-n).")
     if CURSOR_OPEN_FULLSCREEN and sys.platform == "win32":
         log.info("Cursor will be sent F11 for fullscreen after focus/launch.")
-    if JARVIS_WELCOME_ENABLED:
-        log.info(
-            "Triple clap (normal mode) says: %r (Piper voice=%s)",
-            JARVIS_WELCOME_PHRASE.strip(),
-            PIPER_VOICE,
-        )
-        log.info(
-            "Double clap (serious mode) says: %r, then reports weather + time for %s",
-            JARVIS_SERIOUS_MODE_PHRASE,
-            JARVIS_SERIOUS_MODE_LOCATION,
-        )
-        _preload_piper_async()
+    _preload_piper_async()
     if JARVIS_PTT_ENABLED:
         log.info(
             "Push-to-talk: hold '%s' and speak, release to run the command "
-            "(Whisper=%s, Claude model=%s). Locked until the first recognized clap pattern. "
-            "Preloading Whisper in the background...",
+            "(Whisper=%s, Claude model=%s). Preloading Whisper in the background...",
             JARVIS_PTT_KEY,
             WHISPER_MODEL_SIZE,
             CLAUDE_MODEL,
@@ -5925,8 +5728,7 @@ def main() -> int:
 
     if JARVIS_TEXT_HOTKEY_ENABLED:
         log.info(
-            "Typed commands: hold '%s' for %.1fs to open a text box (no clap needed, "
-            "no mic involved).",
+            "Typed commands: hold '%s' for %.1fs to open a text box.",
             JARVIS_TEXT_HOTKEY_KEY,
             JARVIS_TEXT_HOTKEY_HOLD_S,
         )
@@ -5972,123 +5774,34 @@ def main() -> int:
                     log.warning("Input overflow; try a larger BLOCK_MS")
 
                 if jarvis_speaking.is_set():
-                    # Don't let the mic hear Jarvis's own voice and mistake it for a clap
-                    # or a command.
+                    # Don't let the mic hear Jarvis's own voice and mistake it for a command.
                     continue
 
                 if JARVIS_PTT_ENABLED:
                     pressed = _keyboard_is_pressed(JARVIS_PTT_KEY)
-                    if not jarvis_activated:
-                        if pressed and not ptt_locked_notice_shown:
-                            ptt_locked_notice_shown = True
-                            log.info(
-                                "Push-to-talk is locked until a clap (2 = serious mode, "
-                                "3 = normal mode) activates Jarvis — ignoring for now."
+                    if pressed and not ptt_active:
+                        ptt_active = True
+                        ptt_buffer = []
+                        log.info("Push-to-talk: listening...")
+                    if ptt_active:
+                        ptt_buffer.append(data.copy())
+                        if not pressed:
+                            ptt_active = False
+                            audio = (
+                                np.concatenate(ptt_buffer, axis=0)
+                                if ptt_buffer
+                                else np.empty((0, CHANNELS), dtype=np.float32)
                             )
-                    else:
-                        if pressed and not ptt_active:
-                            ptt_active = True
                             ptt_buffer = []
-                            log.info("Push-to-talk: listening...")
-                        if ptt_active:
-                            ptt_buffer.append(data.copy())
-                            if not pressed:
-                                ptt_active = False
-                                audio = (
-                                    np.concatenate(ptt_buffer, axis=0)
-                                    if ptt_buffer
-                                    else np.empty((0, CHANNELS), dtype=np.float32)
-                                )
-                                ptt_buffer = []
-                                log.info(
-                                    "Push-to-talk: released (%.2fs), transcribing...",
-                                    audio.shape[0] / SAMPLE_RATE,
-                                )
-                                threading.Thread(
-                                    target=handle_voice_command,
-                                    args=(audio, SAMPLE_RATE),
-                                    daemon=True,
-                                ).start()
-                            continue
-
-                if jarvis_activated:
-                    # Claps only matter for the initial activation. Once Jarvis is up, mode
-                    # switching happens by voice ("switch to serious/normal mode") instead —
-                    # this also means Jarvis's own TTS can never be misheard as a later clap.
-                    continue
-
-                level = rms_mono(data)
-
-                quiet_gate = noise_floor * QUIET_GATE_MULT
-                if level < quiet_gate:
-                    noise_floor = NOISE_FLOOR_ALPHA * noise_floor + (
-                        1.0 - NOISE_FLOOR_ALPHA
-                    ) * level
-                    noise_floor = max(noise_floor, 1e-7)
-
-                threshold = max(noise_floor * SPIKE_RATIO, MIN_RMS)
-                now = time.monotonic()
-                retrigger_level = threshold * RETRIGGER_RATIO
-
-                if level < retrigger_level:
-                    spike_armed = True
-
-                if (
-                    spike_armed
-                    and level >= threshold
-                    and (now - last_mode_trigger_time) >= COOLDOWN_S
-                ):
-                    spike_armed = False
-                    if last_clap_time is None or (now - last_clap_time) > MAX_DOUBLE_GAP_S:
-                        clap_count = 1
-                        last_clap_time = now
-                    else:
-                        gap = now - last_clap_time
-                        if gap < MIN_DOUBLE_GAP_S:
-                            pass  # bounce/chatter from the same clap; don't count it
-                        else:
-                            clap_count += 1
-                            last_clap_time = now
-
-                # A burst is "finished" once enough silence has passed since the last clap
-                # in it — only then do we know the final count and can act on it.
-                if (
-                    clap_count > 0
-                    and last_clap_time is not None
-                    and (now - last_clap_time) > MAX_DOUBLE_GAP_S
-                ):
-                    finished_count = clap_count
-                    clap_count = 0
-                    last_clap_time = None
-                    last_mode_trigger_time = now
-                    if finished_count == 2:
-                        jarvis_activated = True
-                        log.info(
-                            "Double clap detected (rms=%.5f, noise_floor=%.5f, threshold=%.5f) "
-                            "— activating serious mode (push-to-talk unlocked). Claps are now "
-                            "ignored; say \"switch to normal mode\" to change modes.",
-                            level,
-                            noise_floor,
-                            threshold,
-                        )
-                        threading.Thread(target=run_serious_mode_actions, daemon=True).start()
-                    elif finished_count == 3:
-                        jarvis_activated = True
-                        log.info(
-                            "Triple clap detected (rms=%.5f, noise_floor=%.5f, threshold=%.5f) "
-                            "— activating normal mode (push-to-talk unlocked). Claps are now "
-                            "ignored; say \"switch to serious mode\" to change modes.",
-                            level,
-                            noise_floor,
-                            threshold,
-                        )
-                        threading.Thread(target=run_normal_mode_actions, daemon=True).start()
-                    else:
-                        log.info(
-                            "Clap burst of %d ignored (recognized: 2 = serious mode, "
-                            "3 = normal mode).",
-                            finished_count,
-                        )
+                            log.info(
+                                "Push-to-talk: released (%.2fs), transcribing...",
+                                audio.shape[0] / SAMPLE_RATE,
+                            )
+                            threading.Thread(
+                                target=handle_voice_command,
+                                args=(audio, SAMPLE_RATE),
+                                daemon=True,
+                            ).start()
 
     except KeyboardInterrupt:
         log.info("Stopped.")

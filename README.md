@@ -1,11 +1,6 @@
-# Desktop clap → Jarvis-style assistant
+# Jarvis desktop voice assistant
 
-Python script that listens to your default microphone for two clap patterns:
-
-- **2 claps (double clap) → serious mode**: a different greeting, then an immediate live weather + time report for Ganmo, Ilorin, Kwara State.
-- **3 claps (rapid) → normal mode**: "Hey boss, how can I help you today?" and focuses/launches Cursor.
-
-Either pattern activates Jarvis and unlocks **push-to-talk voice commands** (hold a key, speak, release) — until then, push-to-talk is locked, so the first thing the script reacts to is a clap, not a stray command spoken beforehand. **Claps only matter for that initial activation** — once Jarvis is up, it stops listening for clap patterns entirely (so its own TTS playback can never be misheard as a later clap) and mode-switching happens by voice instead: say "switch to serious mode" or "switch to normal mode." Local Whisper transcribes, Claude Haiku decides what to do, **Piper** (local, offline, free — no account, no API key) speaks the reply. See constants at the top of `jarvis.py` for behavior and tuning.
+Python script offering **push-to-talk voice commands** (hold a key, speak, release) plus a typed-command hotkey, both running local Whisper transcription and a real Claude tool-use loop against this machine. Local Whisper transcribes, Claude decides what to do, **Piper** (local, offline, free — no account, no API key) speaks the reply. See constants at the top of `jarvis.py` for behavior and tuning.
 
 ## Setup
 
@@ -21,7 +16,7 @@ The script loads a **`.env` file** in the same folder as `jarvis.py` (via `pytho
 
 ### Text-to-speech: Piper (local, free, no key needed)
 
-Spoken output — both clap greetings and voice-command replies — uses [Piper](https://github.com/OHF-Voice/piper1-gpl), a local neural TTS engine. It runs entirely on your CPU: no account, no API key, no internet needed after the one-time voice model download (~60MB, automatic on first use), and it can never bill you or rate-limit you. See `PIPER_VOICE` below to pick a different voice.
+Spoken output — voice-command replies — uses [Piper](https://github.com/OHF-Voice/piper1-gpl), a local neural TTS engine. It runs entirely on your CPU: no account, no API key, no internet needed after the one-time voice model download (~60MB, automatic on first use), and it can never bill you or rate-limit you. See `PIPER_VOICE` below to pick a different voice.
 
 ### Required (push-to-talk voice commands)
 
@@ -37,7 +32,6 @@ Without this, holding the push-to-talk key still transcribes locally but no acti
 | -------- | ------- |
 | `PIPER_VOICE` | Piper voice model name (default `en_US-lessac-medium`). Browse options at the [Piper voice samples page](https://rhasspy.github.io/piper-samples/). Downloaded automatically on first use. |
 | `PIPER_VOICES_DIR` | Custom folder for downloaded Piper voice models (default: `.cache/piper_voices/` under the project). |
-| `JARVIS_WELCOME_CACHE_DIR` | Custom folder for cached welcome WAV (default: `.cache/jarvis_welcome/` under the project). |
 | `JARVIS_MEMORY_DB_PATH` | Custom path for the SQLite memory database (default: `jarvis_memory.db` in the project folder). |
 | `JARVIS_PTT_KEY` | Push-to-talk key name, per the `keyboard` package (default `left shift`). Hold to record, release to send. |
 | `WHISPER_MODEL_SIZE` | Local Whisper model size: `tiny`, `base`, `small`, `medium`, ... (default `base`). Bigger = more accurate, slower, more RAM. Downloaded once on first use. |
@@ -63,7 +57,7 @@ Allow the microphone if Windows prompts you. Stop with **Ctrl+C**.
 
 Don't want to talk out loud? Hold **Right Ctrl** (or your `JARVIS_TEXT_HOTKEY_KEY`) for 2 seconds and a small always-on-top text box pops up. Type your command and press **Enter** — it goes straight into the same Claude tool loop as a voice command (no Whisper, no mic) and Jarvis speaks the reply via Piper as usual. Press **Escape**, click away, or close the box to cancel without sending anything.
 
-Unlike push-to-talk, this isn't locked behind the clap activation — since there's no live mic involved, there's no risk of a stray sound being misread as a command, so it works as soon as Jarvis starts.
+Unlike push-to-talk, there's no live mic involved, so there's no risk of a stray sound being misread as a command — it works as soon as Jarvis starts.
 
 | Variable | Purpose |
 | -------- | ------- |
@@ -74,7 +68,7 @@ Set `JARVIS_TEXT_HOTKEY_ENABLED = False` at the top of `jarvis.py` to disable it
 
 ## Talking to Jarvis (push-to-talk)
 
-Clap twice (serious mode) or three times rapidly (normal mode) first — push-to-talk is locked until Jarvis is activated by one of those patterns. Then hold **Left Shift** (or your `JARVIS_PTT_KEY`), say a command, then release. On release:
+Hold **Left Shift** (or your `JARVIS_PTT_KEY`), say a command, then release. On release:
 
 1. **Local Whisper** transcribes what you said (no cloud call, no cost).
 2. The transcript goes to **Claude** running a real tool-use loop (`run_agent_loop` in `jarvis.py`): Claude picks a tool, sees the result, and decides what to do next — it can call several tools in a row before replying, up to `MAX_AGENT_ITERATIONS` round trips. This is **not** a fixed menu anymore.
@@ -98,7 +92,10 @@ Named tools (more reliable — Claude prefers these when one fits):
 | "play some lofi on youtube" | Opens a song/search on Spotify or YouTube (`play_media`) |
 | "open cursor" / "open notepad" / "open calculator" / "open explorer" / "open chrome" / "open spotify" | Launches or focuses that app (`open_app`, allowlist in `ALLOWED_APPS`) |
 | "lock my computer" / "minimize everything" / "minimize this window" / "turn the volume up/down" / "mute" / "skip this track" / "pause the music" | System-level actions and media keys (`system_action`) |
-| "switch to serious mode" / "switch to normal mode" | Re-runs that mode's greeting (`switch_mode`) |
+| "turn on sleep mode" / "turn off sleep mode" / "is sleep mode on?" | Quiets non-urgent notifications, dims to dark mode, lowers volume, and speaks more softly (`sleep_mode`) |
+| "wake me up at 7:30" | Sets a smart wake-up alarm with a gradual volume ramp (`schedule_sleep_wakeup`) |
+| "play some rain sounds" | Ambient/sleep sounds (`play_ambient_sound`) |
+| "guide me through a breathing exercise" | Spoken guided breathing exercise (`guided_breathing_exercise`) |
 | "what does this error say" / "summarize this page" / "fix this error" | Screenshot → Claude vision (`read_screen`); if you explicitly ask for a fix, it's typed at your cursor automatically. **The screenshot is sent to Anthropic's API.** |
 | "search for X" / "look up X" | DuckDuckGo search, summarized (`web_search`) |
 | "type ..." / dictating a message | Types exact text at your cursor via `type_text` — **only types, never presses Enter** |
@@ -151,7 +148,7 @@ Add a skill by hand (drop a file in `skills/`):
 ```
 Or just ask out loud — "turn this into a skill for next time" / "remember these steps as your morning briefing" — and Claude calls `save_skill` itself to write the file. A malformed skill file is skipped with a console warning rather than breaking the others. Override the directory with `JARVIS_SKILLS_DIR`.
 
-**Proactive/scheduled skills:** add an optional `"schedule"` to any skill file and Jarvis runs it on its own — no clap, no push-to-talk — and speaks whatever it produces, unprompted:
+**Proactive/scheduled skills:** add an optional `"schedule"` to any skill file and Jarvis runs it on its own — no push-to-talk needed — and speaks whatever it produces, unprompted:
 ```json
 { "schedule": { "daily_at": "08:00" } }
 ```
@@ -232,7 +229,7 @@ Both are tracked in a `background_tasks` table in `jarvis_memory.db` and polled/
 
 **This one wasn't self-tested end-to-end** — Claude Code's own safety classifier blocks a running Claude Code session from spawning or even probing another `claude` CLI invocation ("create unsafe agents"), so I couldn't verify the actual subprocess call, its flags, or the JSON output shape (`{"result": "..."}`, per `claude --help`) against a real run. Test it yourself: say something like "delegate to Claude Code: add a docstring to X function" and confirm it actually starts, keeps Jarvis responsive to other commands, and reports back correctly when it finishes — if the JSON parsing or flags need adjusting, that'll show up as an error string in the completion report instead of a real result.
 
-The first press after starting the script may be slow while the Whisper model finishes loading in the background (it starts loading at startup, and downloads once on first-ever run). Similarly, the very first clap/greeting may pause briefly while the Piper voice model downloads (also one-time, also automatic).
+The first press after starting the script may be slow while the Whisper model finishes loading in the background (it starts loading at startup, and downloads once on first-ever run). Similarly, the first TTS reply may pause briefly while the Piper voice model downloads (also one-time, also automatic).
 
 ## Tuning
 
@@ -240,20 +237,14 @@ Edit the constants at the top of `jarvis.py`:
 
 | Constant      | Effect                                                            |
 | ------------- | ----------------------------------------------------------------- |
-| `SPIKE_RATIO` | Increase if you get false triggers; decrease if claps are missed. |
-| `COOLDOWN_S`  | Minimum time between two logged claps.                            |
 | `BLOCK_MS`    | Larger = slightly less CPU, a bit less precise timing.            |
-| `MIN_RMS`     | Floor on how loud a block must be (helps in very quiet rooms).  |
 | `SAMPLE_RATE` | Try `48000` if your device does not like `44100`.                 |
-| `JARVIS_WELCOME_PHRASE` | What the double clap says. |
 
 ## Troubleshooting
 
 - **Wrong or quiet mic:** On startup the script probes your default Windows input. If it is silent, it **auto-selects** the loudest working mic. To force a specific device, set `JARVIS_INPUT_DEVICE` in `.env` (index or name substring from `sounddevice.query_devices()`).
 - **PortAudio / audio errors:** Update audio drivers or try another `SAMPLE_RATE`.
-- **No reaction to claps:** Lower `SPIKE_RATIO` slightly or speak/clap closer to the mic.
-- **Spam logs:** Raise `SPIKE_RATIO` or `COOLDOWN_S`.
-- **No welcome speech / TTS errors:** Check the log for a Piper download or load failure — confirm `piper-tts` installed correctly (`pip show piper-tts`) and that `.cache/piper_voices/` has both the `.onnx` and `.onnx.json` files for `PIPER_VOICE`.
+- **No speech / TTS errors:** Check the log for a Piper download or load failure — confirm `piper-tts` installed correctly (`pip show piper-tts`) and that `.cache/piper_voices/` has both the `.onnx` and `.onnx.json` files for `PIPER_VOICE`.
 - **Push-to-talk key does nothing:** The `keyboard` package's global hook can be blocked by Windows permissions; try running the terminal as Administrator. Also confirm `JARVIS_PTT_KEY` matches a name `keyboard` recognizes (e.g. `f8`, `caps lock`, `right ctrl`).
 - **Voice commands transcribe but nothing happens:** Set `ANTHROPIC_API_KEY` in `.env`.
 - **First push-to-talk is slow:** The local Whisper model downloads once (~150 MB for `base`) and loads into memory on first use; subsequent presses are fast.
