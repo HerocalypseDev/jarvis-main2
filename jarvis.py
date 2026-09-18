@@ -54,6 +54,7 @@ import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
 import jarvis_voice_tone as voice_tone
 import jarvis_sleep_mode as sleep_mode
+import jarvis_cache as cache
 import jarvis_dashboard as dashboard
 
 # --- tuning knobs -----------------------------------------------------------
@@ -512,6 +513,11 @@ PIPER_VOICE = (os.environ.get("PIPER_VOICE") or "en_US-lessac-medium").strip() o
 _piper_voice_obj = None
 _piper_lock = threading.Lock()
 
+# On-disk TTS audio cache (.cache/tts/, gitignored): repeated phrases ("Message received.",
+# reminder/sleep-mode lines, short acks) skip synthesis entirely. JARVIS_TTS_CACHE=0 disables.
+TTS_CACHE_MAX_CHARS = 200
+_tts_disk_cache = cache.TTSDiskCache(Path(__file__).resolve().parent / ".cache" / "tts")
+
 
 def _piper_voices_dir() -> Path:
     base = Path(__file__).resolve().parent
@@ -650,20 +656,48 @@ def speak_text(text: str) -> None:
     if not t:
         return
 
+    # Disk cache (short phrases only — long one-off replies never repeat and would just churn
+    # the cache). Keyed per engine, so a Piper fallback clip is never stored under the Fish
+    # key and later served in place of the real voice; on a Fish outage the Fish key can still
+    # hit from earlier good audio, which is strictly better than falling back.
+    fish_prosody = sleep_mode.fish_audio_prosody_overrides()
+    piper_overrides = sleep_mode.tts_overrides()
+    use_cache = cache.enabled("tts") and len(t) <= TTS_CACHE_MAX_CHARS
+    fish_key = piper_key = None
+    if use_cache:
+        piper_key = cache.stable_hash("piper", PIPER_VOICE, t, piper_overrides)
+        if FISH_AUDIO_API_KEY:
+            fish_key = cache.stable_hash(
+                "fish", FISH_AUDIO_MODEL, FISH_AUDIO_VOICE_ID, t, fish_prosody
+            )
+        for key in (fish_key, piper_key):
+            hit = _tts_disk_cache.get(key) if key else None
+            if hit:
+                cache.record("tts", True, repr(t[:30]))
+                _play_pcm_bytes(*hit)
+                return
+        cache.record("tts", False, repr(t[:30]))
+
     raw, sample_rate = b"", 0
+    used_key = None
     if FISH_AUDIO_API_KEY:
         try:
-            raw, sample_rate = _fish_audio_synthesize(t, sleep_mode.fish_audio_prosody_overrides())
+            raw, sample_rate = _fish_audio_synthesize(t, fish_prosody)
+            used_key = fish_key
         except Exception as e:
             log.warning("Fish Audio TTS failed, falling back to Piper: %s", e)
             raw = b""
 
     if not raw:
         try:
-            raw, sample_rate = _piper_synthesize(t, sleep_mode.tts_overrides())
+            raw, sample_rate = _piper_synthesize(t, piper_overrides)
+            used_key = piper_key
         except Exception as e:
             log.warning("Piper TTS failed: %s", e)
             return
+
+    if raw and used_key:
+        _tts_disk_cache.put(used_key, raw, sample_rate)
 
     if not raw:
         log.warning("TTS returned empty audio.")
@@ -1838,6 +1872,28 @@ def _urlopen_hard_timeout(req: urllib.request.Request, timeout: int) -> bytes:
     return outcome.get("data", b"")
 
 
+_cache_ttl_1h_rejected = False
+
+
+def _has_cache_ttl(obj) -> bool:
+    if isinstance(obj, dict):
+        return ("cache_control" in obj and "ttl" in (obj["cache_control"] or {})) or any(
+            _has_cache_ttl(v) for v in obj.values()
+        )
+    return isinstance(obj, list) and any(_has_cache_ttl(v) for v in obj)
+
+
+def _strip_cache_ttl(obj):
+    if isinstance(obj, dict):
+        return {
+            k: ({kk: vv for kk, vv in v.items() if kk != "ttl"} if k == "cache_control" and isinstance(v, dict) else _strip_cache_ttl(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_strip_cache_ttl(v) for v in obj]
+    return obj
+
+
 def _claude_request(body: dict, timeout: int) -> dict | None:
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
@@ -1864,6 +1920,15 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
             except Exception:
                 detail = "(could not read response body)"
             log.warning("Claude request failed (attempt %d): HTTP %d: %s", attempt, e.code, detail)
+            if e.code == 400 and "ttl" in detail.lower() and _has_cache_ttl(body):
+                # The 1h cache TTL was rejected (unsupported on this account/API version):
+                # drop to the plain 5-minute breakpoint for the rest of this run and retry now,
+                # rather than failing every command over an optimization.
+                global _cache_ttl_1h_rejected
+                _cache_ttl_1h_rejected = True
+                log.warning("Anthropic rejected the 1h cache TTL; falling back to 5-minute caching.")
+                encoded = json.dumps(_strip_cache_ttl(body)).encode()
+                continue
             if not transient or attempt == CLAUDE_MAX_ATTEMPTS:
                 return None
             time.sleep(CLAUDE_RETRY_DELAY_S)
@@ -1940,6 +2005,15 @@ def _summarize_for_speech(text: str) -> str:
     text = text or ""
     if len(text) < SPEECH_SUMMARY_MIN_CHARS:
         return text
+    # Same long reply -> same summary: skip the extra Claude call. Persisted in SQLite so it
+    # survives restarts (JARVIS_SUMMARY_CACHE=0 disables).
+    summary_key = None
+    if cache.enabled("summary"):
+        summary_key = cache.stable_hash(CLAUDE_MODEL, text[:4000])
+        cached_summary = _speech_summary_kv().get(summary_key, SPEECH_SUMMARY_CACHE_MAX_AGE_S)
+        cache.record("summary", cached_summary is not None)
+        if cached_summary:
+            return cached_summary
     body = {
         "model": CLAUDE_MODEL,
         "max_tokens": 120,
@@ -1955,7 +2029,23 @@ def _summarize_for_speech(text: str) -> str:
     if data is None:
         return text
     summary = _claude_text(data).strip()
+    if summary and summary_key:
+        _speech_summary_kv().put(summary_key, summary)
     return summary or text
+
+
+SPEECH_SUMMARY_CACHE_MAX_AGE_S = 7 * 24 * 3600
+_speech_summary_kv_obj: cache.SqliteKV | None = None
+
+
+def _speech_summary_kv() -> cache.SqliteKV:
+    # Lazy: _memory_db_connect/_memory_db_lock are defined further down this module.
+    global _speech_summary_kv_obj
+    if _speech_summary_kv_obj is None:
+        _speech_summary_kv_obj = cache.SqliteKV(
+            "speech_summary_cache", _memory_db_connect, _memory_db_lock
+        )
+    return _speech_summary_kv_obj
 
 
 # --- persistent memory: SQLite-backed chat history + user profile facts --------------
@@ -2990,7 +3080,27 @@ def _skills_dir() -> Path:
     return Path(__file__).resolve().parent / SKILLS_DIR_NAME
 
 
+_skills_cache: tuple[tuple, list[dict]] | None = None
+
+
 def _load_skills() -> list[dict]:
+    """Skills from disk, re-parsed only when a skills/*.json file was added, removed or
+    modified (checked via a cheap name+mtime signature) instead of on every agent turn."""
+    global _skills_cache
+    directory = _skills_dir()
+    try:
+        sig = tuple((p.name, p.stat().st_mtime_ns) for p in sorted(directory.glob("*.json")))
+    except OSError:
+        return _read_skills_from_disk()
+    cached = _skills_cache
+    if cached is not None and cached[0] == sig:
+        return [dict(s) for s in cached[1]]
+    skills = _read_skills_from_disk()
+    _skills_cache = (sig, skills)
+    return [dict(s) for s in skills]
+
+
+def _read_skills_from_disk() -> list[dict]:
     """Reads every *.json skill file from the skills directory. A malformed file is skipped
     with a warning instead of breaking the others or the whole system prompt."""
     directory = _skills_dir()
@@ -3627,32 +3737,43 @@ def build_system_blocks(tone_line: str = "") -> list[dict]:
         + get_active_facts_context()
         + get_projects_context()
         + get_skills_context()
-        + workflow.get_context_summary()
     )
     now = datetime.now()
     volatile = (
         f"Right now it is {now.strftime('%A, %Y-%m-%d %H:%M')} (local time)."
         + tone_line
+        + workflow.get_context_summary()
         + sleep_mode.system_prompt_context_line()
     )
-    return [
-        {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": volatile},
-    ]
+    stable_block: dict = {"type": "text", "text": stable}
+    if cache.enabled("prompt"):
+        stable_block["cache_control"] = _long_cache_control()
+    return [stable_block, {"type": "text", "text": volatile}]
+
+
+def _long_cache_control() -> dict:
+    """Breakpoint for the big, rarely-changing prefix (tools + stable system block). Defaults
+    to the 1-hour TTL (JARVIS_PROMPT_CACHE_TTL=5m for the plain 5-minute one): a 1h write costs
+    2x instead of 1.25x, but survives idle gaps between voice commands so far fewer commands
+    pay a write at all. Anthropic requires longer-TTL breakpoints to come *before* shorter ones
+    — tools, then system, then the (5-minute) message breakpoint — which is the order here."""
+    if _cache_ttl_1h_rejected or (os.environ.get("JARVIS_PROMPT_CACHE_TTL") or "1h").strip().lower() == "5m":
+        return {"type": "ephemeral"}
+    return {"type": "ephemeral", "ttl": "1h"}
 
 
 def _cached_tools(tools: list[dict]) -> list[dict]:
     """Copy of tools with a cache breakpoint on the last one (caches the whole tool list)."""
-    if not tools:
+    if not tools or not cache.enabled("prompt"):
         return tools
-    return tools[:-1] + [{**tools[-1], "cache_control": {"type": "ephemeral"}}]
+    return tools[:-1] + [{**tools[-1], "cache_control": _long_cache_control()}]
 
 
 def _messages_with_cache_breakpoint(messages: list[dict]) -> list[dict]:
     """Copy of messages with a cache breakpoint on the final content block, so each agent-loop
     round trip reads everything before it (history + earlier tool results) from cache instead
     of re-billing it. Never mutates the caller's list — the marker must not accumulate."""
-    if not messages:
+    if not messages or not cache.enabled("prompt"):
         return messages
     last = messages[-1]
     content = last.get("content")
@@ -3666,16 +3787,73 @@ def _messages_with_cache_breakpoint(messages: list[dict]) -> list[dict]:
     return messages[:-1] + [{**last, "content": blocks}]
 
 
+_last_claude_agent_call = 0.0
+
+
 def _log_cache_usage(data: dict, label: str) -> None:
+    global _last_claude_agent_call
+    _last_claude_agent_call = time.time()
     usage = data.get("usage") or {}
+    read = usage.get("cache_read_input_tokens", 0) or 0
     log.info(
         "%s tokens: %s uncached in, %s cache-read, %s cache-write, %s out",
         label,
         usage.get("input_tokens", 0),
-        usage.get("cache_read_input_tokens", 0),
+        read,
         usage.get("cache_creation_input_tokens", 0),
         usage.get("output_tokens", 0),
     )
+    if cache.enabled("prompt"):
+        cache.record("prompt", hit=read > 0)
+
+
+def _prompt_cache_warm_request() -> None:
+    """One 1-token request carrying exactly the prefix run_agent_loop sends (same tools, same
+    stable system block), so the first real command after startup already reads from cache.
+    (max_tokens=0 is rejected by the Messages API — 1 is the minimum.) Never raises."""
+    try:
+        data = _claude_request(
+            {
+                "model": CLAUDE_MODEL,
+                "max_tokens": 1,
+                "system": build_system_blocks(),
+                "messages": [{"role": "user", "content": "warmup"}],
+                "tools": _cached_tools(AGENT_TOOLS + get_mcp_tool_schemas()),
+            },
+            timeout=30,
+        )
+        if data is not None:
+            _log_cache_usage(data, "prompt-cache warmup")
+    except Exception as e:
+        log.debug("Prompt-cache warmup failed: %s", e)
+
+
+def _prompt_cache_keepwarm_loop(interval_s: float) -> None:
+    while True:
+        time.sleep(interval_s)
+        # Only re-warm when the prefix would otherwise expire unused — a real command in the
+        # last interval already refreshed it for free.
+        if time.time() - _last_claude_agent_call >= interval_s:
+            _prompt_cache_warm_request()
+
+
+def start_prompt_cache_warmup() -> None:
+    """Startup pre-warm (background thread; get_mcp_tool_schemas blocks until MCP has
+    connected, and the tool list must match what agent calls send or the prefix won't hit).
+    Optional periodic keep-warm via JARVIS_PROMPT_CACHE_KEEPWARM_MIN (default 0 = off: with the
+    1h TTL every real command refreshes the cache, and a keep-warm read of the ~22k-token prefix
+    every few minutes around the clock would cost more than most idle gaps save)."""
+    if not (cache.enabled("prompt") and (os.environ.get("ANTHROPIC_API_KEY") or "").strip()):
+        return
+    threading.Thread(target=_prompt_cache_warm_request, daemon=True).start()
+    try:
+        minutes = float(os.environ.get("JARVIS_PROMPT_CACHE_KEEPWARM_MIN") or 0)
+    except ValueError:
+        minutes = 0
+    if minutes > 0:
+        threading.Thread(
+            target=_prompt_cache_keepwarm_loop, args=(minutes * 60,), daemon=True
+        ).start()
 
 
 def _launch_app_notepad() -> None:
@@ -5444,7 +5622,73 @@ def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result:
             conn.close()
 
 
+# --- read-only tool result cache + reply cache ----------------------------------------------
+# Tools that only *read* state, with how long (seconds) a result may be reused. Anything not in
+# this table — every mutating tool, every mcp_* tool, anything unknown — is never cached, and
+# running one clears both caches below, since it may have changed what a read would return.
+READONLY_TOOL_TTLS: dict[str, float] = {
+    "system_status": 20,
+    "list_reminders": 30,
+    "list_task_queue": 30,
+    "list_background_tasks": 30,
+    "get_workflow_status": 30,
+    "get_recent_file_events": 30,
+    "list_open_windows": 15,
+    "list_watched_folders": 60,
+    "list_window_layouts": 60,
+    "recall_facts": 60,
+    "quick_recall": 60,
+    "semantic_recall": 60,
+    "web_search": 600,
+}
+# web_search's summary is written for the transcript that asked (web_search_and_summarize takes
+# it), so that tool's cache key includes it; the others depend only on their arguments.
+_TRANSCRIPT_KEYED_TOOLS = {"web_search"}
+_tool_result_cache = cache.TTLCache(256)
+_reply_cache = cache.TTLCache(128)
+_FAILED_RESULT_PREFIXES = ("couldn't", "could not", "no results", "unrecognized", "error", "failed", "skipped")
+
+
+def _looks_failed(result: str) -> bool:
+    r = (result or "").strip().lower()
+    return not r or r.startswith(_FAILED_RESULT_PREFIXES) or "unavailable" in r[:60]
+
+
+def _invalidate_read_caches() -> None:
+    _tool_result_cache.clear()
+    _reply_cache.clear()
+
+
 def _execute_tool(
+    tool_name: str, tool_input: dict, transcript: str, skip_confirmation: bool = False
+) -> str:
+    """_execute_tool_impl behind the read-only result cache: identical read-only calls within
+    their TTL reuse the earlier result (JARVIS_TOOL_CACHE=0 disables); any other tool runs
+    normally and then clears the read caches."""
+    ttl = READONLY_TOOL_TTLS.get(tool_name)
+    if ttl is None:
+        try:
+            return _execute_tool_impl(tool_name, tool_input, transcript, skip_confirmation)
+        finally:
+            _invalidate_read_caches()
+    if not cache.enabled("tool") or skip_confirmation:
+        return _execute_tool_impl(tool_name, tool_input, transcript, skip_confirmation)
+    key = cache.stable_hash(
+        tool_name, tool_input or {}, cache.normalize_text(transcript) if tool_name in _TRANSCRIPT_KEYED_TOOLS else ""
+    )
+    hit = _tool_result_cache.get(key)
+    if hit is not cache.MISS:
+        cache.record("tool", True, tool_name)
+        _log_action_audit(tool_name, tool_input or {}, transcript, f"(cached) {hit}")
+        return hit
+    cache.record("tool", False, tool_name)
+    result = _execute_tool_impl(tool_name, tool_input, transcript, skip_confirmation)
+    if not _looks_failed(result):
+        _tool_result_cache.put(key, result, ttl)
+    return result
+
+
+def _execute_tool_impl(
     tool_name: str, tool_input: dict, transcript: str, skip_confirmation: bool = False
 ) -> str:
     """Runs one tool call and returns the text to feed back to Claude as its tool_result.
@@ -5805,9 +6049,24 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
         log.warning("Set ANTHROPIC_API_KEY in the environment for voice command interpretation.")
         return ""
 
+    # Reply cache: only ever populated by turns that used read-only tools exclusively (see the
+    # store below), so a hit can only replay an informational answer, never skip an action.
+    reply_key = None
+    if cache.enabled("reply") and cache.is_self_contained(transcript):
+        reply_key = cache.stable_hash(
+            cache.normalize_text(transcript), sleep_mode.system_prompt_context_line()
+        )
+        cached_reply = _reply_cache.get(reply_key)
+        cache.record("reply", cached_reply is not cache.MISS, repr(transcript[:40]))
+        if cached_reply is not cache.MISS:
+            _append_history(transcript, cached_reply)
+            return cached_reply
+
     messages: list[dict] = _history_snapshot() + [{"role": "user", "content": transcript}]
     reply_parts: list[str] = []
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
+    used_tool_names: list[str] = []
+    any_tool_failed = False
     tools = AGENT_TOOLS + get_mcp_tool_schemas()
     tone_line = voice_tone.tone_context_line(tone) if tone else ""
     # Built once per command, not per round trip: the volatile block (clock minute) sits
@@ -5858,9 +6117,19 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
                 {"type": "tool_result", "tool_use_id": tu.get("id"), "content": result_text}
             )
             last_tool_result_text = result_text
+            used_tool_names.append(tu.get("name", ""))
+            any_tool_failed = any_tool_failed or _looks_failed(result_text)
         messages.append({"role": "user", "content": tool_results})
 
     reply = " ".join(p.strip() for p in reply_parts if p.strip())
+    if (
+        reply_key
+        and reply
+        and used_tool_names
+        and not any_tool_failed
+        and all(n in READONLY_TOOL_TTLS for n in used_tool_names)
+    ):
+        _reply_cache.put(reply_key, reply, min(READONLY_TOOL_TTLS[n] for n in used_tool_names))
     if not reply and last_tool_result_text:
         # Observed live: Claude sometimes ends a turn with only a tool call and no spoken text
         # at all — most consequentially for a staged catastrophic confirmation (run_shell/
@@ -6321,6 +6590,7 @@ def main() -> int:
             log.warning("Dashboard failed to start; Jarvis continues without it: %s", e)
 
     _preload_mcp_async()
+    start_prompt_cache_warmup()
     _start_scheduler()
     _start_health_monitor()
     filewatcher.start_watching(

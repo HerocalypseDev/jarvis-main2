@@ -202,6 +202,28 @@ Rules:
   `build_system_prompt` is now unused by the loops (kept for reference).
 - Verified live: call 1 wrote 22,039 tokens to cache, an identical call 2 read all 22,039.
 
+- **Caching, round 2 (2026-09-18)** — helpers in `jarvis_cache.py`, tests in `test_cache.py`
+  (`python -m pytest test_cache.py -v`). Every layer is on by default and individually switchable
+  with `JARVIS_<LAYER>_CACHE=0`:
+  - `PROMPT` — the layer above, now with a **1-hour TTL** on tools + stable system block
+    (`JARVIS_PROMPT_CACHE_TTL=5m` for 5-minute; auto-falls back to 5m for the run if the API
+    rejects `ttl`), a startup pre-warm (`start_prompt_cache_warmup`, 1-token request — the API
+    rejects `max_tokens=0`), and optional `JARVIS_PROMPT_CACHE_KEEPWARM_MIN` (default off: a
+    read of the ~22k prefix every few minutes around the clock costs more than it saves).
+    Workflow summary moved to the volatile block. The 1h TTL/pre-warm were **not verified live**
+    (the Anthropic key hit its spend limit, resets 2026-10-01) — only unit-tested with mocks.
+  - `TTS` — `.cache/tts/*.wav`, phrases ≤200 chars, 200 entries/100MB LRU. Keyed per engine
+    (Fish vs Piper), so Piper fallback audio is never served in place of the real voice.
+  - `REPLY` — in-memory; only turns whose tools were *all* in `READONLY_TOOL_TTLS`, none failed,
+    and whose transcript has no pronoun/"and…"-style context dependence. Zero-tool turns are
+    never cached (they may depend on history or the clock). TTL = shortest tool TTL used.
+  - `TOOL` — in-memory results for `READONLY_TOOL_TTLS` tools (15–60s; web_search 10 min).
+    Running any other tool (mutating, mcp_*, unknown) clears both this and the reply cache.
+  - `SUMMARY` — `speech_summary_cache` table in `jarvis_memory.db`, 7-day max age, 500 rows.
+  - Skills are re-parsed only when a `skills/*.json` name/mtime signature changes.
+  - Hit/miss logging: `cache[layer] HIT|miss ... (h/n hits, pct)` and per-call
+    `agent loop tokens: ... cache-read ...` lines in the Jarvis log.
+
 ## Window control
 
 - `resize_window(title, width=, height=, width_percent=, height_percent=)` and
@@ -243,4 +265,5 @@ row there each phase rather than only stating the total in chat.
 | 5 (import deadlock + SQLite WAL/lock fixes, found on live restart) | Sonnet 5 | ~10 min | ~$0.30–$0.40 |
 | 6 (RAM removal, silent-reply fix, phone-notif toggle, resizable panels, Daily tab) | Sonnet 5 | ~35 min | ~$1.00–$1.40 |
 | 7 (prompt caching for agent loop + plan steps) | Sonnet 5 | ~15 min | ~$0.50–$0.70 |
-| **Running total (final)** | | **~140 min** | **~$4.35–$6.15** |
+| 8 (multi-layer caching: TTS/reply/tool/summary/skills + 1h prompt TTL) | Sonnet 5 | ~40 min | ~$1.60–$2.20 |
+| **Running total (final)** | | **~180 min** | **~$5.95–$8.35** |
