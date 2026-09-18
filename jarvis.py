@@ -250,7 +250,7 @@ def _execute_confirmed_action(step: dict, reply_sink=None) -> None:
     if reply_sink:
         reply_sink(reply)
     else:
-        speak_text(reply)
+        _speak_shaped(reply)
 
 
 def _dashboard_get_pending() -> dict | None:
@@ -274,7 +274,7 @@ def _dashboard_approve_pending() -> str | None:
     )
 
     def _sink(reply: str) -> None:
-        speak_text(reply)
+        _speak_shaped(reply)
         dashboard.notify({"type": "pending_result", "data": {"reply": reply}})
 
     threading.Thread(target=_execute_confirmed_action, args=(step, _sink), daemon=True).start()
@@ -2603,6 +2603,16 @@ def _set_scheduled_task_running(running: bool) -> None:
         _save_session_context_locked()
 
 
+def _speak_shaped(text: str) -> None:
+    """speak_text with the same speech shaping a command reply gets: long text is summarized
+    into a sentence or two and full file paths collapse to a folder name. Proactive messages
+    (background-task completions, scheduled skills, reminders) used to call speak_text directly,
+    so a finished coding task was read out word for word, exactly as it appears in the
+    dashboard. Only the *spoken* copy is shortened — the dashboard, toast and phone push all
+    keep the full text — and short messages (under SPEECH_SUMMARY_MIN_CHARS) cost no extra call."""
+    speak_text(_collapse_paths_for_speech(_summarize_for_speech(text)))
+
+
 def queue_or_deliver_notification(text: str, urgent: bool = False) -> None:
     """The interrupt gate every proactive message (scheduled skills, health-check suggestions)
     goes through, instead of calling speak_text directly: speaks immediately unless the user
@@ -2625,7 +2635,7 @@ def queue_or_deliver_notification(text: str, urgent: bool = False) -> None:
         log.info("Queued non-urgent notification (Sleep Mode active): %r", text)
         return
     if urgent or not (user_is_actively_working() and _is_preferred_work_hours()):
-        speak_text(text)
+        _speak_shaped(text)
         return
     with _session_context_lock:
         _session_context.setdefault("pending_notifications", []).append(
@@ -2645,7 +2655,7 @@ def flush_pending_notifications() -> None:
         _save_session_context_locked()
     for item in pending:
         try:
-            speak_text(item.get("text", ""))
+            _speak_shaped(item.get("text", ""))
         except Exception as e:
             log.warning("Could not speak queued notification: %s", e)
 

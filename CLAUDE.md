@@ -125,6 +125,16 @@ Rules:
   received." ack — that's for phone commands only, where nobody's looking at a screen for it.
   The dashboard already shows a command land live.
 
+- **Proactive speech now shaped too (2026-09-18)**: a finished delegated coding task was read out
+  word for word, because `_finish_background_task` -> `queue_or_deliver_notification` called
+  `speak_text` directly — `_summarize_for_speech`/`_collapse_paths_for_speech` only ran inside
+  `handle_text_command`. New `_speak_shaped()` applies both, and is used by
+  `queue_or_deliver_notification`, `flush_pending_notifications`, and the spoken result of a
+  confirmed/dashboard-approved action. Only the spoken copy is shortened; dashboard, toast and
+  phone push keep the full text. Guided-breathing lines stay verbatim on purpose. Rule: any new
+  code path that speaks model- or tool-generated text should use `_speak_shaped`, not
+  `speak_text` directly.
+
 ## MCP startup (2026-09-18)
 
 - `ensure_mcp_started()` previously had a real race: it set `_mcp_started = True` *before* the

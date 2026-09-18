@@ -429,3 +429,32 @@ def test_system_prompt_requires_the_tool_call_to_stage():
 
     assert "MUST actually make that run_shell/run_python call" in j.AGENT_SYSTEM_PROMPT
     assert "NEVER tell the user you're about to shut down" in j.AGENT_SYSTEM_PROMPT
+
+
+# --- proactive notifications (e.g. a finished delegated coding task) get the same speech shaping ---
+def test_long_notification_is_summarized_for_speech_but_phone_keeps_full_text(jarvis, monkeypatch):
+    spoken, phoned = [], []
+    full = "James is done: I refactored the module and " + "updated many files " * 30
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
+    monkeypatch.setattr(jarvis, "_notify_phone", lambda t: phoned.append(t))
+    monkeypatch.setattr(jarvis, "refresh_session_context", lambda: None)
+    monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: False)
+    monkeypatch.setattr(jarvis, "_summarize_for_speech", lambda t: "The refactor is finished.")
+    jarvis.queue_or_deliver_notification(full, urgent=True)
+    assert spoken == ["The refactor is finished."]  # shortened for the speakers
+    assert phoned == [full.strip()]  # the phone push keeps the full text
+
+
+def test_short_notification_is_spoken_unchanged_without_a_claude_call(jarvis, monkeypatch):
+    spoken = []
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
+    monkeypatch.setattr(jarvis, "_notify_phone", lambda t: None)
+    monkeypatch.setattr(jarvis, "refresh_session_context", lambda: None)
+    monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: False)
+
+    def no_claude(*a, **k):
+        raise AssertionError("short text must not trigger a summary call")
+
+    monkeypatch.setattr(jarvis, "_claude_request", no_claude)
+    jarvis.queue_or_deliver_notification("Reminder: drink water", urgent=True)
+    assert spoken == ["Reminder: drink water"]
