@@ -5794,7 +5794,13 @@ def handle_text_command(
     if reply:
         if reply_sink:
             reply_sink(reply)
-        else:
+        # Phone is remote — the room shouldn't hear the full answer read into an empty space,
+        # so it gets reply_sink only (plus the "Message received." ack above). Dashboard is
+        # different: the user is normally sitting right there, typing into a box they can see —
+        # muting speech just because they used the dashboard instead of push-to-talk surprised
+        # the user in practice ("it's not even talking anymore"), so dashboard gets *both* the
+        # text (already in the dashboard via dashboard.end_session above) and spoken audio.
+        if reply_sink is None or source == "dashboard":
             # Dashboard/audit trail always get the full `reply` above — only what actually
             # comes out of the speakers is shortened and stripped of full file paths.
             speak_text(_collapse_paths_for_speech(_summarize_for_speech(reply)))
