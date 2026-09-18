@@ -59,8 +59,13 @@ Rules:
   transcript string into both `dashboard_sessions` and every `_log_action_audit` call for that
   turn, so no new session_id column was needed) and the metrics strip (CPU/RAM/disk/uptime from
   the existing `get_system_status_report()`/psutil, sampled once server-side on a 5s timer and
-  pushed to clients — not polled per-browser-tab). Dashboard-initiated commands (Phase 4) are
-  still pending.
+  pushed to clients — not polled per-browser-tab). Phase 4 shipped: an input-mode chip in the
+  top bar (reflects the most recent session's source), a compose box in the Detail column that
+  posts to `POST /api/command` — a 4th input surface alongside voice/text-hotkey/phone, running
+  through the *exact same* `handle_text_command` pipeline including the confirmation gate, never
+  `skip_confirmation=True` — and an auto-focus behavior where a new voice-originated session
+  opens in the Detail panel live. Tauri packaging remains deferred (user chose "browser tab for
+  MVP" 2026-09-18); revisit only if asked.
 
 ### Cost reporting
 
@@ -87,4 +92,5 @@ row there each phase rather than only stating the total in chat.
 | 1 (Sessions/Tasks/Victory log MVP) | Sonnet 5 | ~25 min | ~$0.75–$1.10 |
 | 2 (Approve/Reject/Stop) | Sonnet 5 | ~15 min | ~$0.55–$0.75 |
 | 3 (Audit Trail filters + System Metrics) | Sonnet 5 | ~20 min | ~$0.60–$0.85 |
-| **Running total** | | **~65 min** | **~$2.10–$3.00** |
+| 4 (input-mode chip, dashboard commands, voice auto-focus) | Sonnet 5 | ~15 min | ~$0.45–$0.65 |
+| **Running total (final)** | | **~80 min** | **~$2.55–$3.65** |

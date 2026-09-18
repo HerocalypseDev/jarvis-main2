@@ -12,6 +12,7 @@
   <div id="approval-queue" class="approval-queue">
     <span class="approval-empty">No pending confirmations</span>
   </div>
+  <div id="input-mode-chip" class="input-mode-chip">idle</div>
   <div id="conn-status" class="conn-status offline">connecting&hellip;</div>
 </header>
 
@@ -28,6 +29,11 @@
   </section>
   <section class="col col-detail">
     <h2>Detail</h2>
+    <form id="compose-form" class="compose-form">
+      <input type="text" id="compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
+      <button class="btn" type="submit">Send</button>
+    </form>
+    <p id="compose-status" class="muted compose-status"></p>
     <div id="detail-panel" class="detail-panel">
       <p class="muted">Select a session or task to see details.</p>
     </div>

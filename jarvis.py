@@ -5867,6 +5867,13 @@ def main() -> int:
                     reject_pending=_dashboard_reject_pending,
                     kill_background_task=_dashboard_kill_background_task,
                     get_system_status=get_system_status_report,
+                    # Phase 4: a dashboard-typed command is just a 4th input surface alongside
+                    # voice/text-hotkey/phone — it goes through the exact same
+                    # handle_text_command pipeline (run_agent_loop, _execute_tool, and the
+                    # confirmation gate for run_shell/run_python), never skip_confirmation.
+                    run_command=lambda text, sink: handle_text_command(
+                        text, reply_sink=sink, source="dashboard"
+                    ),
                 ),
                 daemon=True,
                 name="dashboard-server",

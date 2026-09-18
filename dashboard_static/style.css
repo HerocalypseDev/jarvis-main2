@@ -94,6 +94,19 @@ body {
 }
 .conn-status.offline { color: var(--warn); }
 
+.input-mode-chip {
+  font-size: 0.78em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.input-mode-chip.mode-voice { color: var(--cyan); border-color: var(--cyan-dim); }
+.input-mode-chip.mode-text { color: var(--ok); border-color: var(--ok); }
+.input-mode-chip.mode-phone { color: var(--warn); border-color: var(--warn); }
+.input-mode-chip.mode-dashboard { color: var(--danger); border-color: var(--danger); }
+
 .metrics-strip {
   display: flex;
   flex-wrap: wrap;
@@ -206,6 +219,24 @@ body {
 .btn-stop { margin-top: 6px; border-color: var(--warn); color: var(--warn); }
 .detail-actions { display: flex; gap: 10px; margin: 10px 0; }
 .danger-text { color: var(--danger); }
+
+.compose-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.compose-form input[type="text"] {
+  flex: 1;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.85em;
+  font-family: inherit;
+}
+.compose-form input[type="text"]:focus { border-color: var(--cyan); outline: none; }
+.compose-status { min-height: 1.2em; margin: 0 0 8px; }
 
 .detail-panel pre {
   background: #030810;

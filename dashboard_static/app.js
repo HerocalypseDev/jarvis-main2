@@ -1,4 +1,4 @@
-const state = { data: null };
+const state = { data: null, followedSessionId: null };
 
 async function fetchState() {
   try {
@@ -20,6 +20,22 @@ function render() {
   renderVictory(d.victory_log, d.counts);
   renderMetrics(d.metrics);
   populateToolNames(d.tool_names);
+  renderInputMode(d.sessions);
+}
+
+function renderInputMode(sessions) {
+  const el = document.getElementById("input-mode-chip");
+  const latest = sessions && sessions.length ? sessions[0] : null;
+  el.className = "input-mode-chip";
+  if (!latest) {
+    el.textContent = "idle";
+    return;
+  }
+  const label = { voice: "voice", text: "typed", phone: "phone", dashboard: "dashboard" }[
+    latest.source
+  ] || latest.source;
+  el.textContent = latest.status === "active" ? `${label}…` : `last: ${label}`;
+  el.classList.add(`mode-${latest.source}`);
 }
 
 function renderMetrics(metrics) {
@@ -112,6 +128,7 @@ function renderApproval(pending) {
 // compact top bar itself — the user accepted (2026-09-18) that Approve may one-click-confirm
 // even catastrophic-tier actions, on condition it only happens from this detail view.
 function showPendingDetail(pending) {
+  state.followedSessionId = null;
   const el = document.getElementById("detail-panel");
   let inputText;
   try {
@@ -237,6 +254,7 @@ function renderVictory(victoryLog, counts) {
 function showDetail(kind, item) {
   const el = document.getElementById("detail-panel");
   if (kind === "session") {
+    state.followedSessionId = item.id;
     el.innerHTML = `
       <h3>${badge(item.source)} Session #${esc(item.id)}</h3>
       <p><strong>Status:</strong> ${statusPill(item.status)}</p>
@@ -244,6 +262,7 @@ function showDetail(kind, item) {
       <p><strong>Reply:</strong> ${esc(item.reply || "(pending)")}</p>
       <p class="muted">${esc(item.started_at)} &rarr; ${esc(item.ended_at || "active")}</p>`;
   } else if (kind === "task") {
+    state.followedSessionId = null;
     el.innerHTML = `
       <h3>Task ${esc(item.id)}</h3>
       <p><strong>Status:</strong> ${statusPill(item.status)}</p>
@@ -251,6 +270,7 @@ function showDetail(kind, item) {
       <p><strong>Result:</strong> ${esc(item.result_summary || "(none yet)")}</p>
       <p class="muted">${esc(item.started_at || "")} &rarr; ${esc(item.finished_at || "running")}</p>`;
   } else if (kind === "audit") {
+    state.followedSessionId = null;
     const fromTranscript = item.transcript
       ? `<p><strong>From command:</strong> ${esc(truncate(item.transcript, 200))}</p>`
       : "";
@@ -323,6 +343,54 @@ document.getElementById("audit-q").addEventListener("keydown", (e) => {
   if (e.key === "Enter") fetchAuditResults();
 });
 
+// Compose box: a dashboard-typed command is a 4th input surface alongside voice/text-hotkey/
+// phone. It goes through the exact same handle_text_command pipeline server-side (see
+// jarvis.py's main()), including the confirmation gate — this box has no special privileges.
+document.getElementById("compose-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("compose-input");
+  const statusEl = document.getElementById("compose-status");
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+  statusEl.textContent = "Sending…";
+  try {
+    const res = await fetch("/api/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    statusEl.textContent = data.ok ? "Sent — watch Sessions for the reply." : (data.error || "Failed.");
+    if (data.ok) input.value = "";
+  } catch (err) {
+    statusEl.textContent = "Request failed: " + err;
+  }
+  input.disabled = false;
+  input.focus();
+});
+
+// When a new voice-originated session starts, open/focus it in the Detail panel so a complex
+// task kicked off by voice elsewhere in the room is immediately visible here too.
+function handleLiveEvent(event) {
+  if (!event || !event.type) return;
+  if (event.type === "session_start" && event.data && event.data.source === "voice") {
+    showDetail("session", {
+      id: event.data.id,
+      source: "voice",
+      transcript: event.data.transcript,
+      status: "active",
+      reply: null,
+      started_at: new Date().toISOString(),
+      ended_at: null,
+    });
+  } else if (event.type === "session_end" && event.data && event.data.id === state.followedSessionId) {
+    const d = state.data;
+    const found = d && d.sessions && d.sessions.find((s) => s.id === event.data.id);
+    if (found) showDetail("session", found);
+  }
+}
+
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -337,8 +405,16 @@ function connectWs() {
     setTimeout(connectWs, 2000);
   };
   ws.onerror = () => ws.close();
-  ws.onmessage = () => {
-    fetchState();
+  ws.onmessage = async (msg) => {
+    let event = null;
+    try {
+      event = JSON.parse(msg.data);
+    } catch (e) {
+      // non-JSON message; ignore
+    }
+    if (event && event.type === "session_start") handleLiveEvent(event);
+    await fetchState();
+    if (event && event.type === "session_end") handleLiveEvent(event);
     if (isAuditTabActive()) fetchAuditResults();
   };
 }
