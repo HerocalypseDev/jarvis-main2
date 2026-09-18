@@ -3615,6 +3615,69 @@ def build_system_prompt(tone_line: str = "") -> str:
     )
 
 
+def build_system_blocks(tone_line: str = "") -> list[dict]:
+    """build_system_prompt split for Anthropic prompt caching: a stable block carrying the
+    (large) fixed prompt, marked cacheable, then a small volatile block (clock minute, tone,
+    sleep-mode line) after it. Cache matching is an exact-prefix match, so anything that
+    changes per call must sit *after* the breakpoint or it invalidates the whole prefix."""
+    stable = (
+        AGENT_SYSTEM_PROMPT
+        + _tts_engine_context_line()
+        + get_user_profile_context()
+        + get_active_facts_context()
+        + get_projects_context()
+        + get_skills_context()
+        + workflow.get_context_summary()
+    )
+    now = datetime.now()
+    volatile = (
+        f"Right now it is {now.strftime('%A, %Y-%m-%d %H:%M')} (local time)."
+        + tone_line
+        + sleep_mode.system_prompt_context_line()
+    )
+    return [
+        {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": volatile},
+    ]
+
+
+def _cached_tools(tools: list[dict]) -> list[dict]:
+    """Copy of tools with a cache breakpoint on the last one (caches the whole tool list)."""
+    if not tools:
+        return tools
+    return tools[:-1] + [{**tools[-1], "cache_control": {"type": "ephemeral"}}]
+
+
+def _messages_with_cache_breakpoint(messages: list[dict]) -> list[dict]:
+    """Copy of messages with a cache breakpoint on the final content block, so each agent-loop
+    round trip reads everything before it (history + earlier tool results) from cache instead
+    of re-billing it. Never mutates the caller's list — the marker must not accumulate."""
+    if not messages:
+        return messages
+    last = messages[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        blocks = list(content)
+    else:
+        return messages
+    blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+    return messages[:-1] + [{**last, "content": blocks}]
+
+
+def _log_cache_usage(data: dict, label: str) -> None:
+    usage = data.get("usage") or {}
+    log.info(
+        "%s tokens: %s uncached in, %s cache-read, %s cache-write, %s out",
+        label,
+        usage.get("input_tokens", 0),
+        usage.get("cache_read_input_tokens", 0),
+        usage.get("cache_creation_input_tokens", 0),
+        usage.get("output_tokens", 0),
+    )
+
+
 def _launch_app_notepad() -> None:
     try:
         subprocess.Popen(["notepad.exe"])
@@ -5217,20 +5280,23 @@ def _run_plan_step(step_description: str, prior_context: str) -> str:
     messages: list[dict] = [{"role": "user", "content": f"{intro}\n\nStep: {step_description}"}]
     reply_parts: list[str] = []
     tools = [t for t in AGENT_TOOLS if t["name"] != "set_plan"] + get_mcp_tool_schemas()
+    system_blocks = build_system_blocks()
+    cached_tools = _cached_tools(tools)
 
     for _ in range(MAX_STEP_ITERATIONS):
         data = _claude_request(
             {
                 "model": CLAUDE_MODEL,
                 "max_tokens": 1024,
-                "system": build_system_prompt(),
-                "messages": messages,
-                "tools": tools,
+                "system": system_blocks,
+                "messages": _messages_with_cache_breakpoint(messages),
+                "tools": cached_tools,
             },
             timeout=60,
         )
         if data is None:
             return " ".join(reply_parts).strip() or "step failed: could not reach Claude"
+        _log_cache_usage(data, "plan step")
 
         content = data.get("content", [])
         messages.append({"role": "assistant", "content": content})
@@ -5744,15 +5810,20 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
     tools = AGENT_TOOLS + get_mcp_tool_schemas()
     tone_line = voice_tone.tone_context_line(tone) if tone else ""
+    # Built once per command, not per round trip: the volatile block (clock minute) sits
+    # before the messages in the cached prefix, so recomputing it mid-loop across a minute
+    # rollover would needlessly invalidate the message-level cache.
+    system_blocks = build_system_blocks(tone_line)
+    cached_tools = _cached_tools(tools)
 
     for _ in range(MAX_AGENT_ITERATIONS):
         data = _claude_request(
             {
                 "model": CLAUDE_MODEL,
                 "max_tokens": 1536,
-                "system": build_system_prompt(tone_line),
-                "messages": messages,
-                "tools": tools,
+                "system": system_blocks,
+                "messages": _messages_with_cache_breakpoint(messages),
+                "tools": cached_tools,
             },
             timeout=60,
         )
@@ -5760,6 +5831,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
             reply = " ".join(reply_parts).strip() or CLAUDE_UNAVAILABLE_REPLY
             _append_history(transcript, reply)
             return reply
+        _log_cache_usage(data, "agent loop")
 
         content = data.get("content", [])
         messages.append({"role": "assistant", "content": content})

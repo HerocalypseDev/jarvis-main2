@@ -188,6 +188,20 @@ Rules:
   `_ntfy_listen_loop`/`_telegram_listen_loop`, a completely separate path, unaffected by this
   toggle. Set the env var to `1`/`true` to restore proactive phone pushes.
 
+## Prompt caching (2026-09-18)
+
+- `run_agent_loop` and the plan-step loop send Anthropic `cache_control` breakpoints on (1) the
+  last tool, (2) the stable system block, (3) the final message block, so each of the up-to-12
+  round trips per command re-reads the ~22k-token prefix (system prompt + 105 tool schemas +
+  earlier tool results) at ~10% price instead of re-billing it. Helpers: `build_system_blocks`,
+  `_cached_tools`, `_messages_with_cache_breakpoint` (copies — never mutates `messages`), and
+  `_log_cache_usage` (logs uncached/cache-read/cache-write/out tokens per round trip).
+- Cache matching is exact-prefix: anything that changes per call (clock minute, tone line,
+  sleep-mode line) must stay in the *volatile* second system block, after the breakpoint, and is
+  built once per command, not per round trip. Don't move it back into the stable block.
+  `build_system_prompt` is now unused by the loops (kept for reference).
+- Verified live: call 1 wrote 22,039 tokens to cache, an identical call 2 read all 22,039.
+
 ## Window control
 
 - `resize_window(title, width=, height=, width_percent=, height_percent=)` and
@@ -228,4 +242,5 @@ row there each phase rather than only stating the total in chat.
 | 4 (input-mode chip, dashboard commands, voice auto-focus) | Sonnet 5 | ~15 min | ~$0.45–$0.65 |
 | 5 (import deadlock + SQLite WAL/lock fixes, found on live restart) | Sonnet 5 | ~10 min | ~$0.30–$0.40 |
 | 6 (RAM removal, silent-reply fix, phone-notif toggle, resizable panels, Daily tab) | Sonnet 5 | ~35 min | ~$1.00–$1.40 |
-| **Running total (final)** | | **~125 min** | **~$3.85–$5.45** |
+| 7 (prompt caching for agent loop + plan steps) | Sonnet 5 | ~15 min | ~$0.50–$0.70 |
+| **Running total (final)** | | **~140 min** | **~$4.35–$6.15** |
