@@ -268,6 +268,17 @@ Rules:
 - Unit-tested with `subprocess.Popen` faked (prompt/cwd, self-edit lock, phone forcing); **not
   run live** against a real `claude` process — a live test would make real edits to this repo.
 
+## Own-code location fix (2026-09-18)
+
+- **Wrong "where is your code" (found live)**: asked where its source lives, Jarvis had no ground
+  truth, searched the disk with run_shell, found the unrelated OpenJarvis project under the user
+  profile and named it as its own code — a self-edit sent there would have changed the wrong repo.
+  Fixed with `_own_code_context_line()` in the stable system block (the real path from
+  `Path(__file__)`, "don't search the disk", "OpenJarvis etc. are different projects, use
+  change_jarvis_code") and a clearer `delegate_to_claude_code` repo_path description. Pinned by
+  tests in `test_cache.py`. Prompt-level, so not deterministic; if it recurs, add a code-level
+  path check. **Not yet re-verified live** — the API credit balance ran out before the check.
+
 ## API spend lookup (2026-09-18)
 
 - `api_spend` tool (`jarvis_billing.py`) reads Anthropic's Usage & Cost Admin API
