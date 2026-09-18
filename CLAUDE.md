@@ -99,11 +99,21 @@ Rules:
   _is_preferred_work_hours()` check) the way an unprompted proactive suggestion does. That gate
   still applies as before to scheduled skills and health-monitor suggestions — only
   user-requested background task completions bypass it.
-- What Jarvis *speaks* locally (voice/typed-hotkey replies only — phone and dashboard replies
-  are read, not heard, and already get the full text via reply_sink) is now shortened for
-  anything over `SPEECH_SUMMARY_MIN_CHARS` (220 chars) via one extra Claude call
-  (`_summarize_for_speech`, same `CLAUDE_MODEL` already used everywhere — Haiku by default, so
-  this doesn't add a more expensive tier) before `speak_text`. The dashboard/audit trail/session
+- **Design intent, clarified by the user after an initial misread (2026-09-18): the dashboard
+  is always the full, complete record (session reply, audit trail — never trimmed); what comes
+  out of the speakers is a separate, always-summarized pass over that same reply
+  (`_summarize_for_speech`), and that spoken summary happens for every input source — voice,
+  typed-hotkey, AND dashboard — never just silently written to the dashboard instead of spoken.**
+  ("dashboard shouldn't talk" from earlier the same day meant "don't parrot the dashboard's full
+  text verbatim out loud," not "stay silent when commands come from the dashboard" — an initial
+  fix over-corrected to full silence for dashboard-sourced replies, confirmed broken live ("it's
+  not even talking anymore"), then corrected to speak the *summary* for dashboard same as voice.)
+  Phone is the one exception that stays text-only (no spoken summary, just the "Message
+  received." ack) since nobody's in the room for a remote phone command — that part was never in
+  question. What Jarvis speaks is shortened for anything over `SPEECH_SUMMARY_MIN_CHARS` (220
+  chars) via one extra Claude call (`_summarize_for_speech`, same `CLAUDE_MODEL` already used
+  everywhere — Haiku by default, so this doesn't add a more expensive tier) before `speak_text`.
+  The dashboard/audit trail/session
   history always keep the full, unsummarized `reply` — only the TTS output is shortened. Falls
   back to the original text on any failure; never goes silent.
 - `_collapse_paths_for_speech` replaces any full file path in the spoken text with just its
