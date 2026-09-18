@@ -26,6 +26,7 @@ import os
 import sqlite3
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -452,12 +453,14 @@ def _build_app(
     )
 
     manager = _ConnectionManager()
-    app = FastAPI(title="Jarvis Dashboard", docs_url=None, redoc_url=None)
 
-    @app.on_event("startup")
-    async def _on_startup() -> None:
+    @asynccontextmanager
+    async def _lifespan(_app):
         _set_broadcast(asyncio.get_running_loop(), manager)
         log.info("Dashboard: ready on http://127.0.0.1:%d", port)
+        yield
+
+    app = FastAPI(title="Jarvis Dashboard", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
     @app.get("/api/state")
     def api_state() -> dict:
