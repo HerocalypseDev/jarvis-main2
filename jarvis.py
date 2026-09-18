@@ -750,9 +750,11 @@ the background and already announces large ones (over 100MB) unprompted — use 
 list_watched_folders/get_recent_file_events/remove_watched_folder only when the user asks about \
 watched folders directly, not proactively.
 
-For window management, use control_window (minimize/maximize/restore/close/snap by title \
-substring), arrange_windows to lay out several at once, and save_window_layout/ \
-restore_window_layout to name and recall a set of window positions later.
+For window management, use control_window (minimize/maximize/restore/close/snap/resize by \
+title substring — resize takes width/height in pixels or width_percent/height_percent for a \
+free-form size, snap is for the fixed preset zones), resize_all_windows when the user means \
+every open window rather than one, arrange_windows to lay out several at once, and \
+save_window_layout/restore_window_layout to name and recall a set of window positions later.
 
 For something the user wants done "sometime today" rather than at an exact time, use \
 queue_task (not create_reminder, which is for an exact time) then plan_task_queue to give it \
@@ -1541,9 +1543,12 @@ AGENT_TOOLS = [
     {
         "name": "control_window",
         "description": (
-            "Minimize, maximize, restore, close, or snap a single open window by a substring "
-            "of its title. For snap, pass a side: left, right, top, bottom, top-left, "
-            "top-right, bottom-left, bottom-right, maximize, or center."
+            "Minimize, maximize, restore, close, snap, or resize a single open window by a "
+            "substring of its title. For snap, pass a side: left, right, top, bottom, "
+            "top-left, top-right, bottom-left, bottom-right, maximize, or center (fixed preset "
+            "zones). For resize, pass an arbitrary width/height in pixels, or width_percent/ "
+            "height_percent (e.g. 50 for half the screen) — use this for a free-form size the "
+            "user asks for, not one of the preset snap zones."
         ),
         "input_schema": {
             "type": "object",
@@ -1551,15 +1556,37 @@ AGENT_TOOLS = [
                 "window_title": {"type": "string", "description": "substring of the target window's title"},
                 "action": {
                     "type": "string",
-                    "enum": ["minimize", "maximize", "restore", "close", "snap"],
+                    "enum": ["minimize", "maximize", "restore", "close", "snap", "resize"],
                 },
                 "side": {
                     "type": "string",
                     "enum": list(window_control.SNAP_SIDES),
                     "description": "required when action is snap",
                 },
+                "width": {"type": "integer", "description": "pixels; for action=resize"},
+                "height": {"type": "integer", "description": "pixels; for action=resize"},
+                "width_percent": {"type": "number", "description": "percent of screen width; for action=resize"},
+                "height_percent": {"type": "number", "description": "percent of screen height; for action=resize"},
             },
             "required": ["window_title", "action"],
+        },
+    },
+    {
+        "name": "resize_all_windows",
+        "description": (
+            "Resize every visible open window to the same size at once — use this when the "
+            "user asks to resize \"all my windows\" rather than one specific window. Pass "
+            "width/height in pixels, or width_percent/height_percent for a percent of the "
+            "screen. Minimized windows are left alone."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "width": {"type": "integer"},
+                "height": {"type": "integer"},
+                "width_percent": {"type": "number"},
+                "height_percent": {"type": "number"},
+            },
         },
     },
     {
@@ -1780,6 +1807,84 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
 def _claude_text(data: dict) -> str:
     parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
     return " ".join(p for p in parts if p).strip()
+
+
+# --- speech shaping: the dashboard always shows the full reply; what Piper actually speaks ---
+# --- out loud (voice/typed-hotkey only — phone and dashboard replies are read, not heard) ---
+# --- gets shortened first, so a long tool-result dump doesn't turn into a rambling monologue. ---
+SPEECH_SUMMARY_MIN_CHARS = 220  # below this, speaking the reply verbatim is already short
+SPEECH_SUMMARY_TIMEOUT_S = 12
+
+# Matches a Windows path (C:\...) or an absolute Unix-style path (/a/b/c) with at least two
+# path segments. A lookbehind for ":" only stops this from matching the "//" directly after
+# "https:" — it does nothing about the path segment *later* in a URL (https://example.com/a/b
+# still has a bare "/a/b" with no ":" right before it) — so _collapse_paths_for_speech masks
+# whole URLs out first and this regex never sees their insides at all.
+_SPEECH_PATH_RE = re.compile(
+    r'[A-Za-z]:[\\/](?:[^\s\\/:*?"<>|]+[\\/])+[^\s\\/:*?"<>|]*'
+    r'|/(?:[^\s/]+/)+[^\s/]*'
+)
+_SPEECH_URL_RE = re.compile(r"https?://\S+", re.I)
+
+
+def _humanize_path_for_speech(path_text: str) -> str:
+    parts = [p for p in re.split(r"[\\/]+", path_text) if p]
+    if parts and re.fullmatch(r"[A-Za-z]:", parts[0]):
+        parts = parts[1:]
+    if not parts:
+        return "a folder"
+    last = parts[-1]
+    # A trailing name with a dot that isn't just a leading-dot dotfile reads as a file — say the
+    # folder it's in, not the path leading to it; a bare directory name speaks for itself.
+    if "." in last.lstrip(".") and not last.startswith("."):
+        folder = parts[-2] if len(parts) >= 2 else last
+        return f"the {folder} folder"
+    return f"the {last} folder"
+
+
+def _collapse_paths_for_speech(text: str) -> str:
+    """Replaces any full file path in `text` with just its containing folder's name — Jarvis
+    should say "saved it in the Research folder", never read a full path with every slash.
+    URLs are masked out first and restored untouched afterward, so a link never gets mistaken
+    for a filesystem path (its own "/segments" would otherwise match just as well)."""
+    text = text or ""
+    urls: list[str] = []
+
+    def _stash_url(m: re.Match) -> str:
+        urls.append(m.group(0))
+        return f"\x00URL{len(urls) - 1}\x00"
+
+    masked = _SPEECH_URL_RE.sub(_stash_url, text)
+    collapsed = _SPEECH_PATH_RE.sub(lambda m: _humanize_path_for_speech(m.group(0)), masked)
+    for i, url in enumerate(urls):
+        collapsed = collapsed.replace(f"\x00URL{i}\x00", url)
+    return collapsed
+
+
+def _summarize_for_speech(text: str) -> str:
+    """Shortens a reply for Piper to speak — the dashboard still shows `text` in full via
+    action_audit/dashboard_sessions, this only affects what comes out of the speakers. Skipped
+    (no Claude call, zero extra cost) for anything already short. Falls back to the original
+    text on any failure — a summarization hiccup must never mean Jarvis goes silent."""
+    text = text or ""
+    if len(text) < SPEECH_SUMMARY_MIN_CHARS:
+        return text
+    body = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": 120,
+        "system": (
+            "Rewrite the following assistant reply as one short, natural sentence (two at "
+            "most) meant to be spoken aloud by a voice assistant. Keep the key facts and any "
+            "direct answer; drop filler and repetition. Never read out a full file path — "
+            "refer to a file or folder by name only, not its full location."
+        ),
+        "messages": [{"role": "user", "content": text[:4000]}],
+    }
+    data = _claude_request(body, timeout=SPEECH_SUMMARY_TIMEOUT_S)
+    if data is None:
+        return text
+    summary = _claude_text(data).strip()
+    return summary or text
 
 
 # --- persistent memory: SQLite-backed chat history + user profile facts --------------
@@ -2987,6 +3092,7 @@ def _scheduler_loop() -> None:
                     _run_scheduled_skill(skill)
             _check_due_reminders(now)
             _check_background_tasks(now)
+            _retry_failed_mcp_servers(now)
             task_scheduler.tick(now, _run_queued_task, queue_or_deliver_notification)
             sleep_mode.check_wakeup(now, _run_system_action, speak_text)
         except Exception as e:
@@ -3007,13 +3113,20 @@ def _start_scheduler() -> None:
 # --- built-in tools and the rest of Jarvis keep working regardless. ---
 MCP_TOOL_CALL_TIMEOUT_S = 60
 MCP_STARTUP_TIMEOUT_S = 60
+MCP_RETRY_INTERVAL_S = 120  # a server that failed to connect gets one more try every 2 minutes
 
 _mcp_lock = threading.Lock()
 _mcp_loop: asyncio.AbstractEventLoop | None = None
 _mcp_started = False
+# Set once the *first* connection attempt (success or failure) finishes — every caller of
+# ensure_mcp_started() waits on this instead of racing past a bare "already started" flag, so a
+# scheduled skill's first run can't slip through before MCP tools actually exist. See
+# ensure_mcp_started's docstring for the race this fixes.
+_mcp_ready_event = threading.Event()
 _mcp_handles: dict[str, "_McpServerHandle"] = {}  # server name -> _McpServerHandle
 _mcp_tool_index: dict[str, tuple[str, str]] = {}  # exposed tool name -> (server name, real tool name)
 _mcp_tool_schemas: list[dict] = []
+_mcp_failed_servers: dict[str, dict] = {}  # server name -> {"cfg": {...}, "last_attempt": datetime}
 
 
 def _mcp_servers_config_path() -> Path:
@@ -3108,6 +3221,38 @@ async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle") -> None:
         handle.ready.set()  # unblock the connect-time waiter even on failure
 
 
+async def _mcp_connect_one(server_name: str, cfg: dict) -> bool:
+    """Connects a single MCP server and registers its tools on success. Returns whether it
+    connected — the caller (initial connect or a later retry) decides what to do with that."""
+    command = str(cfg.get("command") or "").strip()
+    if not command:
+        log.warning("MCP server %r has no \"command\"; skipping.", server_name)
+        return False
+    handle = _McpServerHandle()
+    _mcp_handles[server_name] = handle
+    asyncio.get_running_loop().create_task(_mcp_server_supervisor(cfg, handle))
+    try:
+        await asyncio.wait_for(handle.ready.wait(), timeout=MCP_STARTUP_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        log.warning("MCP server %r timed out connecting.", server_name)
+        return False
+    if handle.error:
+        log.warning("Failed to connect MCP server %r: %s", server_name, handle.error)
+        return False
+    for tool in handle.tools:
+        exposed_name = f"mcp_{server_name}_{tool.name}"[:128]
+        _mcp_tool_index[exposed_name] = (server_name, tool.name)
+        _mcp_tool_schemas.append(
+            {
+                "name": exposed_name,
+                "description": (tool.description or f"{server_name}.{tool.name}")[:1024],
+                "input_schema": tool.input_schema or {"type": "object", "properties": {}},
+            }
+        )
+    log.info("Connected MCP server %r (%d tools).", server_name, len(handle.tools))
+    return True
+
+
 async def _mcp_connect_all_async(configs: dict) -> None:
     for server_name, cfg in configs.items():
         # Top-level non-server keys (e.g. a "_comment" string in the example config) or any
@@ -3115,32 +3260,12 @@ async def _mcp_connect_all_async(configs: dict) -> None:
         try:
             if server_name.startswith("_") or not isinstance(cfg, dict):
                 continue
-            command = str(cfg.get("command") or "").strip()
-            if not command:
-                log.warning("MCP server %r has no \"command\"; skipping.", server_name)
-                continue
-            handle = _McpServerHandle()
-            _mcp_handles[server_name] = handle
-            asyncio.get_running_loop().create_task(_mcp_server_supervisor(cfg, handle))
-            try:
-                await asyncio.wait_for(handle.ready.wait(), timeout=MCP_STARTUP_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                log.warning("MCP server %r timed out connecting.", server_name)
-                continue
-            if handle.error:
-                log.warning("Failed to connect MCP server %r: %s", server_name, handle.error)
-                continue
-            for tool in handle.tools:
-                exposed_name = f"mcp_{server_name}_{tool.name}"[:128]
-                _mcp_tool_index[exposed_name] = (server_name, tool.name)
-                _mcp_tool_schemas.append(
-                    {
-                        "name": exposed_name,
-                        "description": (tool.description or f"{server_name}.{tool.name}")[:1024],
-                        "input_schema": tool.input_schema or {"type": "object", "properties": {}},
-                    }
-                )
-            log.info("Connected MCP server %r (%d tools).", server_name, len(handle.tools))
+            ok = await _mcp_connect_one(server_name, cfg)
+            with _mcp_lock:
+                if ok:
+                    _mcp_failed_servers.pop(server_name, None)
+                else:
+                    _mcp_failed_servers[server_name] = {"cfg": cfg, "last_attempt": datetime.now()}
         except Exception as e:
             log.warning("Skipping malformed MCP server config %r: %s", server_name, e)
 
@@ -3156,33 +3281,125 @@ def _preload_mcp_async() -> None:
 
 
 def ensure_mcp_started() -> None:
-    """Connects every configured MCP server exactly once, lazily, on first use — safe to call
-    on every request. If the `mcp` package isn't installed or no servers are configured, this
-    is a silent no-op; MCP is additive, never required."""
+    """Connects every configured MCP server exactly once, lazily, on first use.
+
+    Every caller — including one racing in on another thread while the first connection
+    attempt is still in flight — blocks here until that attempt actually finishes, success or
+    failure. This matters because _preload_mcp_async() starts connecting in the background at
+    the same moment _start_scheduler() starts the scheduler thread, and a skill due to run on
+    the very first tick (observed live: gmail_watch) calls this too, from run_agent_loop's
+    get_mcp_tool_schemas(). Without blocking here, that second caller would see "already
+    started" and return immediately with the tool list still empty — the skill runs believing
+    Gmail has no tools, not that it just isn't ready yet.
+
+    If the `mcp` package isn't installed or no servers are configured, this is a silent no-op;
+    MCP is additive, never required."""
     global _mcp_started
     with _mcp_lock:
         if _mcp_started:
+            already_starting = True
+        else:
+            _mcp_started = True
+            already_starting = False
+    if already_starting:
+        _mcp_ready_event.wait(timeout=MCP_STARTUP_TIMEOUT_S * 4)
+        return
+    try:
+        configs = _load_mcp_server_configs()
+        if not configs:
             return
-        _mcp_started = True
-    configs = _load_mcp_server_configs()
-    if not configs:
+        try:
+            import mcp  # noqa: F401  (import check only — real usage is inside _mcp_connect_all_async)
+        except ImportError:
+            log.warning(
+                "mcp_servers.json is configured but the `mcp` package isn't installed "
+                "(pip install mcp)."
+            )
+            return
+        try:
+            # _mcp_connect_all_async connects servers one at a time, each with its own internal
+            # MCP_STARTUP_TIMEOUT_S budget — this outer bound must cover the whole sequence, not
+            # a single server's worth, or a later server (observed live: a first-time `npx`
+            # package download) gets truncated before it's even reached once earlier servers eat
+            # into the budget.
+            _mcp_run_coro(
+                _mcp_connect_all_async(configs), timeout=MCP_STARTUP_TIMEOUT_S * len(configs)
+            )
+        except Exception as e:
+            log.warning("MCP startup failed: %s", e)
+    finally:
+        _mcp_ready_event.set()
+
+
+def _retry_failed_mcp_servers(now: datetime) -> None:
+    """Called from the scheduler tick (every SCHEDULER_TICK_S). A server that failed its
+    initial connection attempt (npx cold-start, transient network hiccup, server briefly down)
+    gets retried every MCP_RETRY_INTERVAL_S instead of being given up on for the rest of the
+    process's life — the only way it came back before this was restarting Jarvis entirely."""
+    if not _mcp_started:
+        return  # nothing has attempted a first connection yet; nothing to retry
+    with _mcp_lock:
+        due = {
+            name: info["cfg"]
+            for name, info in _mcp_failed_servers.items()
+            if (now - info["last_attempt"]) >= timedelta(seconds=MCP_RETRY_INTERVAL_S)
+        }
+        for name in due:
+            _mcp_failed_servers[name]["last_attempt"] = now
+    if not due:
         return
+    log.info("Retrying %d previously-failed MCP server(s): %s", len(due), ", ".join(due))
     try:
-        import mcp  # noqa: F401  (import check only — real usage is inside _mcp_connect_all_async)
-    except ImportError:
-        log.warning("mcp_servers.json is configured but the `mcp` package isn't installed (pip install mcp).")
-        return
-    try:
-        # _mcp_connect_all_async connects servers one at a time, each with its own internal
-        # MCP_STARTUP_TIMEOUT_S budget — this outer bound must cover the whole sequence, not
-        # a single server's worth, or a later server (observed live: a first-time `npx`
-        # package download) gets truncated before it's even reached once earlier servers eat
-        # into the budget.
-        _mcp_run_coro(
-            _mcp_connect_all_async(configs), timeout=MCP_STARTUP_TIMEOUT_S * len(configs)
-        )
+        _mcp_run_coro(_mcp_connect_all_async(due), timeout=MCP_STARTUP_TIMEOUT_S * len(due))
     except Exception as e:
-        log.warning("MCP startup failed: %s", e)
+        log.warning("MCP retry failed: %s", e)
+
+
+def _dashboard_get_services_status() -> list[dict]:
+    """Read-only snapshot for the dashboard's Services dropdown: every configured MCP server
+    plus the two phone channels, each with a status and a short human detail string."""
+    with _mcp_lock:
+        failed = {k: dict(v) for k, v in _mcp_failed_servers.items()}
+        handles_snapshot = dict(_mcp_handles)
+        started = _mcp_started
+    configs = _load_mcp_server_configs()
+    services: list[dict] = []
+    for name, cfg in configs.items():
+        if name.startswith("_") or not isinstance(cfg, dict):
+            continue
+        handle = handles_snapshot.get(name)
+        if name in failed:
+            last = failed[name]["last_attempt"]
+            services.append({
+                "name": name,
+                "status": "failed",
+                "detail": (
+                    f"last tried {last.strftime('%H:%M:%S')}, "
+                    f"retrying every {MCP_RETRY_INTERVAL_S // 60} min"
+                ),
+            })
+        elif handle is not None and handle.error is None:
+            services.append({
+                "name": name, "status": "connected", "detail": f"{len(handle.tools)} tool(s)",
+            })
+        elif not started:
+            services.append({"name": name, "status": "pending", "detail": "not started yet"})
+        else:
+            services.append({"name": name, "status": "connecting", "detail": "starting…"})
+    services.append({
+        "name": "phone — ntfy",
+        "status": "connected" if NTFY_TOPIC else "not configured",
+        "detail": "listening" if NTFY_TOPIC else "set NTFY_TOPIC in .env to enable",
+    })
+    services.append({
+        "name": "phone — telegram",
+        "status": "connected" if (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID) else "not configured",
+        "detail": (
+            "listening" if (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+            else "set TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID in .env to enable"
+        ),
+    })
+    return services
 
 
 def get_mcp_tool_schemas() -> list[dict]:
@@ -4574,10 +4791,13 @@ def _count_running_background_tasks(kind: str) -> int:
 
 
 def _finish_background_task(task_id: int, status: str, summary: str, kind: str = "") -> None:
-    """Marks a background_tasks row done/failed and reports it exactly like a reminder: a
-    Windows toast plus a spoken message through the same busy-aware notification gate. A
-    'code' task is reported in James's voice (the coding-agent persona) since that's who the
-    user was told is doing it; other kinds (research) stay generic since no persona was named."""
+    """Marks a background_tasks row done/failed and reports it: a Windows toast plus a spoken
+    message. Reported urgent=True (bypasses the busy-quiet-hours gate other proactive messages
+    go through) — unlike a scheduled skill or health-monitor suggestion, the user explicitly
+    asked for this and is waiting on it, so it should never sit silently queued until they
+    happen to say something else first. A 'code' task is reported in James's voice (the
+    coding-agent persona) since that's who the user was told is doing it; other kinds
+    (research) stay generic since no persona was named."""
     now_iso = datetime.now().isoformat(timespec="seconds")
     with _memory_db_lock:
         conn = _memory_db_connect()
@@ -4602,7 +4822,7 @@ def _finish_background_task(task_id: int, status: str, summary: str, kind: str =
         lead = f"Background task #{task_id} finished:" if ok else f"Background task #{task_id} failed:"
     message = f"{lead} {summary}"
     send_windows_toast("Jarvis — background task done", message[:250])
-    queue_or_deliver_notification(message)
+    queue_or_deliver_notification(message, urgent=True)
     record_recent_task(f"background task #{task_id} {'finished' if ok else 'failed'}")
 
 
@@ -5349,8 +5569,23 @@ def _execute_tool(
                 result = window_control.close_window(title)
             elif action == "snap":
                 result = window_control.snap_window(title, str(inp.get("side") or ""))
+            elif action == "resize":
+                result = window_control.resize_window(
+                    title,
+                    width=inp.get("width"),
+                    height=inp.get("height"),
+                    width_percent=inp.get("width_percent"),
+                    height_percent=inp.get("height_percent"),
+                )
             else:
                 result = f"{action!r} is not a known window action."
+        elif tool_name == "resize_all_windows":
+            result = window_control.resize_all_windows(
+                width=inp.get("width"),
+                height=inp.get("height"),
+                width_percent=inp.get("width_percent"),
+                height_percent=inp.get("height_percent"),
+            )
         elif tool_name == "arrange_windows":
             result = window_control.arrange_windows(
                 list(inp.get("window_titles") or []), str(inp.get("layout") or "side-by-side")
@@ -5474,12 +5709,12 @@ def handle_text_command(
     source labels this command for the dashboard's Sessions panel ("voice"/"text"/"phone"/
     "dashboard") — purely descriptive, never changes behavior.
 
-    reply_sink, if given, marks this as a phone-originated command (from
-    _ntfy_listen_loop/_telegram_listen_loop): instead of speaking the full reply locally,
-    Jarvis gives a brief spoken "Message received." ack up front (so anyone in the room knows
-    something's happening) and sends the *actual* answer only to reply_sink — the room and the
-    phone get different things, on purpose, instead of reading the whole answer out loud into
-    an empty room.
+    reply_sink, if given, marks this as a phone- or dashboard-originated command: instead of
+    speaking the full reply locally, Jarvis sends the *actual* answer only to reply_sink — the
+    room and the phone/dashboard get different things, on purpose, instead of reading the whole
+    answer out loud into an empty room. Phone additionally gets a brief spoken "Message
+    received." ack up front, since nobody's looking at a screen for it; the dashboard already
+    shows the command arrive live, so it skips that ack.
 
     tone, if given, comes from handle_voice_command (text + raw audio, so it can factor in
     loudness/pace). Callers without audio (typed hotkey, phone) leave it unset and this
@@ -5492,7 +5727,7 @@ def handle_text_command(
     # health check or scheduled skill happens to notice.
     flush_pending_notifications()
 
-    if reply_sink:
+    if reply_sink and source != "dashboard":
         speak_text("Message received.")
 
     with _pending_action_lock:
@@ -5533,7 +5768,9 @@ def handle_text_command(
         if reply_sink:
             reply_sink(reply)
         else:
-            speak_text(reply)
+            # Dashboard/audit trail always get the full `reply` above — only what actually
+            # comes out of the speakers is shortened and stripped of full file paths.
+            speak_text(_collapse_paths_for_speech(_summarize_for_speech(reply)))
 
 
 def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
@@ -5867,6 +6104,7 @@ def main() -> int:
                     reject_pending=_dashboard_reject_pending,
                     kill_background_task=_dashboard_kill_background_task,
                     get_system_status=get_system_status_report,
+                    get_services=_dashboard_get_services_status,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same
                     # handle_text_command pipeline (run_agent_loop, _execute_tool, and the

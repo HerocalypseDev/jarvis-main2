@@ -13,6 +13,12 @@
     <span class="approval-empty">No pending confirmations</span>
   </div>
   <div id="input-mode-chip" class="input-mode-chip">idle</div>
+  <div class="services-dropdown">
+    <button class="btn btn-ghost" id="services-toggle-btn">Services &#9662;</button>
+    <div id="services-panel" class="services-panel hidden">
+      <p class="muted">Loading&hellip;</p>
+    </div>
+  </div>
   <div id="conn-status" class="conn-status offline">connecting&hellip;</div>
 </header>
 
@@ -20,7 +26,10 @@
 
 <main class="layout">
   <section class="col col-sessions">
-    <h2>Sessions</h2>
+    <div class="col-header">
+      <h2>Sessions</h2>
+      <button class="btn btn-ghost btn-small" id="clear-sessions-btn">Clear finished</button>
+    </div>
     <ul id="sessions-list" class="list"></ul>
   </section>
   <section class="col col-tasks">

@@ -113,6 +113,77 @@ def close_window(title: str) -> str:
     return _with_window(title, "Closed", lambda w: w.close())
 
 
+def resize_window(
+    title: str,
+    width: int | None = None,
+    height: int | None = None,
+    width_percent: float | None = None,
+    height_percent: float | None = None,
+) -> str:
+    """Resizes one window to an arbitrary size — absolute pixels (width/height) or a percent
+    of the screen (width_percent/height_percent, e.g. 50 for half the screen). Percent wins if
+    both are given for a dimension; a dimension left unset keeps the window's current size on
+    that axis. Unlike snap_window (fixed preset zones), this is a free-form resize."""
+    gw = _pygetwindow()
+    if gw is None:
+        return "PyGetWindow isn't installed."
+    win = _find(gw, title)
+    if win is None:
+        return f"No open window matching {title!r}."
+    screen_w, screen_h = _screen_size()
+    try:
+        if win.isMinimized or win.isMaximized:
+            win.restore()
+        new_w = int(screen_w * width_percent / 100) if width_percent else (int(width) if width else win.width)
+        new_h = int(screen_h * height_percent / 100) if height_percent else (int(height) if height else win.height)
+        new_w = max(100, min(new_w, screen_w))
+        new_h = max(100, min(new_h, screen_h))
+        win.resizeTo(new_w, new_h)
+        return f"Resized {win.title!r} to {new_w}x{new_h}."
+    except Exception as e:
+        log.warning("Could not resize window %r: %s", title, e)
+        return f"Could not resize {win.title!r}: {e}"
+
+
+def resize_all_windows(
+    width: int | None = None,
+    height: int | None = None,
+    width_percent: float | None = None,
+    height_percent: float | None = None,
+) -> str:
+    """Resizes every visible open window to the same size — the "resize all my windows" case,
+    as opposed to resize_window's single-window-by-title version."""
+    gw = _pygetwindow()
+    if gw is None:
+        return "PyGetWindow isn't installed."
+    wins = [w for w in gw.getAllWindows() if w.title and w.visible]
+    if not wins:
+        return "No visible windows found."
+    resized, skipped = [], []
+    for win in wins:
+        try:
+            if win.isMinimized:
+                continue  # leave minimized windows alone rather than popping them open
+            if win.isMaximized:
+                win.restore()
+            screen_w, screen_h = _screen_size()
+            new_w = int(screen_w * width_percent / 100) if width_percent else (int(width) if width else win.width)
+            new_h = int(screen_h * height_percent / 100) if height_percent else (int(height) if height else win.height)
+            new_w = max(100, min(new_w, screen_w))
+            new_h = max(100, min(new_h, screen_h))
+            win.resizeTo(new_w, new_h)
+            resized.append(win.title)
+        except Exception as e:
+            log.debug("Skipping %r in resize_all_windows: %s", win.title, e)
+            skipped.append(win.title)
+    if not resized:
+        return "No windows could be resized (all minimized or failed)."
+    result = f"Resized {len(resized)} window(s): {', '.join(resized)}."
+    if skipped:
+        result += f" Skipped: {', '.join(skipped)}."
+    return result
+
+
 def _snap_rect(side: str, screen_w: int, screen_h: int) -> tuple[int, int, int, int]:
     half_w, half_h = screen_w // 2, screen_h // 2
     quarter_w, quarter_h = half_w, half_h

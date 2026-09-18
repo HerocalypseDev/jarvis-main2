@@ -64,6 +64,9 @@ def _connect() -> sqlite3.Connection:
 # --- session bookkeeping -----------------------------------------------------------------
 # Called from jarvis.py's handle_text_command for every voice/text/phone/dashboard command.
 # Never raises.
+MAX_SESSION_ROWS = 300  # every command writes a row here — prune so the table never grows unbounded
+
+
 def start_session(source: str, transcript: str) -> int | None:
     try:
         now_iso = datetime.now().isoformat(timespec="seconds")
@@ -75,13 +78,38 @@ def start_session(source: str, transcript: str) -> int | None:
                     "VALUES (?, ?, 'active', ?)",
                     (source, transcript, now_iso),
                 )
+                new_id = int(cur.lastrowid)
+                # Cheap enough to run on every write (an indexed rowid range delete); keeps the
+                # table from piling up forever while every command a user gives still gets a row.
+                conn.execute(
+                    "DELETE FROM dashboard_sessions WHERE id NOT IN "
+                    "(SELECT id FROM dashboard_sessions ORDER BY id DESC LIMIT ?)",
+                    (MAX_SESSION_ROWS,),
+                )
                 conn.commit()
-                return int(cur.lastrowid)
+                return new_id
             finally:
                 conn.close()
     except Exception as e:
         log.debug("start_session failed (non-fatal): %s", e)
         return None
+
+
+def clear_finished_sessions() -> int:
+    """Deletes every session that isn't currently 'active' — the dashboard's "Clear finished"
+    button. Returns how many rows were removed."""
+    try:
+        with _db_lock:
+            conn = _connect()
+            try:
+                cur = conn.execute("DELETE FROM dashboard_sessions WHERE status != 'active'")
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+    except Exception as e:
+        log.debug("clear_finished_sessions failed (non-fatal): %s", e)
+        return 0
 
 
 def end_session(session_id: int | None, status: str, reply: str | None) -> None:
@@ -425,6 +453,7 @@ def _build_app(
     reject_pending: Callable[[], bool] | None = None,
     kill_background_task: Callable[[int], str] | None = None,
     run_command: Callable[[str, Callable[[str], None]], None] | None = None,
+    get_services: Callable[[], list[dict]] | None = None,
     port: int = DEFAULT_PORT,
 ):
     """Builds the FastAPI app (import-guarded, testable without binding a socket). Returns
@@ -492,6 +521,20 @@ def _build_app(
             log.warning("Audit query failed: %s", e)
             rows = []
         return {"rows": rows, "limit": limit, "offset": offset}
+
+    @app.get("/api/services")
+    def api_services() -> dict:
+        if not get_services:
+            return {"services": []}
+        try:
+            return {"services": get_services()}
+        except Exception as e:
+            log.warning("get_services failed: %s", e)
+            return {"services": []}
+
+    @app.delete("/api/sessions/finished")
+    def api_clear_finished_sessions() -> dict:
+        return {"ok": True, "removed": clear_finished_sessions()}
 
     @app.post("/api/pending/approve")
     def api_approve():
@@ -565,6 +608,7 @@ def start(
     reject_pending: Callable[[], bool] | None = None,
     kill_background_task: Callable[[int], str] | None = None,
     run_command: Callable[[str, Callable[[str], None]], None] | None = None,
+    get_services: Callable[[], list[dict]] | None = None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
     127.0.0.1 only, by design: this server is a second surface that can (in later phases)
@@ -579,6 +623,7 @@ def start(
         reject_pending=reject_pending,
         kill_background_task=kill_background_task,
         run_command=run_command,
+        get_services=get_services,
         port=port,
     )
     if app is None:

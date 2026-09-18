@@ -66,6 +66,70 @@ Rules:
   `skip_confirmation=True` — and an auto-focus behavior where a new voice-originated session
   opens in the Detail panel live. Tauri packaging remains deferred (user chose "browser tab for
   MVP" 2026-09-18); revisit only if asked.
+- Post-launch fixes/additions (2026-09-18, from real usage): a Services dropdown
+  (`GET /api/services`, `_dashboard_get_services_status()` in jarvis.py) lists every configured
+  MCP server plus both phone channels with a live status dot; a per-core CPU heatmap in the
+  metrics strip (`metrics.cpu.per_core_percent`, already returned by
+  `get_system_status_report()` — no backend change needed for that part); `dashboard_sessions`
+  is now pruned to `MAX_SESSION_ROWS` (300) on every write, the Sessions panel groups rows by
+  day, and has a "Clear finished" button (`DELETE /api/sessions/finished`, active sessions are
+  never touched); the Detail panel's audit/session/task views were rebuilt as syntax-highlighted
+  cards instead of raw `<pre>` dumps of JSON.
+- **Test suite**: `test_dashboard.py` (pytest + FastAPI TestClient, isolated temp DB via
+  `JARVIS_MEMORY_DB_PATH`, never touches the real `jarvis_memory.db`) covers every dashboard
+  endpoint. Run: `python -m pytest test_dashboard.py -v`. Extend it when adding endpoints rather
+  than only ad-hoc-testing by hand.
+
+## Speech shaping (2026-09-18)
+
+- `_finish_background_task` now reports completion with `urgent=True` — a background
+  code/research task the user explicitly asked for must never sit silently queued behind the
+  busy-quiet-hours gate (`queue_or_deliver_notification`'s `user_is_actively_working() and
+  _is_preferred_work_hours()` check) the way an unprompted proactive suggestion does. That gate
+  still applies as before to scheduled skills and health-monitor suggestions — only
+  user-requested background task completions bypass it.
+- What Jarvis *speaks* locally (voice/typed-hotkey replies only — phone and dashboard replies
+  are read, not heard, and already get the full text via reply_sink) is now shortened for
+  anything over `SPEECH_SUMMARY_MIN_CHARS` (220 chars) via one extra Claude call
+  (`_summarize_for_speech`, same `CLAUDE_MODEL` already used everywhere — Haiku by default, so
+  this doesn't add a more expensive tier) before `speak_text`. The dashboard/audit trail/session
+  history always keep the full, unsummarized `reply` — only the TTS output is shortened. Falls
+  back to the original text on any failure; never goes silent.
+- `_collapse_paths_for_speech` replaces any full file path in the spoken text with just its
+  containing folder's name ("the Research folder", never a path with every backslash read
+  aloud). URLs are masked out before this runs and restored untouched after — the naive version
+  of this regex will also match a URL's `/path/segments` and mangle the link; don't remove that
+  masking step when touching this code.
+- Dashboard-originated commands (`source="dashboard"`) no longer get the spoken "Message
+  received." ack — that's for phone commands only, where nobody's looking at a screen for it.
+  The dashboard already shows a command land live.
+
+## MCP startup (2026-09-18)
+
+- `ensure_mcp_started()` previously had a real race: it set `_mcp_started = True` *before* the
+  connection attempt finished, so a second caller (observed live: the scheduler's first tick
+  running a due skill like `gmail_watch`, racing against `_preload_mcp_async()`'s background
+  connect) would see "already started" and return immediately with an empty tool list, instead
+  of waiting for the connection that was still in flight. Fixed: every caller now blocks on
+  `_mcp_ready_event` until the in-flight attempt (started by whoever got there first) actually
+  finishes. Verified with a threaded repro (`ensure_mcp_started` called concurrently from two
+  threads against a slow fake connect) before/after the fix.
+- A server that fails to connect is retried automatically every `MCP_RETRY_INTERVAL_S` (2 min)
+  from the scheduler tick (`_retry_failed_mcp_servers`, tracked in `_mcp_failed_servers`) instead
+  of being given up on for the rest of the process's life — previously the only way to recover
+  from a transient failure (npx cold-start, brief network hiccup) was restarting Jarvis.
+
+## Window control
+
+- `resize_window(title, width=, height=, width_percent=, height_percent=)` and
+  `resize_all_windows(...)` (jarvis_window_control.py) added for arbitrary free-form resize —
+  `snap_window` remains for the fixed preset zones (left/right/quarters/etc.), this is for "make
+  this window 500x400" or "resize all my windows to half the screen." Exposed to the agent via
+  `control_window`'s `action=resize` and the standalone `resize_all_windows` tool.
+- `resize_all_windows` resizes *every visible window on the desktop* — tested once for real
+  during QA and it visibly resized 15 live windows (Discord, Chrome, VS Code, etc.), not just a
+  throwaway test window. Test this one against a single spawned process in the future, not the
+  live desktop.
 
 ### Cost reporting
 

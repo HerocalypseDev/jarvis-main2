@@ -58,7 +58,39 @@ function renderMetrics(metrics) {
   const uptimeHours = metrics.system && metrics.system.uptime_hours;
   const uptimeText =
     uptimeHours != null ? `<span class="metric-value">Uptime ${uptimeHours.toFixed(1)}h</span>` : "";
-  el.innerHTML = bars.join("") + uptimeText;
+  let heatmap = "";
+  if (metrics.cpu && Array.isArray(metrics.cpu.per_core_percent) && metrics.cpu.per_core_percent.length > 1) {
+    heatmap = coreHeatmap(metrics.cpu.per_core_percent);
+  }
+  el.innerHTML = bars.join("") + heatmap + uptimeText;
+}
+
+// Per-core CPU heatmap: one cell per core, colored on a cool-to-hot gradient by load — a
+// visual "receptor" for load distribution a single averaged bar can't show (e.g. one pegged
+// core vs. even load across all of them look identical as a plain percentage).
+function coreHeatmap(perCore) {
+  const cells = perCore
+    .map((pct) => `<span class="heatmap-cell" style="background:${heatColor(pct)}" title="${pct.toFixed(0)}%"></span>`)
+    .join("");
+  return `
+    <div class="heatmap">
+      <span class="heatmap-label">Cores</span>
+      <span class="heatmap-cells">${cells}</span>
+    </div>`;
+}
+
+// green (cool/idle) -> yellow -> red (hot/saturated), interpolated by load percent.
+function heatColor(pct) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0)) / 100;
+  let r, g;
+  if (p < 0.5) {
+    r = Math.round(255 * (p / 0.5));
+    g = 200;
+  } else {
+    r = 255;
+    g = Math.round(200 * (1 - (p - 0.5) / 0.5));
+  }
+  return `rgb(${r},${g},60)`;
 }
 
 function metricBar(label, percent, unit) {
@@ -130,22 +162,22 @@ function renderApproval(pending) {
 function showPendingDetail(pending) {
   state.followedSessionId = null;
   const el = document.getElementById("detail-panel");
-  let inputText;
-  try {
-    inputText = JSON.stringify(pending.tool_input, null, 2);
-  } catch (e) {
-    inputText = String(pending.tool_input);
-  }
   el.innerHTML = `
-    <h3>Confirmation needed</h3>
-    <p class="danger-text"><strong>${esc(pending.tool_name)}</strong> would ${esc(pending.reason)}.</p>
-    <p><strong>Full input:</strong></p>
-    <pre>${esc(inputText)}</pre>
-    <div class="detail-actions">
-      <button class="btn btn-danger" id="approve-btn">Approve &amp; Run</button>
-      <button class="btn btn-ghost" id="reject-btn">Reject</button>
-    </div>
-    <p id="pending-action-status" class="muted"></p>`;
+    <div class="detail-card">
+      <div class="detail-header">
+        <span class="detail-title danger-text">Confirmation needed</span>
+      </div>
+      <p class="danger-text"><strong>${esc(pending.tool_name)}</strong> would ${esc(pending.reason)}.</p>
+      <div>
+        <p class="detail-section-label">Full input</p>
+        <pre class="detail-code">${prettyCodeHtml(pending.tool_input)}</pre>
+      </div>
+      <div class="detail-actions">
+        <button class="btn btn-danger" id="approve-btn">Approve &amp; Run</button>
+        <button class="btn btn-ghost" id="reject-btn">Reject</button>
+      </div>
+      <p id="pending-action-status" class="muted"></p>
+    </div>`;
   document.getElementById("approve-btn").addEventListener("click", () => actOnPending("approve"));
   document.getElementById("reject-btn").addEventListener("click", () => actOnPending("reject"));
 }
@@ -167,10 +199,35 @@ async function actOnPending(action) {
   fetchState();
 }
 
+// "Today" / "Yesterday" / a short date — so a long-running session log reads as organized
+// history instead of one undifferentiated pile that just keeps growing.
+function sessionDateLabel(isoStr) {
+  if (!isoStr) return "Unknown";
+  const d = new Date(isoStr);
+  if (isNaN(d)) return "Unknown";
+  const now = new Date();
+  const startOfDay = (dt) => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  const opts = { month: "short", day: "numeric" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
+}
+
 function renderSessions(sessions) {
   const el = document.getElementById("sessions-list");
   el.innerHTML = "";
+  let lastGroup = null;
   (sessions || []).forEach((s) => {
+    const group = sessionDateLabel(s.started_at);
+    if (group !== lastGroup) {
+      const header = document.createElement("li");
+      header.className = "session-group-header";
+      header.textContent = group;
+      el.appendChild(header);
+      lastGroup = group;
+    }
     const li = document.createElement("li");
     li.className = "list-item" + (s.status === "active" ? " active" : "");
     li.innerHTML = `
@@ -181,6 +238,18 @@ function renderSessions(sessions) {
   });
   if (!sessions || !sessions.length) el.innerHTML = '<li class="muted">No sessions yet.</li>';
 }
+
+document.getElementById("clear-sessions-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("clear-sessions-btn");
+  btn.disabled = true;
+  try {
+    await fetch("/api/sessions/finished", { method: "DELETE" });
+  } catch (e) {
+    console.error("Clear finished sessions failed", e);
+  }
+  btn.disabled = false;
+  fetchState();
+});
 
 function renderTasks(tasks) {
   const el = document.getElementById("tasks-list");
@@ -251,35 +320,104 @@ function renderVictory(victoryLog, counts) {
   if (!victoryLog || !victoryLog.length) el.innerHTML = '<li class="muted">Nothing completed yet.</li>';
 }
 
+// Recursively renders a parsed JSON value as syntax-colored HTML text (not innerHTML on raw
+// strings — every leaf goes through esc() first, so this is safe even for adversarial content
+// like a tool_input containing "<script>").
+function renderJsonValue(v, indent) {
+  const pad = "  ".repeat(indent);
+  const pad2 = "  ".repeat(indent + 1);
+  if (v === null) return '<span class="json-null">null</span>';
+  if (typeof v === "boolean") return `<span class="json-bool">${v}</span>`;
+  if (typeof v === "number") return `<span class="json-number">${v}</span>`;
+  if (typeof v === "string") return `<span class="json-string">${esc(JSON.stringify(v))}</span>`;
+  if (Array.isArray(v)) {
+    if (!v.length) return "[]";
+    const items = v.map((item) => pad2 + renderJsonValue(item, indent + 1)).join(",\n");
+    return `[\n${items}\n${pad}]`;
+  }
+  if (typeof v === "object") {
+    const keys = Object.keys(v);
+    if (!keys.length) return "{}";
+    const items = keys
+      .map(
+        (k) =>
+          `${pad2}<span class="json-key">${esc(JSON.stringify(k))}</span>: ${renderJsonValue(v[k], indent + 1)}`
+      )
+      .join(",\n");
+    return `{\n${items}\n${pad}}`;
+  }
+  return esc(String(v));
+}
+
+// Pretty-prints `raw` as colored JSON if it parses as JSON; otherwise falls back to plain
+// escaped text (most tool results are just strings, not JSON, and that's fine here too).
+function prettyCodeHtml(raw) {
+  if (raw == null || raw === "") return '<span class="muted">(none)</span>';
+  if (typeof raw === "object") return renderJsonValue(raw, 0);
+  try {
+    return renderJsonValue(JSON.parse(raw), 0);
+  } catch (e) {
+    return esc(String(raw));
+  }
+}
+
 function showDetail(kind, item) {
   const el = document.getElementById("detail-panel");
   if (kind === "session") {
     state.followedSessionId = item.id;
     el.innerHTML = `
-      <h3>${badge(item.source)} Session #${esc(item.id)}</h3>
-      <p><strong>Status:</strong> ${statusPill(item.status)}</p>
-      <p><strong>Transcript:</strong> ${esc(item.transcript)}</p>
-      <p><strong>Reply:</strong> ${esc(item.reply || "(pending)")}</p>
-      <p class="muted">${esc(item.started_at)} &rarr; ${esc(item.ended_at || "active")}</p>`;
+      <div class="detail-card">
+        <div class="detail-header">
+          ${badge(item.source)}
+          <span class="detail-title">Session #${esc(item.id)}</span>
+          <span class="detail-timestamp">${esc(item.started_at)} &rarr; ${esc(item.ended_at || "active")}</span>
+        </div>
+        <div class="detail-row"><span class="detail-row-label">Status</span>${statusPill(item.status)}</div>
+        <div>
+          <p class="detail-section-label">Transcript</p>
+          <blockquote class="detail-quote">${esc(item.transcript)}</blockquote>
+        </div>
+        <div>
+          <p class="detail-section-label">Reply</p>
+          <pre class="detail-code">${item.reply ? esc(item.reply) : '<span class="muted">(pending)</span>'}</pre>
+        </div>
+      </div>`;
   } else if (kind === "task") {
     state.followedSessionId = null;
     el.innerHTML = `
-      <h3>Task ${esc(item.id)}</h3>
-      <p><strong>Status:</strong> ${statusPill(item.status)}</p>
-      <p><strong>Description:</strong> ${esc(item.description)}</p>
-      <p><strong>Result:</strong> ${esc(item.result_summary || "(none yet)")}</p>
-      <p class="muted">${esc(item.started_at || "")} &rarr; ${esc(item.finished_at || "running")}</p>`;
+      <div class="detail-card">
+        <div class="detail-header">
+          <span class="detail-title">${esc(truncate(item.description, 70))}</span>
+          <span class="detail-timestamp">${esc(item.started_at || "")} &rarr; ${esc(item.finished_at || "running")}</span>
+        </div>
+        <div class="detail-row"><span class="detail-row-label">Status</span>${statusPill(item.status)}</div>
+        <div class="detail-row"><span class="detail-row-label">Kind</span><span>${esc(item.kind || "")}${item.progress ? ` &middot; step ${esc(item.progress)}` : ""}</span></div>
+        <div>
+          <p class="detail-section-label">Result</p>
+          <pre class="detail-code">${item.result_summary ? esc(item.result_summary) : '<span class="muted">(none yet)</span>'}</pre>
+        </div>
+      </div>`;
   } else if (kind === "audit") {
     state.followedSessionId = null;
     const fromTranscript = item.transcript
-      ? `<p><strong>From command:</strong> ${esc(truncate(item.transcript, 200))}</p>`
+      ? `<blockquote class="detail-quote">${esc(truncate(item.transcript, 200))}</blockquote>`
       : "";
     el.innerHTML = `
-      <h3>${esc(item.tool_name)}</h3>
-      <p class="muted">${esc(item.timestamp)}</p>
-      ${fromTranscript}
-      <p><strong>Input:</strong></p><pre>${esc(item.tool_input)}</pre>
-      <p><strong>Result:</strong></p><pre>${esc(item.result)}</pre>`;
+      <div class="detail-card">
+        <div class="detail-header">
+          <span class="detail-title">${esc(item.tool_name)}</span>
+          <span class="detail-timestamp">${esc(item.timestamp)}</span>
+        </div>
+        ${fromTranscript}
+        <div>
+          <p class="detail-section-label">Input</p>
+          <pre class="detail-code">${prettyCodeHtml(item.tool_input)}</pre>
+        </div>
+        <div>
+          <p class="detail-section-label">Result</p>
+          <pre class="detail-code">${prettyCodeHtml(item.result)}</pre>
+        </div>
+      </div>`;
   }
 }
 
@@ -368,6 +506,50 @@ document.getElementById("compose-form").addEventListener("submit", async (e) => 
   }
   input.disabled = false;
   input.focus();
+});
+
+function slugStatus(status) {
+  return String(status || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+async function loadServices() {
+  const panel = document.getElementById("services-panel");
+  panel.innerHTML = '<p class="muted">Loading&hellip;</p>';
+  try {
+    const res = await fetch("/api/services");
+    const data = await res.json();
+    const services = data.services || [];
+    if (!services.length) {
+      panel.innerHTML = '<p class="muted">No services configured.</p>';
+      return;
+    }
+    panel.innerHTML = services
+      .map(
+        (s) => `
+      <div class="service-row">
+        <span class="service-dot status-${slugStatus(s.status)}"></span>
+        <span class="service-name">${esc(s.name)}</span>
+        <span class="service-detail">${esc(s.detail || s.status)}</span>
+      </div>`
+      )
+      .join("");
+  } catch (e) {
+    panel.innerHTML = '<p class="muted">Failed to load services.</p>';
+  }
+}
+
+const servicesPanel = document.getElementById("services-panel");
+const servicesToggleBtn = document.getElementById("services-toggle-btn");
+servicesToggleBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const willOpen = servicesPanel.classList.contains("hidden");
+  servicesPanel.classList.toggle("hidden");
+  if (willOpen) loadServices();
+});
+document.addEventListener("click", (e) => {
+  if (!servicesPanel.classList.contains("hidden") && !e.target.closest(".services-dropdown")) {
+    servicesPanel.classList.add("hidden");
+  }
 });
 
 // When a new voice-originated session starts, open/focus it in the Detail panel so a complex

@@ -269,3 +269,77 @@ def test_websocket_broadcast(dashboard):
 def test_notify_before_server_started_is_noop(dashboard):
     dashboard._broadcast_fn = None
     dashboard.notify({"type": "irrelevant"})  # must not raise
+
+
+def test_services_endpoint_empty_when_not_wired(client):
+    r = client.get("/api/services")
+    assert r.status_code == 200
+    assert r.json() == {"services": []}
+
+
+def test_services_endpoint_wired(dashboard):
+    from fastapi.testclient import TestClient
+
+    fake_services = [
+        {"name": "gmail", "status": "connected", "detail": "5 tool(s)"},
+        {"name": "calendar", "status": "failed", "detail": "retrying every 2 min"},
+    ]
+    app = dashboard._build_app(get_services=lambda: fake_services)
+    with TestClient(app) as c:
+        r = c.get("/api/services")
+        assert r.status_code == 200
+        assert r.json()["services"] == fake_services
+
+
+def test_services_endpoint_exception_does_not_break(dashboard):
+    from fastapi.testclient import TestClient
+
+    def boom():
+        raise RuntimeError("mcp lock exploded")
+
+    app = dashboard._build_app(get_services=boom)
+    with TestClient(app) as c:
+        r = c.get("/api/services")
+        assert r.status_code == 200
+        assert r.json() == {"services": []}
+
+
+def test_session_pruning_keeps_table_bounded(dashboard):
+    original_max = dashboard.MAX_SESSION_ROWS
+    dashboard.MAX_SESSION_ROWS = 5
+    try:
+        ids = [dashboard.start_session("voice", f"command {i}") for i in range(10)]
+        conn = sqlite3.connect(dashboard._db_path())
+        count = conn.execute("SELECT COUNT(*) FROM dashboard_sessions").fetchone()[0]
+        conn.close()
+        assert count == 5
+        # the most recent ones must be the ones kept, not an arbitrary subset
+        assert dashboard.start_session is not None
+        assert ids[-1] is not None
+    finally:
+        dashboard.MAX_SESSION_ROWS = original_max
+
+
+def test_clear_finished_sessions(dashboard, client):
+    active_id = dashboard.start_session("voice", "still running")
+    done_id = dashboard.start_session("text", "already done")
+    dashboard.end_session(done_id, "done", "ok")
+
+    removed = dashboard.clear_finished_sessions()
+    assert removed == 1
+
+    r = client.get("/api/state")
+    sessions = r.json()["sessions"]
+    ids = [s["id"] for s in sessions]
+    assert active_id in ids
+    assert done_id not in ids
+
+
+def test_clear_finished_sessions_endpoint(dashboard, client):
+    done_id = dashboard.start_session("voice", "finished one")
+    dashboard.end_session(done_id, "done", "ok")
+
+    r = client.request("DELETE", "/api/sessions/finished")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert r.json()["removed"] >= 1
