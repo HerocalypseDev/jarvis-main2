@@ -406,3 +406,26 @@ def test_claude_request_records_usage(jarvis, monkeypatch):
     jarvis._claude_request({"model": "claude-haiku-4-5-20251001", "messages": []}, 5)
     time.sleep(0.2)  # recording happens on a background thread
     assert len(calls) == 1 and calls[0][2] == "claude-haiku-4-5-20251001" and calls[0][3]["input_tokens"] == 7
+
+
+# --- confirmation gate regression: a shutdown request must be *staged*, never run or ignored ---
+def test_shutdown_via_run_shell_is_staged_not_run(jarvis, monkeypatch):
+    import subprocess
+
+    def must_not_run(*a, **k):
+        raise AssertionError("the shutdown command was executed instead of staged")
+
+    monkeypatch.setattr(subprocess, "run", must_not_run)
+    monkeypatch.setattr(subprocess, "Popen", must_not_run)
+    jarvis._pending_action = None
+    result = jarvis._execute_tool_impl("run_shell", {"command": "shutdown /s /t 0"}, "shut down my computer")
+    assert "staged, not run" in result
+    pending = jarvis._take_pending_action()
+    assert pending and pending["tool_name"] == "run_shell" and "shutdown" in pending["tool_input"]["command"]
+
+
+def test_system_prompt_requires_the_tool_call_to_stage():
+    import jarvis as j
+
+    assert "MUST actually make that run_shell/run_python call" in j.AGENT_SYSTEM_PROMPT
+    assert "NEVER tell the user you're about to shut down" in j.AGENT_SYSTEM_PROMPT

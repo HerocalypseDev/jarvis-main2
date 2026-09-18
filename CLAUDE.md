@@ -226,6 +226,17 @@ Rules:
   - Hit/miss logging: `cache[layer] HIT|miss ... (h/n hits, pct)` and per-call
     `agent loop tokens: ... cache-read ...` lines in the Jarvis log.
 
+## Confirmation gate follow-up (2026-09-18)
+
+- **Shutdown never staged (2026-09-18, found live)**: "shut down my computer" via the dashboard
+  produced a text-only reply ("I'm about to shut down… say yes") with *no* run_shell call, so
+  nothing was staged, the dashboard approval bar stayed empty, and a later "yes" did nothing —
+  Claude imitated the staged-action wording from the system prompt without making the call that
+  triggers the gate. Nothing ran (audit table had no run_shell row). Fixed in the system prompt
+  (must make the run_shell/run_python call; never announce/ask "yes" without it) and pinned with
+  tests: the gate stages `shutdown /s /t 0` without executing it, and the prompt carries the rule.
+  Prompt-level, so not 100% deterministic — if it recurs, add a code-level guard.
+
 ## API spend lookup (2026-09-18)
 
 - `api_spend` tool (`jarvis_billing.py`) reads Anthropic's Usage & Cost Admin API
