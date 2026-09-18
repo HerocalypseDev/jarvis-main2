@@ -2007,15 +2007,33 @@ def _quarantine_corrupt_memory_db(db_path: Path) -> None:
 
 def _memory_db_connect() -> sqlite3.Connection:
     db_path = _memory_db_path()
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
+    _apply_memory_db_pragmas(conn)
     try:
         _create_memory_tables(conn)
     except sqlite3.DatabaseError:
         conn.close()
         _quarantine_corrupt_memory_db(db_path)
-        conn = sqlite3.connect(db_path)  # fresh file, since the old one was just moved aside
+        conn = sqlite3.connect(db_path, timeout=10)  # fresh file, since the old one was just moved aside
+        _apply_memory_db_pragmas(conn)
         _create_memory_tables(conn)
     return conn
+
+
+def _apply_memory_db_pragmas(conn: sqlite3.Connection) -> None:
+    """WAL mode lets readers proceed while a writer is mid-transaction instead of the default
+    rollback-journal's whole-file exclusive lock — observed live: many jarvis_*.py modules each
+    open their own connection to this same file, and a startup burst (session recovery, the
+    scheduler's first tick, filewatcher, dashboard session pruning) can collide under the
+    default mode. journal_mode is persisted in the file itself, so this only has real work to
+    do the first time any connection ever sets it; busy_timeout (10s, above the 5s default) is
+    a per-connection setting and always applied. Never fatal — a WAL-unsupported filesystem
+    (rare, e.g. some network shares) just keeps the default mode."""
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+    except sqlite3.DatabaseError as e:
+        log.debug("Could not set WAL/busy_timeout pragmas: %s", e)
 
 
 def _history_snapshot() -> list[dict]:
@@ -6095,6 +6113,19 @@ def main() -> int:
         # A startup failure (e.g. fastapi/uvicorn not installed) must never take Jarvis's core
         # loop down with it, hence the broad except.
         try:
+            # Warm the fastapi/uvicorn import *here*, synchronously, before the dashboard
+            # thread exists — observed live: CPython's per-module import lock can spuriously
+            # deadlock-detect when two threads do their first import of unrelated heavy
+            # packages at nearly the same instant (here: dashboard-server's first `import
+            # uvicorn` racing Whisper/Piper loading on other startup threads), permanently
+            # crashing whichever thread loses. Importing once on the main thread means the
+            # background thread's later `import uvicorn` just hits sys.modules — no lock, no
+            # race, regardless of what else is importing at that moment.
+            try:
+                import fastapi  # noqa: F401
+                import uvicorn  # noqa: F401
+            except ImportError:
+                pass  # dashboard.start() logs its own warning and no-ops if truly missing
             threading.Thread(
                 target=dashboard.start,
                 kwargs=dict(

@@ -47,7 +47,16 @@ def _db_path() -> Path:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
+    conn = sqlite3.connect(_db_path(), timeout=10)
+    # WAL mode + a longer busy timeout: observed live, jarvis.py's many independent sqlite
+    # connections to this same file can collide under the default rollback-journal mode
+    # during a startup burst. journal_mode is persisted in the file itself, so this is only
+    # ever real work the first time any connection sets it.
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+    except sqlite3.DatabaseError as e:
+        log.debug("Could not set WAL/busy_timeout pragmas: %s", e)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS dashboard_sessions ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
