@@ -110,3 +110,156 @@ def get_api_spend(admin_key: str, days: int = 30, http_get: Callable = _default_
         log.warning("API spend lookup failed: %s", e)
         return "Couldn't read API spend right now."
     return summarize(buckets, days, today=now.strftime("%Y-%m-%d"))
+
+
+# =============================================================================================
+# Local estimate: every Claude call's `usage` block x list price, stored in `api_usage`.
+# Needs no admin key and covers exactly what Jarvis itself spent (not other apps on the same key).
+# =============================================================================================
+import sqlite3
+import threading
+import time
+
+# USD per million tokens. Longest-prefix match on the model id; an unrecognised model falls back
+# to Haiku 4.5 rates and the summary flags the figure as approximate. Update when prices change.
+PRICES: dict[str, dict[str, float]] = {
+    "claude-haiku-4-5": {"in": 1.00, "out": 5.00, "read": 0.10, "w5m": 1.25, "w1h": 2.00},
+    "claude-sonnet-4": {"in": 3.00, "out": 15.00, "read": 0.30, "w5m": 3.75, "w1h": 6.00},
+    "claude-opus-4-5": {"in": 5.00, "out": 25.00, "read": 0.50, "w5m": 6.25, "w1h": 10.00},
+}
+_FALLBACK = PRICES["claude-haiku-4-5"]
+USAGE_RETENTION_DAYS = 400
+
+
+def _rates(model: str) -> tuple[dict[str, float], bool]:
+    best = max((p for p in PRICES if (model or "").startswith(p)), key=len, default=None)
+    return (PRICES[best], True) if best else (_FALLBACK, False)
+
+
+def compute_cost(model: str, usage: dict) -> tuple[float, float, bool]:
+    """(cost_usd, cache_saved_usd, price_known) for one response's `usage` block."""
+    rates, known = _rates(model)
+    fresh = usage.get("input_tokens", 0) or 0
+    read = usage.get("cache_read_input_tokens", 0) or 0
+    out = usage.get("output_tokens", 0) or 0
+    write_total = usage.get("cache_creation_input_tokens", 0) or 0
+    detail = usage.get("cache_creation") or {}
+    w1h = detail.get("ephemeral_1h_input_tokens", 0) or 0
+    w5m = detail.get("ephemeral_5m_input_tokens", write_total - w1h) or 0
+    cost = (
+        fresh * rates["in"] + out * rates["out"] + read * rates["read"]
+        + w5m * rates["w5m"] + w1h * rates["w1h"]
+    ) / 1e6
+    saved = read * (rates["in"] - rates["read"]) / 1e6
+    return cost, saved, known
+
+
+def _ensure_usage_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS api_usage ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, model TEXT NOT NULL, "
+        "input_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER, "
+        "output_tokens INTEGER, cost_usd REAL NOT NULL, saved_usd REAL NOT NULL)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_ts ON api_usage(ts)")
+
+
+def record_usage(connect: Callable[[], sqlite3.Connection], lock, model: str, usage: dict) -> None:
+    """Best-effort: never raises and never blocks the caller for long. A failure here must not
+    affect the Claude call whose usage it records."""
+    try:
+        if not usage:
+            return
+        cost, saved, _ = compute_cost(model, usage)
+        with lock:
+            conn = connect()
+            try:
+                _ensure_usage_table(conn)
+                conn.execute(
+                    "INSERT INTO api_usage (ts, model, input_tokens, cache_read_tokens, "
+                    "cache_write_tokens, output_tokens, cost_usd, saved_usd) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        time.time(), model or "unknown", usage.get("input_tokens", 0) or 0,
+                        usage.get("cache_read_input_tokens", 0) or 0,
+                        usage.get("cache_creation_input_tokens", 0) or 0,
+                        usage.get("output_tokens", 0) or 0, cost, saved,
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM api_usage WHERE ts < ?", (time.time() - USAGE_RETENTION_DAYS * 86400,)
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception as e:
+        log.debug("api_usage record failed: %s", e)
+
+
+def local_summary(connect: Callable[[], sqlite3.Connection], lock, now: float | None = None) -> dict:
+    """Totals for the dashboard/tool. Periods use the machine's local calendar (today = since
+    local midnight, month = calendar month to date, week = last 7 local days incl. today)."""
+    now = now or time.time()
+    lt = time.localtime(now)
+    midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    starts = {
+        "today": midnight,
+        "week": midnight - 6 * 86400,
+        "month": time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1)),
+        "all_time": 0.0,
+    }
+    out: dict = {"periods": {}, "by_model": [], "daily": [], "estimate_note": (
+        "Estimated from token counts x list price for calls made by Jarvis only; "
+        "Anthropic's Console is the source of truth."
+    )}
+    with lock:
+        conn = connect()
+        try:
+            _ensure_usage_table(conn)
+            for name, start in starts.items():
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(cost_usd),0), COUNT(*), COALESCE(SUM(input_tokens),0), "
+                    "COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0), "
+                    "COALESCE(SUM(output_tokens),0), COALESCE(SUM(saved_usd),0) "
+                    "FROM api_usage WHERE ts >= ?", (start,),
+                ).fetchone()
+                out["periods"][name] = {
+                    "cost_usd": row[0], "calls": row[1], "input_tokens": row[2],
+                    "cache_read_tokens": row[3], "cache_write_tokens": row[4],
+                    "output_tokens": row[5], "cache_saved_usd": row[6],
+                }
+            out["by_model"] = [
+                {"model": m, "cost_usd": c, "calls": n}
+                for m, c, n in conn.execute(
+                    "SELECT model, SUM(cost_usd), COUNT(*) FROM api_usage WHERE ts >= ? "
+                    "GROUP BY model ORDER BY SUM(cost_usd) DESC", (starts["month"],),
+                )
+            ]
+            by_day = dict(conn.execute(
+                "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime'), SUM(cost_usd) "
+                "FROM api_usage WHERE ts >= ? GROUP BY 1", (midnight - 13 * 86400,),
+            ).fetchall())
+        finally:
+            conn.close()
+    for i in range(13, -1, -1):
+        day = time.strftime("%Y-%m-%d", time.localtime(midnight - i * 86400 + 3600))
+        out["daily"].append({"date": day, "cost_usd": by_day.get(day, 0.0)})
+    out["unknown_price_models"] = [
+        m["model"] for m in out["by_model"] if not _rates(m["model"])[1]
+    ]
+    return out
+
+
+def format_local_summary(s: dict) -> str:
+    p = s["periods"]
+    if not p["all_time"]["calls"]:
+        return "No Jarvis API usage has been recorded yet, so there's no estimate to give."
+    text = (
+        f"Estimated Claude spend from Jarvis: ${p['today']['cost_usd']:.2f} today, "
+        f"${p['week']['cost_usd']:.2f} over the last 7 days, ${p['month']['cost_usd']:.2f} this month, "
+        f"${p['all_time']['cost_usd']:.2f} in total since tracking began."
+    )
+    if p["month"]["cache_saved_usd"] > 0.005:
+        text += f" Prompt caching saved about ${p['month']['cache_saved_usd']:.2f} this month."
+    if s["unknown_price_models"]:
+        text += " Some usage is on a model with unknown pricing, so that part is approximate."
+    return text

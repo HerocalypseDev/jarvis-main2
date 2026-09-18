@@ -235,6 +235,19 @@ Rules:
   cached 5 min via `READONLY_TOOL_TTLS`. Amounts arrive in cents as decimal strings.
   Unit-tested against the documented response shape; **not yet verified live** (the `.env` key
   line was blank when built) — confirm the real response once a key is set.
+- **Local spend estimate (2026-09-18)** — for accounts with no Admin key (individual accounts
+  can't have one). Every response's `usage` block goes through `_record_api_usage` (called from
+  `_claude_request`, on its own thread so a locked DB can never delay or deadlock a Claude call)
+  into the `api_usage` table in `jarvis_memory.db`: tokens + `cost_usd` + `saved_usd` (what
+  caching saved vs. uncached input). Prices are the `PRICES` table in `jarvis_billing.py`
+  (Haiku 4.5 / Sonnet 4 / Opus 4.5 list rates; unknown models fall back to Haiku rates and are
+  flagged "approximate" — **update `PRICES` when prices change or the default model changes**).
+  Covers Jarvis's own calls only, not other apps on the same key. `api_spend` uses the Admin API
+  when `ANTHROPIC_ADMIN_API_KEY` is set, else this local estimate. Dashboard: `GET /api/usage`
+  (read-only, no network call), a "Usage" tab (cards, 14-day bars, per-model list) and a
+  "$X today" chip in the top bar. Verified live (real calls recorded; tab rendered in headless
+  Chromium with no console errors). Rows older than 400 days are pruned on write.
+  Cost note: the startup prompt-cache pre-warm is a ~32k-token 1h write, ~$0.065 per restart.
 
 ## Window control
 
@@ -279,4 +292,5 @@ row there each phase rather than only stating the total in chat.
 | 7 (prompt caching for agent loop + plan steps) | Sonnet 5 | ~15 min | ~$0.50–$0.70 |
 | 8 (multi-layer caching: TTS/reply/tool/summary/skills + 1h prompt TTL) | Sonnet 5 | ~40 min | ~$1.60–$2.20 |
 | 9 (api_spend billing tool) | Sonnet 5 | ~10 min | ~$0.20–$0.30 |
-| **Running total (final)** | | **~200 min** | **~$6.30–$8.95** |
+| 10 (local spend tracking + dashboard Usage tab) | Sonnet 5 | ~25 min | ~$0.90–$1.30 |
+| **Running total (final)** | | **~225 min** | **~$7.20–$10.25** |

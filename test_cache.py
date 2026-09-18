@@ -334,4 +334,75 @@ def test_api_spend_tool_is_registered_and_cacheable(jarvis, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_ADMIN_API_KEY", raising=False)
     assert any(t["name"] == "api_spend" for t in jarvis.AGENT_TOOLS)
     assert jarvis.READONLY_TOOL_TTLS["api_spend"] == 300
-    assert "No admin key" in jarvis._execute_tool_impl("api_spend", {}, "how much have i spent")
+    assert "No Jarvis API usage" in jarvis._execute_tool_impl("api_spend", {}, "how much have i spent")
+
+
+# --- local spend tracking ---------------------------------------------------------------------
+def _kv_db(tmp_path):
+    import sqlite3
+    import threading
+
+    path = tmp_path / "usage.db"
+    return (lambda: sqlite3.connect(path)), threading.Lock()
+
+
+def test_compute_cost_haiku_with_1h_and_5m_writes():
+    import jarvis_billing as b
+
+    usage = {
+        "input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 10000,
+        "cache_creation_input_tokens": 5000,
+        "cache_creation": {"ephemeral_5m_input_tokens": 2000, "ephemeral_1h_input_tokens": 3000},
+    }
+    cost, saved, known = b.compute_cost("claude-haiku-4-5-20251001", usage)
+    assert known and abs(cost - 0.011) < 1e-9 and abs(saved - 0.009) < 1e-9
+    # no per-TTL breakdown -> all writes billed at the 5-minute rate
+    cost2, _, _ = b.compute_cost("claude-haiku-4-5", {"cache_creation_input_tokens": 1_000_000})
+    assert abs(cost2 - 1.25) < 1e-9
+    assert b.compute_cost("some-future-model", {"input_tokens": 1_000_000})[2] is False
+
+
+def test_record_and_local_summary(tmp_path):
+    import time
+    import jarvis_billing as b
+
+    connect, lock = _kv_db(tmp_path)
+    b.record_usage(connect, lock, "claude-haiku-4-5-20251001", {"input_tokens": 1_000_000, "output_tokens": 0})
+    b.record_usage(connect, lock, "mystery-model", {"input_tokens": 500_000, "cache_read_input_tokens": 1_000_000})
+    b.record_usage(connect, lock, "claude-haiku-4-5", {})  # empty usage: ignored
+    s = b.local_summary(connect, lock)
+    assert s["periods"]["all_time"]["calls"] == 2 and s["periods"]["today"]["calls"] == 2
+    assert abs(s["periods"]["today"]["cost_usd"] - (1.0 + 0.5 + 0.1)) < 1e-9
+    assert abs(s["periods"]["today"]["cache_saved_usd"] - 0.9) < 1e-9
+    assert len(s["daily"]) == 14 and abs(s["daily"][-1]["cost_usd"] - 1.6) < 1e-9
+    assert s["unknown_price_models"] == ["mystery-model"]
+    text = b.format_local_summary(s)
+    assert "$1.60 today" in text and "approximate" in text
+    # an old row falls outside "today" but inside "all time"
+    import sqlite3
+    conn = connect()
+    conn.execute("UPDATE api_usage SET ts = ?", (time.time() - 10 * 86400,))
+    conn.commit(); conn.close()
+    s2 = b.local_summary(connect, lock)
+    assert s2["periods"]["today"]["calls"] == 0 and s2["periods"]["all_time"]["calls"] == 2
+
+
+def test_record_usage_never_raises(tmp_path):
+    import jarvis_billing as b
+
+    def broken():
+        raise RuntimeError("no db")
+
+    b.record_usage(broken, __import__("threading").Lock(), "claude-haiku-4-5", {"input_tokens": 5})
+
+
+def test_claude_request_records_usage(jarvis, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jarvis.billing, "record_usage", lambda *a: calls.append(a))
+    monkeypatch.setattr(
+        jarvis, "_urlopen_hard_timeout",
+        lambda req, t: b'{"content": [], "usage": {"input_tokens": 7, "output_tokens": 2}}',
+    )
+    jarvis._claude_request({"model": "claude-haiku-4-5-20251001", "messages": []}, 5)
+    time.sleep(0.2)  # recording happens on a background thread
+    assert len(calls) == 1 and calls[0][2] == "claude-haiku-4-5-20251001" and calls[0][3]["input_tokens"] == 7

@@ -490,6 +490,76 @@ function renderDailyItems(items) {
   if (!items.length) el.innerHTML = '<li class="muted">No recurring skills or reminders yet.</li>';
 }
 
+// Local Claude-spend estimate (GET /api/usage): every API call's token usage x list price,
+// tracked by Jarvis itself — no admin key. Shown as a top-bar chip (refreshed every minute) and a
+// Usage tab (refreshed when opened and every 30s while it's the active tab).
+function fmtUsd(n) {
+  n = Number(n) || 0;
+  return "$" + (n < 1 ? n.toFixed(3) : n.toFixed(2));
+}
+
+async function fetchUsage() {
+  try {
+    const res = await fetch("/api/usage");
+    const data = await res.json();
+    renderUsage(data.usage);
+  } catch (e) {
+    /* leave the last render in place */
+  }
+}
+
+function renderUsage(u) {
+  const chip = document.getElementById("spend-chip");
+  if (!u) {
+    chip.textContent = "$– today";
+    return;
+  }
+  const p = u.periods;
+  chip.textContent = `${fmtUsd(p.today.cost_usd)} today`;
+  const cards = [
+    ["Today", p.today], ["7 days", p.week], ["This month", p.month], ["All time", p.all_time],
+  ].map(([label, d]) => `<div class="usage-card"><div class="usage-card-label">${esc(label)}</div>
+      <div class="usage-card-value">${esc(fmtUsd(d.cost_usd))}</div>
+      <div class="muted">${esc(String(d.calls))} calls</div></div>`);
+  cards.push(`<div class="usage-card usage-card-good"><div class="usage-card-label">Saved by caching (month)</div>
+      <div class="usage-card-value">${esc(fmtUsd(p.month.cache_saved_usd))}</div>
+      <div class="muted">${esc(String(p.month.cache_read_tokens.toLocaleString()))} tokens read from cache</div></div>`);
+  document.getElementById("usage-cards").innerHTML = cards.join("");
+
+  const max = Math.max(0.0001, ...u.daily.map((d) => d.cost_usd));
+  document.getElementById("usage-chart").innerHTML = u.daily
+    .map((d) => {
+      const h = Math.max(2, Math.round((d.cost_usd / max) * 100));
+      return `<div class="usage-bar-col" title="${esc(d.date)}: ${esc(fmtUsd(d.cost_usd))}">
+        <div class="usage-bar" style="height:${h}%"></div><div class="usage-bar-label">${esc(d.date.slice(8))}</div></div>`;
+    })
+    .join("");
+
+  const models = document.getElementById("usage-models");
+  models.innerHTML = u.by_model.length
+    ? u.by_model
+        .map((m) => `<li class="list-item compact"><span class="tool">${esc(m.model)}</span>
+          <span class="muted">${esc(fmtUsd(m.cost_usd))} this month &middot; ${esc(String(m.calls))} calls</span></li>`)
+        .join("")
+    : '<li class="muted">No usage recorded yet.</li>';
+  const extra = u.unknown_price_models.length
+    ? ` Approximate pricing used for: ${u.unknown_price_models.join(", ")}.`
+    : "";
+  document.getElementById("usage-note").textContent = u.estimate_note + extra;
+}
+
+function isUsageTabActive() {
+  const panel = document.getElementById("tab-usage");
+  return !!panel && panel.classList.contains("active");
+}
+
+document.getElementById("spend-chip").addEventListener("click", () => {
+  document.querySelector('.tab-btn[data-tab="usage"]').click();
+});
+fetchUsage();
+setInterval(fetchUsage, 60000);
+setInterval(() => { if (isUsageTabActive()) fetchUsage(); }, 30000);
+
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
@@ -498,6 +568,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "audit") fetchAuditResults();
     if (btn.dataset.tab === "daily") fetchDailyItems();
+    if (btn.dataset.tab === "usage") fetchUsage();
   });
 });
 

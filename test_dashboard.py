@@ -376,3 +376,24 @@ def test_daily_endpoint_exception_does_not_break(dashboard):
         r = c.get("/api/daily")
         assert r.status_code == 200
         assert r.json() == {"items": []}
+
+
+def test_usage_endpoint_empty_when_not_wired(client):
+    r = client.get("/api/usage")
+    assert r.status_code == 200
+    assert r.json() == {"usage": None}
+
+
+def test_usage_endpoint_wired_and_exception_safe(dashboard):
+    from fastapi.testclient import TestClient
+
+    fake = {"periods": {"today": {"cost_usd": 0.42}}, "daily": [], "by_model": []}
+    with TestClient(dashboard._build_app(get_usage=lambda: fake)) as c:
+        assert c.get("/api/usage").json() == {"usage": fake}
+
+    def boom():
+        raise RuntimeError("db locked")
+
+    with TestClient(dashboard._build_app(get_usage=boom)) as c:
+        r = c.get("/api/usage")
+        assert r.status_code == 200 and r.json() == {"usage": None}

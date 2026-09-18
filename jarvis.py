@@ -967,8 +967,10 @@ AGENT_TOOLS = [
     {
         "name": "api_spend",
         "description": (
-            "Report how much the user has spent on the Anthropic (Claude) API, from Anthropic's "
-            "own billing data: total for the last N days, today's spend, and the biggest models. "
+            "Report how much the user has spent on the Anthropic (Claude) API. Uses Anthropic's "
+            "own billing data when an admin key is configured (total for the last N days, "
+            "today's spend, biggest models); otherwise gives Jarvis's own locally-tracked "
+            "estimate (today, last 7 days, this month, all time, and what prompt caching saved). "
             "Use for questions like 'how much have I spent on Claude', 'what's my API bill', "
             "'how much did Jarvis cost today'. Read-only."
         ),
@@ -1913,6 +1915,21 @@ def _strip_cache_ttl(obj):
     return obj
 
 
+def _record_api_usage(body: dict, result: dict) -> None:
+    """Logs this response's token usage + estimated cost to the api_usage table (dashboard's
+    Usage tab, api_spend tool). Runs on its own short-lived thread so a slow or locked SQLite
+    write can never delay — or deadlock against a caller already holding the DB lock — the
+    Claude call it records. Best-effort: record_usage swallows every error."""
+    usage = (result or {}).get("usage") if isinstance(result, dict) else None
+    if not usage:
+        return
+    threading.Thread(
+        target=billing.record_usage,
+        args=(_memory_db_connect, _memory_db_lock, (body or {}).get("model") or CLAUDE_MODEL, usage),
+        daemon=True,
+    ).start()
+
+
 def _claude_request(body: dict, timeout: int) -> dict | None:
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
@@ -1931,7 +1948,9 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
             },
         )
         try:
-            return json.loads(_urlopen_hard_timeout(req, timeout))
+            result = json.loads(_urlopen_hard_timeout(req, timeout))
+            _record_api_usage(body, result)
+            return result
         except urllib.error.HTTPError as e:
             transient = e.code in (429, 500, 502, 503, 504, 529)
             try:
@@ -3623,6 +3642,10 @@ def _dashboard_get_services_status() -> list[dict]:
         ),
     })
     return services
+
+
+def _dashboard_get_usage() -> dict:
+    return billing.local_summary(_memory_db_connect, _memory_db_lock)
 
 
 def _dashboard_get_daily_items() -> list[dict]:
@@ -5766,9 +5789,15 @@ def _execute_tool_impl(
                 spend_days = int(inp.get("days") or 30)
             except (TypeError, ValueError):
                 spend_days = 30
-            result = billing.get_api_spend(
-                os.environ.get("ANTHROPIC_ADMIN_API_KEY") or "", spend_days
-            )
+            admin_key = (os.environ.get("ANTHROPIC_ADMIN_API_KEY") or "").strip()
+            if admin_key:
+                result = billing.get_api_spend(admin_key, spend_days)
+            else:
+                # No Admin API key (individual accounts can't have one): use the local estimate
+                # built from every call's logged token usage.
+                result = billing.format_local_summary(
+                    billing.local_summary(_memory_db_connect, _memory_db_lock)
+                )
         elif tool_name == "read_clipboard":
             result = read_clipboard_and_describe(transcript) or "Clipboard is empty."
         elif tool_name == "refactor_clipboard_code":
@@ -6596,6 +6625,7 @@ def main() -> int:
                     get_system_status=get_system_status_report,
                     get_services=_dashboard_get_services_status,
                     get_daily=_dashboard_get_daily_items,
+                    get_usage=_dashboard_get_usage,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same
                     # handle_text_command pipeline (run_agent_loop, _execute_tool, and the

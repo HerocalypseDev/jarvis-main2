@@ -464,6 +464,7 @@ def _build_app(
     run_command: Callable[[str, Callable[[str], None]], None] | None = None,
     get_services: Callable[[], list[dict]] | None = None,
     get_daily: Callable[[], list[dict]] | None = None,
+    get_usage: Callable[[], dict] | None = None,
     port: int = DEFAULT_PORT,
 ):
     """Builds the FastAPI app (import-guarded, testable without binding a socket). Returns
@@ -552,6 +553,18 @@ def _build_app(
             log.warning("get_daily failed: %s", e)
             return {"items": []}
 
+    @app.get("/api/usage")
+    def api_usage() -> dict:
+        # Read-only local spend estimate (see jarvis_billing.local_summary) — no admin key, no
+        # network call, nothing written.
+        if not get_usage:
+            return {"usage": None}
+        try:
+            return {"usage": get_usage()}
+        except Exception as e:
+            log.warning("get_usage failed: %s", e)
+            return {"usage": None}
+
     @app.delete("/api/sessions/finished")
     def api_clear_finished_sessions() -> dict:
         return {"ok": True, "removed": clear_finished_sessions()}
@@ -630,6 +643,7 @@ def start(
     run_command: Callable[[str, Callable[[str], None]], None] | None = None,
     get_services: Callable[[], list[dict]] | None = None,
     get_daily: Callable[[], list[dict]] | None = None,
+    get_usage: Callable[[], dict] | None = None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
     127.0.0.1 only, by design: this server is a second surface that can (in later phases)
@@ -646,6 +660,7 @@ def start(
         run_command=run_command,
         get_services=get_services,
         get_daily=get_daily,
+        get_usage=get_usage,
         port=port,
     )
     if app is None:
