@@ -3577,6 +3577,21 @@ def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
     return f"MCP tool reported an error: {text}" if getattr(result, "is_error", False) else text
 
 
+def _tts_engine_context_line() -> str:
+    """Ground truth for "what voice/TTS engine are you using?" — without this, Claude has no
+    way to actually know (the engine choice happens in speak_text(), entirely after Claude's
+    reply is generated, invisible to it) and was observed live guessing "Piper" regardless of
+    which engine was actually active, since Piper is the more famous open-source project."""
+    if FISH_AUDIO_API_KEY:
+        return (
+            "\n\nYour spoken replies are synthesized by Fish Audio (cloud TTS), with the "
+            "local Piper engine as an automatic fallback only if Fish Audio fails — say Fish "
+            "Audio if asked what voice engine you use, not Piper, unless you know a fallback "
+            "just happened."
+        )
+    return "\n\nYour spoken replies are synthesized by the local Piper TTS engine."
+
+
 def build_system_prompt(tone_line: str = "") -> str:
     # Computed fresh on every call (every agent-loop iteration) rather than relying on a
     # get-current-time tool call staying in the 6-message history window — observed live:
@@ -3589,6 +3604,7 @@ def build_system_prompt(tone_line: str = "") -> str:
     return (
         AGENT_SYSTEM_PROMPT
         + current_time_line
+        + _tts_engine_context_line()
         + tone_line
         + get_user_profile_context()
         + get_active_facts_context()
