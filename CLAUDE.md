@@ -53,3 +53,17 @@ Rules:
   mandatory "Review" detail view; Stop wired to a task's own subprocess via
   `_dashboard_kill_background_task`, which only ever kills processes Jarvis itself spawned).
   System metrics and dashboard-initiated commands are later phases.
+
+### Cost reporting
+
+After every implementation phase, report a block with: model, a one-line summary of the work,
+estimated tokens (in/out), estimated cost, and time spent — plus a **running total across all
+phases** for both cost and time (not cost alone). Keep the running totals below up to date; add
+a new row here each phase rather than only stating the total in chat.
+
+| Phase | Model | Time | Est. cost |
+|---|---|---|---|
+| 0 (analysis + risk review) | Sonnet 5 | ~5 min | ~$0.20–$0.30 |
+| 1 (Sessions/Tasks/Victory log MVP) | Sonnet 5 | ~25 min | ~$0.75–$1.10 |
+| 2 (Approve/Reject/Stop) | Sonnet 5 | ~15 min | ~$0.55–$0.75 |
+| **Running total** | | **~45 min** | **~$1.50–$2.15** |
