@@ -226,6 +226,16 @@ Rules:
   - Hit/miss logging: `cache[layer] HIT|miss ... (h/n hits, pct)` and per-call
     `agent loop tokens: ... cache-read ...` lines in the Jarvis log.
 
+## API spend lookup (2026-09-18)
+
+- `api_spend` tool (`jarvis_billing.py`) reads Anthropic's Usage & Cost Admin API
+  (`GET /v1/organizations/cost_report`, daily buckets, paginated) so Jarvis can answer "how much
+  have I spent on Claude?". Needs `ANTHROPIC_ADMIN_API_KEY` (an `sk-ant-admin…` key, org accounts
+  only) in `.env` — never in code; the normal `ANTHROPIC_API_KEY` cannot read billing. Read-only,
+  cached 5 min via `READONLY_TOOL_TTLS`. Amounts arrive in cents as decimal strings.
+  Unit-tested against the documented response shape; **not yet verified live** (the `.env` key
+  line was blank when built) — confirm the real response once a key is set.
+
 ## Window control
 
 - `resize_window(title, width=, height=, width_percent=, height_percent=)` and
@@ -268,4 +278,5 @@ row there each phase rather than only stating the total in chat.
 | 6 (RAM removal, silent-reply fix, phone-notif toggle, resizable panels, Daily tab) | Sonnet 5 | ~35 min | ~$1.00–$1.40 |
 | 7 (prompt caching for agent loop + plan steps) | Sonnet 5 | ~15 min | ~$0.50–$0.70 |
 | 8 (multi-layer caching: TTS/reply/tool/summary/skills + 1h prompt TTL) | Sonnet 5 | ~40 min | ~$1.60–$2.20 |
-| **Running total (final)** | | **~180 min** | **~$5.95–$8.35** |
+| 9 (api_spend billing tool) | Sonnet 5 | ~10 min | ~$0.20–$0.30 |
+| **Running total (final)** | | **~200 min** | **~$6.30–$8.95** |

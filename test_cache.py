@@ -285,3 +285,53 @@ def test_1h_ttl_rejection_falls_back_to_5m_and_retries(jarvis, monkeypatch):
     assert jarvis._claude_request(body, 5) == {"content": [], "usage": {}}
     assert len(sent) == 2 and "ttl" not in json.dumps(sent[1])
     assert jarvis._long_cache_control() == {"type": "ephemeral"}  # remembered for later calls
+
+
+# --- api_spend (Admin API cost report) --------------------------------------------------------
+def test_billing_summary_and_pagination():
+    import jarvis_billing as b
+    from datetime import datetime, timezone
+
+    pages = [
+        {"data": [{"starting_at": "2026-09-17T00:00:00Z", "results": [{"amount": "250", "model": "claude-haiku-4-5"}]}],
+         "has_more": True, "next_page": "p2"},
+        {"data": [{"starting_at": "2026-09-18T00:00:00Z", "results": [
+            {"amount": "100.5", "model": "claude-haiku-4-5"}, {"amount": "50", "description": "web search"}]}],
+         "has_more": False},
+    ]
+    seen = []
+
+    def fake_get(url, headers, timeout):
+        seen.append((url, headers))
+        return pages[len(seen) - 1]
+
+    out = b.get_api_spend("sk-ant-admin-x", 7, http_get=fake_get)
+    assert len(seen) == 2 and "page=p2" in seen[1][0] and seen[0][1]["x-api-key"] == "sk-ant-admin-x"
+    assert "$4.00" in out and "claude-haiku-4-5 $3.50" in out  # 250+100.5+50 cents = $4.00
+    assert "sk-ant-admin" not in out
+
+
+def test_billing_failures_are_plain_sentences():
+    import io
+    import urllib.error
+    import jarvis_billing as b
+
+    assert "No admin key" in b.get_api_spend("", 30)
+
+    def denied(url, headers, timeout):
+        raise urllib.error.HTTPError(url, 401, "no", {}, io.BytesIO(b"{}"))
+
+    assert "rejected the admin key" in b.get_api_spend("k", 30, http_get=denied)
+
+    def boom(url, headers, timeout):
+        raise OSError("network down")
+
+    assert "Couldn't read API spend" in b.get_api_spend("k", 30, http_get=boom)
+    assert "No API spend" in b.summarize([], 30)
+
+
+def test_api_spend_tool_is_registered_and_cacheable(jarvis, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_ADMIN_API_KEY", raising=False)
+    assert any(t["name"] == "api_spend" for t in jarvis.AGENT_TOOLS)
+    assert jarvis.READONLY_TOOL_TTLS["api_spend"] == 300
+    assert "No admin key" in jarvis._execute_tool_impl("api_spend", {}, "how much have i spent")

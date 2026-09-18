@@ -55,6 +55,7 @@ import jarvis_task_scheduler as task_scheduler
 import jarvis_voice_tone as voice_tone
 import jarvis_sleep_mode as sleep_mode
 import jarvis_cache as cache
+import jarvis_billing as billing
 import jarvis_dashboard as dashboard
 
 # --- tuning knobs -----------------------------------------------------------
@@ -962,6 +963,24 @@ AGENT_TOOLS = [
         "name": "system_status",
         "description": "Report machine health: CPU, RAM, disk, battery, uptime.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "api_spend",
+        "description": (
+            "Report how much the user has spent on the Anthropic (Claude) API, from Anthropic's "
+            "own billing data: total for the last N days, today's spend, and the biggest models. "
+            "Use for questions like 'how much have I spent on Claude', 'what's my API bill', "
+            "'how much did Jarvis cost today'. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "How many days back to include (default 30, max 90). Use 1 for today only.",
+                }
+            },
+        },
     },
     {
         "name": "read_clipboard",
@@ -5628,6 +5647,7 @@ def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result:
 # running one clears both caches below, since it may have changed what a read would return.
 READONLY_TOOL_TTLS: dict[str, float] = {
     "system_status": 20,
+    "api_spend": 300,
     "list_reminders": 30,
     "list_task_queue": 30,
     "list_background_tasks": 30,
@@ -5741,6 +5761,14 @@ def _execute_tool_impl(
                 result = "No text given."
         elif tool_name == "system_status":
             result = system_status() or "Couldn't read system status."
+        elif tool_name == "api_spend":
+            try:
+                spend_days = int(inp.get("days") or 30)
+            except (TypeError, ValueError):
+                spend_days = 30
+            result = billing.get_api_spend(
+                os.environ.get("ANTHROPIC_ADMIN_API_KEY") or "", spend_days
+            )
         elif tool_name == "read_clipboard":
             result = read_clipboard_and_describe(transcript) or "Clipboard is empty."
         elif tool_name == "refactor_clipboard_code":
