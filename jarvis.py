@@ -5866,6 +5866,7 @@ def main() -> int:
                     approve_pending=_dashboard_approve_pending,
                     reject_pending=_dashboard_reject_pending,
                     kill_background_task=_dashboard_kill_background_task,
+                    get_system_status=get_system_status_report,
                 ),
                 daemon=True,
                 name="dashboard-server",

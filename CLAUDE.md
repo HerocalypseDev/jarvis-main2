@@ -44,15 +44,23 @@ Rules:
   to disable that). `JARVIS_DASHBOARD_PORT` overrides the port. No desktop shell (Tauri) yet —
   MVP is a plain browser tab; Tauri packaging is deferred until Phases 1-3 are solid.
 - Visual style: dark background with cyan/electric-blue glow accents (mood reference only).
-  Layout is the functional top-approval-bar + three-column (Sessions/Tasks/Detail) +
-  bottom Activity/Victory-log structure — never the circular HUD composition of any reference
-  image.
+  Layout is the functional top-approval-bar + a horizontal system-metrics strip + three-column
+  (Sessions/Tasks/Detail) + bottom Activity/Audit-Trail/Victory-log tabs — never the circular
+  HUD composition of any reference image. The metrics strip is this build's take on the spec's
+  "optional sidebar," horizontal rather than vertical so it doesn't crowd the three columns.
 - Status: Phase 1 shipped (Sessions, Tasks, Victory log, read-only pending-action display,
   basic WebSocket live updates). Phase 2 shipped (Approve/Reject wired to
   `_execute_confirmed_action`/`_take_pending_action`, reachable only via the frontend's
   mandatory "Review" detail view; Stop wired to a task's own subprocess via
   `_dashboard_kill_background_task`, which only ever kills processes Jarvis itself spawned).
-  System metrics and dashboard-initiated commands are later phases.
+  Phase 3 shipped: a filterable Audit Trail tab (`GET /api/audit`, filters on date range,
+  tool name, and a free-text search over tool_input/result/transcript — session correlation
+  is an exact match on `action_audit.transcript`, since handle_text_command passes the same
+  transcript string into both `dashboard_sessions` and every `_log_action_audit` call for that
+  turn, so no new session_id column was needed) and the metrics strip (CPU/RAM/disk/uptime from
+  the existing `get_system_status_report()`/psutil, sampled once server-side on a 5s timer and
+  pushed to clients — not polled per-browser-tab). Dashboard-initiated commands (Phase 4) are
+  still pending.
 
 ### Cost reporting
 
@@ -66,4 +74,5 @@ a new row here each phase rather than only stating the total in chat.
 | 0 (analysis + risk review) | Sonnet 5 | ~5 min | ~$0.20–$0.30 |
 | 1 (Sessions/Tasks/Victory log MVP) | Sonnet 5 | ~25 min | ~$0.75–$1.10 |
 | 2 (Approve/Reject/Stop) | Sonnet 5 | ~15 min | ~$0.55–$0.75 |
-| **Running total** | | **~45 min** | **~$1.50–$2.15** |
+| 3 (Audit Trail filters + System Metrics) | Sonnet 5 | ~20 min | ~$0.60–$0.85 |
+| **Running total** | | **~65 min** | **~$2.10–$3.00** |

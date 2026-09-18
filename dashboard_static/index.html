@@ -15,6 +15,8 @@
   <div id="conn-status" class="conn-status offline">connecting&hellip;</div>
 </header>
 
+<div id="metrics-strip" class="metrics-strip"></div>
+
 <main class="layout">
   <section class="col col-sessions">
     <h2>Sessions</h2>
@@ -35,10 +37,22 @@
 <footer class="bottom">
   <div class="bottom-tabs">
     <button class="tab-btn active" data-tab="activity">Activity</button>
+    <button class="tab-btn" data-tab="audit">Audit Trail</button>
     <button class="tab-btn" data-tab="victory">Victory Log</button>
   </div>
   <div id="tab-activity" class="tab-panel active">
     <ul id="activity-list" class="list compact"></ul>
+  </div>
+  <div id="tab-audit" class="tab-panel">
+    <div class="audit-filters">
+      <input type="date" id="audit-date-from" title="From date" />
+      <input type="date" id="audit-date-to" title="To date" />
+      <select id="audit-tool"><option value="">All tools</option></select>
+      <input type="text" id="audit-q" placeholder="Search input/result&hellip;" />
+      <button class="btn" id="audit-apply-btn">Filter</button>
+      <button class="btn btn-ghost" id="audit-clear-btn">Clear</button>
+    </div>
+    <ul id="audit-list" class="list compact"></ul>
   </div>
   <div id="tab-victory" class="tab-panel">
     <div id="victory-counts" class="victory-counts"></div>

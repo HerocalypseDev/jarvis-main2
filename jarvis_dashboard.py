@@ -25,6 +25,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -255,6 +256,70 @@ def _fetch_audit(conn: sqlite3.Connection, limit: int = 30) -> list[dict]:
     return out
 
 
+def _fetch_tool_names(conn: sqlite3.Connection) -> list[str]:
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT tool_name FROM action_audit ORDER BY tool_name"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [r[0] for r in rows if r[0]]
+
+
+def _fetch_audit_filtered(
+    conn: sqlite3.Connection,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    tool_name: str | None = None,
+    transcript: str | None = None,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]:
+    """The dedicated Audit Trail tab's query — full filtering on top of action_audit, the same
+    table Phase 1's compact Activity stream already reads, just with real WHERE clauses instead
+    of a flat "last N". `transcript` (exact match) is how a session row links to "its" audit
+    rows: handle_text_command passes the identical transcript string into both
+    dashboard.start_session and (via run_agent_loop/_execute_tool) every _log_action_audit call
+    for that turn, so there's no need for a new session_id column to join them."""
+    clauses: list[str] = []
+    params: list = []
+    if date_from:
+        clauses.append("timestamp >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("timestamp <= ?")
+        params.append(date_to)
+    if tool_name:
+        clauses.append("tool_name = ?")
+        params.append(tool_name)
+    if transcript:
+        clauses.append("transcript = ?")
+        params.append(transcript)
+    if q:
+        clauses.append("(tool_input LIKE ? OR result LIKE ? OR transcript LIKE ?)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    try:
+        rows = conn.execute(
+            f"SELECT id, timestamp, transcript, tool_name, tool_input, result FROM action_audit "
+            f"{where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out = []
+    for r in rows:
+        result = r[5] or ""
+        out.append({
+            "id": r[0], "timestamp": r[1], "transcript": r[2], "tool_name": r[3],
+            "tool_input": r[4] or "", "result": result, "result_preview": result[:200],
+        })
+    return out
+
+
 def _fetch_victory(conn: sqlite3.Connection, limit: int = 30) -> list[dict]:
     out: list[dict] = []
     try:
@@ -314,6 +379,7 @@ def _build_state(
     tasks: list[dict] = []
     audit: list[dict] = []
     victory: list[dict] = []
+    tool_names: list[str] = []
     counts = {"tasks_done_today": 0, "tasks_done_week": 0, "tasks_failed_today": 0}
     try:
         with _db_lock:
@@ -324,6 +390,7 @@ def _build_state(
                 audit = _fetch_audit(conn)
                 victory = _fetch_victory(conn)
                 counts = _fetch_counts(conn)
+                tool_names = _fetch_tool_names(conn)
             finally:
                 conn.close()
     except Exception as e:
@@ -344,6 +411,7 @@ def _build_state(
         "victory_log": victory,
         "counts": counts,
         "metrics": metrics,
+        "tool_names": tool_names,
     }
 
 
@@ -394,6 +462,33 @@ def _build_app(
     @app.get("/api/state")
     def api_state() -> dict:
         return _build_state(get_pending, get_system_status)
+
+    @app.get("/api/audit")
+    def api_audit(
+        date_from: str | None = None,
+        date_to: str | None = None,
+        tool_name: str | None = None,
+        transcript: str | None = None,
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        limit = max(1, min(limit, 500))
+        offset = max(0, offset)
+        try:
+            with _db_lock:
+                conn = _connect()
+                try:
+                    rows = _fetch_audit_filtered(
+                        conn, date_from=date_from, date_to=date_to, tool_name=tool_name,
+                        transcript=transcript, q=q, limit=limit, offset=offset,
+                    )
+                finally:
+                    conn.close()
+        except Exception as e:
+            log.warning("Audit query failed: %s", e)
+            rows = []
+        return {"rows": rows, "limit": limit, "offset": offset}
 
     @app.post("/api/pending/approve")
     def api_approve():
@@ -485,6 +580,18 @@ def start(
     )
     if app is None:
         return
+
+    if get_system_status:
+        # Sample once here (server-side, on a single timer) and just ping connected clients to
+        # refetch /api/state — cheaper than each browser tab independently polling a call that
+        # blocks ~0.4s (psutil.cpu_percent's sampling window).
+        def _metrics_loop() -> None:
+            while True:
+                time.sleep(5)
+                notify({"type": "metrics_tick"})
+
+        threading.Thread(target=_metrics_loop, daemon=True, name="dashboard-metrics-tick").start()
+
     import uvicorn
 
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")

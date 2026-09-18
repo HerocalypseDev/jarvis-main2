@@ -18,6 +18,58 @@ function render() {
   renderTasks(d.tasks);
   renderActivity(d.audit);
   renderVictory(d.victory_log, d.counts);
+  renderMetrics(d.metrics);
+  populateToolNames(d.tool_names);
+}
+
+function renderMetrics(metrics) {
+  const el = document.getElementById("metrics-strip");
+  if (!metrics) {
+    el.innerHTML = "";
+    return;
+  }
+  const bars = [];
+  if (metrics.cpu) {
+    bars.push(metricBar("CPU", metrics.cpu.overall_percent, "%"));
+  }
+  if (metrics.memory) {
+    bars.push(metricBar("RAM", metrics.memory.percent, "%"));
+  }
+  if (metrics.disks && metrics.disks.length) {
+    const d0 = metrics.disks[0];
+    bars.push(metricBar(d0.mountpoint || "Disk", d0.percent, "%"));
+  }
+  const uptimeHours = metrics.system && metrics.system.uptime_hours;
+  const uptimeText =
+    uptimeHours != null ? `<span class="metric-value">Uptime ${uptimeHours.toFixed(1)}h</span>` : "";
+  el.innerHTML = bars.join("") + uptimeText;
+}
+
+function metricBar(label, percent, unit) {
+  const pct = Math.max(0, Math.min(100, Number(percent) || 0));
+  const cls = pct >= 90 ? "metric-danger" : pct >= 75 ? "metric-warn" : "";
+  return `
+    <div class="metric">
+      <span class="metric-label">${esc(label)}</span>
+      <span class="metric-bar"><span class="metric-bar-fill ${cls}" style="width:${pct}%"></span></span>
+      <span class="metric-value">${pct.toFixed(0)}${unit}</span>
+    </div>`;
+}
+
+function populateToolNames(toolNames) {
+  const sel = document.getElementById("audit-tool");
+  if (!sel || !toolNames) return;
+  const current = sel.value;
+  const existing = new Set(Array.from(sel.options).map((o) => o.value));
+  toolNames.forEach((name) => {
+    if (!existing.has(name)) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    }
+  });
+  sel.value = current;
 }
 
 function esc(s) {
@@ -199,12 +251,54 @@ function showDetail(kind, item) {
       <p><strong>Result:</strong> ${esc(item.result_summary || "(none yet)")}</p>
       <p class="muted">${esc(item.started_at || "")} &rarr; ${esc(item.finished_at || "running")}</p>`;
   } else if (kind === "audit") {
+    const fromTranscript = item.transcript
+      ? `<p><strong>From command:</strong> ${esc(truncate(item.transcript, 200))}</p>`
+      : "";
     el.innerHTML = `
       <h3>${esc(item.tool_name)}</h3>
       <p class="muted">${esc(item.timestamp)}</p>
+      ${fromTranscript}
       <p><strong>Input:</strong></p><pre>${esc(item.tool_input)}</pre>
       <p><strong>Result:</strong></p><pre>${esc(item.result)}</pre>`;
   }
+}
+
+async function fetchAuditResults() {
+  const el = document.getElementById("audit-list");
+  const params = new URLSearchParams();
+  const dateFrom = document.getElementById("audit-date-from").value;
+  const dateTo = document.getElementById("audit-date-to").value;
+  const tool = document.getElementById("audit-tool").value;
+  const q = document.getElementById("audit-q").value.trim();
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo + "T23:59:59");
+  if (tool) params.set("tool_name", tool);
+  if (q) params.set("q", q);
+  try {
+    const res = await fetch(`/api/audit?${params.toString()}`);
+    const data = await res.json();
+    renderAuditResults(data.rows || []);
+  } catch (e) {
+    el.innerHTML = '<li class="muted">Failed to load audit trail.</li>';
+  }
+}
+
+function renderAuditResults(rows) {
+  const el = document.getElementById("audit-list");
+  el.innerHTML = "";
+  rows.forEach((a) => {
+    const li = document.createElement("li");
+    li.className = "list-item compact";
+    li.innerHTML = `<span class="ts">${esc(a.timestamp)}</span><span class="tool">${esc(a.tool_name)}</span><span class="muted">${esc(truncate(a.result_preview, 80))}</span>`;
+    li.addEventListener("click", () => showDetail("audit", a));
+    el.appendChild(li);
+  });
+  if (!rows.length) el.innerHTML = '<li class="muted">No matching actions.</li>';
+}
+
+function isAuditTabActive() {
+  const panel = document.getElementById("tab-audit");
+  return !!panel && panel.classList.contains("active");
 }
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -213,7 +307,20 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "audit") fetchAuditResults();
   });
+});
+
+document.getElementById("audit-apply-btn").addEventListener("click", fetchAuditResults);
+document.getElementById("audit-clear-btn").addEventListener("click", () => {
+  document.getElementById("audit-date-from").value = "";
+  document.getElementById("audit-date-to").value = "";
+  document.getElementById("audit-tool").value = "";
+  document.getElementById("audit-q").value = "";
+  fetchAuditResults();
+});
+document.getElementById("audit-q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") fetchAuditResults();
 });
 
 function connectWs() {
@@ -230,7 +337,10 @@ function connectWs() {
     setTimeout(connectWs, 2000);
   };
   ws.onerror = () => ws.close();
-  ws.onmessage = () => fetchState();
+  ws.onmessage = () => {
+    fetchState();
+    if (isAuditTabActive()) fetchAuditResults();
+  };
 }
 
 fetchState();
