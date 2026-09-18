@@ -210,8 +210,10 @@ Rules:
     rejects `ttl`), a startup pre-warm (`start_prompt_cache_warmup`, 1-token request — the API
     rejects `max_tokens=0`), and optional `JARVIS_PROMPT_CACHE_KEEPWARM_MIN` (default off: a
     read of the ~22k prefix every few minutes around the clock costs more than it saves).
-    Workflow summary moved to the volatile block. The 1h TTL/pre-warm were **not verified live**
-    (the Anthropic key hit its spend limit, resets 2026-10-01) — only unit-tested with mocks.
+    Workflow summary moved to the volatile block. **Verified live** (2026-09-18): 1h TTL accepted
+    (write then full read), startup pre-warm ran after MCP connected, agent-loop round trips read
+    the 33k-token prefix from cache. Note: a startup pre-warm racing a scheduled skill's first
+    call (both fire when MCP connects) can double-write once — harmless, one-time.
   - `TTS` — `.cache/tts/*.wav`, phrases ≤200 chars, 200 entries/100MB LRU. Keyed per engine
     (Fish vs Piper), so Piper fallback audio is never served in place of the real voice.
   - `REPLY` — in-memory; only turns whose tools were *all* in `READONLY_TOOL_TTLS`, none failed,
@@ -219,7 +221,7 @@ Rules:
     never cached (they may depend on history or the clock). TTL = shortest tool TTL used.
   - `TOOL` — in-memory results for `READONLY_TOOL_TTLS` tools (15–60s; web_search 10 min).
     Running any other tool (mutating, mcp_*, unknown) clears both this and the reply cache.
-  - `SUMMARY` — `speech_summary_cache` table in `jarvis_memory.db`, 7-day max age, 500 rows.
+  - `SUMMARY` — (live: repeat long reply skipped its Claude call) `speech_summary_cache` table in `jarvis_memory.db`, 7-day max age, 500 rows.
   - Skills are re-parsed only when a `skills/*.json` name/mtime signature changes.
   - Hit/miss logging: `cache[layer] HIT|miss ... (h/n hits, pct)` and per-call
     `agent loop tokens: ... cache-read ...` lines in the Jarvis log.
