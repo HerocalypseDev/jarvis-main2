@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Jarvis Dashboard</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">JARVIS <span class="brand-sub">Supervision</span></div>
+  <div id="approval-queue" class="approval-queue">
+    <span class="approval-empty">No pending confirmations</span>
+  </div>
+  <div id="conn-status" class="conn-status offline">connecting&hellip;</div>
+</header>
+
+<main class="layout">
+  <section class="col col-sessions">
+    <h2>Sessions</h2>
+    <ul id="sessions-list" class="list"></ul>
+  </section>
+  <section class="col col-tasks">
+    <h2>Tasks</h2>
+    <ul id="tasks-list" class="list"></ul>
+  </section>
+  <section class="col col-detail">
+    <h2>Detail</h2>
+    <div id="detail-panel" class="detail-panel">
+      <p class="muted">Select a session or task to see details.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="bottom">
+  <div class="bottom-tabs">
+    <button class="tab-btn active" data-tab="activity">Activity</button>
+    <button class="tab-btn" data-tab="victory">Victory Log</button>
+  </div>
+  <div id="tab-activity" class="tab-panel active">
+    <ul id="activity-list" class="list compact"></ul>
+  </div>
+  <div id="tab-victory" class="tab-panel">
+    <div id="victory-counts" class="victory-counts"></div>
+    <ul id="victory-list" class="list compact"></ul>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -53,6 +53,7 @@ import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
 import jarvis_voice_tone as voice_tone
 import jarvis_sleep_mode as sleep_mode
+import jarvis_dashboard as dashboard
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -111,6 +112,17 @@ NTFY_SERVER = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").strip().rstri
 # a stronger boundary than the ntfy command channel.
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+
+# Local supervision dashboard (jarvis_dashboard.py): FastAPI + WebSocket UI, off by default,
+# localhost-only when enabled. See CLAUDE.md's "Dashboard" section for the risk rules around
+# this before changing any of it.
+JARVIS_DASHBOARD_ENABLED = (
+    os.environ.get("JARVIS_DASHBOARD_ENABLED") or ""
+).strip().lower() in ("1", "true", "yes")
+JARVIS_DASHBOARD_PORT = int(os.environ.get("JARVIS_DASHBOARD_PORT") or 8765)
+JARVIS_DASHBOARD_AUTO_OPEN = (
+    os.environ.get("JARVIS_DASHBOARD_AUTO_OPEN") or "1"
+).strip().lower() in ("1", "true", "yes")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -203,6 +215,7 @@ def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -
             log.warning("A confirmation is already pending; dropping %r.", tool_name)
             return False
         _pending_action = {"tool_name": tool_name, "tool_input": tool_input, "reason": reason}
+    dashboard.notify({"type": "pending_action", "data": dict(_pending_action)})
     return True
 
 
@@ -225,6 +238,15 @@ def _execute_confirmed_action(step: dict, reply_sink=None) -> None:
         reply_sink(reply)
     else:
         speak_text(reply)
+
+
+def _dashboard_get_pending() -> dict | None:
+    """Read-only snapshot of _pending_action for the dashboard's top approval bar. Deliberately
+    has no write counterpart yet (Phase 1) — approve/reject wiring is Phase 2, per the Phase 0
+    risk review: a one-click bypass of the catastrophic confirmation gate needs its own,
+    separately reviewable change."""
+    with _pending_action_lock:
+        return dict(_pending_action) if _pending_action is not None else None
 
 
 def block_samples() -> int:
@@ -2450,7 +2472,9 @@ def _ntfy_listen_loop() -> None:
                         log.info("ntfy command received: %r", text)
                         # Reply goes to the main (notification) topic, not -cmd, so it lands
                         # wherever you're already subscribed to see it, not the inbound-only one.
-                        handle_text_command(text, reply_sink=lambda r: _ntfy_publish(r, title="Jarvis"))
+                        handle_text_command(
+                            text, reply_sink=lambda r: _ntfy_publish(r, title="Jarvis"), source="phone"
+                        )
         except Exception as e:
             log.warning("ntfy listener error (reconnecting): %s", e)
             time.sleep(5)
@@ -2480,7 +2504,7 @@ def _telegram_listen_loop() -> None:
                     continue
                 if text:
                     log.info("Telegram command received: %r", text)
-                    handle_text_command(text, reply_sink=lambda r: _telegram_send(r))
+                    handle_text_command(text, reply_sink=lambda r: _telegram_send(r), source="phone")
         except Exception as e:
             log.warning("Telegram listener error (reconnecting): %s", e)
             time.sleep(5)
@@ -4497,9 +4521,14 @@ def _insert_background_task(task: str, kind: str, target: str) -> int:
                 (kind, task, target, now_iso),
             )
             conn.commit()
-            return int(cur.lastrowid)
+            task_id = int(cur.lastrowid)
         finally:
             conn.close()
+    dashboard.notify({
+        "type": "background_task_update",
+        "data": {"id": task_id, "kind": kind, "task": task, "status": "running"},
+    })
+    return task_id
 
 
 def _count_running_background_tasks(kind: str) -> int:
@@ -4532,6 +4561,10 @@ def _finish_background_task(task_id: int, status: str, summary: str, kind: str =
             conn.commit()
         finally:
             conn.close()
+    dashboard.notify({
+        "type": "background_task_update",
+        "data": {"id": task_id, "status": status, "result_summary": summary},
+    })
     ok = status == "done"
     if kind == "code":
         who = f"{CODING_AGENT_NAME} (background task #{task_id})"
@@ -5381,10 +5414,15 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
     return reply
 
 
-def handle_text_command(transcript: str, reply_sink=None, tone: dict | None = None) -> None:
+def handle_text_command(
+    transcript: str, reply_sink=None, tone: dict | None = None, source: str = "text"
+) -> None:
     """Runs one already-transcribed command (typed or spoken) through the confirmation
     gate and the Claude tool loop, then speaks the reply. Shared by handle_voice_command
     (after Whisper) and the typed-command hotkey (which skips transcription entirely).
+
+    source labels this command for the dashboard's Sessions panel ("voice"/"text"/"phone"/
+    "dashboard") — purely descriptive, never changes behavior.
 
     reply_sink, if given, marks this as a phone-originated command (from
     _ntfy_listen_loop/_telegram_listen_loop): instead of speaking the full reply locally,
@@ -5425,7 +5463,20 @@ def handle_text_command(transcript: str, reply_sink=None, tone: dict | None = No
         tone = voice_tone.analyze_tone(transcript)
 
     record_recent_task(transcript)
-    reply = run_agent_loop(transcript, tone=tone)
+    # Dashboard session bookkeeping: best-effort, never raises (see jarvis_dashboard.py) — a
+    # failure here must never affect the actual command below.
+    session_id = dashboard.start_session(source, transcript)
+    dashboard.notify(
+        {"type": "session_start", "data": {"id": session_id, "source": source, "transcript": transcript}}
+    )
+    try:
+        reply = run_agent_loop(transcript, tone=tone)
+    except Exception:
+        dashboard.end_session(session_id, "failed", None)
+        dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
+        raise
+    dashboard.end_session(session_id, "done", reply)
+    dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": reply}})
     if reply:
         if reply_sink:
             reply_sink(reply)
@@ -5448,7 +5499,7 @@ def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
     if tone.get("tone") != "neutral":
         log.info("Voice tone: %s (confidence %.0f%%).", tone["tone"], tone["confidence"] * 100)
     log.info("Heard: %r", transcript)
-    handle_text_command(transcript, tone=tone)
+    handle_text_command(transcript, tone=tone, source="voice")
 
 
 _text_hotkey_popup_open = threading.Event()
@@ -5743,6 +5794,30 @@ def main() -> int:
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         log.info("Phone (Telegram): pushing notifications and listening for chat %s.", TELEGRAM_CHAT_ID)
         threading.Thread(target=_telegram_listen_loop, daemon=True, name="telegram-listener").start()
+
+    if JARVIS_DASHBOARD_ENABLED:
+        # Double-checked (Phase 0/1): localhost-only, no auth (user-accepted for a single-user
+        # local machine); read-only in Phase 1 (Sessions/Tasks/Victory log/pending-action
+        # display) — no endpoint here can execute a command or touch the confirmation gate yet.
+        # A startup failure (e.g. fastapi/uvicorn not installed) must never take Jarvis's core
+        # loop down with it, hence the broad except.
+        try:
+            threading.Thread(
+                target=dashboard.start,
+                kwargs=dict(port=JARVIS_DASHBOARD_PORT, get_pending=_dashboard_get_pending),
+                daemon=True,
+                name="dashboard-server",
+            ).start()
+            log.info(
+                "Dashboard: starting on http://127.0.0.1:%d (localhost-only, read-only Phase 1).",
+                JARVIS_DASHBOARD_PORT,
+            )
+            if JARVIS_DASHBOARD_AUTO_OPEN:
+                threading.Timer(
+                    1.5, lambda: webbrowser.open(f"http://127.0.0.1:{JARVIS_DASHBOARD_PORT}")
+                ).start()
+        except Exception as e:
+            log.warning("Dashboard failed to start; Jarvis continues without it: %s", e)
 
     _preload_mcp_async()
     _start_scheduler()

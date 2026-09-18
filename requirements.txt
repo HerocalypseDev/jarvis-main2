@@ -11,3 +11,5 @@ PyGetWindow>=0.0.9,<1
 piper-tts>=1.8,<2
 mcp>=1.0
 discord.py-self>=2.0
+fastapi>=0.110,<1
+uvicorn[standard]>=0.27,<1
