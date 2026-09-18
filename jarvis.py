@@ -1459,6 +1459,29 @@ AGENT_TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "change_jarvis_code",
+        "description": (
+            "Add a feature to, fix, or otherwise change JARVIS'S OWN source code (this very "
+            "assistant) by handing it to the background coding agent, pre-loaded with this "
+            "project's rules (follow CLAUDE.md, never weaken the confirmation gate, add tests, "
+            "commit locally but never push or restart). Use for any request like 'add a "
+            "feature to yourself', 'make Jarvis able to X', 'change how you Y', 'fix your own "
+            "bug'. Runs in the background and returns once *started*; refer to the agent as "
+            f"{CODING_AGENT_NAME}. The running Jarvis keeps its old code until the user "
+            "restarts it — say so when it reports back. Only one self-change runs at a time."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "feature": {
+                    "type": "string",
+                    "description": "the feature or change to make, as a clear, complete instruction",
+                }
+            },
+            "required": ["feature"],
+        },
+    },
+    {
         "name": "delegate_to_claude_code",
         "description": (
             "Delegate a real software development task — writing code, fixing a bug, adding a "
@@ -2613,7 +2636,9 @@ def _speak_shaped(text: str) -> None:
     speak_text(_collapse_paths_for_speech(_summarize_for_speech(text)))
 
 
-def queue_or_deliver_notification(text: str, urgent: bool = False) -> None:
+def queue_or_deliver_notification(
+    text: str, urgent: bool = False, force_phone: bool = False
+) -> None:
     """The interrupt gate every proactive message (scheduled skills, health-check suggestions)
     goes through, instead of calling speak_text directly: speaks immediately unless the user
     looks actively busy (touched the keyboard/mouse in the last ACTIVE_IDLE_THRESHOLD_S
@@ -2624,7 +2649,7 @@ def queue_or_deliver_notification(text: str, urgent: bool = False) -> None:
     text = (text or "").strip()
     if not text:
         return
-    _notify_phone(text)
+    _notify_phone(text, force=force_phone)
     refresh_session_context()
     if sleep_mode.should_suppress(urgent):
         with _session_context_lock:
@@ -2801,14 +2826,17 @@ def _telegram_send(message: str) -> bool:
         return False
 
 
-def _notify_phone(text: str, title: str = "Jarvis") -> None:
+def _notify_phone(text: str, title: str = "Jarvis", force: bool = False) -> None:
     """Pushes to every configured phone channel — but only when
     JARVIS_PHONE_PROACTIVE_NOTIFICATIONS is explicitly enabled (off by default; see that
     constant's comment). Called from queue_or_deliver_notification for every *proactive*
     message (scheduled skills, health suggestions, reminders, background task completions);
     never affects a direct reply to something the user typed from ntfy/Telegram, which goes
     through reply_sink in _ntfy_listen_loop/_telegram_listen_loop instead."""
-    if not JARVIS_PHONE_PROACTIVE_NOTIFICATIONS:
+    # force=True bypasses the off-by-default toggle for the one case the user asked for it:
+    # the result of a change to Jarvis's own code (so a phone-started self-change reports back
+    # to the phone). Every other proactive message still respects the toggle.
+    if not (JARVIS_PHONE_PROACTIVE_NOTIFICATIONS or force):
         return
     if NTFY_TOPIC:
         _ntfy_publish(text, title=title)
@@ -5212,7 +5240,7 @@ def _finish_background_task(task_id: int, status: str, summary: str, kind: str =
         lead = f"Background task #{task_id} finished:" if ok else f"Background task #{task_id} failed:"
     message = f"{lead} {summary}"
     send_windows_toast("Jarvis — background task done", message[:250])
-    queue_or_deliver_notification(message, urgent=True)
+    queue_or_deliver_notification(message, urgent=True, force_phone=task_id in _SELF_EDIT_TASK_IDS)
     record_recent_task(f"background task #{task_id} {'finished' if ok else 'failed'}")
 
 
@@ -5353,6 +5381,36 @@ def _dashboard_kill_background_task(task_id: int) -> str:
     return f"Stopped task #{task_id}."
 
 
+# Prepended to every task that runs in Jarvis's *own* folder (whichever tool started it), so the
+# self-editing path can't skip the project's standing rules. The agent is headless and cannot ask
+# questions, so anything risky must be reported instead of done. The user accepted (2026-09-18)
+# that this can be triggered from the phone channels too, and knows the risk; these rules are a
+# guardrail for the model, not a hard technical barrier.
+_SELF_EDIT_PREAMBLE = (
+    "You are modifying the Jarvis voice assistant's OWN source code (this repository), at the "
+    "user's request via Jarvis. Rules, in priority order:\n"
+    "1. Read CLAUDE.md first and follow it. For dashboard features it requires a risk review "
+    "(security, cost, data exposure, irreversibility, performance); you cannot ask questions "
+    "here, so if any of those risks is non-zero and unmitigated, do NOT implement it — explain "
+    "the risk in your final message instead.\n"
+    "2. Never weaken or bypass the catastrophic confirmation gate (_CATASTROPHIC_PATTERNS / "
+    "_pending_action), the phone-notification rules, or the dashboard's localhost-only binding "
+    "(no 0.0.0.0, no tunnels), and never add a new way to run commands or actions that skips "
+    "the existing gate.\n"
+    "3. Never read out, print, or commit secrets (.env, tokens, PINs, API keys).\n"
+    "4. Add or extend tests for what you change, and run `python -m pytest test_cache.py "
+    "test_dashboard.py -q`; do not finish while tests fail (revert your change if you can't "
+    "fix them).\n"
+    "5. Commit locally with a clear message, but do NOT push and do NOT restart or kill "
+    "Jarvis: the running instance keeps its old code until the user restarts it.\n"
+    "6. Your final message is spoken aloud and sent to the user's phone: two to four plain "
+    "sentences — what you added, whether tests passed, and that a restart is needed to use "
+    "it.\n\n"
+    "The requested change: "
+)
+_SELF_EDIT_TASK_IDS: set[int] = set()
+
+
 def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     task = (task or "").strip()
     if not task:
@@ -5367,6 +5425,15 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     cwd = Path(repo_path).expanduser() if repo_path else Path(__file__).resolve().parent
     if not cwd.is_dir():
         return f"{cwd} is not a valid directory."
+    self_edit = cwd.resolve() == Path(__file__).resolve().parent
+    if self_edit:
+        with _background_tasks_lock:
+            self_edit_running = any(t in _RUNNING_BACKGROUND_PROCS for t in _SELF_EDIT_TASK_IDS)
+        if self_edit_running:
+            return (
+                f"{CODING_AGENT_NAME} is already changing my code (one self-change at a time, so "
+                "two edits can't collide) — ask again once that one finishes."
+            )
     try:
         workflow.touch_workspace(str(cwd))
     except Exception as e:
@@ -5403,7 +5470,10 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
         # copy when the `with` block exits doesn't touch the child's ability to keep writing.
         with open(output_path, "w", encoding="utf-8") as out_f:
             proc = subprocess.Popen(
-                ["claude", "-p", task, "--output-format", "json", "--dangerously-skip-permissions"],
+                [
+                    "claude", "-p", (_SELF_EDIT_PREAMBLE + task) if self_edit else task,
+                    "--output-format", "json", "--dangerously-skip-permissions",
+                ],
                 cwd=str(cwd),
                 stdout=out_f,
                 stderr=subprocess.STDOUT,
@@ -5421,6 +5491,8 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
 
     with _background_tasks_lock:
         _RUNNING_BACKGROUND_PROCS[task_id] = (proc, time.monotonic())
+        if self_edit:
+            _SELF_EDIT_TASK_IDS.add(task_id)
     record_recent_task(f"started background coding task #{task_id}: {task}")
     return (
         f"Handed this off to {CODING_AGENT_NAME} (background task #{task_id}) in {cwd}: {task}. "
@@ -6003,6 +6075,8 @@ def _execute_tool_impl(
             )
         elif tool_name == "quick_recall":
             result = quick_recall()
+        elif tool_name == "change_jarvis_code":
+            result = _delegate_to_claude_code(str(inp.get("feature") or ""), "")
         elif tool_name == "delegate_to_claude_code":
             result = _delegate_to_claude_code(
                 str(inp.get("task") or ""), str(inp.get("repo_path") or "")

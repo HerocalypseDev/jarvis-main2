@@ -247,6 +247,27 @@ Rules:
   tests: the gate stages `shutdown /s /t 0` without executing it, and the prompt carries the rule.
   Prompt-level, so not 100% deterministic — if it recurs, add a code-level guard.
 
+## Self-modification: `change_jarvis_code` (2026-09-18)
+
+- New `change_jarvis_code(feature)` tool hands a change to Jarvis's *own* source to the background
+  coding agent (James, headless `claude -p --dangerously-skip-permissions`). **Any** delegation
+  whose working directory is this repo — the new tool, or `delegate_to_claude_code` with no/this
+  `repo_path` — gets `_SELF_EDIT_PREAMBLE` prepended, so no route skips the rules: follow
+  CLAUDE.md (incl. the dashboard risk review; headless, so risky = report, don't build), never
+  weaken the confirmation gate / phone rules / localhost-only binding, never touch secrets, add
+  tests and run them, **commit locally but never push or restart** (the running instance keeps
+  its old code until the user restarts it), and give a 2–4 sentence spoken summary.
+- Only one self-change runs at a time (`_SELF_EDIT_TASK_IDS` vs `_RUNNING_BACKGROUND_PROCS`).
+- **Phone can trigger it, by explicit user choice (2026-09-18, "I am aware of the risk").** It is
+  not source-gated: a Telegram/ntfy message can start a self-change. Anyone who can message the
+  ntfy `-cmd` topic or the Telegram chat can therefore ask for code changes — the preamble is a
+  guardrail for the model, not a technical barrier. The result of a self-change is pushed to the
+  phone even with `JARVIS_PHONE_PROACTIVE_NOTIFICATIONS` off (`_notify_phone(force=True)`); every
+  other proactive message still respects that toggle. If the phone exposure ever worries the
+  user, the safe tightening is refusing `change_jarvis_code` when the command came from phone.
+- Unit-tested with `subprocess.Popen` faked (prompt/cwd, self-edit lock, phone forcing); **not
+  run live** against a real `claude` process — a live test would make real edits to this repo.
+
 ## API spend lookup (2026-09-18)
 
 - `api_spend` tool (`jarvis_billing.py`) reads Anthropic's Usage & Cost Admin API
@@ -314,4 +335,5 @@ row there each phase rather than only stating the total in chat.
 | 8 (multi-layer caching: TTS/reply/tool/summary/skills + 1h prompt TTL) | Sonnet 5 | ~40 min | ~$1.60–$2.20 |
 | 9 (api_spend billing tool) | Sonnet 5 | ~10 min | ~$0.20–$0.30 |
 | 10 (local spend tracking + dashboard Usage tab) | Sonnet 5 | ~25 min | ~$0.90–$1.30 |
-| **Running total (final)** | | **~225 min** | **~$7.20–$10.25** |
+| 11 (shutdown staging fix, proactive speech shaping, change_jarvis_code + phone) | Sonnet 5 | ~35 min | ~$1.40–$2.00 |
+| **Running total (final)** | | **~260 min** | **~$8.60–$12.25** |

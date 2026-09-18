@@ -436,7 +436,7 @@ def test_long_notification_is_summarized_for_speech_but_phone_keeps_full_text(ja
     spoken, phoned = [], []
     full = "James is done: I refactored the module and " + "updated many files " * 30
     monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
-    monkeypatch.setattr(jarvis, "_notify_phone", lambda t: phoned.append(t))
+    monkeypatch.setattr(jarvis, "_notify_phone", lambda t, force=False: phoned.append(t))
     monkeypatch.setattr(jarvis, "refresh_session_context", lambda: None)
     monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: False)
     monkeypatch.setattr(jarvis, "_summarize_for_speech", lambda t: "The refactor is finished.")
@@ -448,7 +448,7 @@ def test_long_notification_is_summarized_for_speech_but_phone_keeps_full_text(ja
 def test_short_notification_is_spoken_unchanged_without_a_claude_call(jarvis, monkeypatch):
     spoken = []
     monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
-    monkeypatch.setattr(jarvis, "_notify_phone", lambda t: None)
+    monkeypatch.setattr(jarvis, "_notify_phone", lambda t, force=False: None)
     monkeypatch.setattr(jarvis, "refresh_session_context", lambda: None)
     monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: False)
 
@@ -458,3 +458,76 @@ def test_short_notification_is_spoken_unchanged_without_a_claude_call(jarvis, mo
     monkeypatch.setattr(jarvis, "_claude_request", no_claude)
     jarvis.queue_or_deliver_notification("Reminder: drink water", urgent=True)
     assert spoken == ["Reminder: drink water"]
+
+
+# --- change_jarvis_code / self-edit delegation ------------------------------------------------
+class _FakeProc:
+    def poll(self):
+        return None
+
+    def kill(self):
+        pass
+
+
+@pytest.fixture()
+def delegation(jarvis, monkeypatch, tmp_path):
+    launched, ids = [], iter(range(100, 200))
+    monkeypatch.setattr(jarvis.subprocess, "Popen", lambda cmd, **kw: launched.append((cmd, kw)) or _FakeProc())
+    monkeypatch.setattr(jarvis, "_insert_background_task", lambda *a: next(ids))
+    monkeypatch.setattr(jarvis, "_background_tasks_dir", lambda tid: (tmp_path / f"t{tid}").mkdir(exist_ok=True) or (tmp_path / f"t{tid}"))
+    monkeypatch.setattr(jarvis, "_count_running_background_tasks", lambda kind: 0)
+    monkeypatch.setattr(jarvis.workflow, "touch_workspace", lambda p: None)
+    monkeypatch.setattr(jarvis, "record_recent_task", lambda t: None)
+    monkeypatch.setattr(jarvis, "_RUNNING_BACKGROUND_PROCS", {})
+    monkeypatch.setattr(jarvis, "_SELF_EDIT_TASK_IDS", set())
+    return launched
+
+
+def test_change_jarvis_code_tool_registered_and_dispatches_self_edit(jarvis, delegation):
+    assert any(t["name"] == "change_jarvis_code" for t in jarvis.AGENT_TOOLS)
+    out = jarvis._execute_tool_impl("change_jarvis_code", {"feature": "add a joke command"}, "t")
+    assert "background task #100" in out
+    cmd, kw = delegation[0]
+    prompt = cmd[cmd.index("-p") + 1]
+    assert prompt.startswith(jarvis._SELF_EDIT_PREAMBLE) and prompt.endswith("add a joke command")
+    for rule in ("CLAUDE.md", "confirmation gate", "secrets", "pytest", "do NOT push", "0.0.0.0"):
+        assert rule in prompt
+    from pathlib import Path
+    assert Path(kw["cwd"]).resolve() == Path(jarvis.__file__).resolve().parent
+
+
+def test_plain_delegation_into_jarvis_folder_also_gets_the_rules(jarvis, delegation):
+    jarvis._delegate_to_claude_code("fix a bug in yourself", "")  # no repo_path defaults to Jarvis
+    prompt = delegation[0][0][delegation[0][0].index("-p") + 1]
+    assert prompt.startswith(jarvis._SELF_EDIT_PREAMBLE)
+
+
+def test_delegation_to_another_repo_has_no_preamble_and_no_self_edit_lock(jarvis, delegation, tmp_path):
+    other = tmp_path / "other_repo"
+    other.mkdir()
+    jarvis._delegate_to_claude_code("build a calculator", str(other))
+    prompt = delegation[0][0][delegation[0][0].index("-p") + 1]
+    assert prompt == "build a calculator" and not jarvis._SELF_EDIT_TASK_IDS
+    jarvis._delegate_to_claude_code("another thing", str(other))  # not blocked by the self-edit lock
+    assert len(delegation) == 2
+
+
+def test_only_one_self_change_at_a_time(jarvis, delegation):
+    jarvis._delegate_to_claude_code("first change", "")
+    second = jarvis._delegate_to_claude_code("second change", "")
+    assert "already changing my code" in second and len(delegation) == 1
+    jarvis._RUNNING_BACKGROUND_PROCS.clear()  # first finished
+    jarvis._delegate_to_claude_code("third change", "")
+    assert len(delegation) == 2
+
+
+def test_self_change_result_is_pushed_to_phone_even_with_proactive_pushes_off(jarvis, monkeypatch):
+    pushed = []
+    monkeypatch.setattr(jarvis, "JARVIS_PHONE_PROACTIVE_NOTIFICATIONS", False)
+    monkeypatch.setattr(jarvis, "NTFY_TOPIC", "topic")
+    monkeypatch.setattr(jarvis, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(jarvis, "_ntfy_publish", lambda text, title="Jarvis": pushed.append(text))
+    jarvis._notify_phone("ordinary proactive message")
+    assert pushed == []  # the off-by-default toggle still holds for everything else
+    jarvis._notify_phone("James finished the change", force=True)
+    assert pushed == ["James finished the change"]
