@@ -50,8 +50,52 @@ function renderApproval(pending) {
     <div class="approval-item">
       <span class="approval-badge">CONFIRMATION NEEDED</span>
       <span class="approval-reason">${esc(pending.tool_name)} would ${esc(pending.reason)}</span>
-      <span class="approval-note">Say &quot;yes&quot; on your next push-to-talk / typed / phone command to confirm, or anything else to drop it. (One-click Approve/Reject lands in Phase 2.)</span>
+      <button class="btn btn-review" id="review-pending-btn">Review &rarr;</button>
     </div>`;
+  const btn = document.getElementById("review-pending-btn");
+  if (btn) btn.addEventListener("click", () => showPendingDetail(pending));
+}
+
+// Deliberately reached only via the "Review" button above, never a one-click action on the
+// compact top bar itself — the user accepted (2026-09-18) that Approve may one-click-confirm
+// even catastrophic-tier actions, on condition it only happens from this detail view.
+function showPendingDetail(pending) {
+  const el = document.getElementById("detail-panel");
+  let inputText;
+  try {
+    inputText = JSON.stringify(pending.tool_input, null, 2);
+  } catch (e) {
+    inputText = String(pending.tool_input);
+  }
+  el.innerHTML = `
+    <h3>Confirmation needed</h3>
+    <p class="danger-text"><strong>${esc(pending.tool_name)}</strong> would ${esc(pending.reason)}.</p>
+    <p><strong>Full input:</strong></p>
+    <pre>${esc(inputText)}</pre>
+    <div class="detail-actions">
+      <button class="btn btn-danger" id="approve-btn">Approve &amp; Run</button>
+      <button class="btn btn-ghost" id="reject-btn">Reject</button>
+    </div>
+    <p id="pending-action-status" class="muted"></p>`;
+  document.getElementById("approve-btn").addEventListener("click", () => actOnPending("approve"));
+  document.getElementById("reject-btn").addEventListener("click", () => actOnPending("reject"));
+}
+
+async function actOnPending(action) {
+  const statusEl = document.getElementById("pending-action-status");
+  const approveBtn = document.getElementById("approve-btn");
+  const rejectBtn = document.getElementById("reject-btn");
+  if (approveBtn) approveBtn.disabled = true;
+  if (rejectBtn) rejectBtn.disabled = true;
+  if (statusEl) statusEl.textContent = action === "approve" ? "Approving…" : "Rejecting…";
+  try {
+    const res = await fetch(`/api/pending/${action}`, { method: "POST" });
+    const data = await res.json();
+    if (statusEl) statusEl.textContent = data.ok ? (data.reply || "Done.") : (data.error || "Failed.");
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "Request failed: " + e;
+  }
+  fetchState();
 }
 
 function renderSessions(sessions) {
@@ -75,10 +119,32 @@ function renderTasks(tasks) {
   (tasks || []).forEach((t) => {
     const li = document.createElement("li");
     li.className = "list-item";
+    const progress = t.progress ? ` &middot; step ${esc(t.progress)}` : "";
+    const stopBtn = t.stoppable
+      ? `<button class="btn btn-stop" data-task-id="${esc(t.id)}">Stop</button>`
+      : "";
     li.innerHTML = `
       <div class="list-item-title">${esc(truncate(t.description, 60))}</div>
-      <div class="list-item-meta">${statusPill(t.status)} &middot; ${esc(t.kind || "")} &middot; ${esc(t.started_at || "")}</div>`;
-    li.addEventListener("click", () => showDetail("task", t));
+      <div class="list-item-meta">${statusPill(t.status)} &middot; ${esc(t.kind || "")}${progress} &middot; ${esc(t.started_at || "")}</div>
+      ${stopBtn}`;
+    li.addEventListener("click", (e) => {
+      if (e.target.closest(".btn-stop")) return;
+      showDetail("task", t);
+    });
+    const btn = li.querySelector(".btn-stop");
+    if (btn) {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        btn.textContent = "Stopping…";
+        try {
+          await fetch(`/api/tasks/${encodeURIComponent(t.id)}/stop`, { method: "POST" });
+        } catch (err) {
+          console.error("Stop failed", err);
+        }
+        fetchState();
+      });
+    }
     el.appendChild(li);
   });
   if (!tasks || !tasks.length) el.innerHTML = '<li class="muted">No tasks yet.</li>';

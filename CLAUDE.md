@@ -48,4 +48,8 @@ Rules:
   bottom Activity/Victory-log structure — never the circular HUD composition of any reference
   image.
 - Status: Phase 1 shipped (Sessions, Tasks, Victory log, read-only pending-action display,
-  basic WebSocket live updates). Approve/Reject/Stop and system metrics are later phases.
+  basic WebSocket live updates). Phase 2 shipped (Approve/Reject wired to
+  `_execute_confirmed_action`/`_take_pending_action`, reachable only via the frontend's
+  mandatory "Review" detail view; Stop wired to a task's own subprocess via
+  `_dashboard_kill_background_task`, which only ever kills processes Jarvis itself spawned).
+  System metrics and dashboard-initiated commands are later phases.

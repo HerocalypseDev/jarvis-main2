@@ -155,6 +155,25 @@ body {
 
 .src-badge { font-size: 0.75em; color: var(--text-muted); margin-right: 4px; }
 
+.btn {
+  border: 1px solid var(--cyan-dim);
+  background: transparent;
+  color: var(--cyan);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.78em;
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn:hover { border-color: var(--cyan); box-shadow: var(--glow); }
+.btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+.btn-review { border-color: var(--danger); color: var(--danger); }
+.btn-danger { border-color: var(--danger); color: var(--danger); background: rgba(255, 84, 112, 0.08); }
+.btn-ghost { border-color: var(--border); color: var(--text-muted); }
+.btn-stop { margin-top: 6px; border-color: var(--warn); color: var(--warn); }
+.detail-actions { display: flex; gap: 10px; margin: 10px 0; }
+.danger-text { color: var(--danger); }
+
 .detail-panel pre {
   background: #030810;
   border: 1px solid var(--border);

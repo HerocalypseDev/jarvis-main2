@@ -241,12 +241,41 @@ def _execute_confirmed_action(step: dict, reply_sink=None) -> None:
 
 
 def _dashboard_get_pending() -> dict | None:
-    """Read-only snapshot of _pending_action for the dashboard's top approval bar. Deliberately
-    has no write counterpart yet (Phase 1) — approve/reject wiring is Phase 2, per the Phase 0
-    risk review: a one-click bypass of the catastrophic confirmation gate needs its own,
-    separately reviewable change."""
+    """Read-only snapshot of _pending_action for the dashboard's top approval bar."""
     with _pending_action_lock:
         return dict(_pending_action) if _pending_action is not None else None
+
+
+def _dashboard_approve_pending() -> str | None:
+    """Phase 2: the dashboard's one-click Approve. Per the Phase 0 risk review, the user
+    explicitly accepted (2026-09-18, recorded in CLAUDE.md's Dashboard section) that this can
+    approve catastrophic-tier actions from the UI — on the condition that the click only ever
+    happens from the mandatory detail/review view (see dashboard_static/app.js), never a bare
+    list-row button. This calls the *exact same* _execute_confirmed_action used by the spoken
+    "yes" path — never a reimplementation — so there is no second, weaker confirmation logic."""
+    step = _take_pending_action()
+    if not step:
+        return None
+    log.info(
+        "Dashboard approved pending action: %s(%r)", step.get("tool_name"), step.get("tool_input")
+    )
+
+    def _sink(reply: str) -> None:
+        speak_text(reply)
+        dashboard.notify({"type": "pending_result", "data": {"reply": reply}})
+
+    threading.Thread(target=_execute_confirmed_action, args=(step, _sink), daemon=True).start()
+    return "Approved — running now."
+
+
+def _dashboard_reject_pending() -> bool:
+    step = _take_pending_action()
+    if step:
+        log.info(
+            "Dashboard rejected pending action: %s(%r)", step.get("tool_name"), step.get("tool_input")
+        )
+        dashboard.notify({"type": "pending_result", "data": {"reply": "Rejected from dashboard."}})
+    return step is not None
 
 
 def block_samples() -> int:
@@ -4693,6 +4722,27 @@ def _check_background_tasks(now: datetime) -> None:
         _finish_background_task(task_id, "done", result or "finished with no result text", kind="code")
 
 
+def _dashboard_kill_background_task(task_id: int) -> str:
+    """Phase 2 Stop button. Only ever kills a process Jarvis itself spawned via
+    _delegate_to_claude_code (already passed the catastrophic-reason check at delegation
+    time) — never touches the confirmation gate. Mirrors the existing timeout-reaper kill
+    path in _check_background_tasks rather than adding new process-control logic."""
+    with _background_tasks_lock:
+        entry = _RUNNING_BACKGROUND_PROCS.pop(task_id, None)
+    if not entry:
+        return (
+            "That task isn't currently running as a killable background process "
+            "(already finished, or a queued/reminder task with no live process to stop)."
+        )
+    proc, _started_at = entry
+    try:
+        proc.kill()
+    except Exception as e:
+        return f"Failed to stop task #{task_id}: {e}"
+    _finish_background_task(task_id, "cancelled", "Cancelled from dashboard.", kind="code")
+    return f"Stopped task #{task_id}."
+
+
 def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     task = (task or "").strip()
     if not task:
@@ -5452,8 +5502,10 @@ def handle_text_command(
             step = _take_pending_action()
             if step:
                 _execute_confirmed_action(step, reply_sink)
+            dashboard.notify({"type": "pending_action", "data": None})
             return
         _take_pending_action()
+        dashboard.notify({"type": "pending_action", "data": None})
         log.info(
             "Dropped pending confirmation (%r); treating this as a new command.",
             pending.get("tool_name"),
@@ -5796,21 +5848,30 @@ def main() -> int:
         threading.Thread(target=_telegram_listen_loop, daemon=True, name="telegram-listener").start()
 
     if JARVIS_DASHBOARD_ENABLED:
-        # Double-checked (Phase 0/1): localhost-only, no auth (user-accepted for a single-user
-        # local machine); read-only in Phase 1 (Sessions/Tasks/Victory log/pending-action
-        # display) — no endpoint here can execute a command or touch the confirmation gate yet.
+        # Double-checked (Phase 0/2): localhost-only, no auth (user-accepted for a single-user
+        # local machine). Approve/Reject/Stop are wired starting Phase 2 — Approve calls the
+        # *same* _execute_confirmed_action used by the spoken "yes" (see
+        # _dashboard_approve_pending's docstring); the user explicitly accepted (2026-09-18,
+        # recorded in CLAUDE.md) that this may one-click-confirm catastrophic-tier actions,
+        # on condition that the click only happens from the frontend's mandatory review/detail
+        # view. Stop only ever kills a process Jarvis itself spawned; never touches the gate.
         # A startup failure (e.g. fastapi/uvicorn not installed) must never take Jarvis's core
         # loop down with it, hence the broad except.
         try:
             threading.Thread(
                 target=dashboard.start,
-                kwargs=dict(port=JARVIS_DASHBOARD_PORT, get_pending=_dashboard_get_pending),
+                kwargs=dict(
+                    port=JARVIS_DASHBOARD_PORT,
+                    get_pending=_dashboard_get_pending,
+                    approve_pending=_dashboard_approve_pending,
+                    reject_pending=_dashboard_reject_pending,
+                    kill_background_task=_dashboard_kill_background_task,
+                ),
                 daemon=True,
                 name="dashboard-server",
             ).start()
             log.info(
-                "Dashboard: starting on http://127.0.0.1:%d (localhost-only, read-only Phase 1).",
-                JARVIS_DASHBOARD_PORT,
+                "Dashboard: starting on http://127.0.0.1:%d (localhost-only).", JARVIS_DASHBOARD_PORT
             )
             if JARVIS_DASHBOARD_AUTO_OPEN:
                 threading.Timer(

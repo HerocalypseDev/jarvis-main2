@@ -178,10 +178,26 @@ def _fetch_tasks(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
             "FROM background_tasks ORDER BY id DESC LIMIT ?",
             (limit,),
         ):
+            tid, kind, task, status, started_at, finished_at, result_summary = row
+            progress = None
+            if kind == "plan" and status == "running":
+                try:
+                    total = conn.execute(
+                        "SELECT COUNT(*) FROM plan_steps WHERE task_id = ?", (tid,)
+                    ).fetchone()[0]
+                    done = conn.execute(
+                        "SELECT COUNT(*) FROM plan_steps WHERE task_id = ? AND status = 'done'",
+                        (tid,),
+                    ).fetchone()[0]
+                    if total:
+                        progress = f"{done}/{total}"
+                except sqlite3.OperationalError:
+                    pass
             items.append({
-                "id": f"bg-{row[0]}", "kind": row[1], "description": row[2], "status": row[3],
-                "started_at": row[4], "finished_at": row[5], "result_summary": row[6],
-                "source": "background_tasks",
+                "id": f"bg-{tid}", "kind": kind, "description": task, "status": status,
+                "started_at": started_at, "finished_at": finished_at,
+                "result_summary": result_summary, "source": "background_tasks",
+                "progress": progress, "stoppable": status == "running",
             })
     except sqlite3.OperationalError:
         pass
@@ -195,6 +211,7 @@ def _fetch_tasks(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
                 "id": f"tq-{row[0]}", "kind": f"queued ({row[5]})", "description": row[1],
                 "status": row[2], "started_at": row[3], "finished_at": row[4],
                 "result_summary": None, "source": "task_queue",
+                "progress": None, "stoppable": False,
             })
     except sqlite3.OperationalError:
         pass
@@ -209,6 +226,7 @@ def _fetch_tasks(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
                 "id": f"rem-{row[0]}", "kind": "reminder", "description": row[1],
                 "status": status, "started_at": row[2], "finished_at": row[3] or row[4],
                 "result_summary": None, "source": "reminders",
+                "progress": None, "stoppable": False,
             })
     except sqlite3.OperationalError:
         pass
@@ -391,10 +409,20 @@ def _build_app(
         return {"ok": reject_pending()}
 
     @app.post("/api/tasks/{task_id}/stop")
-    def api_stop_task(task_id: int):
+    def api_stop_task(task_id: str):
         if not kill_background_task:
             return JSONResponse({"error": "not available yet"}, status_code=501)
-        return {"ok": True, "result": kill_background_task(task_id)}
+        # Only background_tasks rows (id "bg-<n>") have a live OS process to kill — task_queue
+        # and reminders entries have no such process, so stopping them isn't offered.
+        if not task_id.startswith("bg-"):
+            return JSONResponse(
+                {"error": "only background (code/research) tasks can be stopped"}, status_code=400
+            )
+        try:
+            numeric_id = int(task_id[len("bg-"):])
+        except ValueError:
+            return JSONResponse({"error": "invalid task id"}, status_code=400)
+        return {"ok": True, "result": kill_background_task(numeric_id)}
 
     @app.post("/api/command")
     def api_command(payload: dict = Body(...)):
