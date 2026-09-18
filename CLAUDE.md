@@ -79,6 +79,17 @@ Rules:
   `JARVIS_MEMORY_DB_PATH`, never touches the real `jarvis_memory.db`) covers every dashboard
   endpoint. Run: `python -m pytest test_dashboard.py -v`. Extend it when adding endpoints rather
   than only ad-hoc-testing by hand.
+- Post-launch round 2 (2026-09-18, from more real usage): columns and the bottom panel are now
+  drag-resizable via plain CSS `resize: horizontal`/`resize: vertical` (`.layout` switched from
+  grid to flex so a resized column reflows the others instead of overflowing a fixed grid
+  track) — verified the computed style applies correctly, but pixel-perfect synthetic
+  mouse-drag verification of the actual grip hit-zone was unreliable in headless Chromium
+  (known automation flakiness for native resize handles); this needs a real hands-on check, not
+  just automated coverage. A new "Daily" tab (`GET /api/daily`, `_dashboard_get_daily_items()`
+  in jarvis.py) lists recurring skills (from `_load_skills()`'s `schedule` field, with last-run
+  time from `scheduled_skill_runs`) and recurring reminders (`repeat_every_minutes` set) — kept
+  as its own tab per explicit request, not folded into the Tasks column, since these are
+  standing routines, not one-off/in-flight work.
 
 ## Speech shaping (2026-09-18)
 
@@ -119,6 +130,33 @@ Rules:
   of being given up on for the rest of the process's life — previously the only way to recover
   from a transient failure (npx cold-start, brief network hiccup) was restarting Jarvis.
 
+## Reliability fixes from real usage (2026-09-18)
+
+- **Silent replies, root-caused**: `run_agent_loop` could return an empty string when Claude
+  ended its turn with only a tool call and no text at all — most consequentially, right after
+  staging a catastrophic confirmation (run_shell/run_python's "staged, not run, say yes" tool
+  result), where Claude sometimes considered the tool result self-explanatory and added no
+  spoken commentary, and for a multi-tool task (e.g. "summarize my email") that exhausted
+  `MAX_AGENT_ITERATIONS` before ever narrating a summary. The system prompt already said to
+  always give a spoken reply, but that's not 100%-reliable model behavior. Fixed at the code
+  level: if the loop ends with no text but at least one tool was called, `reply` falls back to
+  that last tool's own result text instead of empty — silence is worse than surfacing something.
+  Verified with a simulated Claude response containing only tool_use blocks across the whole
+  loop (the worst case) before/after the fix.
+- **RAM monitoring removed entirely** (`check_system_health`'s per-process "X is using N
+  megabytes, want me to close it?" nag and the RAM-jump-since-last-check alert), per explicit
+  user request. CPU-load and disk-capacity checks are untouched — only asked to remove RAM.
+  `system_status()` (on-demand, voice-asked) still reports RAM usage; this only removed the
+  *unprompted* nagging about it.
+- **Phone push notifications are off by default now**: `JARVIS_PHONE_PROACTIVE_NOTIFICATIONS`
+  (env var, default false) gates `_notify_phone`, called from `queue_or_deliver_notification`
+  for every proactive message (scheduled skills, reminders, background task completions,
+  health-monitor suggestions). Per explicit user request: "I don't want notifications sent to
+  my telegram and ntfy all the time unless I type a message there." This never affects a direct
+  reply to something the user typed *from* ntfy/Telegram — that goes through `reply_sink` in
+  `_ntfy_listen_loop`/`_telegram_listen_loop`, a completely separate path, unaffected by this
+  toggle. Set the env var to `1`/`true` to restore proactive phone pushes.
+
 ## Window control
 
 - `resize_window(title, width=, height=, width_percent=, height_percent=)` and
@@ -157,4 +195,6 @@ row there each phase rather than only stating the total in chat.
 | 2 (Approve/Reject/Stop) | Sonnet 5 | ~15 min | ~$0.55–$0.75 |
 | 3 (Audit Trail filters + System Metrics) | Sonnet 5 | ~20 min | ~$0.60–$0.85 |
 | 4 (input-mode chip, dashboard commands, voice auto-focus) | Sonnet 5 | ~15 min | ~$0.45–$0.65 |
-| **Running total (final)** | | **~80 min** | **~$2.55–$3.65** |
+| 5 (import deadlock + SQLite WAL/lock fixes, found on live restart) | Sonnet 5 | ~10 min | ~$0.30–$0.40 |
+| 6 (RAM removal, silent-reply fix, phone-notif toggle, resizable panels, Daily tab) | Sonnet 5 | ~35 min | ~$1.00–$1.40 |
+| **Running total (final)** | | **~125 min** | **~$3.85–$5.45** |

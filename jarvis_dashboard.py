@@ -463,6 +463,7 @@ def _build_app(
     kill_background_task: Callable[[int], str] | None = None,
     run_command: Callable[[str, Callable[[str], None]], None] | None = None,
     get_services: Callable[[], list[dict]] | None = None,
+    get_daily: Callable[[], list[dict]] | None = None,
     port: int = DEFAULT_PORT,
 ):
     """Builds the FastAPI app (import-guarded, testable without binding a socket). Returns
@@ -541,6 +542,16 @@ def _build_app(
             log.warning("get_services failed: %s", e)
             return {"services": []}
 
+    @app.get("/api/daily")
+    def api_daily() -> dict:
+        if not get_daily:
+            return {"items": []}
+        try:
+            return {"items": get_daily()}
+        except Exception as e:
+            log.warning("get_daily failed: %s", e)
+            return {"items": []}
+
     @app.delete("/api/sessions/finished")
     def api_clear_finished_sessions() -> dict:
         return {"ok": True, "removed": clear_finished_sessions()}
@@ -618,6 +629,7 @@ def start(
     kill_background_task: Callable[[int], str] | None = None,
     run_command: Callable[[str, Callable[[str], None]], None] | None = None,
     get_services: Callable[[], list[dict]] | None = None,
+    get_daily: Callable[[], list[dict]] | None = None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
     127.0.0.1 only, by design: this server is a second surface that can (in later phases)
@@ -633,6 +645,7 @@ def start(
         kill_background_task=kill_background_task,
         run_command=run_command,
         get_services=get_services,
+        get_daily=get_daily,
         port=port,
     )
     if app is None:

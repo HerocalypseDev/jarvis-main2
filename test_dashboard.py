@@ -343,3 +343,36 @@ def test_clear_finished_sessions_endpoint(dashboard, client):
     assert r.status_code == 200
     assert r.json()["ok"] is True
     assert r.json()["removed"] >= 1
+
+
+def test_daily_endpoint_empty_when_not_wired(client):
+    r = client.get("/api/daily")
+    assert r.status_code == 200
+    assert r.json() == {"items": []}
+
+
+def test_daily_endpoint_wired(dashboard):
+    from fastapi.testclient import TestClient
+
+    fake_items = [
+        {"kind": "skill", "name": "morning_briefing", "description": "", "schedule": "daily at 08:00", "last_run_at": "2026-09-18T08:00:00"},
+        {"kind": "reminder", "name": "drink water", "description": "", "schedule": "every 60 min", "last_run_at": None, "next_due": "2026-09-18T09:00:00"},
+    ]
+    app = dashboard._build_app(get_daily=lambda: fake_items)
+    with TestClient(app) as c:
+        r = c.get("/api/daily")
+        assert r.status_code == 200
+        assert r.json()["items"] == fake_items
+
+
+def test_daily_endpoint_exception_does_not_break(dashboard):
+    from fastapi.testclient import TestClient
+
+    def boom():
+        raise RuntimeError("skills dir exploded")
+
+    app = dashboard._build_app(get_daily=boom)
+    with TestClient(app) as c:
+        r = c.get("/api/daily")
+        assert r.status_code == 200
+        assert r.json() == {"items": []}

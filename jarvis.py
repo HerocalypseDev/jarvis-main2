@@ -113,6 +113,16 @@ NTFY_SERVER = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").strip().rstri
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 
+# Off by default per explicit user request (2026-09-18): "I don't want notifications sent to
+# my telegram and ntfy all the time unless I type a message there." This only gates *proactive*
+# pushes (_notify_phone, called from queue_or_deliver_notification for scheduled skills, health
+# suggestions, reminders, background task completions) — a direct reply to something the user
+# typed FROM ntfy/Telegram always goes back through reply_sink regardless of this setting, since
+# that's a separate path (_ntfy_listen_loop/_telegram_listen_loop), not this one.
+JARVIS_PHONE_PROACTIVE_NOTIFICATIONS = (
+    os.environ.get("JARVIS_PHONE_PROACTIVE_NOTIFICATIONS") or ""
+).strip().lower() in ("1", "true", "yes")
+
 # Local supervision dashboard (jarvis_dashboard.py): FastAPI + WebSocket UI, off by default,
 # localhost-only when enabled. See CLAUDE.md's "Dashboard" section for the risk rules around
 # this before changing any of it.
@@ -671,7 +681,9 @@ machine would.
 
 Call tools as needed — you can call several in a row, look at each result, and decide what to do \
 next, before giving your final spoken reply. When you're done, reply with a short (1-4 sentence) \
-spoken summary of the outcome; don't narrate tool mechanics.
+spoken summary of the outcome; don't narrate tool mechanics. Always end your turn with that \
+spoken reply — never end a turn with only a tool call and no text, even when the tool result \
+already says everything that needs saying; briefly restate it instead of leaving Jarvis silent.
 
 Your reply is spoken aloud by a text-to-speech engine, not displayed as text — never use markdown \
 (no **bold**, no bullet points or numbered lists, no headers, no code blocks/backticks) and never \
@@ -2588,9 +2600,14 @@ def _telegram_send(message: str) -> bool:
 
 
 def _notify_phone(text: str, title: str = "Jarvis") -> None:
-    """Pushes to every configured phone channel. Called from queue_or_deliver_notification —
-    unconditionally, ahead of its busy/work-hours gate, since a silent phone push doesn't
-    interrupt anything the way the in-room spoken announcement would."""
+    """Pushes to every configured phone channel — but only when
+    JARVIS_PHONE_PROACTIVE_NOTIFICATIONS is explicitly enabled (off by default; see that
+    constant's comment). Called from queue_or_deliver_notification for every *proactive*
+    message (scheduled skills, health suggestions, reminders, background task completions);
+    never affects a direct reply to something the user typed from ntfy/Telegram, which goes
+    through reply_sink in _ntfy_listen_loop/_telegram_listen_loop instead."""
+    if not JARVIS_PHONE_PROACTIVE_NOTIFICATIONS:
+        return
     if NTFY_TOPIC:
         _ntfy_publish(text, title=title)
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
@@ -3420,6 +3437,56 @@ def _dashboard_get_services_status() -> list[dict]:
     return services
 
 
+def _dashboard_get_daily_items() -> list[dict]:
+    """Read-only snapshot for the dashboard's own Daily section (recurring skills + recurring
+    reminders) — deliberately separate from the Tasks panel, which is one-off/in-flight work,
+    not standing routines."""
+    items: list[dict] = []
+    for skill in _load_skills():
+        schedule = skill.get("schedule")
+        if not isinstance(schedule, dict):
+            continue
+        if schedule.get("daily_at"):
+            schedule_desc = f"daily at {schedule['daily_at']}"
+        elif schedule.get("every_minutes"):
+            schedule_desc = f"every {schedule['every_minutes']:g} minutes"
+        else:
+            schedule_desc = "recurring"
+        last_run = _get_last_skill_run(skill["name"])
+        items.append({
+            "kind": "skill",
+            "name": skill["name"],
+            "description": skill.get("description") or "",
+            "schedule": schedule_desc,
+            "last_run_at": last_run.isoformat(timespec="seconds") if last_run else None,
+        })
+
+    try:
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                rows = conn.execute(
+                    "SELECT text, due_at, repeat_every_minutes FROM reminders "
+                    "WHERE repeat_every_minutes IS NOT NULL AND cancelled_at IS NULL "
+                    "ORDER BY due_at"
+                ).fetchall()
+            finally:
+                conn.close()
+    except sqlite3.DatabaseError as e:
+        log.debug("Could not read recurring reminders for dashboard Daily section: %s", e)
+        rows = []
+    for text, due_at, repeat_every_minutes in rows:
+        items.append({
+            "kind": "reminder",
+            "name": text,
+            "description": "",
+            "schedule": f"every {repeat_every_minutes:g} min",
+            "last_run_at": None,
+            "next_due": due_at,
+        })
+    return items
+
+
 def get_mcp_tool_schemas() -> list[dict]:
     ensure_mcp_started()
     return list(_mcp_tool_schemas)
@@ -4116,37 +4183,14 @@ def system_status() -> str:
 # --- waiting for the user to ask what's slowing the machine down. ---
 HEALTH_CHECK_INTERVAL_S = 15 * 60  # run every 15 minutes
 PROACTIVE_SUGGESTIONS_LOG_PATH = Path(__file__).resolve().parent / "proactive_suggestions.log"
-TOP_PROCESS_COUNT = 5
-RAM_JUMP_ALERT_POINTS = 20.0  # alert if overall RAM percent jumps by this many points since the last check
-RAM_SINGLE_PROCESS_ALERT_MB = 1024.0  # a single process over this size gets called out by name
 DISK_USAGE_ALERT_PERCENT = 90.0  # a drive at/above this percent full is "approaching capacity"
 CPU_LOAD_ALERT_PERCENT = 90.0
 
-_health_lock = threading.Lock()
-_last_health_snapshot: dict | None = None
-
-
-def _top_ram_processes(limit: int = TOP_PROCESS_COUNT) -> list[dict]:
-    """Top `limit` processes by resident memory — same data free_up_ram's Get-Process
-    one-liner reports, gathered here in-process via psutil so the health monitor can act on
-    it without shelling out. A process that exits mid-scan or can't be read (permissions) is
-    just skipped, not treated as a failure of the whole scan."""
-    import psutil
-
-    procs: list[dict] = []
-    for p in psutil.process_iter(["pid", "name", "memory_info"]):
-        try:
-            info = p.info
-            mem_info = info.get("memory_info")
-            if mem_info is None:
-                continue
-            procs.append(
-                {"pid": info.get("pid"), "name": info.get("name") or "?", "rss_mb": _bytes_to_mb(mem_info.rss)}
-            )
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    procs.sort(key=lambda p: p["rss_mb"], reverse=True)
-    return procs[:limit]
+# Double-checked (2026-09-18, user request): RAM monitoring — the per-process "X is using N
+# megabytes, want me to close it?" nag and the RAM-jump-since-last-check alert — was removed
+# entirely, not just muted. Disk-capacity and CPU-load checks below are unaffected; the user
+# only objected to the RAM ones. system_status() (on-demand, voice-asked) still reports RAM
+# usage — this only removes the *unprompted* proactive nagging about it.
 
 
 def _log_proactive_suggestion(text: str, timestamp: str) -> None:
@@ -4166,8 +4210,6 @@ def check_system_health() -> dict:
     returns {"snapshot": ..., "suggestions": [...]}. Every metric is gathered independently
     so one failure (e.g. psutil missing, or a permission error on one drive) never blocks the
     rest — mirrors the defensive per-section pattern in get_system_status_report()."""
-    global _last_health_snapshot
-
     try:
         import psutil
     except ImportError:
@@ -4179,22 +4221,10 @@ def check_system_health() -> dict:
     suggestions: list[str] = []
 
     try:
-        top_procs = _top_ram_processes()
-    except Exception as e:
-        log.warning("Could not list top RAM processes: %s", e)
-        top_procs = []
-
-    try:
         cpu_percent = psutil.cpu_percent(interval=0.5)
     except Exception as e:
         log.warning("Could not read CPU load: %s", e)
         cpu_percent = None
-
-    try:
-        ram_percent = psutil.virtual_memory().percent
-    except Exception as e:
-        log.warning("Could not read RAM usage: %s", e)
-        ram_percent = None
 
     disks_near_capacity: list[dict] = []
     try:
@@ -4210,38 +4240,7 @@ def check_system_health() -> dict:
     except Exception as e:
         log.warning("Could not read disk usage: %s", e)
 
-    snapshot = {
-        "timestamp": timestamp,
-        "top_processes": top_procs,
-        "cpu_percent": cpu_percent,
-        "ram_percent": ram_percent,
-    }
-
-    with _health_lock:
-        previous = _last_health_snapshot
-        _last_health_snapshot = snapshot
-
-    # Trend-based alert: RAM usage jumped sharply since the last 15-minute check.
-    if (
-        previous
-        and previous.get("ram_percent") is not None
-        and ram_percent is not None
-        and (ram_percent - previous["ram_percent"]) >= RAM_JUMP_ALERT_POINTS
-    ):
-        suggestions.append(
-            f"Heads up, RAM usage jumped from {previous['ram_percent']:.0f} percent to "
-            f"{ram_percent:.0f} percent since the last check. Might be worth freeing some up."
-        )
-
-    # Smart cleanup suggestions: call out any single process using a lot of RAM by name,
-    # e.g. "Firefox is using 1200 megabytes, would you like to close it?" — same spirit as
-    # the free_up_ram skill, just offered before the user has to ask.
-    for proc in top_procs:
-        if proc["rss_mb"] >= RAM_SINGLE_PROCESS_ALERT_MB:
-            suggestions.append(
-                f"{proc['name']} is using about {proc['rss_mb']:.0f} megabytes of RAM. "
-                f"Want me to close it?"
-            )
+    snapshot = {"timestamp": timestamp, "cpu_percent": cpu_percent}
 
     for disk in disks_near_capacity:
         suggestions.append(
@@ -5667,6 +5666,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
 
     messages: list[dict] = _history_snapshot() + [{"role": "user", "content": transcript}]
     reply_parts: list[str] = []
+    last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
     tools = AGENT_TOOLS + get_mcp_tool_schemas()
     tone_line = voice_tone.tone_context_line(tone) if tone else ""
 
@@ -5710,9 +5710,18 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
             tool_results.append(
                 {"type": "tool_result", "tool_use_id": tu.get("id"), "content": result_text}
             )
+            last_tool_result_text = result_text
         messages.append({"role": "user", "content": tool_results})
 
     reply = " ".join(p.strip() for p in reply_parts if p.strip())
+    if not reply and last_tool_result_text:
+        # Observed live: Claude sometimes ends a turn with only a tool call and no spoken text
+        # at all — most consequentially for a staged catastrophic confirmation (run_shell/
+        # run_python's "staged, not run, say yes" result) and a multi-tool task that exhausts
+        # MAX_AGENT_ITERATIONS before ever narrating a summary. The system prompt already says
+        # to always give a short spoken reply, but that's not 100% reliable model behavior —
+        # silence is worse than just surfacing the last tool's own result text instead.
+        reply = last_tool_result_text
     _append_history(transcript, reply)
     return reply
 
@@ -6136,6 +6145,7 @@ def main() -> int:
                     kill_background_task=_dashboard_kill_background_task,
                     get_system_status=get_system_status_report,
                     get_services=_dashboard_get_services_status,
+                    get_daily=_dashboard_get_daily_items,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same
                     # handle_text_command pipeline (run_agent_loop, _execute_tool, and the

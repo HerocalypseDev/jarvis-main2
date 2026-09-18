@@ -459,6 +459,37 @@ function isAuditTabActive() {
   return !!panel && panel.classList.contains("active");
 }
 
+// Recurring skills + recurring reminders — kept as its own tab rather than folded into Tasks,
+// since these are standing routines, not one-off/in-flight work.
+async function fetchDailyItems() {
+  const el = document.getElementById("daily-list");
+  try {
+    const res = await fetch("/api/daily");
+    const data = await res.json();
+    renderDailyItems(data.items || []);
+  } catch (e) {
+    el.innerHTML = '<li class="muted">Failed to load daily items.</li>';
+  }
+}
+
+function renderDailyItems(items) {
+  const el = document.getElementById("daily-list");
+  el.innerHTML = "";
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "list-item compact";
+    const kindIcon = item.kind === "reminder" ? "⏰" : "\u{1F501}";
+    const lastRun = item.last_run_at ? `last ran ${esc(item.last_run_at)}` : "";
+    const nextDue = item.next_due ? `next ${esc(item.next_due)}` : "";
+    const meta = [esc(item.schedule || ""), lastRun, nextDue].filter(Boolean).join(" &middot; ");
+    li.innerHTML = `
+      <div class="list-item-title">${kindIcon} ${esc(item.name)}</div>
+      <div class="list-item-meta">${meta}</div>`;
+    el.appendChild(li);
+  });
+  if (!items.length) el.innerHTML = '<li class="muted">No recurring skills or reminders yet.</li>';
+}
+
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
@@ -466,6 +497,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "audit") fetchAuditResults();
+    if (btn.dataset.tab === "daily") fetchDailyItems();
   });
 });
 
