@@ -56,6 +56,7 @@ import jarvis_voice_tone as voice_tone
 import jarvis_sleep_mode as sleep_mode
 import jarvis_cache as cache
 import jarvis_billing as billing
+import jarvis_gemini as gemini
 import jarvis_dashboard as dashboard
 
 # --- tuning knobs -----------------------------------------------------------
@@ -1459,6 +1460,20 @@ AGENT_TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "set_llm_provider",
+        "description": (
+            "Switch which AI brain answers the user: 'claude' (Anthropic) or 'gemini' (Google "
+            "AI Studio). Takes effect immediately, no restart. Use for 'switch to Gemini', "
+            "'use Claude again', 'change your brain/model provider'. Tell the user the result "
+            "(it includes a data-privacy note when switching to Gemini's free tier)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"provider": {"type": "string", "enum": ["claude", "gemini"]}},
+            "required": ["provider"],
+        },
+    },
+    {
         "name": "change_jarvis_code",
         "description": (
             "Add a feature to, fix, or otherwise change JARVIS'S OWN source code (this very "
@@ -1944,6 +1959,58 @@ def _strip_cache_ttl(obj):
     return obj
 
 
+# --- LLM provider switch: Claude (default) or Gemini (Google AI Studio) ------------------------
+# Callers all build Anthropic-format requests; when the provider is gemini, _claude_request hands
+# the body to jarvis_gemini.call, which translates it and returns an Anthropic-shaped response, so
+# nothing above this layer knows or cares which brain answered. Precedence: llm_provider.json
+# (written by the set_llm_provider tool / dashboard chip) > JARVIS_LLM_PROVIDER env > "claude".
+LLM_SETTINGS_PATH = Path(__file__).resolve().parent / "llm_provider.json"
+
+
+def _llm_provider() -> str:
+    return gemini.get_provider(LLM_SETTINGS_PATH)
+
+
+def _llm_configured() -> bool:
+    if _llm_provider() == "gemini":
+        return bool(gemini.api_key())
+    return bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip())
+
+
+def _llm_unavailable_reply() -> str:
+    return "Sorry, I couldn't reach Gemini just now." if _llm_provider() == "gemini" else CLAUDE_UNAVAILABLE_REPLY
+
+
+def _llm_status() -> dict:
+    return {
+        "provider": _llm_provider(),
+        "gemini_model": gemini.model_name(),
+        "claude_model": CLAUDE_MODEL,
+        "claude_configured": bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip()),
+        "gemini_configured": bool(gemini.api_key()),
+    }
+
+
+def set_llm_provider(provider: str) -> str:
+    """Switches the brain for every following request (no restart). Refuses a provider whose
+    key isn't configured, so a typo can't leave Jarvis with no working brain."""
+    provider = (provider or "").strip().lower()
+    if provider not in gemini.PROVIDERS:
+        return f"Unknown brain {provider!r}; choose claude or gemini."
+    if provider == "gemini" and not gemini.api_key():
+        return "Gemini isn't set up: add GEMINI_API_KEY to the .env file and restart Jarvis."
+    if provider == "claude" and not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+        return "Claude isn't set up: ANTHROPIC_API_KEY is missing."
+    gemini.set_provider(LLM_SETTINGS_PATH, provider)
+    _invalidate_read_caches()
+    if provider == "gemini":
+        return (
+            f"Switched to Gemini ({gemini.model_name()}). Note: on Google's free tier, your "
+            "prompts and Jarvis's tool results may be used by Google to improve its products."
+        )
+    return f"Switched to Claude ({CLAUDE_MODEL})."
+
+
 def _record_api_usage(body: dict, result: dict) -> None:
     """Logs this response's token usage + estimated cost to the api_usage table (dashboard's
     Usage tab, api_spend tool). Runs on its own short-lived thread so a slow or locked SQLite
@@ -1954,12 +2021,20 @@ def _record_api_usage(body: dict, result: dict) -> None:
         return
     threading.Thread(
         target=billing.record_usage,
-        args=(_memory_db_connect, _memory_db_lock, (body or {}).get("model") or CLAUDE_MODEL, usage),
+        args=(
+            _memory_db_connect, _memory_db_lock,
+            (result or {}).get("model") or (body or {}).get("model") or CLAUDE_MODEL, usage,
+        ),
         daemon=True,
     ).start()
 
 
 def _claude_request(body: dict, timeout: int) -> dict | None:
+    if _llm_provider() == "gemini":
+        result = gemini.call(body, timeout, _urlopen_hard_timeout)
+        if result is not None:
+            _record_api_usage(body, result)
+        return result
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
         log.warning("Set ANTHROPIC_API_KEY in the environment to use Claude.")
@@ -3945,8 +4020,8 @@ def start_prompt_cache_warmup() -> None:
     Optional periodic keep-warm via JARVIS_PROMPT_CACHE_KEEPWARM_MIN (default 0 = off: with the
     1h TTL every real command refreshes the cache, and a keep-warm read of the ~22k-token prefix
     every few minutes around the clock would cost more than most idle gaps save)."""
-    if not (cache.enabled("prompt") and (os.environ.get("ANTHROPIC_API_KEY") or "").strip()):
-        return
+    if not (cache.enabled("prompt") and _llm_provider() == "claude" and _llm_configured()):
+        return  # Anthropic prompt caching only; Gemini caches implicitly, no pre-warm needed
     threading.Thread(target=_prompt_cache_warm_request, daemon=True).start()
     try:
         minutes = float(os.environ.get("JARVIS_PROMPT_CACHE_KEEPWARM_MIN") or 0)
@@ -4310,7 +4385,7 @@ def read_screen(transcript: str) -> tuple[str, str]:
     this" ask. That decision happens here (after actually seeing the screenshot), not at the
     routing step, since the routing call never sees the screen.
     """
-    if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+    if not _llm_configured():
         return "I don't have an Anthropic API key set, so I can't read the screen.", ""
     b64 = _screenshot_jpeg_b64()
     if not b64:
@@ -4998,7 +5073,7 @@ def web_search_and_summarize(transcript: str, query: str) -> str:
     if not results:
         return f"I couldn't find anything for {q}."
 
-    if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+    if not _llm_configured():
         title, snippet = results[0]
         return f"{title}. {snippet}"
 
@@ -6092,6 +6167,8 @@ def _execute_tool_impl(
             )
         elif tool_name == "quick_recall":
             result = quick_recall()
+        elif tool_name == "set_llm_provider":
+            result = set_llm_provider(str(inp.get("provider") or ""))
         elif tool_name == "change_jarvis_code":
             result = _delegate_to_claude_code(str(inp.get("feature") or ""), "")
         elif tool_name == "delegate_to_claude_code":
@@ -6208,8 +6285,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
     tone, if given (see jarvis_voice_tone.analyze_tone), is folded into the system prompt
     for every round trip of this call so the reply's tone/approach can adapt — e.g. terser
     when the user sounds frustrated, more explanatory when curious."""
-    if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
-        log.warning("Set ANTHROPIC_API_KEY in the environment for voice command interpretation.")
+    if not _llm_configured():
+        log.warning("No API key for the active brain (%s) — set it in .env.", _llm_provider())
         return ""
 
     # Reply cache: only ever populated by turns that used read-only tools exclusively (see the
@@ -6250,7 +6327,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
             timeout=60,
         )
         if data is None:
-            reply = " ".join(reply_parts).strip() or CLAUDE_UNAVAILABLE_REPLY
+            reply = " ".join(reply_parts).strip() or _llm_unavailable_reply()
             _append_history(transcript, reply)
             return reply
         _log_cache_usage(data, "agent loop")
@@ -6732,6 +6809,8 @@ def main() -> int:
                     get_services=_dashboard_get_services_status,
                     get_daily=_dashboard_get_daily_items,
                     get_usage=_dashboard_get_usage,
+                    get_llm=_llm_status,
+                    set_llm=set_llm_provider,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same
                     # handle_text_command pipeline (run_agent_loop, _execute_tool, and the

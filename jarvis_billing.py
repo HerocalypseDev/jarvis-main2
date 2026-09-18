@@ -126,6 +126,15 @@ PRICES: dict[str, dict[str, float]] = {
     "claude-haiku-4-5": {"in": 1.00, "out": 5.00, "read": 0.10, "w5m": 1.25, "w1h": 2.00},
     "claude-sonnet-4": {"in": 3.00, "out": 15.00, "read": 0.30, "w5m": 3.75, "w1h": 6.00},
     "claude-opus-4-5": {"in": 5.00, "out": 25.00, "read": 0.50, "w5m": 6.25, "w1h": 10.00},
+    # Gemini paid-tier list prices (ai.google.dev/gemini-api/docs/pricing). Implicit caching has no
+    # write charge, so w5m/w1h just mirror the input rate. The free tier actually bills $0 — these
+    # are "what it would cost" figures; the real free-tier constraint is tokens/requests per
+    # minute and day, which the dashboard shows as token totals.
+    "gemini-3.5-flash-lite": {"in": 0.30, "out": 2.50, "read": 0.03, "w5m": 0.30, "w1h": 0.30},
+    "gemini-3.5-flash": {"in": 1.50, "out": 9.00, "read": 0.15, "w5m": 1.50, "w1h": 1.50},
+    "gemini-3.1-flash-lite": {"in": 0.25, "out": 1.50, "read": 0.025, "w5m": 0.25, "w1h": 0.25},
+    "gemini-2.5-flash-lite": {"in": 0.10, "out": 0.40, "read": 0.01, "w5m": 0.10, "w1h": 0.10},
+    "gemini-2.5-flash": {"in": 0.30, "out": 2.50, "read": 0.03, "w5m": 0.30, "w1h": 0.30},
 }
 _FALLBACK = PRICES["claude-haiku-4-5"]
 USAGE_RETENTION_DAYS = 400
@@ -208,8 +217,9 @@ def local_summary(connect: Callable[[], sqlite3.Connection], lock, now: float | 
         "all_time": 0.0,
     }
     out: dict = {"periods": {}, "by_model": [], "daily": [], "estimate_note": (
-        "Estimated from token counts x list price for calls made by Jarvis only; "
-        "Anthropic's Console is the source of truth."
+        "Estimated from token counts x list price for calls made by Jarvis only; the "
+        "provider's own console is the source of truth. Gemini figures are paid-tier equivalents "
+        "(the free tier bills $0 but is limited by tokens/requests per minute and day)."
     )}
     with lock:
         conn = connect()
@@ -228,9 +238,11 @@ def local_summary(connect: Callable[[], sqlite3.Connection], lock, now: float | 
                     "output_tokens": row[5], "cache_saved_usd": row[6],
                 }
             out["by_model"] = [
-                {"model": m, "cost_usd": c, "calls": n}
-                for m, c, n in conn.execute(
-                    "SELECT model, SUM(cost_usd), COUNT(*) FROM api_usage WHERE ts >= ? "
+                {"model": m, "cost_usd": c, "calls": n, "tokens": t}
+                for m, c, n, t in conn.execute(
+                    "SELECT model, SUM(cost_usd), COUNT(*), SUM(COALESCE(input_tokens,0) + "
+                    "COALESCE(cache_read_tokens,0) + COALESCE(cache_write_tokens,0) + "
+                    "COALESCE(output_tokens,0)) FROM api_usage WHERE ts >= ? "
                     "GROUP BY model ORDER BY SUM(cost_usd) DESC", (starts["month"],),
                 )
             ]

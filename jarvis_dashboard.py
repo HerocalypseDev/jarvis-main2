@@ -465,6 +465,8 @@ def _build_app(
     get_services: Callable[[], list[dict]] | None = None,
     get_daily: Callable[[], list[dict]] | None = None,
     get_usage: Callable[[], dict] | None = None,
+    get_llm: Callable[[], dict] | None = None,
+    set_llm: Callable[[str], str] | None = None,
     port: int = DEFAULT_PORT,
 ):
     """Builds the FastAPI app (import-guarded, testable without binding a socket). Returns
@@ -565,6 +567,27 @@ def _build_app(
             log.warning("get_usage failed: %s", e)
             return {"usage": None}
 
+    @app.get("/api/llm")
+    def api_llm() -> dict:
+        if not get_llm:
+            return {"llm": None}
+        try:
+            return {"llm": get_llm()}
+        except Exception as e:
+            log.warning("get_llm failed: %s", e)
+            return {"llm": None}
+
+    @app.post("/api/llm")
+    def api_set_llm(payload: dict = Body(...)):
+        # Switches which AI brain (Claude/Gemini) answers. Goes through jarvis.set_llm_provider,
+        # which refuses a provider with no key configured. Same localhost-only trust level as the
+        # command box; the frontend asks for confirmation before switching to Gemini's free tier.
+        if not set_llm or not get_llm:
+            return JSONResponse({"error": "not available yet"}, status_code=501)
+        message = set_llm(str((payload or {}).get("provider") or ""))
+        ok = message.startswith("Switched")
+        return JSONResponse({"ok": ok, "message": message, "llm": get_llm()}, status_code=200 if ok else 400)
+
     @app.delete("/api/sessions/finished")
     def api_clear_finished_sessions() -> dict:
         return {"ok": True, "removed": clear_finished_sessions()}
@@ -644,6 +667,8 @@ def start(
     get_services: Callable[[], list[dict]] | None = None,
     get_daily: Callable[[], list[dict]] | None = None,
     get_usage: Callable[[], dict] | None = None,
+    get_llm: Callable[[], dict] | None = None,
+    set_llm: Callable[[str], str] | None = None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
     127.0.0.1 only, by design: this server is a second surface that can (in later phases)
@@ -661,6 +686,8 @@ def start(
         get_services=get_services,
         get_daily=get_daily,
         get_usage=get_usage,
+        get_llm=get_llm,
+        set_llm=set_llm,
         port=port,
     )
     if app is None:

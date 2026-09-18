@@ -268,6 +268,42 @@ Rules:
 - Unit-tested with `subprocess.Popen` faked (prompt/cwd, self-edit lock, phone forcing); **not
   run live** against a real `claude` process — a live test would make real edits to this repo.
 
+## Gemini brain option (2026-09-18)
+
+- Jarvis can run on **Gemini (Google AI Studio)** instead of Claude, switchable live. All eight LLM
+  call sites still build Anthropic-format requests; `_claude_request` checks `_llm_provider()` and,
+  for gemini, hands the body to `jarvis_gemini.call`, which translates request -> Gemini
+  `generateContent` and response -> Anthropic shape (tool_use/tool_result <-> functionCall/
+  functionResponse, images -> inlineData, `cache_control` keys ignored, usage mapped incl. cached
+  tokens). Nothing above `_claude_request` knows which brain answered.
+- **Switching**: `llm_provider.json` (gitignored; written by the switch) > `JARVIS_LLM_PROVIDER`
+  env > `claude`. Ways to flip it at runtime, no restart: the `set_llm_provider` tool ("switch to
+  Gemini"), or the **"brain: claude/gemini" chip** in the dashboard top bar (`GET/POST /api/llm`;
+  clicking to Gemini asks for confirmation). `set_llm_provider` refuses a provider whose key isn't
+  set, so a typo can't strand Jarvis. Keys: `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) in `.env` only;
+  `JARVIS_GEMINI_MODEL` (default `gemini-3.1-flash-lite`); `JARVIS_GEMINI_THINKING` (default
+  `minimal` — thinking tokens bill as output and count toward free-tier limits; `default` leaves
+  the model's own).
+- Gemini 3 needs each function call's `thoughtSignature` echoed back: `from_response` stores it on
+  the tool_use block as `_thought_signature` and `convert_messages` sends it back. Tool schemas go
+  via `parametersJsonSchema` (MCP schemas pass through untouched); empty-property tools omit it.
+- 429s: waits the server's `retryDelay` if <= 30s, but fails fast on a long (daily) quota reset
+  rather than hanging a command. A 400 mentioning "thinking" retries once without thinkingConfig.
+- **Data-exposure risk (double-check protocol)**: on Google's *free* tier, prompts and tool
+  results (emails, screen contents, shell output) may be used to improve Google products; the paid
+  tier does not. `set_llm_provider` and the dashboard confirm both say so. Claude stays the default.
+- Free-tier limits are per *project*, not per key, and exact numbers are only visible in the AI
+  Studio dashboard (third-party blogs disagree). A full agent turn sends ~13k tokens of fixed prefix
+  (system ~4.8k + built-in tools ~8.3k, more with MCP tools) per round trip; Gemini's implicit
+  caching reduces billing but it is unverified whether cached tokens count toward TPM.
+- Usage tracking covers both providers (`api_usage` records the model that actually answered;
+  Gemini prices are paid-tier equivalents, real free-tier cost is $0; the Usage tab now also
+  shows tokens per model). The Anthropic prompt-cache pre-warm is skipped on Gemini.
+- Verified live against the real Gemini API: 62-tool request accepted, tool call -> result ->
+  reply round trip, implicit cache hits, and the "where is your code" question answered correctly.
+  Not verified: the dashboard chip in a real browser, the voice/phone paths on Gemini, and how
+  well a lite model handles the 58 extra MCP tools.
+
 ## Own-code location fix (2026-09-18)
 
 - **Wrong "where is your code" (found live)**: asked where its source lives, Jarvis had no ground
@@ -347,4 +383,5 @@ row there each phase rather than only stating the total in chat.
 | 9 (api_spend billing tool) | Sonnet 5 | ~10 min | ~$0.20–$0.30 |
 | 10 (local spend tracking + dashboard Usage tab) | Sonnet 5 | ~25 min | ~$0.90–$1.30 |
 | 11 (shutdown staging fix, proactive speech shaping, change_jarvis_code + phone) | Sonnet 5 | ~35 min | ~$1.40–$2.00 |
-| **Running total (final)** | | **~260 min** | **~$8.60–$12.25** |
+| 12 (Gemini brain option + runtime switch + research) | Sonnet 5 | ~50 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~310 min** | **~$10.60–$15.05** |

@@ -454,3 +454,6 @@ body {
 .usage-bar { width: 100%; background: var(--cyan-dim); border-top: 2px solid var(--cyan); border-radius: 2px 2px 0 0; }
 .usage-bar-label { font-size: 0.65em; color: var(--text-muted); margin-top: 2px; }
 .usage-lower .list { flex: 1; min-width: 220px; }
+
+.llm-chip { cursor: pointer; }
+.llm-chip.llm-gemini { color: var(--warn); border-color: var(--warn); }

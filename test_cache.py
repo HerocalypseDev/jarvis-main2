@@ -78,6 +78,8 @@ def jarvis(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     import jarvis as j
 
+    monkeypatch.setattr(j, "LLM_SETTINGS_PATH", tmp_path / "llm_provider.json")  # never read the real switch
+    monkeypatch.delenv("JARVIS_LLM_PROVIDER", raising=False)
     monkeypatch.setattr(j, "get_mcp_tool_schemas", lambda: [])
     monkeypatch.setattr(j, "_history_snapshot", lambda: [])
     monkeypatch.setattr(j, "_append_history", lambda *a, **k: None)

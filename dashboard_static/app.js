@@ -539,7 +539,7 @@ function renderUsage(u) {
   models.innerHTML = u.by_model.length
     ? u.by_model
         .map((m) => `<li class="list-item compact"><span class="tool">${esc(m.model)}</span>
-          <span class="muted">${esc(fmtUsd(m.cost_usd))} this month &middot; ${esc(String(m.calls))} calls</span></li>`)
+          <span class="muted">${esc(fmtUsd(m.cost_usd))} this month &middot; ${esc(String(m.calls))} calls &middot; ${esc(Number(m.tokens || 0).toLocaleString())} tokens</span></li>`)
         .join("")
     : '<li class="muted">No usage recorded yet.</li>';
   const extra = u.unknown_price_models.length
@@ -552,6 +552,55 @@ function isUsageTabActive() {
   const panel = document.getElementById("tab-usage");
   return !!panel && panel.classList.contains("active");
 }
+
+// Brain switch (Claude <-> Gemini): the chip shows the active provider; clicking switches to the
+// other one after a confirmation (Gemini's free tier may use prompts to improve Google products).
+let currentLlm = null;
+
+function renderLlm(llm) {
+  const chip = document.getElementById("llm-chip");
+  if (!llm) {
+    chip.textContent = "brain: ?";
+    return;
+  }
+  currentLlm = llm;
+  const model = llm.provider === "gemini" ? llm.gemini_model : llm.claude_model;
+  chip.textContent = `brain: ${llm.provider}`;
+  chip.title = `Model: ${model}. Click to switch to ${llm.provider === "gemini" ? "Claude" : "Gemini"}.`;
+  chip.classList.toggle("llm-gemini", llm.provider === "gemini");
+}
+
+async function fetchLlm() {
+  try {
+    const res = await fetch("/api/llm");
+    renderLlm((await res.json()).llm);
+  } catch (e) {
+    /* keep the last render */
+  }
+}
+
+document.getElementById("llm-chip").addEventListener("click", async () => {
+  if (!currentLlm) return;
+  const target = currentLlm.provider === "gemini" ? "claude" : "gemini";
+  if (target === "gemini" && !window.confirm(
+    "Switch Jarvis's brain to Gemini?\n\nOn Google's free tier, your prompts and tool results " +
+    "(emails, screen contents, shell output) may be used by Google to improve its products."
+  )) return;
+  try {
+    const res = await fetch("/api/llm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: target }),
+    });
+    const data = await res.json();
+    if (data.llm) renderLlm(data.llm);
+    if (!data.ok) window.alert(data.message || "Couldn't switch.");
+  } catch (e) {
+    window.alert("Couldn't switch the brain.");
+  }
+});
+fetchLlm();
+setInterval(fetchLlm, 60000);
 
 document.getElementById("spend-chip").addEventListener("click", () => {
   document.querySelector('.tab-btn[data-tab="usage"]').click();
