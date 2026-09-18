@@ -64,10 +64,22 @@ Rules:
 
 ### Cost reporting
 
-After every implementation phase, report a block with: model, a one-line summary of the work,
-estimated tokens (in/out), estimated cost, and time spent — plus a **running total across all
-phases** for both cost and time (not cost alone). Keep the running totals below up to date; add
-a new row here each phase rather than only stating the total in chat.
+After every implementation phase, report a table with exactly these rows — Model, Work,
+Estimated tokens, Estimated cost, Time, and a **Running total** row that states *both* the
+running cost and the running time across all phases so far (not cost alone):
+
+| | |
+|---|---|
+| Model | e.g. Sonnet 5 |
+| Work | one line: what changed and how it was verified |
+| Estimated tokens | e.g. ~95k in / ~9k out |
+| Estimated cost | e.g. ~$0.55–$0.75 |
+| Time | e.g. ~15 min |
+| Running total (Phases 0–N) | e.g. ~$1.55–$2.15, ~45 min |
+
+This exact table goes in every phase report in chat (user confirmed 2026-09-18) — not just a
+prose summary. Keep the running totals in the phase-log table below up to date too; add a new
+row there each phase rather than only stating the total in chat.
 
 | Phase | Model | Time | Est. cost |
 |---|---|---|---|
