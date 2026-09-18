@@ -531,3 +531,32 @@ def test_self_change_result_is_pushed_to_phone_even_with_proactive_pushes_off(ja
     assert pushed == []  # the off-by-default toggle still holds for everything else
     jarvis._notify_phone("James finished the change", force=True)
     assert pushed == ["James finished the change"]
+
+
+# --- "where is your code?" regression (Jarvis once named the unrelated OpenJarvis project) -----
+def test_system_prompt_states_jarvis_own_code_location_and_warns_about_lookalikes(jarvis):
+    from pathlib import Path
+
+    own = str(Path(jarvis.__file__).resolve().parent)
+    stable = jarvis.build_system_blocks()[0]["text"]
+    assert own in stable  # computed from this file's location, not typed in
+    assert "do not need to search the disk" in stable
+    assert "OpenJarvis" in stable and "different projects" in stable
+    assert "change_jarvis_code" in stable
+    assert own not in jarvis.build_system_blocks()[1]["text"]  # constant per install: cache-safe
+
+
+def test_delegate_tool_steers_self_changes_to_change_jarvis_code(jarvis):
+    tool = next(t for t in jarvis.AGENT_TOOLS if t["name"] == "delegate_to_claude_code")
+    desc = tool["input_schema"]["properties"]["repo_path"]["description"]
+    assert "change_jarvis_code" in desc and "never guess" in desc.lower()
+
+
+def test_a_lookalike_jarvis_folder_is_not_treated_as_jarvis_itself(jarvis, delegation, tmp_path):
+    lookalike = tmp_path / "OpenJarvis" / "src" / "openjarvis"  # the folder Jarvis wrongly named
+    lookalike.mkdir(parents=True)
+    jarvis._delegate_to_claude_code("add a feature", str(lookalike))
+    cmd, kw = delegation[0]
+    assert cmd[cmd.index("-p") + 1] == "add a feature"  # no self-edit rules: it's another project
+    assert not jarvis._SELF_EDIT_TASK_IDS
+    assert kw["cwd"] == str(lookalike)

@@ -1509,8 +1509,9 @@ AGENT_TOOLS = [
                 "repo_path": {
                     "type": "string",
                     "description": (
-                        "absolute path to the project/repo to work in; omit to default to "
-                        "this Jarvis project's own folder"
+                        "absolute path to the OTHER project/repo to work in. To change "
+                        "Jarvis itself use change_jarvis_code instead — never guess Jarvis's "
+                        "path; omitting this defaults to Jarvis's own folder"
                     ),
                 },
             },
@@ -3810,6 +3811,21 @@ def build_system_prompt(tone_line: str = "") -> str:
     )
 
 
+def _own_code_context_line() -> str:
+    """Ground truth for "where is your code / edit yourself". Without it Claude has no way to
+    know and was observed searching the disk, finding an unrelated project whose folder name
+    contained "jarvis" (OpenJarvis), and telling the user that was its source. The path is
+    computed from this file's own location, so it stays right if the folder moves; it is
+    constant per install, so it lives in the cached stable system block."""
+    here = Path(__file__).resolve().parent
+    return (
+        f"\n\nYour own source code is in {here} (entry point jarvis.py, a git repository). You "
+        "do not need to search the disk for it — that is the answer to \"where is your code\". "
+        "Other folders with \"jarvis\" in the name, such as OpenJarvis, are different projects, "
+        "not you. To change your own code, use change_jarvis_code (never guess a repo path)."
+    )
+
+
 def build_system_blocks(tone_line: str = "") -> list[dict]:
     """build_system_prompt split for Anthropic prompt caching: a stable block carrying the
     (large) fixed prompt, marked cacheable, then a small volatile block (clock minute, tone,
@@ -3817,6 +3833,7 @@ def build_system_blocks(tone_line: str = "") -> list[dict]:
     changes per call must sit *after* the breakpoint or it invalidates the whole prefix."""
     stable = (
         AGENT_SYSTEM_PROMPT
+        + _own_code_context_line()
         + _tts_engine_context_line()
         + get_user_profile_context()
         + get_active_facts_context()
