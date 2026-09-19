@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1789796794.1677074,
-    "seen": 1789796865.1353486,
-    "ast_hash": "22698c899a347bab7037ca8eca7e2758",
+    "mtime": 1789797336.1518443,
+    "seen": 1789797475.9736054,
+    "ast_hash": "6fe97663ccf2f6e5e8c45c22f1228033",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -42,9 +42,9 @@
     "semantic_hash": ""
   },
   "jarvis_sleep_mode.py": {
-    "mtime": 1789796785.900571,
-    "seen": 1789796865.1353848,
-    "ast_hash": "d8a1d6e11e43fa4628e365c7f5657397",
+    "mtime": 1789797319.4693747,
+    "seen": 1789797475.9736252,
+    "ast_hash": "50a98f5207437466e46c93da0076b1f4",
     "semantic_hash": ""
   },
   "jarvis_task_scheduler.py": {
@@ -108,21 +108,21 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1789796852.891968,
-    "seen": 1789796865.1354434,
-    "ast_hash": "831cedab9ecfed93ae363dc36bc160e6",
+    "mtime": 1789797450.876719,
+    "seen": 1789797475.9736555,
+    "ast_hash": "e12a43249a59ccc810690c7c07632cfa",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1789795562.297647,
-    "seen": 1789795963.0516782,
-    "ast_hash": "be5de41482627b787023985d4e8c474b",
+    "mtime": 1789797336.1539004,
+    "seen": 1789797475.9736571,
+    "ast_hash": "5516303341f095d04db5a975a65a2d90",
     "semantic_hash": ""
   },
   "requirements.txt": {
-    "mtime": 1789794415.7034285,
-    "seen": 1789795963.051748,
-    "ast_hash": "97b39cdc053b12357cf900a4cfc0420a",
+    "mtime": 1789797432.0336702,
+    "seen": 1789797475.9736755,
+    "ast_hash": "aae3e1b7adc86c403d139eef89cfcf72",
     "semantic_hash": ""
   },
   "dashboard_static/app.js": {
@@ -198,9 +198,9 @@
     "semantic_hash": ""
   },
   "test_sleep.py": {
-    "mtime": 1789796811.091651,
-    "seen": 1789796865.1354368,
-    "ast_hash": "8d472cbe0a7765ae8e2d7613aa2c5d35",
+    "mtime": 1789797405.137679,
+    "seen": 1789797475.973652,
+    "ast_hash": "da6f35b21be457981ce18223364c7d41",
     "semantic_hash": ""
   },
   "brag-output-2026-09-19-001152/brag-plan.md": {
