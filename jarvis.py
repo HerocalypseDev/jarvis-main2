@@ -69,6 +69,7 @@ import jarvis_image_download as image_download
 import jarvis_devtools as devtools
 import jarvis_focus as focus_mode
 import jarvis_face as face
+import jarvis_guest_reminders as guest_reminders
 import jarvis_roblox as roblox
 import jarvis_vibes as vibes
 import jarvis_restart as restart_mod
@@ -2070,6 +2071,34 @@ FACE_TOOLS = [
         },
     },
     {
+        "name": "reminders_mode",
+        "description": (
+            "Turn reminders off or on. Off: due reminders are not spoken and no toast is shown; they "
+            "are held (never dropped) and each is texted to the owner's Telegram, and they are read "
+            "out when turned back on. Used when someone else is at the computer. 'status' says which."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["off", "on", "status"]}},
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "away_mode",
+        "description": (
+            "Away mode: while ON, if the camera can see and the owner's face has not been recognized "
+            "for 2 minutes, the computer is LOCKED (with a spoken warning 15 seconds before). It "
+            "only ever locks; a face never unlocks anything. A covered, busy or unreachable camera "
+            "never triggers a lock. 'on' needs an enrolled face; 'off' must be asked at the computer, "
+            "not from the phone."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["on", "off", "status"]}},
+            "required": ["action"],
+        },
+    },
+    {
         "name": "delete_face",
         "description": (
             "Permanently erase an enrolled face profile and its embeddings. Ask the user to say "
@@ -2917,6 +2946,7 @@ def queue_or_deliver_notification(
     force_phone: bool = False,
     quiet_asleep: bool = False,
     bypass_busy_gate: bool = False,
+    is_reminder: bool = False,
 ) -> None:
     """The interrupt gate every proactive message (scheduled skills, health-check suggestions)
     goes through, instead of calling speak_text directly: speaks immediately unless the user
@@ -2959,7 +2989,23 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Queued non-urgent notification (Sleep Mode active): %r", text)
         return
-    if face.group_safe_suppress(urgent):
+    if is_reminder and _reminders_held_now(urgent):
+        forwarded = guest_reminders.should_forward()
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {
+                    "text": text,
+                    "queued_at": datetime.now().isoformat(timespec="seconds"),
+                    "reminder_hold": True,
+                    "forwarded": forwarded,
+                }
+            )
+            _save_session_context_locked()
+        if forwarded:
+            guest_reminders.forward_reminder(text)
+        log.info("Held reminder (reminders off / visitor present): %r", text)
+        return
+    if face.group_safe_suppress(urgent) and not (is_reminder and guest_reminders.reminders_allowed()):
         # An unrecognized person is in view: hold spoken proactive messages (they may carry email
         # or message content) until they leave. Commands the user gives are unaffected.
         with _session_context_lock:
@@ -2989,19 +3035,65 @@ def flush_pending_notifications() -> None:
         # Items queued by Sleep Mode wait for the wake-up digest (_sleep_wake_digest) instead of
         # being read out one by one — even if the user talks to Jarvis while still in Sleep Mode.
         keep_held = face.group_safe()
-        pending = [
-            i for i in everything
-            if not i.get("during_sleep") and not (keep_held and i.get("group_safe"))
-        ]
-        _session_context["pending_notifications"] = [
-            i for i in everything if i.get("during_sleep") or (keep_held and i.get("group_safe"))
-        ]
+        hold_reminders = guest_reminders.holding_reminders() or (
+            keep_held and not guest_reminders.reminders_allowed()
+        )
+
+        def _stays(i: dict) -> bool:
+            return bool(
+                i.get("during_sleep")
+                or (keep_held and i.get("group_safe"))
+                or (hold_reminders and i.get("reminder_hold"))
+            )
+
+        pending = [i for i in everything if not _stays(i)]
+        _session_context["pending_notifications"] = [i for i in everything if _stays(i)]
         _save_session_context_locked()
     for item in pending:
         try:
             _speak_shaped(item.get("text", ""))
         except Exception as e:
             log.warning("Could not speak queued notification: %s", e)
+
+
+def _reminders_held_now(urgent: bool = False) -> bool:
+    """Should a due reminder be held (no speech, no toast) right now? The owner's choice, or an
+    unanswered question about it, holds every reminder including urgent ones; a "no" lets them
+    through even with a visitor present; otherwise a visitor holds them like other proactive speech
+    (urgent ones still speak). With face recognition off this is always False."""
+    if guest_reminders.holding_reminders():
+        return True
+    if guest_reminders.reminders_allowed():
+        return False
+    return (not urgent) and face.group_safe()
+
+
+def _forward_held_reminders() -> None:
+    """Text every held reminder to the owner's Telegram (once each). Used when reminders are
+    switched off after some were already held."""
+    with _session_context_lock:
+        todo = [
+            i for i in (_session_context.get("pending_notifications") or [])
+            if i.get("reminder_hold") and not i.get("forwarded")
+        ]
+        for i in todo:
+            i["forwarded"] = True
+        _save_session_context_locked()
+    for i in todo:
+        guest_reminders.forward_reminder(i.get("text", ""))
+
+
+def _release_held_reminders() -> None:
+    """Read out reminders that were held (reminders switched back on, or the owner said no).
+    On a thread: it may speak for a while and is called from the Telegram listener."""
+    threading.Thread(target=flush_pending_notifications, daemon=True, name="release-reminders").start()
+
+
+def _away_warn(text: str) -> None:
+    """Spoken warning before away mode locks the computer (not routed through the notification
+    queue: it must be heard now, and holding it would defeat the point)."""
+    if not sleep_mode.is_active():
+        speak_text(text)
 
 
 def _face_release_held_notifications() -> None:
@@ -3447,10 +3539,12 @@ def _check_due_reminders(now: datetime) -> None:
         # The toast fires immediately and unconditionally — unlike the spoken announcement,
         # a silent visual banner doesn't talk over anything, so it doesn't need to wait out
         # queue_or_deliver_notification's busy-gate to avoid being missed.
-        send_windows_toast("Jarvis Reminder", text)
+        # (A held reminder gets no toast either: the banner would show its text on screen.)
+        if not _reminders_held_now(bool(urgent)):
+            send_windows_toast("Jarvis Reminder", text)
         # A reminder the user set must fire on time; only unprompted messages wait out the busy gate.
         queue_or_deliver_notification(
-            f"Reminder: {text}", urgent=bool(urgent), bypass_busy_gate=True
+            f"Reminder: {text}", urgent=bool(urgent), bypass_busy_gate=True, is_reminder=True
         )
         record_recent_task(f"reminder delivered: {text}")
         with _memory_db_lock:
@@ -6461,6 +6555,23 @@ def _execute_tool_impl(
             result = face.describe_profiles()
         elif tool_name == "who_is_here":
             result = face.describe_presence()
+        elif tool_name == "reminders_mode":
+            act = str(inp.get("action") or "")
+            if act == "off":
+                result = guest_reminders.set_disabled(True)
+                _forward_held_reminders()
+            elif act == "on":
+                result = guest_reminders.set_disabled(False)
+            else:
+                result = guest_reminders.status()
+        elif tool_name == "away_mode":
+            act = str(inp.get("action") or "")
+            if act == "on":
+                result = face.set_away(True, _current_command_source())
+            elif act == "off":
+                result = face.set_away(False, _current_command_source())
+            else:
+                result = face.away_status()
         elif tool_name == "face_privacy":
             act = str(inp.get("action") or "")
             if act == "pause":
@@ -6938,6 +7049,22 @@ def _handle_text_command_impl(
     if not transcript:
         return
 
+    # A yes/no to Jarvis's Telegram question about reminders ("someone I don't recognize is at your
+    # computer, disable reminders?"). Phone only, and only a clear whole-message yes/no. It runs
+    # BEFORE the confirmation gate below on purpose: a "yes" meant for this question must never be
+    # read as approval of a catastrophic action that happens to be staged. If one is, it is
+    # cancelled (cancelling only ever makes things safer; ask again if it is still wanted).
+    if source == "phone" and reply_sink is not None and guest_reminders.has_open_question():
+        handled = guest_reminders.answer(transcript)
+        if handled is not None:
+            if _take_pending_action() is not None:
+                dashboard.notify({"type": "pending_action", "data": None})
+                handled += " I also cancelled the action that was waiting for confirmation; ask again if you still want it."
+            if guest_reminders.should_forward():
+                _forward_held_reminders()
+            reply_sink(handled)
+            return
+
     # Session context: the user talking to Jarvis is itself proof they're available, so
     # deliver anything queued earlier right now instead of leaving it stuck until the next
     # health check or scheduled skill happens to notice.
@@ -7403,12 +7530,18 @@ def main() -> int:
     start_prompt_cache_warmup()
     _start_scheduler()
     if face.enabled():
+        # The stranger prompt goes to Telegram only (a private bot chat), never the ntfy topic.
+        guest_reminders.configure(send_fn=_telegram_send, release_fn=_release_held_reminders)
         face.set_event_hook(lambda ev: dashboard.notify({"type": "face_event", "data": ev}))
         face.start_polling(
             greet_fn=_face_greet,
             notify_fn=queue_or_deliver_notification,
             quiet_fn=sleep_mode.is_active,
             release_fn=_face_release_held_notifications,
+            stranger_fn=guest_reminders.on_stranger_arrived,
+            stranger_left_fn=guest_reminders.on_stranger_left,
+            lock_fn=_system_action_lock,
+            away_warn_fn=_away_warn,
         )
     _start_health_monitor()
     filewatcher.start_watching(

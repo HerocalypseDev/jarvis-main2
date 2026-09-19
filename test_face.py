@@ -259,11 +259,28 @@ def jarvis(monkeypatch, tmp_path):
     return j
 
 
+def _tool_names_with_feature(flag: str) -> set:
+    """Import jarvis in a fresh process with JARVIS_FACE_ENABLED set explicitly, so the result never
+    depends on the developer's own .env (dotenv does not override variables that are already set)."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "JARVIS_FACE_ENABLED": flag, "JARVIS_DASHBOARD_ENABLED": "0"}
+    out = subprocess.run(
+        [sys.executable, "-c", "import json, jarvis; print(json.dumps([t['name'] for t in jarvis.AGENT_TOOLS]))"],
+        capture_output=True, text=True, env=env, timeout=120, cwd=os.path.dirname(os.path.abspath(__file__)),
+    )
+    assert out.returncode == 0, out.stderr[-500:]
+    return set(json.loads(out.stdout.strip().splitlines()[-1]))
+
+
 def test_face_tools_are_hidden_unless_the_feature_is_enabled(jarvis):
-    names = {t["name"] for t in jarvis.AGENT_TOOLS}
-    face_names = {"enroll_face", "list_faces", "delete_face", "who_is_here", "face_privacy"}
-    assert face_names == {t["name"] for t in jarvis.FACE_TOOLS}
-    assert not (face_names & names)  # default: off, no tokens spent
+    face_names = {t["name"] for t in jarvis.FACE_TOOLS}
+    assert {"enroll_face", "list_faces", "delete_face", "who_is_here", "face_privacy"} <= face_names
+    assert not (face_names & _tool_names_with_feature("0"))  # default: off, no tokens spent
+    assert face_names <= _tool_names_with_feature("1")  # on: all advertised
 
 
 @pytest.mark.parametrize("source,refused", [("phone", True), ("voice", False), ("text", False), ("dashboard", False)])
@@ -906,11 +923,26 @@ def test_face_code_cannot_reach_the_confirmation_gate():
         "_execute_tool_impl",  # the face tools' own dispatch branches
         "_face_greet", "queue_or_deliver_notification", "flush_pending_notifications",  # speech hold/greeting
         "build_system_blocks", "run_agent_loop",  # presence line (+ reply-cache key)
+        "_reminders_held_now",  # visitor present -> hold a due reminder (speech + toast)
         "main",  # start polling / event hook
     }
     assert users <= allowed, f"face is referenced from unreviewed code: {sorted(users - allowed)}"
     for gate in ("_take_pending_action", "_execute_confirmed_action", "_dashboard_approve_pending", "_dashboard_reject_pending"):
         assert gate not in users
+
+    # Away mode is the first time a face event acts on the machine. It may only LOCK: no unlock
+    # anywhere in the face module, and the injected action is jarvis's lock helper (LockWorkStation).
+    assert not any("unlock" in name.lower() for name in used), [n for n in used if "unlock" in n.lower()]
+    jarvis_src = (root / "jarvis.py").read_text(encoding="utf-8")
+    assert "lock_fn=_system_action_lock" in jarvis_src
+    lock_fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_system_action_lock")
+    assert {n.attr for n in ast.walk(lock_fn) if isinstance(n, ast.Attribute)} >= {"LockWorkStation"}
+
+    # The reminder-policy module (driven by face events) must not touch the gate either.
+    gr_tree = ast.parse((root / "jarvis_guest_reminders.py").read_text(encoding="utf-8"))
+    gr_used = {n.id for n in ast.walk(gr_tree) if isinstance(n, ast.Name)} | {n.attr for n in ast.walk(gr_tree) if isinstance(n, ast.Attribute)}
+    for forbidden in ("_pending_action", "_execute_confirmed_action", "skip_confirmation", "_take_pending_action", "jarvis", "face"):
+        assert forbidden not in gr_used, forbidden
 
 
 def test_no_image_or_frame_is_ever_written_to_disk(enrolled, monkeypatch):
@@ -1328,3 +1360,255 @@ def test_greeting_does_not_talk_over_a_reply_already_playing(quiet_jarvis, monke
     finally:
         j.jarvis_speaking.clear()
     assert said == []
+
+
+# ===============================================================================================
+# Away mode (locks the computer when the owner has not been shown) + stranger hooks
+# ===============================================================================================
+class _Rec:
+    """Records lock / warning / stranger hook calls in order."""
+
+    def __init__(self):
+        self.calls = []
+
+    def hook(self, name):
+        return lambda *a: self.calls.append((name, *a))
+
+
+@pytest.fixture()
+def away(enrolled, monkeypatch):
+    rec = _Rec()
+    for name in ("lock", "away_warn", "stranger", "stranger_left", "release"):
+        face._hooks[name] = rec.hook(name)
+    face._hooks["locked"] = lambda: False
+    assert "Away mode is on" in face.set_away(True, "voice")
+    _look(monkeypatch, [])  # the camera works, but the owner is not in view
+    return rec
+
+
+A0 = 5_000_000.0
+
+
+def test_away_mode_warns_once_then_locks_after_the_grace_period(away):
+    for t in (0, 30, 100):
+        face.poll_once(A0 + t)
+    assert away.calls == []  # 100s unseen: still inside the grace period, before the warning window
+    face.poll_once(A0 + 106)  # >= 120 - 15
+    assert [c[0] for c in away.calls] == ["away_warn"] and "15 seconds" in away.calls[0][1]
+    face.poll_once(A0 + 112)
+    assert [c[0] for c in away.calls] == ["away_warn"]  # warned only once
+    face.poll_once(A0 + 121)
+    assert [c[0] for c in away.calls] == ["away_warn", "lock"]
+    assert _kinds()[-2:] == ["away_warning", "away_lock"]
+    face.poll_once(A0 + 125)  # the clock restarts after a lock (no lock storm)
+    assert [c[0] for c in away.calls].count("lock") == 1
+
+
+def test_owner_coming_back_before_the_lock_cancels_it(away, monkeypatch):
+    for t in (0, 60, 106):
+        face.poll_once(A0 + t)  # warned
+    _look(monkeypatch, _obs(0.0, BASE))  # ...and the owner is recognized again
+    face.poll_once(A0 + 112)
+    _look(monkeypatch, [])
+    face.poll_once(A0 + 130)  # would have been past the old deadline
+    face.poll_once(A0 + 140)
+    assert "lock" not in [c[0] for c in away.calls]
+    # The new absence clock started at t=130. It warns again at 130+105, and only locks at 130+120.
+    for t in (150, 236, 244):
+        face.poll_once(A0 + t)
+    assert [c[0] for c in away.calls] == ["away_warn", "away_warn"]
+    face.poll_once(A0 + 251)
+    assert [c[0] for c in away.calls] == ["away_warn", "away_warn", "lock"]
+
+
+def test_away_mode_is_off_by_default_and_never_locks_when_off(enrolled, monkeypatch):
+    rec = _Rec()
+    face._hooks["lock"], face._hooks["away_warn"], face._hooks["locked"] = rec.hook("lock"), rec.hook("warn"), (lambda: False)
+    _look(monkeypatch, [])
+    assert not face.away_enabled()
+    for t in (0, 60, 120, 600, 6000):
+        face.poll_once(A0 + t)
+    assert rec.calls == []
+
+
+@pytest.mark.parametrize("blind", ["covered", "camera-error", "busy"])
+def test_a_blind_camera_never_locks_and_resets_the_clock(away, monkeypatch, blind):
+    """Decision: if the camera can't see (covered, unreachable, busy in a call) it can't tell the
+    owner is gone, so it must never lock - and it must not let earlier absence keep counting."""
+    face.poll_once(A0)
+    face.poll_once(A0 + 100)  # 100s of genuine absence so far
+    if blind == "covered":
+        _look(monkeypatch, [], mean=1.0, std=0.5)
+    elif blind == "camera-error":
+        monkeypatch.setattr(face, "_capture_and_analyze", lambda: (_ for _ in ()).throw(face.CameraUnavailable("in a call")))
+    if blind == "busy":
+        assert face._camera_lock.acquire(blocking=False)
+    try:
+        for t in (105, 400, 4000):
+            face.poll_once(A0 + t)
+    finally:
+        if blind == "busy":
+            face._camera_lock.release()
+    _look(monkeypatch, [])
+    face.poll_once(A0 + 4001)  # sight is back: a brand-new clock starts
+    face.poll_once(A0 + 4050)
+    assert "lock" not in [c[0] for c in away.calls]
+
+
+def test_no_lock_when_paused_asleep_locked_already_or_nobody_enrolled(away, monkeypatch):
+    face.poll_once(A0)
+    face.set_paused(True, "voice")
+    face.poll_once(A0 + 500)
+    face.set_paused(False, "voice")
+    face._hooks["quiet"] = lambda: True  # Sleep Mode
+    face.poll_once(A0 + 1000)
+    face._hooks["quiet"] = lambda: False
+    used = []
+    monkeypatch.setattr(face, "_capture_and_analyze", lambda: used.append(1) or ([], 100.0, 40.0, FRAME))
+    face._hooks["locked"] = lambda: True  # the lock screen is already up
+    assert face.poll_once(A0 + 2000) == "locked" and used == []  # camera untouched while locked
+    face._hooks["locked"] = lambda: False
+    with face._db_lock, face._db() as conn:
+        conn.execute("DELETE FROM face_profiles")
+    face.invalidate_profile_cache()
+    face.poll_once(A0 + 3000)
+    assert "lock" not in [c[0] for c in away.calls]
+
+
+def test_warning_can_be_disabled_and_grace_has_a_floor(away, monkeypatch):
+    monkeypatch.setenv("JARVIS_FACE_AWAY_WARN_S", "0")
+    for t in (0, 106, 119):
+        face.poll_once(A0 + t)
+    assert away.calls == []  # no warning configured
+    face.poll_once(A0 + 121)
+    assert [c[0] for c in away.calls] == ["lock"]
+    monkeypatch.setenv("JARVIS_FACE_AWAY_GRACE_S", "1")
+    assert face.away_grace_s() == 10.0  # can't be configured into locking on every missed frame
+
+
+def test_a_failing_lock_hook_does_not_break_polling(away):
+    def boom(*a):
+        raise OSError("LockWorkStation failed")
+
+    face._hooks["lock"] = boom
+    face.poll_once(A0)
+    face.poll_once(A0 + 121)
+    assert face.poll_once(A0 + 130) == "ok"
+
+
+def test_set_away_rules(fx, monkeypatch):
+    assert "Enroll your face first" in face.set_away(True, "voice")  # nobody enrolled: would lock constantly
+    with face._db_lock, face._db() as conn:
+        conn.execute(
+            "INSERT INTO face_profiles (name, role, created_at, consent_at, n_samples, embeddings) VALUES (?,?,?,?,?,?)",
+            ("Hero", "admin", "x", "x", 5, face._pack_embeddings(np.vstack([BASE, BASE]))),
+        )
+    face.invalidate_profile_cache()
+    assert "Away mode is on" in face.set_away(True, "phone")  # turning it ON adds protection: any source
+    assert face.away_enabled()
+    assert "phone" in face.set_away(False, "phone") and face.away_enabled()  # OFF removes it: at the PC only
+    assert "scheduled" in face.set_away(False, None) and face.away_enabled()
+    assert "off" in face.set_away(False, "voice") and not face.away_enabled()
+    assert _kinds()[-3:] == ["away_on", "away_off"][-2:] or "away_on" in _kinds()
+    face.set_paused(True, "voice")
+    assert "paused" in face.set_away(True, "voice")  # tells the owner it won't lock until resumed
+    monkeypatch.setenv("JARVIS_FACE_ENABLED", "0")
+    assert "switched off" in face.set_away(True, "voice")
+    assert "switched off" in face.away_status()
+
+
+def test_erasing_the_profile_turns_away_mode_off(away):
+    assert face.away_enabled()
+    assert face.delete("Hero", True, "voice", ui_confirmed=True).startswith("Deleted")
+    assert not face.away_enabled()
+
+
+def test_away_mode_persists_in_the_database(away):
+    assert face.get_setting("away_mode") == "1"
+    assert "Away mode is on" in face.away_status() and "120" in face.away_status()
+
+
+def test_polling_runs_at_the_fast_interval_while_the_away_clock_is_running(enrolled, monkeypatch):
+    waits = []
+
+    class FakeEvent:
+        def __init__(self):
+            self.n = 0
+
+        def is_set(self):
+            return self.n >= 2
+
+        def clear(self):
+            pass
+
+        def set(self):
+            self.n = 99
+
+        def wait(self, seconds):
+            waits.append(seconds)
+            self.n += 1
+
+    monkeypatch.setattr(face, "_poll_stop", FakeEvent())
+    monkeypatch.setattr(face, "poll_once", lambda now=None: "ok")
+    monkeypatch.setattr(face, "housekeeping", lambda *a, **k: False)
+    monkeypatch.setattr(face, "_poll_thread", None)
+    face._st.owner_present = True  # owner steadily present -> the slow "settled" interval
+    assert face.start_polling()
+    face._poll_thread.join(3)
+    assert waits[0] == face.settled_poll_interval()
+    waits.clear()
+    face._st.owner_present, face._st.absent_since = True, time.time()  # ...but the away clock is running
+    face._poll_stop.n = 0
+    monkeypatch.setattr(face, "_poll_thread", None)
+    assert face.start_polling()
+    face._poll_thread.join(3)
+    assert waits[0] == face.poll_interval()  # watch closely: a 15s cadence would delay the lock
+
+
+def test_stranger_hooks_fire_once_and_leave_fires_before_release(enrolled, monkeypatch):
+    rec = _Rec()
+    for name in ("stranger", "stranger_left", "release"):
+        face._hooks[name] = rec.hook(name)
+    _look(monkeypatch, _obs(0.0, OTHER))
+    t = 9_000_000.0
+    for i in range(4):
+        face.poll_once(t + i * 5)
+    assert rec.calls == [("stranger",)]  # once per visit, not per poll
+    _look(monkeypatch, [])
+    face.poll_once(t + 30)
+    face.poll_once(t + 5 + face.UNKNOWN_CLEAR_S + 60)
+    assert [c[0] for c in rec.calls] == ["stranger", "stranger_left", "release"]  # state before flush
+
+
+def test_real_session_lock_probe_returns_a_bool_and_never_raises():
+    assert face._session_locked() in (True, False)
+
+
+# --- dashboard + tool -------------------------------------------------------------------------------------
+def test_dashboard_away_toggle_and_state(dash):
+    r = dash.post("/api/faces/away", json={"enabled": True}, headers={"origin": "http://127.0.0.1:8765"}).json()
+    assert r["ok"] and r["away"] is True and "Away mode is on" in r["message"]
+    st = dash.get("/api/faces").json()["away"]
+    assert st["enabled"] is True and st["grace_seconds"] == 120.0 and st["warn_seconds"] == 15.0
+    assert dash.post("/api/faces/away", json={"enabled": False}).json()["away"] is False
+    assert dash.post("/api/faces/away", json={"enabled": True}, headers={"origin": "https://evil.example"}).status_code == 403
+    assert dash.post("/api/faces/away", json={"enabled": True}, headers={"host": "evil.example"}).status_code == 403
+    assert not face.away_enabled()  # neither hostile request changed anything
+
+
+def test_away_mode_tool_respects_the_source(jarvis, monkeypatch, enrolled):
+    out = []
+
+    def turn(source, action):
+        def agent(transcript, tone=None, narrate=False):
+            out.append(jarvis._execute_tool("away_mode", {"action": action}, transcript))
+            return "ok"
+
+        monkeypatch.setattr(jarvis, "run_agent_loop", agent)
+        jarvis.handle_text_command("x", source=source, reply_sink=lambda r: None)
+        return out[-1]
+
+    assert "Away mode is on" in turn("phone", "on")
+    assert "phone" in turn("phone", "off") and face.away_enabled()  # can't be switched off remotely
+    assert "on:" in turn("voice", "status")
+    assert "Away mode is off" in turn("voice", "off") and not face.away_enabled()

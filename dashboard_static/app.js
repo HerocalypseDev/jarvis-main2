@@ -1012,12 +1012,18 @@ function renderIdentity() {
   document.getElementById("identity-status").textContent = s.paused ? "Camera paused" : s.polling ? "Watching (low duty)" : "Not watching";
   pauseBtn.hidden = false;
   pauseBtn.textContent = s.paused ? "Resume camera" : "Pause camera";
+  const awayBtn = document.getElementById("identity-away-btn");
+  awayBtn.hidden = !s.profiles.length;
+  awayBtn.textContent = s.away.enabled ? "Away mode: ON" : "Away mode: off";
+  awayBtn.classList.toggle("btn-danger", !!s.away.enabled);
   const cardHtml = (label, value, sub) =>
     `<div class="usage-card"><div class="usage-card-label">${esc(label)}</div><div class="usage-card-value id-value">${esc(value)}</div><div class="muted">${esc(sub || "")}</div></div>`;
   cards.innerHTML = [
     cardHtml("Right now", identityPresenceText(st), `looks every ${cfg.poll_seconds}s (${cfg.settled_poll_seconds}s once settled)`),
     cardHtml("Enrolled", String(s.profiles.length), s.profiles.length ? s.profiles.map((p) => p.name).join(", ") : "say “enroll me as …”"),
     cardHtml("Unknown pictures", String(s.snapshot_count), cfg.save_unknown_pictures ? `kept ${cfg.picture_keep_days} days` : "saving is off"),
+    cardHtml("Away mode", s.away.enabled ? "On" : "Off",
+      s.away.enabled ? `locks after ${s.away.grace_seconds}s unseen` + (s.away.absent_seconds ? ` (unseen ${s.away.absent_seconds}s)` : "") : "locks the PC if you're not seen"),
     cardHtml("Match threshold", String(cfg.match_threshold), "higher = stricter"),
   ].join("");
 
@@ -1085,6 +1091,23 @@ document.getElementById("identity-pause-btn").addEventListener("click", async ()
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paused: !(identityState && identityState.paused) }),
     });
+  } catch (err) {
+    alert("Couldn't reach Jarvis.");
+  }
+  fetchIdentity();
+});
+
+document.getElementById("identity-away-btn").addEventListener("click", async () => {
+  const turningOn = !(identityState && identityState.away && identityState.away.enabled);
+  if (turningOn && !confirm("Turn away mode on? If Jarvis can't see you for a couple of minutes it will LOCK this computer (with a spoken warning first).")) return;
+  try {
+    const res = await fetch("/api/faces/away", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: turningOn }),
+    });
+    const data = await res.json();
+    if (data.message && Boolean(data.away) !== turningOn) alert(data.message);  // e.g. "Enroll your face first"
   } catch (err) {
     alert("Couldn't reach Jarvis.");
   }

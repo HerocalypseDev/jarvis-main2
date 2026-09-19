@@ -657,6 +657,7 @@ def delete(name: str, confirm: bool, source: str | None, turn_id: str | None = N
         conn.execute("DELETE FROM face_profiles WHERE id=?", (row[0],))
     invalidate_profile_cache()
     _reset_presence_serialized()  # otherwise "Hero is at the computer" lingers in the prompt for ~90s
+    set_setting("away_mode", "0")  # with no face enrolled, away mode could only misfire
     log_event("delete", profile_id=row[0], name=row[1], detail="profile and embeddings erased")
     return f"Deleted {row[1]}'s face profile. Nothing biometric is left on this computer."
 
@@ -767,6 +768,8 @@ class _Presence:
     camera_fails: int = 0
     camera_alert_sent: bool = False
     updated_at: float = 0.0
+    absent_since: float = 0.0  # away mode: when the owner was first NOT seen (0 = not absent)
+    away_warned: bool = False
 
 
 _st = _Presence()
@@ -778,7 +781,11 @@ def _noop(*a, **k):
     return None
 
 
-_hooks = {"greet": _noop, "notify": _noop, "quiet": lambda: False, "release": _noop}
+_hooks = {
+    "greet": _noop, "notify": _noop, "quiet": lambda: False, "release": _noop,
+    "stranger": _noop, "stranger_left": _noop, "lock": _noop, "away_warn": _noop,
+    "locked": None,  # filled below with the real session-lock probe
+}
 
 
 def _reset_transient() -> None:
@@ -790,7 +797,116 @@ def _reset_transient() -> None:
         _st.unknown_streak = 0
         _st.covered = False
         _st.updated_at = 0.0
+        _st.absent_since = 0.0
+        _st.away_warned = False
     _recent_unknowns.clear()
+
+
+# --- away mode --------------------------------------------------------------------------------
+# A mode the owner switches on. While it is on, and the camera can see, and the owner has not been
+# recognized for AWAY_GRACE seconds, the workstation is LOCKED (after a spoken warning). Face only
+# ever locks - nothing here can unlock anything - and a camera that can't see (covered, busy in a
+# call, unreachable, paused) never counts as "owner not shown", so those cases never lock.
+AWAY_GRACE_DEFAULT = 120.0
+AWAY_WARN_DEFAULT = 15.0
+
+
+def away_grace_s() -> float:
+    return max(10.0, _float_env("JARVIS_FACE_AWAY_GRACE_S", AWAY_GRACE_DEFAULT))
+
+
+def away_warn_s() -> float:
+    return max(0.0, min(_float_env("JARVIS_FACE_AWAY_WARN_S", AWAY_WARN_DEFAULT), away_grace_s() - 5.0))
+
+
+def away_enabled() -> bool:
+    return get_setting("away_mode", "0") == "1"
+
+
+def _session_locked() -> bool:
+    """True while the Windows lock screen (secure desktop) is up: the camera is off-limits then,
+    and there is nothing left to lock."""
+    if sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        user32.OpenInputDesktop.restype = ctypes.c_void_p
+        user32.CloseDesktop.argtypes = [ctypes.c_void_p]
+        handle = user32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP
+        if not handle:
+            return True  # can't open the input desktop -> the secure (lock) desktop is showing
+        user32.CloseDesktop(handle)
+        return False
+    except Exception:
+        return False
+
+
+_hooks["locked"] = _session_locked
+
+
+def _away_reset() -> None:
+    with _st_lock:
+        _st.absent_since = 0.0
+        _st.away_warned = False
+
+
+def _away_step(now: float, owner_seen: bool, out: list) -> None:
+    """Advance the away timer after a poll in which the camera could see. Warn once shortly
+    before the grace period ends, then lock."""
+    if not away_enabled() or owner_seen:
+        _away_reset()
+        return
+    grace, warn = away_grace_s(), away_warn_s()
+    action = None
+    with _st_lock:
+        if _st.absent_since == 0.0:
+            _st.absent_since = now  # the first poll that couldn't find the owner starts the clock
+            return
+        absent = now - _st.absent_since
+        if absent >= grace:
+            action, _st.absent_since, _st.away_warned = "lock", 0.0, False
+        elif warn > 0 and absent >= grace - warn and not _st.away_warned:
+            action, _st.away_warned = "warn", True
+    if action == "lock":
+        log_event("away_lock", detail=f"owner not seen for {int(absent)}s; locking the computer")
+        out.append(("lock",))
+    elif action == "warn":
+        log_event("away_warning", detail=f"owner not seen for {int(absent)}s; locking in ~{int(warn)}s")
+        out.append(("away_warn", f"I can't see you. Locking the computer in {int(warn)} seconds."))
+
+
+def set_away(on: bool, source: str | None) -> str:
+    """Away-mode switch. Turning it ON is always fine (it only adds protection) but needs an
+    enrolled face, otherwise nobody could ever be "shown" and it would lock constantly. Turning it
+    OFF removes protection, so it must come from this computer, like re-enabling the camera."""
+    if not enabled():
+        return "Face recognition is switched off, so away mode isn't available."
+    if on:
+        if not list_profiles():
+            return "Enroll your face first; without it I couldn't tell you're here and would lock you out."
+        set_setting("away_mode", "1")
+        _away_reset()
+        log_event("away_on", detail=f"source={source}")
+        note = " Face recognition is paused, so it won't lock until you resume it." if is_paused() else ""
+        return (
+            f"Away mode is on. If I can't see you for {int(away_grace_s() // 60) or 1} "
+            f"minute{'s' if away_grace_s() >= 120 else ''}, I'll lock the computer, with a warning first." + note
+        )
+    why = refuse_reason(source)
+    if why:
+        return why.replace("enroll or delete faces", "turn away mode off")
+    set_setting("away_mode", "0")
+    _away_reset()
+    log_event("away_off", detail=f"source={source}")
+    return "Away mode is off."
+
+
+def away_status() -> str:
+    if not enabled():
+        return "Face recognition is switched off."
+    if not away_enabled():
+        return "Away mode is off."
+    return f"Away mode is on: I lock the computer after {int(away_grace_s())} seconds without seeing you."
 
 
 def state_snapshot() -> dict:
@@ -1021,8 +1137,11 @@ def poll_once(now: float | None = None) -> str:
     # Speaking / notifying can take many seconds (TTS, a summarizer call); doing it while holding
     # the poll lock would freeze who_is_here and the dashboard's pause/erase behind it.
     for hook, *args in out:
+        fn = _hooks.get(hook)
+        if fn is None:
+            continue
         try:
-            _hooks[hook](*args)
+            fn(*args)
         except Exception as e:
             log.warning("face %s hook failed: %s", hook, e)
     return status
@@ -1043,15 +1162,21 @@ def _poll_once_locked(now: float | None, out: list) -> str:
     if _hooks["quiet"]():  # Sleep Mode: no camera, no polling
         _reset_transient()
         return "quiet"
+    if (_hooks.get("locked") or (lambda: False))():  # already locked: the camera is off-limits, nothing left to lock
+        _reset_transient()
+        return "locked"
     profiles = list_profiles()
     if not profiles:
+        _away_reset()
         return "no-profile"
     if not _camera_lock.acquire(blocking=False):  # an enrollment owns the camera right now
+        _away_reset()
         return "busy"
     try:
         try:
             obs, mean, std, frame = _capture_and_analyze()
         except CameraUnavailable as e:
+            _away_reset()  # can't see = can't tell whether they're gone: never lock on a blind camera
             _camera_failed(e, out)
             return "camera-error"
     finally:
@@ -1066,6 +1191,7 @@ def _poll_once_locked(now: float | None, out: list) -> str:
     with _st_lock:
         was_covered, _st.covered = _st.covered, covered_now
     if covered_now:
+        _away_reset()
         if not was_covered:
             log_event("camera_covered", detail=f"mean brightness {mean:.1f}")
             out.append(("notify", f"{owner['name']}, the camera looks covered, so I can't see the room."))
@@ -1097,6 +1223,8 @@ def _poll_once_locked(now: float | None, out: list) -> str:
         if left:
             log_event("owner_left", owner["id"], owner["name"])
 
+    _away_step(now, bool(known), out)
+
     # --- unknown people
     released = False
     if unknown:
@@ -1116,6 +1244,7 @@ def _poll_once_locked(now: float | None, out: list) -> str:
                         detail=f"best match {score:.2f} < threshold {match_threshold():.2f}",
                     )
                     newly = False
+                    out.append(("stranger",))
                 _maybe_snapshot(frame, o, score, event_id, now)
     else:
         with _st_lock:
@@ -1124,6 +1253,7 @@ def _poll_once_locked(now: float | None, out: list) -> str:
                 _st.unknown_present, released = False, True
         if released:
             log_event("unknown_left")
+            out.append(("stranger_left",))  # before "release": state must update before held items flush
             out.append(("release",))
     return "ok"
 
@@ -1171,17 +1301,24 @@ def _lower_thread_priority() -> None:
         log.debug("could not lower face poll priority: %s", e)
 
 
-def start_polling(greet_fn=None, notify_fn=None, quiet_fn=None, release_fn=None) -> bool:
+def start_polling(greet_fn=None, notify_fn=None, quiet_fn=None, release_fn=None,
+                  stranger_fn=None, stranger_left_fn=None, lock_fn=None, away_warn_fn=None,
+                  locked_fn=None) -> bool:
     """Start the low-duty background poll (no-op unless JARVIS_FACE_ENABLED=1). The callbacks
     keep this module free of any import of jarvis.py: greet_fn speaks the greeting, notify_fn
     delivers a proactive notice, quiet_fn says Sleep Mode is on, release_fn runs when an
-    unrecognized person leaves."""
+    unrecognized person leaves. stranger_fn / stranger_left_fn fire when one is first declared /
+    has gone; lock_fn locks the workstation (away mode) and away_warn_fn speaks the warning before
+    it; locked_fn overrides the session-lock probe."""
     global _poll_thread
     if not enabled():
         return False
     _hooks.update(
         greet=greet_fn or _noop, notify=notify_fn or _noop,
         quiet=quiet_fn or (lambda: False), release=release_fn or _noop,
+        stranger=stranger_fn or _noop, stranger_left=stranger_left_fn or _noop,
+        lock=lock_fn or _noop, away_warn=away_warn_fn or _noop,
+        locked=locked_fn or _session_locked,
     )
     if _poll_thread and _poll_thread.is_alive():
         return True
@@ -1207,7 +1344,7 @@ def start_polling(greet_fn=None, notify_fn=None, quiet_fn=None, release_fn=None)
                 continue
             with _st_lock:
                 fails = _st.camera_fails
-                settled = _st.owner_present and not _st.unknown_present
+                settled = _st.owner_present and not _st.unknown_present and _st.absent_since == 0.0
             wait = FAIL_BACKOFF_S if fails >= CAMERA_FAILS_BEFORE_NOTICE else (
                 settled_poll_interval() if settled else poll_interval())
             _poll_stop.wait(wait)
@@ -1359,6 +1496,12 @@ def dashboard_state() -> dict:
             "absent_after_seconds": owner_absent_after_s(),
         },
         "event_kinds": event_kinds(),
+        "away": {
+            "enabled": away_enabled(),
+            "grace_seconds": away_grace_s(),
+            "warn_seconds": away_warn_s(),
+            "absent_seconds": (max(0, int(time.time() - _st.absent_since)) if _st.absent_since else 0),
+        },
         "problem": health_problem(),
     }
 

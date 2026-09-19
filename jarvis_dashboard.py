@@ -771,6 +771,16 @@ def _build_app(
         ok = message.startswith("Deleted")
         return JSONResponse({"ok": ok, "message": message}, status_code=200 if ok else 404, headers=_NO_STORE)
 
+    @app.post("/api/faces/away")
+    def api_face_away(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"ok": False, "error": "face recognition is off"}, status_code=404)
+        message = face.set_away(bool((payload or {}).get("enabled")), "dashboard")
+        return JSONResponse({"ok": True, "message": message, "away": face.away_enabled()}, headers=_NO_STORE)
+
     @app.post("/api/faces/pause")
     def api_face_pause(request: Request, payload: dict = Body(...)):
         bad = _face_guard(request)

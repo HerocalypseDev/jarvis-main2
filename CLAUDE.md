@@ -643,9 +643,55 @@ Rules:
   data - tune `JARVIS_FACE_MATCH_THRESHOLD` from real `unknown_seen` confidences first.
 - Also open: reminders are held by group-safe mode like other proactive speech (the owner's decision
   was "hold proactive messages"); whether time-critical reminders should bypass it is a policy call.
-- Status: Phases 0-4 + review shipped (90 face tests, 283 total). Verified live: real model + camera
-  + the full poll pipeline against a throwaway temp profile (re-run after the review fixes); the
-  Identity tab in headless Chromium against synthetic data; `calibrate` on the real webcam. **Not verified live**: a real `enroll_face` by
+- **Stranger -> Telegram "disable reminders?" (2026-09-19, `jarvis_guest_reminders.py`,
+  `test_guest_reminders.py`)**. When the face poll declares a stranger (the new `stranger` hook,
+  once per visit) Jarvis texts the owner on **Telegram only** (never the ntfy topic, whose name is
+  a shared secret) "...Should I disable reminders while they're here? Reply yes or no." This is a
+  deliberate, user-requested exception to "no unsolicited phone pushes"; nothing else changed and
+  `JARVIS_PHONE_PROACTIVE_NOTIFICATIONS` still gates everything else. No picture or face data is
+  sent, only that text. Owner's decisions: **held until they answer**; "yes" = disabled (reminders
+  are **held, never dropped, and each is also texted** to Telegram); "no" = held ones are read out
+  and reminders speak normally for that visit; when the stranger leaves after a "yes" Jarvis asks
+  "They've left. Turn reminders back on?" (yes -> back on and the held ones are read out; no -> stay
+  off; the tool `reminders_mode` on/off/status works from any channel). State machine in the module
+  docstring; state is in memory only, so a restart returns to normal (never silently off forever).
+  One question per visit and at most one per 10 min (flapping visitor -> no Telegram spam).
+- **Reminder specifics**: a held reminder also gets **no Windows toast** (the banner would show its
+  text on screen in front of the visitor - `_check_due_reminders` now checks `_reminders_held_now`).
+  Default (no answer/policy, e.g. Telegram down): a visitor holds non-urgent reminders like other
+  proactive speech; urgent ones still speak. Once the owner says "disable", urgent ones are held too.
+- **Phone-reply safety**: the yes/no is intercepted at the top of `_handle_text_command_impl`,
+  phone source only, whole-message match only ("yes", "no thanks", "keep them on"; "no problem,
+  open notepad" is NOT an answer - strict parser, unlike the gate's substring `_is_confirmation_yes`).
+  It runs **before** the catastrophic gate on purpose: a "yes" meant for this question must never
+  approve a staged shutdown/format. If one is staged it is **cancelled** (never run) and the reply
+  says so. Pinned by a test. Only Telegram-configured setups get the question.
+- **Away mode (2026-09-19)**: `away_mode` tool (on/off/status, also a dashboard button/card). Off by
+  default and persisted (`face_settings.away_mode`). While ON, if the camera CAN see and the owner is
+  not recognized for **2 min** (`JARVIS_FACE_AWAY_GRACE_S`, floor 10s) the computer is locked via the
+  existing `_system_action_lock` (LockWorkStation), after a spoken warning **15s** before
+  (`JARVIS_FACE_AWAY_WARN_S`, 0 disables) that is cancelled if the owner is recognized again.
+  **Face only ever locks; nothing in the face module can unlock** (AST test, no identifier
+  containing "unlock"; the injected action is checked to be LockWorkStation).
+- **Away mode never fires blind** (owner's decision): covered lens, unreachable/busy camera (a
+  Zoom/Teams call), pause, Sleep Mode, no enrollment, or an already-locked session all reset the
+  clock and never lock. While the lock screen is up polling stops (`_session_locked()` via
+  OpenInputDesktop; **not verified against a real locked session** - only that it returns False
+  when unlocked). Polling runs at the fast 5s cadence while the clock is running (a 15s cadence
+  would delay the lock). `on` needs an enrolled face; `off` (and re-enabling the camera) must come
+  from the PC, not the phone; erasing the profile turns it off.
+- **Known limitation of away mode**: it locks when the owner is *not recognized*, so a poor
+  recognition (looking down, glare) for 2 min while working would lock the PC - the 15s warning
+  is the mitigation. The same false-negative weakness as the held "false unknown" item above. A
+  faster lock for "stranger present + owner absent" was deliberately NOT added: a false "unknown"
+  on the owner would then lock in seconds. Using keyboard/mouse activity to veto a lock was
+  considered and not built (a stranger typing would veto it too) - an open policy question.
+- Status: Phases 0-4 + review + stranger/reminders + away mode shipped (face tests 107, +45 in
+  `test_guest_reminders.py`; 345 total). Verified live: real model + camera + the full poll pipeline
+  against a throwaway temp profile (re-run after the review fixes); the Identity tab in headless
+  Chromium against synthetic data; `calibrate` on the real webcam. **Not verified live**: the real
+  Telegram question/answer round trip, a real away-mode lock (would lock the owner's PC), the lock
+  probe on a locked session. **Not verified live**: a real `enroll_face` by
   voice (writes a real biometric profile - the owner should do it), the head-turn threshold on a
   deliberate turn, an actual stranger (group-safe/picture path is unit-tested only), greeting
   audio, covered-lens detection on the real webcam, the tab against real data.
@@ -696,4 +742,5 @@ row there each phase rather than only stating the total in chat.
 | 22 (face recognition Phase 3: dashboard Identity tab, consent view, export/erase, event stream, Host-header guard) | Sonnet 5 | ~35 min | ~$2.00–$2.80 |
 | 23 (face recognition Phase 4: self-audit fixes, gate-isolation test, calibrate tool, Origin guard) | Sonnet 5 | ~30 min | ~$1.60–$2.30 |
 | 24 (face recognition code review: 11 defects fixed, 17 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
-| **Running total (final)** | | **~638 min** | **~$26.85–$37.60** |
+| 25 (stranger -> Telegram reminders question with held+forwarded reminders, away mode auto-lock, dashboard toggle) | Sonnet 5 | ~60 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~698 min** | **~$29.85–$41.80** |
