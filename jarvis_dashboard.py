@@ -661,6 +661,15 @@ def _build_app(
         host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
         if host not in ("127.0.0.1", "localhost", "::1"):
             return JSONResponse({"error": "forbidden host"}, status_code=403)
+        # A page on another site can still fire a "simple" cross-origin request at 127.0.0.1 with a
+        # perfectly valid Host, so a state-changing call must also come from this dashboard's own
+        # origin (browsers always send Origin on cross-origin POST/DELETE).
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            origin = request.headers.get("origin")
+            if origin:
+                o_host = origin.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]").lower()
+                if o_host not in ("127.0.0.1", "localhost", "::1"):
+                    return JSONResponse({"error": "forbidden origin"}, status_code=403)
         return None
 
     def _face_unavailable():

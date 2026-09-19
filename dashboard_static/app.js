@@ -1047,8 +1047,11 @@ function renderIdentity() {
     '<option value="">All events</option>' +
     s.event_kinds.map((k) => `<option value="${esc(k)}">${esc(identityKindLabel(k))}</option>`).join("");
   kindSel.value = s.event_kinds.includes(current) ? current : "";
-  document.getElementById("identity-note").textContent =
-    "A face only personalizes Jarvis — it never approves or unlocks anything. Everything here stays on this computer.";
+  const note = document.getElementById("identity-note");
+  note.textContent = s.problem
+    ? "Problem: " + s.problem
+    : "A face only personalizes Jarvis — it never approves or unlocks anything. Everything here stays on this computer.";
+  note.classList.toggle("danger-text", !!s.problem);
 }
 
 document.getElementById("identity-profile").addEventListener("click", async (e) => {

@@ -61,6 +61,9 @@ SAMPLE_CONSISTENCY = 0.45  # lowest cosine between any two samples; different pe
 WARMUP_MIN_FRAMES = 5
 WARMUP_MAX_FRAMES = 45  # ~1.5s at 30fps: the most a poll will spend waiting for exposure
 WARMUP_STABLE_DELTA = 1.5  # brightness change between frames that counts as "settled"
+CAMERA_WAIT_S = 6.0  # how long enroll waits for an in-flight poll to release the camera
+EVENT_KEEP_DAYS_DEFAULT = 180.0
+HOUSEKEEPING_EVERY_S = 3600.0
 ALLOWED_SOURCES = frozenset({"voice", "text", "dashboard"})  # never "phone", never scheduled
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,39}$")
 
@@ -208,10 +211,44 @@ def _key() -> bytes:
     if path.exists():
         key = _dpapi(path.read_bytes(), protect=False)
     else:
+        if _has_encrypted_data():
+            # A fresh key would silently orphan every stored vector and picture. Stop instead.
+            raise RuntimeError(
+                "The face encryption key is missing, so the stored face data can't be read. "
+                "Erase the face profile and enroll again."
+            )
         key = os.urandom(32)
         path.write_bytes(_dpapi(key, protect=True))
     _key_cache[cache_id] = key
     return key
+
+
+def _has_encrypted_data() -> bool:
+    """Any encrypted rows on disk? (Read directly: must not need the key it is about to check.)"""
+    db = _data_dir() / "face.db"
+    if not db.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(db), timeout=10)
+        try:
+            n = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM face_profiles) + (SELECT COUNT(*) FROM face_snapshots)"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        return n > 0
+    except sqlite3.Error:
+        return False
+
+
+def health_problem() -> str | None:
+    """A human-readable reason stored face data can't be used (key missing / unreadable), or None."""
+    try:
+        if _has_encrypted_data():
+            _key()
+    except Exception as e:
+        return str(e)
+    return None
 
 
 def _encrypt(plain: bytes, aad: bytes) -> bytes:
@@ -438,7 +475,7 @@ def enroll(name: str, source: str | None, speak_fn=None) -> str:
         )
     if is_paused():
         return "Face recognition is paused, so I won't turn the camera on. Say resume first."
-    if not _camera_lock.acquire(blocking=False):
+    if not _camera_lock.acquire(timeout=CAMERA_WAIT_S):  # a poll may be mid-look (~1.5s)
         return "The camera is busy right now. Try again in a moment."
     try:
         try:
@@ -545,6 +582,7 @@ def delete(name: str, confirm: bool, source: str | None) -> str:
     with _db_lock, _db() as conn:
         conn.execute("DELETE FROM face_profiles WHERE id=?", (row[0],))
     invalidate_profile_cache()
+    _reset_transient()  # otherwise "Hero is at the computer" lingers in the prompt for ~90s
     log_event("delete", profile_id=row[0], name=row[1], detail="profile and embeddings erased")
     return f"Deleted {row[1]}'s face profile. Nothing biometric is left on this computer."
 
@@ -793,6 +831,38 @@ def prune_snapshots(now: datetime | None = None) -> None:
         )
 
 
+def event_keep_days() -> float:
+    return _float_env("JARVIS_FACE_EVENT_DAYS", EVENT_KEEP_DAYS_DEFAULT)
+
+
+def prune_events(now: datetime | None = None) -> None:
+    from datetime import timedelta
+
+    cutoff = ((now or datetime.now()) - timedelta(days=event_keep_days())).isoformat(timespec="seconds")
+    with _db_lock, _db() as conn:
+        conn.execute("DELETE FROM face_events WHERE ts < ?", (cutoff,))
+
+
+_last_housekeeping = 0.0
+
+
+def housekeeping(now: float | None = None, force: bool = False) -> bool:
+    """Enforce the retention promises (unknown pictures 14 days, events 180 days) on a timer.
+    Before this, pictures were only pruned when a *new* one was saved, so an old picture could
+    sit past its expiry indefinitely. Returns True if it ran."""
+    global _last_housekeeping
+    now = time.time() if now is None else now
+    if not force and now - _last_housekeeping < HOUSEKEEPING_EVERY_S:
+        return False
+    _last_housekeeping = now
+    try:
+        prune_snapshots()
+        prune_events()
+    except Exception as e:
+        log.warning("face housekeeping failed: %s", e)
+    return True
+
+
 def _save_snapshot(jpeg: bytes, confidence: float, event_id: int | None) -> None:
     with _db_lock, _db() as conn:
         conn.execute(
@@ -864,8 +934,18 @@ def _camera_ok() -> None:
         log_event("camera_restored")
 
 
+_poll_lock = threading.Lock()
+
+
 def poll_once(now: float | None = None) -> str:
-    """One recognition cycle. Returns a short status word (used by tests and who_is_here)."""
+    """One recognition cycle. Returns a short status word (used by tests and who_is_here).
+    Serialized: the poll thread and a voice-triggered who_is_here must not interleave state
+    updates (each would otherwise see the other's half-finished presence)."""
+    with _poll_lock:
+        return _poll_once_locked(now)
+
+
+def _poll_once_locked(now: float | None = None) -> str:
     now = time.time() if now is None else now
     if not enabled() or is_paused():
         _reset_transient()
@@ -1010,6 +1090,7 @@ def start_polling(greet_fn=None, notify_fn=None, quiet_fn=None, release_fn=None)
         errors = 0
         while not _poll_stop.is_set():
             try:
+                housekeeping()
                 poll_once()
                 errors = 0
             except Exception as e:
@@ -1172,6 +1253,7 @@ def dashboard_state() -> dict:
             "absent_after_seconds": owner_absent_after_s(),
         },
         "event_kinds": event_kinds(),
+        "problem": health_problem(),
     }
 
 
@@ -1202,3 +1284,55 @@ def delete_by_id(profile_id: int, source: str | None) -> str:
     if prof is None:
         return "No such face profile."
     return delete(prof["name"], True, source)
+
+
+def calibrate(seconds: float = 10.0, out=print) -> dict:
+    """Dry run of the enrollment liveness check that stores NOTHING (no profile, no image, no
+    event): reports the head-turn swing and detector scores it sees, so JARVIS_FACE_LIVENESS_SWING
+    can be tuned on a real head turn before enrolling."""
+    download_models(out)
+    engine, cap = _get_engine(), _open_camera(camera_index())
+    yaws, scores, frames, faces = [], [], 0, 0
+    try:
+        out(f"Look at the camera, then slowly turn your head left and right ({seconds:.0f}s)...")
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+            frames += 1
+            seen = [o for o in engine.analyze(frame) if o.det_score >= MIN_DET_SCORE]
+            if len(seen) == 1:
+                faces += 1
+                yaws.append(yaw_ratio(seen[0].kps))
+                scores.append(seen[0].det_score)
+            time.sleep(FRAME_INTERVAL_S)
+    finally:
+        cap.release()
+    swing = (max(yaws) - min(yaws)) if yaws else 0.0
+    result = {
+        "frames": frames, "single_face_frames": faces, "swing": round(swing, 3),
+        "min_yaw": round(min(yaws), 3) if yaws else None, "max_yaw": round(max(yaws), 3) if yaws else None,
+        "best_det_score": round(max(scores), 3) if scores else None,
+        "needed_swing": liveness_min_swing(), "would_pass": swing >= liveness_min_swing() and faces >= SAMPLES_WANTED,
+    }
+    out(f"Result: {result}")
+    if not faces:
+        out("No single face was seen: face the camera in decent light with nobody else in frame.")
+    elif swing < liveness_min_swing():
+        out(f"Head turn {swing:.2f} is below the {liveness_min_swing():.2f} needed. Turn further, or lower "
+            f"JARVIS_FACE_LIVENESS_SWING to about {max(0.10, swing * 0.7):.2f}.")
+    else:
+        out("That head turn would pass. Nothing was saved.")
+    return result
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Jarvis face recognition helpers")
+    ap.add_argument("command", choices=["calibrate"], help="calibrate: non-storing head-turn test")
+    ap.add_argument("--seconds", type=float, default=10.0)
+    args = ap.parse_args()
+    logging.basicConfig(level=logging.WARNING)
+    calibrate(args.seconds)

@@ -578,12 +578,44 @@ Rules:
   picture (those are other people's). Exporting is itself logged as an `export` event. Erasing a
   profile keeps the audit events (no biometric data in them). Recognition events live in their own
   stream on this tab, not in the general Audit Trail.
-- Status: Phases 0-3 shipped (63 face tests). Verified live: real model + camera + the full poll
-  pipeline against a throwaway temp profile; the Identity tab rendered in headless Chromium against
-  synthetic data (cards, consent, pictures load, filter, pause, delete-all, erase all worked, no
-  console errors). **Not verified live**: real `enroll_face` by voice, the head-turn threshold, an
-  actual stranger (group-safe/picture path is unit-tested only), greeting audio, covered-lens
-  detection on the real webcam, the tab against real data. Phase 4 (hardening) not started.
+- **Phase 4 (hardening), shipped** - a self-audit of Phases 1-3 found and fixed real defects:
+  1. *Retention wasn't enforced*: unknown pictures were only pruned when a **new** one was saved,
+     so an expired picture could sit indefinitely. `housekeeping()` now runs hourly from the poll
+     thread (pictures 14 days, events `JARVIS_FACE_EVENT_DAYS` = 180).
+  2. *Enroll failed spuriously* whenever a poll held the camera (~30% of tries): it now waits up to
+     `CAMERA_WAIT_S` (6s).
+  3. *A missing `face.key` silently minted a new key*, permanently orphaning every stored vector
+     and picture. `_key()` now refuses if encrypted rows exist; `health_problem()` surfaces it in
+     the Identity tab (red note) instead of failing quietly.
+  4. *Erasing the profile left "Hero is at the computer"* in the prompt for up to 90s; `delete`
+     now resets live presence.
+  5. Polls are serialized (`_poll_lock`): the poll thread and a voice `who_is_here` no longer
+     interleave state updates.
+  6. Dashboard state-changing `/api/faces*` calls also require a loopback `Origin` when one is sent
+     (a valid-Host request from another site is otherwise possible from a browser).
+- **Gate isolation is now enforced by a test** (`test_face_code_cannot_reach_the_confirmation_gate`,
+  AST-based): `jarvis_face` may not reference `_pending_action`/`_execute_confirmed_action`/
+  `skip_confirmation`/`_CATASTROPHIC_PATTERNS` or import `jarvis`, and `jarvis.py` may reference
+  `face` only from an allowlist of reviewed functions (tool dispatch, notification hold, greeting,
+  prompt line, startup). Adding face to any other function fails the test - review it first.
+  Another test pins that no image/frame file is ever written to the data dir (only `face.db*` and
+  `face.key`).
+- **Deliberately NOT built: PIN / voice as a second factor.** It only matters if face ever gates an
+  action, and nothing does (face is personalization only). If that ever changes it is a new
+  feature needing its own review (and a secret store), not an extension of this one.
+- **Tuning tool**: `python jarvis_face.py calibrate [--seconds N]` - a dry run of the enrollment
+  liveness check that stores NOTHING (no profile, event or image); prints the head-turn swing and
+  says how to tune `JARVIS_FACE_LIVENESS_SWING`. **Live finding (2026-09-19)**: sitting roughly
+  still produced a swing of 0.21 vs the 0.30 default, so natural head sway alone is most of the
+  way to the threshold - a hand-held photo would jitter similarly. Liveness here is a speed bump
+  against a *static* photo only; do not raise its trust. Consider a higher default (~0.40) once the
+  owner's real head-turn swing has been measured.
+- Status: Phases 0-4 shipped (73 face tests, 266 total). Verified live: real model + camera + the
+  full poll pipeline against a throwaway temp profile; the Identity tab in headless Chromium against
+  synthetic data; `calibrate` on the real webcam. **Not verified live**: a real `enroll_face` by
+  voice (writes a real biometric profile - the owner should do it), the head-turn threshold on a
+  deliberate turn, an actual stranger (group-safe/picture path is unit-tested only), greeting
+  audio, covered-lens detection on the real webcam, the tab against real data.
 
 ### Cost reporting
 
@@ -629,4 +661,5 @@ row there each phase rather than only stating the total in chat.
 | 20 (face recognition Phase 1: module, DPAPI storage, enroll/delete, liveness) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
 | 21 (face recognition Phase 2: polling, recognition, group-safe mode, unknown pictures, privacy switch) | Sonnet 5 | ~45 min | ~$2.50–$3.40 |
 | 22 (face recognition Phase 3: dashboard Identity tab, consent view, export/erase, event stream, Host-header guard) | Sonnet 5 | ~35 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~568 min** | **~$23.05–$32.30** |
+| 23 (face recognition Phase 4: self-audit fixes, gate-isolation test, calibrate tool, Origin guard) | Sonnet 5 | ~30 min | ~$1.60–$2.30 |
+| **Running total (final)** | | **~598 min** | **~$24.65–$34.60** |

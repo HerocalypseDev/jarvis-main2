@@ -183,6 +183,7 @@ def test_enroll_validates_name_and_pause_and_camera_errors(fx, monkeypatch):
 
 def test_camera_lock_blocks_concurrent_enrollment(fx, monkeypatch):
     _install(monkeypatch, _turning_frames())
+    monkeypatch.setattr(face, "CAMERA_WAIT_S", 0.05)
     face._camera_lock.acquire()
     try:
         assert "busy" in face.enroll("Hero", "voice")
@@ -865,3 +866,171 @@ def test_frontend_has_the_identity_tab_wired_to_the_api():
         assert path in js
     assert 'event.type === "face_event"' in js  # live refresh
     assert "confirm(" in js  # erase / delete-all ask first
+
+
+# ===============================================================================================
+# Phase 4: hardening
+# ===============================================================================================
+def test_face_code_cannot_reach_the_confirmation_gate():
+    """Structural guard for the core rule: a face is personalization only. jarvis_face must not
+    touch the gate, and jarvis.py may reference `face` only in the (reviewed) places below."""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).parent
+    face_tree = ast.parse((root / "jarvis_face.py").read_text(encoding="utf-8"))
+    used = set()
+    for n in ast.walk(face_tree):  # code only: the module docstring may discuss the gate in prose
+        if isinstance(n, ast.Name):
+            used.add(n.id)
+        elif isinstance(n, ast.Attribute):
+            used.add(n.attr)
+        elif isinstance(n, ast.arg):
+            used.add(n.arg)
+        elif isinstance(n, ast.keyword) and n.arg:
+            used.add(n.arg)
+        elif isinstance(n, ast.Import):
+            used.update(a.name for a in n.names)
+        elif isinstance(n, ast.ImportFrom):
+            used.add(n.module or "")
+    for forbidden in ("_pending_action", "_execute_confirmed_action", "skip_confirmation", "_CATASTROPHIC_PATTERNS", "jarvis"):
+        assert forbidden not in used, forbidden
+
+    tree = ast.parse((root / "jarvis.py").read_text(encoding="utf-8"))
+    users = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if any(isinstance(n, ast.Name) and n.id == "face" for n in ast.walk(fn)):
+                users.add(fn.name)
+    allowed = {
+        "_execute_tool_impl",  # the face tools' own dispatch branches
+        "_face_greet", "queue_or_deliver_notification", "flush_pending_notifications",  # speech hold/greeting
+        "build_system_blocks", "run_agent_loop",  # presence line (+ reply-cache key)
+        "main",  # start polling / event hook
+    }
+    assert users <= allowed, f"face is referenced from unreviewed code: {sorted(users - allowed)}"
+    for gate in ("_take_pending_action", "_execute_confirmed_action", "_dashboard_approve_pending", "_dashboard_reject_pending"):
+        assert gate not in users
+
+
+def test_no_image_or_frame_is_ever_written_to_disk(enrolled, monkeypatch):
+    import cv2
+
+    monkeypatch.setattr(cv2, "imwrite", lambda *a, **k: (_ for _ in ()).throw(AssertionError("frame written")))
+    _look(monkeypatch, _obs(0.0, OTHER))
+    t = 11_000_000.0
+    for i in range(4):  # an unknown visitor: the one path that keeps a (crop) picture, in the DB
+        face.poll_once(t + i * 5)
+    _install(monkeypatch, _turning_frames())
+    with face._db_lock, face._db() as conn:
+        conn.execute("DELETE FROM face_profiles")
+    face.invalidate_profile_cache()
+    assert face.enroll("Hero", "voice").startswith("Done")
+    files = sorted(p.name for p in face._data_dir().rglob("*") if p.is_file())
+    assert all(f.startswith("face.db") or f == "face.key" for f in files), files  # no .jpg/.png/.mp4 anywhere
+    assert face.snapshot_count() == 1  # the crop lives encrypted inside face.db only
+
+
+def test_housekeeping_expires_pictures_without_needing_a_new_one(enrolled, monkeypatch):
+    face._save_snapshot(b"\xff\xd8old", 0.1, None)
+    with face._db_lock, face._db() as conn:
+        conn.execute("UPDATE face_snapshots SET ts = ?", ("2000-01-01T00:00:00",))
+        conn.execute("INSERT INTO face_events (ts, kind) VALUES (?, ?)", ("2000-01-01T00:00:00", "owner_arrived"))
+    face.log_event("owner_left")  # a recent event must survive
+    assert face.snapshot_count() == 1  # the old bug: nothing prunes it until another picture is saved
+    assert face.housekeeping(now=1e9, force=True) is True
+    assert face.snapshot_count() == 0
+    assert [e["kind"] for e in face.recent_events()] == ["owner_left"]
+    assert face.housekeeping(now=1e9 + 60) is False  # throttled to once an hour
+    assert face.housekeeping(now=1e9 + face.HOUSEKEEPING_EVERY_S + 1) is True
+
+
+def test_a_missing_key_never_silently_orphans_existing_data(enrolled):
+    (face._data_dir() / "face.key").unlink()
+    face._key_cache.clear()
+    with pytest.raises(RuntimeError, match="key is missing"):
+        face._key()
+    assert not (face._data_dir() / "face.key").exists()  # it did NOT mint a replacement
+    assert "key is missing" in face.health_problem()
+    assert "key is missing" in face.dashboard_state()["problem"]
+
+
+def test_a_fresh_install_still_creates_its_key_and_reports_healthy(fx):
+    assert face.health_problem() is None
+    face._key()
+    assert (face._data_dir() / "face.key").exists() and face.health_problem() is None
+
+
+def test_enroll_waits_for_an_inflight_poll_but_not_forever(fx, monkeypatch):
+    _install(monkeypatch, _turning_frames())
+    face._camera_lock.acquire()
+    threading.Timer(0.3, face._camera_lock.release).start()  # a poll finishing its ~1.5s look
+    assert face.enroll("Hero", "voice").startswith("Done")
+    monkeypatch.setattr(face, "CAMERA_WAIT_S", 0.05)
+    face.delete("Hero", True, "voice")
+    face._camera_lock.acquire()
+    try:
+        assert "busy" in face.enroll("Hero", "voice")
+    finally:
+        face._camera_lock.release()
+
+
+def test_erasing_the_profile_clears_presence_immediately(enrolled, monkeypatch):
+    _look(monkeypatch, _obs(0.0, BASE))
+    face.poll_once(time.time())
+    assert "Hero is at the computer" in face.system_prompt_context_line()
+    assert face.delete("Hero", True, "voice").startswith("Deleted")
+    assert face.system_prompt_context_line() == ""  # not "still here" for another ~90s
+    assert not face.state_snapshot()["owner_present"]
+
+
+def test_concurrent_polls_never_overlap(enrolled, monkeypatch):
+    active, worst = [0], [0]
+    lock = threading.Lock()
+
+    def slow():
+        with lock:
+            active[0] += 1
+            worst[0] = max(worst[0], active[0])
+        time.sleep(0.05)
+        with lock:
+            active[0] -= 1
+        return [], 100.0, 40.0, FRAME
+
+    monkeypatch.setattr(face, "_capture_and_analyze", slow)
+    threads = [threading.Thread(target=face.poll_once) for _ in range(5)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert worst[0] == 1
+
+
+def test_state_changing_routes_reject_a_cross_site_origin(dash):
+    good = {"origin": "http://127.0.0.1:8765"}
+    evil = {"origin": "https://evil.example"}
+    r = dash.post("/api/faces/pause", json={"paused": True}, headers=evil)
+    assert r.status_code == 403 and not face.is_paused()  # valid loopback Host, hostile Origin
+    assert dash.delete("/api/faces/1?confirm=true", headers=evil).status_code == 403
+    assert len(face.list_profiles()) == 1
+    assert dash.delete("/api/faces/snapshots", headers=evil).status_code == 403
+    assert dash.post("/api/faces/pause", json={"paused": True}, headers=good).status_code == 200
+    assert dash.post("/api/faces/pause", json={"paused": False}, headers={"origin": "http://localhost:8765"}).status_code == 200
+    assert dash.get("/api/faces", headers=evil).status_code == 200  # reads stay simple; images aren't readable cross-site
+
+
+def test_calibrate_reports_the_head_turn_and_stores_nothing(fx, monkeypatch):
+    monkeypatch.setattr(face, "FRAME_INTERVAL_S", 0)
+    _install(monkeypatch, _turning_frames())
+    out = []
+    res = face.calibrate(seconds=0.4, out=out.append)
+    assert res["swing"] >= 0.5 and res["would_pass"] is True  # the scripted -0.25 -> +0.25 turn
+    assert "Nothing was saved" in out[-1]
+    assert face.list_profiles() == [] and face.recent_events() == [] and face.snapshot_count() == 0
+    # a turn that is too small says how to tune it
+    _install(monkeypatch, [_obs(0.0), _obs(0.05), _obs(-0.05)])
+    out.clear()
+    res = face.calibrate(seconds=0.3, out=out.append)
+    assert res["would_pass"] is False and any("JARVIS_FACE_LIVENESS_SWING" in line for line in out)
+    _install(monkeypatch, [[]])  # nobody in front of the camera
+    out.clear()
+    assert face.calibrate(seconds=0.2, out=out.append)["single_face_frames"] == 0
+    assert any("No single face" in line for line in out)
