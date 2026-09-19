@@ -66,7 +66,7 @@ def test_stats_two_sessions_same_night_are_summed(db):
 
 def test_disable_calls_digest_handler_and_digest_is_saved(db):
     calls = []
-    sm.set_wake_digest_handler(lambda a, b: calls.append((a, b)))
+    sm.set_wake_digest_handler(lambda a, b, kind: calls.append((a, b)))
     sm._set_state(active=1, started_at="2026-09-18T23:00:00", hosts_blocked=0, dark_mode_was_on=1)
     _log("2026-09-18T23:00:00", "2026-09-18T23:00:00")  # placeholder row to attach digest to
     sm.disable()
@@ -196,22 +196,28 @@ def test_dotenv_is_loaded_before_module_imports():
 
 
 # --- naps ------------------------------------------------------------------------------------
-def test_is_nap_window_and_length():
-    assert sm.is_nap(datetime(2026, 9, 18, 14, 0), 45)
-    assert sm.is_nap(datetime(2026, 9, 18, 12, 0), 240)          # exactly at the limits
-    assert not sm.is_nap(datetime(2026, 9, 18, 11, 59), 45)      # before the window
-    assert not sm.is_nap(datetime(2026, 9, 18, 18, 0), 45)       # window is [12, 18)
-    assert not sm.is_nap(datetime(2026, 9, 18, 14, 0), 241)      # too long to be a nap
-    assert not sm.is_nap(datetime(2026, 9, 18, 23, 0), 480)      # a normal night
-    assert sm.is_nap_session("2026-09-18T14:00:00", "2026-09-18T14:40:00")
-    assert not sm.is_nap_session("garbage", "x")
+def _log_kind(start: str, end: str, kind: str | None):
+    minutes = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() / 60
+    with sm._db_lock:
+        conn = sm._connect()
+        conn.execute("INSERT INTO sleep_log (started_at, ended_at, duration_minutes, kind) VALUES (?, ?, ?, ?)",
+                     (start, end, minutes, kind))
+        conn.commit()
+        conn.close()
+
+
+def test_nap_is_chosen_by_the_user_not_the_clock(db):
+    _log_kind("2026-09-19T14:00:00", "2026-09-19T14:45:00", None)      # old row / plain sleep at 2pm: a night
+    _log_kind("2026-09-19T23:00:00", "2026-09-19T23:50:00", "nap")     # nap at 11pm: still a nap
+    s = sm.stats_summary(NOW)
+    assert s["week"]["nights_tracked"] == 1 and s["week"]["nap_count"] == 1
 
 
 def test_naps_are_separate_from_nights(db):
-    _log("2026-09-18T23:00:00", "2026-09-19T05:00:00")   # 6h night
-    _log("2026-09-19T14:00:00", "2026-09-19T14:45:00")   # 45 min nap, same calendar day as wake-up
-    _log("2026-09-19T15:30:00", "2026-09-19T15:40:00")   # 10 min nap: counted (>= NAP_MIN_MINUTES)
-    _log("2026-09-19T16:00:00", "2026-09-19T16:05:00")   # 5 min: ignored
+    _log_kind("2026-09-18T23:00:00", "2026-09-19T05:00:00", "sleep")   # 6h night
+    _log_kind("2026-09-19T14:00:00", "2026-09-19T14:45:00", "nap")
+    _log_kind("2026-09-19T15:30:00", "2026-09-19T15:40:00", "nap")     # 10 min: counted
+    _log_kind("2026-09-19T16:00:00", "2026-09-19T16:05:00", "nap")     # 5 min: ignored
     s = sm.stats_summary(NOW)
     assert s["week"]["nights_tracked"] == 1 and s["week"]["avg_hours"] == 6.0  # nap did not inflate the night
     assert s["week"]["avg_bedtime"] == "23:00" and s["week"]["debt_hours"] == 2.0  # 6h night vs the 8h goal
@@ -222,11 +228,34 @@ def test_naps_are_separate_from_nights(db):
 
 
 def test_nap_only_day_has_no_night_and_status_line_separates_them(db):
-    _log("2026-09-19T14:00:00", "2026-09-19T14:30:00")
+    _log_kind("2026-09-19T14:00:00", "2026-09-19T14:30:00", "nap")
     d = sm.stats_summary(NOW)["daily"][-1]
     assert d["hours"] is None and d["bedtime"] is None and d["nap_hours"] == 0.5
     assert sm.stats_summary(NOW)["week"]["nights_tracked"] == 0
     assert "nap(s) recently" in sm.status() and "night(s)" not in sm.status()
+
+
+def test_enable_nap_logs_kind_and_disable_reports_it(db, monkeypatch):
+    monkeypatch.setattr(sm, "_set_dark_mode", lambda d: True)
+    monkeypatch.setattr(sm, "_dark_mode_is_on", lambda: False)
+    monkeypatch.setattr(sm, "_block_distractions", lambda: False)
+    monkeypatch.setattr(sm, "_start_media_autopause", lambda r: None)
+    monkeypatch.setattr(sm, "_cancel_media_autopause", lambda: None)
+    spoken, handled = [], []
+    sm.set_wake_digest_handler(lambda a, b, kind: handled.append(kind))
+    out = sm.enable(lambda a: None, spoken.append, kind="nap")
+    assert "Nap mode is on" in out and "won't count toward your sleep time" in out
+    assert spoken[0].startswith("Nap mode on.") and sm.is_active()
+    assert sm.stats_summary(NOW)["current"]["is_nap"] is True
+    assert sm.enable(lambda a: None, spoken.append) == "Sleep Mode is already on."   # can't start a second
+    off = sm.disable()
+    assert "Nap logged" in off and "doesn't count" in off and handled == ["nap"] and not sm.is_active()
+    conn = sm._connect()
+    assert conn.execute("SELECT kind FROM sleep_log").fetchall() == [("nap",)]
+    conn.close()
+    # A normal sleep session afterwards is logged as sleep and hands the handler 'sleep'.
+    sm.enable(lambda a: None, spoken.append)
+    assert "You were in Sleep Mode" in sm.disable() and handled == ["nap", "sleep"]
 
 
 def test_recap_wording_for_a_nap(jarvis, monkeypatch):
@@ -245,3 +274,21 @@ def test_text_hotkey_and_ptt_defaults():
     code = f"import sys; sys.path.insert(0, r'{root}'); import jarvis; print(jarvis.JARVIS_TEXT_HOTKEY_KEY, '|', jarvis.JARVIS_PTT_KEY)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, env=env)
     assert out.stdout.strip().splitlines()[-1] == "left ctrl | right shift", out.stderr[-300:]
+
+
+def test_tool_nap_action_starts_a_nap_and_recap_uses_kind(jarvis, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(jarvis.sleep_mode, "enable", lambda run, speak, kind="sleep": seen.setdefault("kind", kind) and "ok")
+    monkeypatch.setattr(jarvis, "_log_action_audit", lambda *a, **k: None)
+    jarvis._execute_tool_impl("sleep_mode", {"action": "nap"}, "nap mode")
+    assert seen.get("kind") == "nap"
+    schema = next(t for t in jarvis.AGENT_TOOLS if t["name"] == "sleep_mode")
+    assert "nap" in schema["input_schema"]["properties"]["action"]["enum"]
+    # wake-digest handler wording follows the session kind
+    texts = []
+    monkeypatch.setattr(jarvis, "_build_sleep_digest", lambda items, nap=False: texts.append(nap) or "x")
+    monkeypatch.setattr(jarvis.sleep_mode, "save_digest", lambda *a: None)
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    jarvis._sleep_wake_digest("2026-09-19T14:00:00", "2026-09-19T14:40:00", "nap")
+    import time as _t; _t.sleep(0.3)
+    assert texts == [True]

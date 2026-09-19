@@ -69,12 +69,9 @@ SLEEP_TTS_VOLUME = float(os.environ.get("JARVIS_SLEEP_TTS_VOLUME") or 0.7)
 # night's sleep, and left out of averages. Goal is the nightly target used for "sleep debt".
 MIN_SESSION_MINUTES = int(os.environ.get("JARVIS_SLEEP_MIN_SESSION_MINUTES") or 20)
 SLEEP_GOAL_HOURS = float(os.environ.get("JARVIS_SLEEP_GOAL_HOURS") or 8)
-# A nap is a Sleep Mode session that *starts* in this afternoon window and lasts at most
-# NAP_MAX_HOURS. Naps are tracked on their own and never count toward night averages, bedtime,
-# sleep debt or the goal streak.
-NAP_START_HOUR = int(os.environ.get("JARVIS_NAP_START_HOUR") or 12)
-NAP_END_HOUR = int(os.environ.get("JARVIS_NAP_END_HOUR") or 18)
-NAP_MAX_HOURS = float(os.environ.get("JARVIS_NAP_MAX_HOURS") or 4)
+# A nap is a session the user starts with nap mode (enable(kind="nap")). Naps are tracked on
+# their own and never count toward night averages, bedtime, sleep debt or the goal streak. A nap
+# shorter than NAP_MIN_MINUTES is treated as an accidental toggle and ignored.
 NAP_MIN_MINUTES = int(os.environ.get("JARVIS_NAP_MIN_MINUTES") or 10)
 
 AMBIENT_SOUNDS = {
@@ -105,7 +102,7 @@ def _db_path() -> Path:
 
 _db_lock = threading.Lock()
 # jarvis.py registers this so disable() can hand off "what was queued while you slept" without
-# this module importing jarvis.py. Called as handler(started_at_iso, ended_at_iso).
+# this module importing jarvis.py. Called as handler(started_at_iso, ended_at_iso, kind).
 _wake_digest_handler = None
 
 
@@ -149,10 +146,15 @@ def _connect() -> sqlite3.Connection:
         "ended_at TEXT, "
         "duration_minutes REAL)"
     )
-    try:
-        conn.execute("ALTER TABLE sleep_log ADD COLUMN digest TEXT")
-    except sqlite3.OperationalError:
-        pass  # column already exists
+    for ddl in (
+        "ALTER TABLE sleep_log ADD COLUMN digest TEXT",
+        "ALTER TABLE sleep_log ADD COLUMN kind TEXT",    # 'sleep' | 'nap'; NULL (old rows) = sleep
+        "ALTER TABLE sleep_state ADD COLUMN kind TEXT",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.execute("INSERT OR IGNORE INTO sleep_state (id, active) VALUES (1, 0)")
     return conn
 
@@ -163,13 +165,13 @@ def _get_state() -> dict:
         try:
             row = conn.execute(
                 "SELECT active, started_at, wake_time, wake_ramp_minutes, wake_fired_date, "
-                "dark_mode_was_on, hosts_blocked FROM sleep_state WHERE id = 1"
+                "dark_mode_was_on, hosts_blocked, kind FROM sleep_state WHERE id = 1"
             ).fetchone()
         finally:
             conn.close()
     keys = (
         "active", "started_at", "wake_time", "wake_ramp_minutes", "wake_fired_date",
-        "dark_mode_was_on", "hosts_blocked",
+        "dark_mode_was_on", "hosts_blocked", "kind",
     )
     return dict(zip(keys, row)) if row else {k: None for k in keys}
 
@@ -353,7 +355,10 @@ def _start_media_autopause(run_system_action) -> None:
 
 
 # --- enable/disable ------------------------------------------------------------------------
-def enable(run_system_action, speak_fn) -> str:
+def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
+    """kind='nap' runs the exact same mode (quiet notifications, mail take-over, dark mode, recap on
+    wake) but the session is logged as a nap and never counts toward sleep time."""
+    kind = "nap" if kind == "nap" else "sleep"
     if is_active():
         return "Sleep Mode is already on."
 
@@ -373,24 +378,27 @@ def enable(run_system_action, speak_fn) -> str:
         started_at=now.isoformat(timespec="seconds"),
         dark_mode_was_on=(1 if was_dark else 0) if was_dark is not None else None,
         hosts_blocked=1 if hosts_ok else 0,
+        kind=kind,
     )
     with _db_lock:
         conn = _connect()
         try:
             conn.execute(
-                "INSERT INTO sleep_log (started_at) VALUES (?)",
-                (now.isoformat(timespec="seconds"),),
+                "INSERT INTO sleep_log (started_at, kind) VALUES (?, ?)",
+                (now.isoformat(timespec="seconds"), kind),
             )
             conn.commit()
         finally:
             conn.close()
 
+    label = "Nap mode" if kind == "nap" else "Sleep Mode"
     try:
-        speak_fn("Sleep Mode on. I'll keep things quiet — only urgent or family messages will come through.")
+        speak_fn(f"{label} on. I'll keep things quiet — only urgent or family messages will come through.")
     except Exception as e:
         log.warning("Sleep Mode speak failed: %s", e)
-    log.info("Sleep Mode enabled.")
-    return "Sleep Mode is on: notifications quieted, dark mode on, volume lowered, media will auto-pause."
+    log.info("%s enabled.", label)
+    return (f"{label} is on: notifications quieted, dark mode on, volume lowered, media will "
+            "auto-pause." + (" This nap won't count toward your sleep time." if kind == "nap" else ""))
 
 
 def disable() -> str:
@@ -412,7 +420,11 @@ def disable() -> str:
             started = datetime.fromisoformat(started_at)
             minutes = (now - started).total_seconds() / 60
             hours, mins = divmod(int(minutes), 60)
-            duration_line = f" You were in Sleep Mode for {hours}h {mins}m."
+            duration_line = (
+                f" Nap logged: {hours}h {mins}m. It doesn't count toward your sleep time."
+                if state.get("kind") == "nap"
+                else f" You were in Sleep Mode for {hours}h {mins}m."
+            )
             with _db_lock:
                 conn = _connect()
                 try:
@@ -429,12 +441,12 @@ def disable() -> str:
 
     _set_state(
         active=0, started_at=None, wake_time=None, wake_ramp_minutes=None,
-        wake_fired_date=None, dark_mode_was_on=None, hosts_blocked=0,
+        wake_fired_date=None, dark_mode_was_on=None, hosts_blocked=0, kind=None,
     )
     log.info("Sleep Mode disabled.%s", duration_line)
     if _wake_digest_handler and started_at:
         try:
-            _wake_digest_handler(started_at, now.isoformat(timespec="seconds"))
+            _wake_digest_handler(started_at, now.isoformat(timespec="seconds"), state.get("kind") or "sleep")
         except Exception as e:
             log.warning("Sleep Mode wake digest failed: %s", e)
     return f"Sleep Mode is off.{duration_line}"
@@ -468,17 +480,14 @@ def status() -> str:
         conn = _connect()
         try:
             rows = conn.execute(
-                "SELECT started_at, duration_minutes FROM sleep_log "
+                "SELECT kind, duration_minutes FROM sleep_log "
                 "WHERE duration_minutes IS NOT NULL ORDER BY id DESC LIMIT 30"
             ).fetchall()
         finally:
             conn.close()
     nights, naps = [], []
-    for started_at, minutes in rows:
-        try:
-            (naps if is_nap(datetime.fromisoformat(started_at), minutes) else nights).append(minutes)
-        except ValueError:
-            nights.append(minutes)
+    for kind, minutes in rows:
+        (naps if kind == "nap" else nights).append(minutes)
     nights = nights[:7]
     if nights:
         avg = sum(nights) / len(nights)
@@ -494,20 +503,6 @@ def status() -> str:
 def _hhmm(minutes: float) -> str:
     m = int(round(minutes)) % 1440
     return f"{m // 60:02d}:{m % 60:02d}"
-
-
-def is_nap(started: datetime, minutes: float) -> bool:
-    """Afternoon start (NAP_START_HOUR <= hour < NAP_END_HOUR) and no longer than NAP_MAX_HOURS."""
-    return NAP_START_HOUR <= started.hour < NAP_END_HOUR and minutes <= NAP_MAX_HOURS * 60
-
-
-def is_nap_session(started_at: str, ended_at: str) -> bool:
-    """is_nap for a logged session given its ISO start/end; False if unparseable."""
-    try:
-        start, end = datetime.fromisoformat(started_at), datetime.fromisoformat(ended_at)
-    except (TypeError, ValueError):
-        return False
-    return is_nap(start, (end - start).total_seconds() / 60)
 
 
 def _period_stats(nights: dict, end_day, days: int, goal_h: float, naps: dict | None = None) -> dict:
@@ -558,7 +553,7 @@ def stats_summary(now: datetime | None = None) -> dict:
         conn = _connect()
         try:
             rows = conn.execute(
-                "SELECT started_at, ended_at, duration_minutes FROM sleep_log "
+                "SELECT started_at, ended_at, duration_minutes, kind FROM sleep_log "
                 "WHERE ended_at IS NOT NULL AND duration_minutes >= ? ORDER BY id",
                 (min(MIN_SESSION_MINUTES, NAP_MIN_MINUTES),),
             ).fetchall()
@@ -571,12 +566,12 @@ def stats_summary(now: datetime | None = None) -> dict:
 
     nights: dict[str, dict] = {}
     naps: dict[str, dict] = {}
-    for started_at, ended_at, minutes in rows:
+    for started_at, ended_at, minutes, kind in rows:
         try:
             start, end = datetime.fromisoformat(started_at), datetime.fromisoformat(ended_at)
         except (TypeError, ValueError):
             continue
-        if is_nap(start, minutes):
+        if kind == "nap":
             if minutes >= NAP_MIN_MINUTES:
                 nap = naps.setdefault(end.date().isoformat(), {"minutes": 0.0, "count": 0})
                 nap["minutes"] += minutes
@@ -638,7 +633,7 @@ def stats_summary(now: datetime | None = None) -> dict:
             current = {
                 "started_at": state["started_at"],
                 "elapsed_minutes": round(elapsed),
-                "is_nap": is_nap(started_dt, elapsed),
+                "is_nap": state.get("kind") == "nap",
             }
         except ValueError:
             pass
@@ -647,7 +642,6 @@ def stats_summary(now: datetime | None = None) -> dict:
         "goal_hours": goal,
         "min_session_minutes": MIN_SESSION_MINUTES,
         "current": current,
-        "nap_window": f"{NAP_START_HOUR:02d}:00-{NAP_END_HOUR:02d}:00, up to {NAP_MAX_HOURS:g}h",
         "week": _period_stats(nights, today, 7, goal, naps),
         "prev_week": _period_stats(nights, today - timedelta(days=7), 7, goal, naps),
         "month": _period_stats(nights, today, 30, goal, naps),
@@ -659,8 +653,8 @@ def stats_summary(now: datetime | None = None) -> dict:
         "note": (
             "Based on time spent in Sleep Mode, not measured sleep: turn it on when you go to "
             f"bed and off when you get up. Night sessions under {MIN_SESSION_MINUTES} min are "
-            f"ignored. Sessions starting {NAP_START_HOUR:02d}:00-{NAP_END_HOUR:02d}:00 and up to "
-            f"{NAP_MAX_HOURS:g}h count as naps: shown separately, never in night averages or the goal."
+            "ignored. Say \"nap mode\" to start a nap: it works the same but is shown separately "
+            "and never counts toward your sleep time or goal."
         ),
     }
 

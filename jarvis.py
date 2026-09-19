@@ -1074,11 +1074,13 @@ AGENT_TOOLS = [
             "non-urgent notifications and reminders (family/whitelisted senders and urgent "
             "items still get through), switches to dark mode, lowers system volume, "
             "auto-pauses media after a while, blocks distracting sites, speaks more softly "
-            "and briefly, and logs how long you slept."
+            "and briefly, and logs how long you slept. Action 'nap' starts the same mode as a "
+            "nap ('nap mode', 'I'm taking a nap'): everything is identical except the session "
+            "is logged as a nap and does not count toward sleep time. 'off' ends either one."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"action": {"type": "string", "enum": ["on", "off", "toggle", "status"]}},
+            "properties": {"action": {"type": "string", "enum": ["on", "nap", "off", "toggle", "status"]}},
             "required": ["action"],
         },
     },
@@ -2798,7 +2800,7 @@ def flush_pending_notifications() -> None:
 USER_NAME = (os.environ.get("JARVIS_USER_NAME") or "Hero").strip() or "Hero"
 
 
-def _sleep_wake_digest(started_at: str, ended_at: str) -> None:
+def _sleep_wake_digest(started_at: str, ended_at: str, kind: str = "sleep") -> None:
     """Registered with jarvis_sleep_mode: when Sleep Mode ends, replaces the old flood of queued
     notifications with one spoken recap ("Hero, while you were asleep, ..."). Draining the queue
     is synchronous (so a command issued right after waking can't replay the items); summarizing
@@ -2813,7 +2815,7 @@ def _sleep_wake_digest(started_at: str, ended_at: str) -> None:
 
     def _run() -> None:
         try:
-            digest = _build_sleep_digest(items, nap=sleep_mode.is_nap_session(started_at, ended_at))
+            digest = _build_sleep_digest(items, nap=(kind == "nap"))
             sleep_mode.save_digest(started_at, digest)
             speak_text(_collapse_paths_for_speech(digest))
         except Exception as e:
@@ -6210,6 +6212,8 @@ def _execute_tool_impl(
             action = str(inp.get("action") or "").strip().lower()
             if action == "on":
                 result = sleep_mode.enable(_run_system_action, speak_text)
+            elif action == "nap":
+                result = sleep_mode.enable(_run_system_action, speak_text, kind="nap")
             elif action == "off":
                 result = sleep_mode.disable()
             elif action == "toggle":

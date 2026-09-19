@@ -865,7 +865,7 @@ function renderSleep() {
     ["Avg bedtime → wake", `${cur.avg_bedtime || "–"} → ${cur.avg_wake || "–"}`, cur.bedtime_variability_min != null ? `bedtime varies ±${cur.bedtime_variability_min} min` : "", ""],
     [`Goal (${u.goal_hours}h)`, `${cur.goal_hit_nights}/${cur.nights_tracked}`, `${u.goal_streak_nights}-night streak`, ""],
     ["Sleep debt", `${cur.debt_hours}h`, `vs ${u.goal_hours}h/night`, ""],
-    ["Naps", cur.nap_count ? `${cur.nap_count}` : "0", cur.nap_count ? `avg ${cur.nap_avg_minutes} min &middot; ${fmtHours(cur.nap_total_hours)} total` : `none (${esc(u.nap_window)})`, ""],
+    ["Naps", cur.nap_count ? `${cur.nap_count}` : "0", cur.nap_count ? `avg ${cur.nap_avg_minutes} min &middot; ${fmtHours(cur.nap_total_hours)} total` : `none yet (say "nap mode")`, ""],
   ];
   cards.innerHTML = c
     .map(([label, val, sub, delta]) => `<div class="usage-card"><div class="usage-card-label">${esc(label)}</div>

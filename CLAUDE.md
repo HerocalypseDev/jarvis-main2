@@ -358,15 +358,19 @@ Rules:
   in the digest. Cost: one small extra model call per wake-up. Same data exposure as the existing
   speech summarizer (queued text goes to the active brain). Tests: `test_sleep.py`.
 
-- **Naps (2026-09-19):** a Sleep Mode session that *starts* 12:00-18:00 (`JARVIS_NAP_START_HOUR`/
-  `_END_HOUR`) and lasts <= 4h (`JARVIS_NAP_MAX_HOURS`) and >= 10 min (`JARVIS_NAP_MIN_MINUTES`) is a
-  nap, classified automatically (`jarvis_sleep_mode.is_nap`, no new table/UX — same on/off flow).
-  Naps never count toward night averages, bedtime/wake, sleep debt or the goal streak (before this,
-  an afternoon nap would have been summed into that day's "night"). They get their own card (count,
-  average length, total), a violet segment stacked on the night bar, and their own line in the voice
-  `status()`; the recap says "while you were napping". Everything else Sleep Mode does (quiet
-  notifications, mail take-over, dark mode) applies to naps too. Not built: counting naps toward a
-  24-hour goal.
+- **Naps (2026-09-19):** the user starts one themselves — say "nap mode" / "I'm taking a nap"
+  (`sleep_mode` tool, action `nap` -> `enable(kind="nap")`); `off` ends it. It is *exactly* Sleep
+  Mode (quiet notifications, dark mode, volume, media auto-pause, the 15/2-min Gmail monitoring and
+  family replies, the wake-up recap — worded "while you were napping") except the session is logged
+  with `kind='nap'` (new `kind` column on `sleep_log`/`sleep_state`; NULL = a normal sleep) and never
+  counts toward night averages, bedtime/wake, sleep debt or the goal streak. Dashboard: a Naps card
+  (count, average, total), a violet nap segment stacked on the day's night bar, "(nap)" in the
+  header, and a separate line in the voice `status()`. Naps under `JARVIS_NAP_MIN_MINUTES` (10) are
+  ignored. Deliberately explicit: an earlier same-day version guessed naps from the clock
+  (afternoon start) and was replaced at the user's request. Not built: a nap alarm/timer (a nap has
+  no wake time unless `schedule_sleep_wakeup` is used, and that alarm says "Good morning"), counting
+  naps toward a 24-hour goal. Not exercised live (it toggles dark mode/volume/hosts); unit-tested
+  with those faked.
 - **Hotkeys (2026-09-19):** push-to-talk defaults to **Right Shift**, the typed-command hotkey to
   **Left Ctrl** (hold 2s). Left Ctrl is also used for shortcuts; a 2s hold is unlikely but possible
   while dragging with Ctrl held — change `JARVIS_TEXT_HOTKEY_KEY` if it misfires.
