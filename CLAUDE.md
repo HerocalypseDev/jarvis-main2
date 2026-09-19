@@ -525,17 +525,47 @@ Rules:
   held-still photo; a replayed video defeats it, which is why a match never gates anything.
 - Enrollment consistency check uses the *minimum pairwise* cosine between samples (>= 0.45);
   comparing to the centroid let a 2-vs-3 mix of different people through (caught by a test).
-- **Approved but not built yet (Phase 2)**: saved pictures of unknown faces - face crop only,
-  encrypted, one per person per 10 min, auto-delete after 14 days, cap 200, dashboard-only viewing
-  with a "delete all", never sent to Claude/Gemini or included in exports,
-  `JARVIS_FACE_SAVE_UNKNOWN=0` to disable.
+- **Phase 2 (recognition + policy), shipped**: a daemon thread (`start_polling`, started from
+  `main()` only when enabled) opens the camera, grabs ONE frame, releases it - every
+  `JARVIS_FACE_POLL_S` (5s), or `JARVIS_FACE_SETTLED_POLL_S` (15s) once the owner has been steadily
+  in view with nobody else. Each look is ~1.5s (camera LED on) and ~0.4s CPU. Match = cosine to the
+  owner's stored embeddings >= `JARVIS_FACE_MATCH_THRESHOLD` (0.50, strict; live match was 0.83).
+  It never polls while paused, in Sleep Mode, with no one enrolled, or while an enrollment holds the
+  camera. State changes (not every poll) go to `face_events`: owner_arrived/left, unknown_seen/
+  left, camera_covered/uncovered/unreachable/restored, paused/resumed.
+- **Group-safe mode**: an unrecognized face seen on 2 consecutive polls holds *non-urgent spoken
+  proactive messages* (queued with `group_safe: True`; `flush_pending_notifications` leaves them
+  while the stranger is still there, and `_face_release_held_notifications` reads them out ~60s
+  after they leave). Urgent messages still speak (same rule as Sleep/Focus Mode). It **never**
+  refuses or alters a user command. Presence older than 90s is ignored (fail open).
+- **Prompt line** (`system_prompt_context_line`, volatile block only, and part of the reply-cache
+  key): who is present, and "keep replies discreet" when a stranger is in view. It says explicitly
+  that it is never a reason to skip a confirmation.
+- **Greeting**: "Good morning/afternoon/evening, <name>." on arrival, at most once per 30 min (cooldown
+  persisted in `face_settings`, so a restart doesn't re-greet). Skipped - not queued - during
+  Sleep/Focus Mode or with a stranger present.
+- **Unknown-face pictures (built as approved)**: face crop only (max 256px JPEG), AES-GCM
+  encrypted in `face_snapshots`, one per person per 10 min (dedupe by embedding, held in RAM only,
+  never persisted), only for confident detections (score >= 0.70), auto-delete after 14 days
+  (`JARVIS_FACE_SNAPSHOT_DAYS`), cap 200, `JARVIS_FACE_SAVE_UNKNOWN=0` disables. Never sent to a
+  model. API only so far: `list_snapshots`/`get_snapshot`/`delete_all_snapshots` (dashboard is Phase 3).
+- **Camera covered** = near-black AND flat frame (a dark room has detail, so it doesn't count);
+  one notice per cover. **Unreachable** = 5 consecutive failed opens (another app such as Zoom may
+  hold it); one notice per outage, then it backs off to one try a minute.
+- Tools added: `who_is_here`, `face_privacy` (pause/resume/status; pause works from any source since
+  it only increases privacy, resume is refused from phone and unattended tasks).
+- **Live-found bug (2026-09-19)**: a camera opened cold returns a washed-out first frame (brightness
+  ~100 vs ~58 settled) and no face was found in it - and every poll is a cold open, so polling would
+  have missed the owner every time. `_open_camera` now discards frames until brightness settles
+  (max 45 frames). Unit tests alone could not have caught this; keep a live check when touching it.
 - **Known gap**: deleting the only profile re-opens the bootstrap window - anyone at the PC could
   then enroll themselves as Admin. Harmless while face grants no power; revisit if that changes.
-- Status: Phase 0 (analysis) and Phase 1 (module, storage, enroll/list/delete, liveness, wiring,
-  21 tests) shipped. Verified live: real model + webcam frame through the real engine (detect,
-  embed, yaw). **Not verified live**: an actual `enroll_face` end to end by voice (it writes a
-  real biometric profile - do this yourself), the head-turn threshold. Phases 2-4 (recognition +
-  policy, dashboard Identity tab, hardening) not started.
+- Status: Phase 0 (analysis), Phase 1 (enroll/storage) and Phase 2 (recognition, presence, group-safe,
+  pictures, privacy switch; 46 tests) shipped. Verified live: real model + camera + the full poll
+  pipeline against a throwaway temp profile (match, greeting, presence line, no picture for the
+  owner). **Not verified live**: real `enroll_face` by voice, the head-turn threshold, an actual
+  stranger (group-safe/picture path is unit-tested only), greeting audio, covered-lens detection on
+  the real webcam. Phases 3-4 (dashboard Identity tab, hardening) not started.
 
 ### Cost reporting
 
@@ -579,4 +609,5 @@ row there each phase rather than only stating the total in chat.
 | 18 (spoken progress lines during multi-step tasks) | Sonnet 5 | ~10 min | ~$0.35–$0.50 |
 | 19 (face recognition Phase 0: analysis + risk review, no code) | Sonnet 5 | ~8 min | ~$0.25–$0.35 |
 | 20 (face recognition Phase 1: module, DPAPI storage, enroll/delete, liveness) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
-| **Running total (final)** | | **~488 min** | **~$18.55–$26.10** |
+| 21 (face recognition Phase 2: polling, recognition, group-safe mode, unknown pictures, privacy switch) | Sonnet 5 | ~45 min | ~$2.50–$3.40 |
+| **Running total (final)** | | **~533 min** | **~$21.05–$29.50** |

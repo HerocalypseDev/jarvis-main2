@@ -58,6 +58,9 @@ SAMPLE_GAP_S = 0.5
 FRAME_INTERVAL_S = 0.25
 ENROLL_TIMEOUT_S = 30.0
 SAMPLE_CONSISTENCY = 0.45  # lowest cosine between any two samples; different people sit near 0
+WARMUP_MIN_FRAMES = 5
+WARMUP_MAX_FRAMES = 45  # ~1.5s at 30fps: the most a poll will spend waiting for exposure
+WARMUP_STABLE_DELTA = 1.5  # brightness change between frames that counts as "settled"
 ALLOWED_SOURCES = frozenset({"voice", "text", "dashboard"})  # never "phone", never scheduled
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,39}$")
 
@@ -118,6 +121,11 @@ def _connect() -> sqlite3.Connection:
         "kind TEXT NOT NULL, confidence REAL, detail TEXT)"
     )
     conn.execute("CREATE TABLE IF NOT EXISTS face_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS face_snapshots ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, event_id INTEGER, "
+        "confidence REAL, jpeg BLOB NOT NULL)"
+    )
     return conn
 
 
@@ -138,16 +146,18 @@ def _now() -> str:
 
 
 def log_event(kind: str, profile_id: int | None = None, name: str | None = None,
-              confidence: float | None = None, detail: str | None = None) -> None:
-    """Audit row (never contains an image or an embedding). Best-effort: never raises."""
+              confidence: float | None = None, detail: str | None = None) -> int | None:
+    """Audit row (never contains an image or an embedding). Best-effort: never raises.
+    Returns the new row id (None if the write failed)."""
     try:
         with _db_lock, _db() as conn:
-            conn.execute(
+            return conn.execute(
                 "INSERT INTO face_events (ts, profile_id, name, kind, confidence, detail) VALUES (?,?,?,?,?,?)",
                 (_now(), profile_id, name, kind, confidence, detail),
-            )
+            ).lastrowid
     except Exception as e:
         log.warning("face event log failed: %s", e)
+        return None
 
 
 # --- key protection: random AES key wrapped by Windows DPAPI (tied to this Windows login) ----
@@ -360,8 +370,19 @@ def _open_camera(index: int):
     if not cap.isOpened():
         cap.release()
         raise CameraUnavailable(f"Couldn't open the camera (index {index}); another app may be using it.")
-    for _ in range(5):  # discard warm-up frames while auto-exposure settles
-        cap.read()
+    # A camera opened cold hands back washed-out frames while auto-exposure settles (seen live:
+    # brightness ~100 then ~58, and no face found in the first frame). Discard frames until the
+    # brightness stops moving, so every poll - each one a cold open - sees a usable image.
+    last, stable = None, 0
+    for i in range(WARMUP_MAX_FRAMES):
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            continue
+        mean = float(frame.mean())
+        stable = stable + 1 if last is not None and abs(mean - last) < WARMUP_STABLE_DELTA else 0
+        last = mean
+        if i >= WARMUP_MIN_FRAMES and stable >= 3:
+            break
     return cap
 
 
@@ -499,6 +520,7 @@ def _run_enrollment(name: str, engine, cap) -> str:
             (name, "admin", ts, ts, len(samples), _pack_embeddings(stored)),
         )
         pid = cur.lastrowid
+    invalidate_profile_cache()
     log_event("enroll", profile_id=pid, name=name, confidence=float(swing), detail="consent given by explicit enroll command")
     return f"Done, {name}. I've enrolled your face. It's stored only on this computer, encrypted, and you can delete it any time."
 
@@ -520,6 +542,7 @@ def delete(name: str, confirm: bool, source: str | None) -> str:
         return f"That will erase {row[1]}'s face profile. Ask the user to confirm, then call again with confirm set."
     with _db_lock, _db() as conn:
         conn.execute("DELETE FROM face_profiles WHERE id=?", (row[0],))
+    invalidate_profile_cache()
     log_event("delete", profile_id=row[0], name=row[1], detail="profile and embeddings erased")
     return f"Deleted {row[1]}'s face profile. Nothing biometric is left on this computer."
 
@@ -532,3 +555,527 @@ def describe_profiles() -> str:
         return "No faces are enrolled."
     p = profiles[0]
     return f"{p['name']} is enrolled as {p['role']}, since {p['created_at'][:10]}, with {p['n_samples']} samples."
+
+
+# ===============================================================================================
+# Phase 2: recognition, presence, group-safe mode, unknown-face pictures
+# ===============================================================================================
+COVER_MEAN, COVER_STD = 6.0, 3.0  # a covered lens is near-black AND flat; a dark room isn't flat
+UNKNOWN_CONFIRM_POLLS = 2  # an unknown face must be seen on 2 polls in a row (drops one-frame noise)
+UNKNOWN_CLEAR_S = 60.0
+STATE_STALE_S = 90.0  # presence older than this is not trusted (thread stalled / paused / asleep)
+GREETING_COOLDOWN_S = 1800.0
+CAMERA_FAILS_BEFORE_NOTICE = 5
+FAIL_BACKOFF_S = 60.0
+SNAPSHOT_DEDUPE_S = 600.0
+SNAPSHOT_MAX = 200
+SNAPSHOT_MAX_SIDE = 256
+
+
+def match_threshold() -> float:
+    """Cosine similarity needed to call a face "the owner". Strict on purpose: a false unknown
+    is only a quiet-mode blip, a false match is the worse error. Tune from the confidences in
+    face_events (unknown rows record how close the best match was)."""
+    return _float_env("JARVIS_FACE_MATCH_THRESHOLD", 0.50)
+
+
+def poll_interval() -> float:
+    return max(2.0, _float_env("JARVIS_FACE_POLL_S", 5.0))
+
+
+def settled_poll_interval() -> float:
+    """Once the owner has been steadily in view with nobody else, look less often (each look is
+    ~0.4s of CPU and lights the camera LED), so the steady state is even lower duty."""
+    return max(poll_interval(), _float_env("JARVIS_FACE_SETTLED_POLL_S", 15.0))
+
+
+def owner_absent_after_s() -> float:
+    return _float_env("JARVIS_FACE_ABSENT_S", 120.0)
+
+
+def save_unknown_enabled() -> bool:
+    return os.environ.get("JARVIS_FACE_SAVE_UNKNOWN", "1").strip().lower() in ("1", "true", "yes")
+
+
+def snapshot_keep_days() -> float:
+    return _float_env("JARVIS_FACE_SNAPSHOT_DAYS", 14.0)
+
+
+# --- matching --------------------------------------------------------------------------------
+_profile_cache: list[tuple[dict, np.ndarray]] | None = None
+_profile_cache_lock = threading.Lock()
+
+
+def invalidate_profile_cache() -> None:
+    global _profile_cache
+    with _profile_cache_lock:
+        _profile_cache = None
+
+
+def _profiles_for_matching() -> list[tuple[dict, np.ndarray]]:
+    global _profile_cache
+    with _profile_cache_lock:
+        if _profile_cache is None:
+            loaded = []
+            for prof in list_profiles():
+                emb = load_embeddings(prof["id"])
+                if emb is not None and len(emb):
+                    loaded.append((prof, np.stack([_unit(e) for e in emb])))
+            _profile_cache = loaded
+        return _profile_cache
+
+
+def identify(embedding: np.ndarray) -> tuple[dict | None, float]:
+    """(profile, score) if the embedding matches an enrolled face at or above the threshold,
+    else (None, best_score_seen)."""
+    e = _unit(np.asarray(embedding, dtype="float32"))
+    best_prof, best = None, -1.0
+    for prof, embs in _profiles_for_matching():
+        score = float((embs @ e).max())
+        if score > best:
+            best_prof, best = prof, score
+    if best_prof is not None and best >= match_threshold():
+        return best_prof, best
+    return None, best
+
+
+# --- presence state --------------------------------------------------------------------------
+@dataclass
+class _Presence:
+    owner_present: bool = False
+    owner_name: str | None = None
+    owner_conf: float | None = None
+    owner_last_seen: float = 0.0
+    unknown_present: bool = False
+    unknown_streak: int = 0
+    unknown_last_seen: float = 0.0
+    covered: bool = False
+    camera_fails: int = 0
+    camera_alert_sent: bool = False
+    updated_at: float = 0.0
+
+
+_st = _Presence()
+_st_lock = threading.Lock()
+_recent_unknowns: list[list] = []  # [embedding, last_seen]; RAM only, never persisted
+
+
+def _noop(*a, **k):
+    return None
+
+
+_hooks = {"greet": _noop, "notify": _noop, "quiet": lambda: False, "release": _noop}
+
+
+def _reset_transient() -> None:
+    """Forget live presence (feature paused / asleep / nothing enrolled): stale "someone is
+    there" state must never keep group-safe mode on with nobody looking."""
+    with _st_lock:
+        _st.owner_present = False
+        _st.unknown_present = False
+        _st.unknown_streak = 0
+        _st.covered = False
+        _st.updated_at = 0.0
+    _recent_unknowns.clear()
+
+
+def state_snapshot() -> dict:
+    with _st_lock:
+        return {
+            "owner_present": _st.owner_present,
+            "owner_name": _st.owner_name,
+            "owner_confidence": _st.owner_conf,
+            "unknown_present": _st.unknown_present,
+            "camera_covered": _st.covered,
+            "camera_unreachable": _st.camera_alert_sent,
+            "updated_at": _st.updated_at,
+        }
+
+
+def _fresh(now: float) -> bool:
+    return _st.updated_at > 0 and (now - _st.updated_at) <= STATE_STALE_S
+
+
+def group_safe(now: float | None = None) -> bool:
+    """True while an unrecognized person is in view. Only ever used to hold *spoken proactive*
+    messages; it never refuses or alters a command, and has no link to the confirmation gate."""
+    if not enabled():
+        return False
+    now = time.time() if now is None else now
+    with _st_lock:
+        return _st.unknown_present and _fresh(now)
+
+
+def group_safe_suppress(urgent: bool) -> bool:
+    return (not urgent) and group_safe()
+
+
+def system_prompt_context_line() -> str:
+    """One volatile-block line so the agent knows who is present. Personalization only: it says
+    nothing about trust and must never be read as a reason to skip a confirmation."""
+    if not enabled():
+        return ""
+    with _st_lock:
+        if not _fresh(time.time()):
+            return ""
+        owner = _st.owner_name if _st.owner_present else None
+        unknown, covered = _st.unknown_present, _st.covered
+    if covered:
+        return " Presence: the camera is covered, so it is unknown who is at the computer."
+    bits = []
+    if owner:
+        bits.append(f"{owner} is at the computer (recognized by face)")
+    elif not unknown:
+        bits.append("nobody is in view of the camera")
+    if unknown:
+        bits.append(
+            "an unrecognized person is in view, so keep spoken replies discreet: don't read out private "
+            "details such as email or message contents unless asked, and don't volunteer personal information"
+        )
+    return (
+        " Presence (local camera; personalization only, never a reason to skip a confirmation): "
+        + "; ".join(bits) + "."
+    )
+
+
+# --- one look at the camera ------------------------------------------------------------------
+def _capture_and_analyze():
+    """Open the camera, grab one frame, release it. Returns (observations, mean, std, frame).
+    A covered/black frame skips the (expensive) analysis. Raises CameraUnavailable."""
+    engine = _get_engine()
+    cap = _open_camera(camera_index())
+    try:
+        ok, frame = cap.read()
+    finally:
+        cap.release()
+    if not ok or frame is None:
+        raise CameraUnavailable("The camera gave no image.")
+    mean, std = float(frame.mean()), float(frame.std())
+    if mean < COVER_MEAN and std < COVER_STD:
+        return [], mean, std, frame
+    return engine.analyze(frame), mean, std, frame
+
+
+def _crop_jpeg(frame, bbox) -> bytes:
+    """JPEG of just the face (with a margin) - never the surrounding room, screen or papers."""
+    import cv2
+
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = bbox
+    mx, my = (x2 - x1) * 0.25, (y2 - y1) * 0.25
+    x1, y1, x2, y2 = max(0, int(x1 - mx)), max(0, int(y1 - my)), min(w, int(x2 + mx)), min(h, int(y2 + my))
+    crop = frame[y1:y2, x1:x2]
+    side = max(crop.shape[:2])
+    if side > SNAPSHOT_MAX_SIDE:
+        scale = SNAPSHOT_MAX_SIDE / side
+        crop = cv2.resize(crop, (max(1, int(crop.shape[1] * scale)), max(1, int(crop.shape[0] * scale))))
+    ok, buf = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    if not ok:
+        raise RuntimeError("could not encode face crop")
+    return buf.tobytes()
+
+
+# --- unknown-face pictures (encrypted, deduplicated, expiring) -------------------------------
+_SNAP_AAD = b"face_snapshots.jpeg"
+
+
+def prune_snapshots(now: datetime | None = None) -> None:
+    from datetime import timedelta
+
+    cutoff = ((now or datetime.now()) - timedelta(days=snapshot_keep_days())).isoformat(timespec="seconds")
+    with _db_lock, _db() as conn:
+        conn.execute("DELETE FROM face_snapshots WHERE ts < ?", (cutoff,))
+        conn.execute(
+            "DELETE FROM face_snapshots WHERE id NOT IN (SELECT id FROM face_snapshots ORDER BY id DESC LIMIT ?)",
+            (SNAPSHOT_MAX,),
+        )
+
+
+def _save_snapshot(jpeg: bytes, confidence: float, event_id: int | None) -> None:
+    with _db_lock, _db() as conn:
+        conn.execute(
+            "INSERT INTO face_snapshots (ts, event_id, confidence, jpeg) VALUES (?,?,?,?)",
+            (_now(), event_id, confidence, _encrypt(jpeg, _SNAP_AAD)),
+        )
+    prune_snapshots()
+
+
+def list_snapshots(limit: int = 50) -> list[dict]:
+    with _db_lock, _db() as conn:
+        rows = conn.execute(
+            "SELECT id, ts, event_id, confidence FROM face_snapshots ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [{"id": r[0], "ts": r[1], "event_id": r[2], "confidence": r[3]} for r in rows]
+
+
+def get_snapshot(snapshot_id: int) -> bytes | None:
+    with _db_lock, _db() as conn:
+        row = conn.execute("SELECT jpeg FROM face_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+    return _decrypt(row[0], _SNAP_AAD) if row else None
+
+
+def delete_all_snapshots() -> int:
+    with _db_lock, _db() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM face_snapshots").fetchone()[0]
+        conn.execute("DELETE FROM face_snapshots")
+    if n:
+        log_event("snapshots_deleted", detail=f"{n} unknown-face pictures erased")
+    return n
+
+
+def _already_seen_recently(embedding: np.ndarray, now: float) -> bool:
+    """Same unknown person as one photographed in the last 10 minutes? Kept in RAM only (a
+    stranger's embedding is never written to disk); a continuous stay counts as one visit."""
+    _recent_unknowns[:] = [r for r in _recent_unknowns if now - r[1] <= SNAPSHOT_DEDUPE_S]
+    e = _unit(embedding)
+    for rec in _recent_unknowns:
+        if float(np.dot(_unit(rec[0]), e)) >= match_threshold():
+            rec[1] = now
+            return True
+    _recent_unknowns.append([e, now])
+    return False
+
+
+# --- the poll ---------------------------------------------------------------------------------
+def _greeting_text(name: str) -> str:
+    h = datetime.now().hour
+    return f"Good {'morning' if h < 12 else 'afternoon' if h < 18 else 'evening'}, {name}."
+
+
+def _camera_failed(err: Exception) -> None:
+    with _st_lock:
+        _st.camera_fails += 1
+        alert = _st.camera_fails >= CAMERA_FAILS_BEFORE_NOTICE and not _st.camera_alert_sent
+        if alert:
+            _st.camera_alert_sent = True
+    if alert:
+        log_event("camera_unreachable", detail=str(err)[:200])
+        _hooks["notify"]("I can't reach the camera right now; another app may be using it, or it's unplugged.")
+
+
+def _camera_ok() -> None:
+    with _st_lock:
+        restored = _st.camera_alert_sent
+        _st.camera_fails = 0
+        _st.camera_alert_sent = False
+    if restored:
+        log_event("camera_restored")
+
+
+def poll_once(now: float | None = None) -> str:
+    """One recognition cycle. Returns a short status word (used by tests and who_is_here)."""
+    now = time.time() if now is None else now
+    if not enabled() or is_paused():
+        _reset_transient()
+        return "off"
+    if _hooks["quiet"]():  # Sleep Mode: no camera, no polling
+        _reset_transient()
+        return "quiet"
+    profiles = list_profiles()
+    if not profiles:
+        return "no-profile"
+    if not _camera_lock.acquire(blocking=False):  # an enrollment owns the camera right now
+        return "busy"
+    try:
+        try:
+            obs, mean, std, frame = _capture_and_analyze()
+        except CameraUnavailable as e:
+            _camera_failed(e)
+            return "camera-error"
+    finally:
+        _camera_lock.release()
+    _camera_ok()
+
+    with _st_lock:
+        _st.updated_at = now
+    owner = profiles[0]
+
+    covered_now = mean < COVER_MEAN and std < COVER_STD
+    with _st_lock:
+        was_covered, _st.covered = _st.covered, covered_now
+    if covered_now:
+        if not was_covered:
+            log_event("camera_covered", detail=f"mean brightness {mean:.1f}")
+            _hooks["notify"](f"{owner['name']}, the camera looks covered, so I can't see the room.")
+        return "covered"
+    if was_covered:
+        log_event("camera_uncovered")
+
+    known, unknown = [], []
+    for o in obs:
+        if o.det_score < MIN_DET_SCORE:
+            continue
+        prof, score = identify(o.embedding)
+        (known if prof else unknown).append((o, prof, score))
+
+    # --- owner
+    arrived = left = False
+    if known:
+        _o, prof, score = max(known, key=lambda k: k[2])
+        with _st_lock:
+            _st.owner_last_seen, _st.owner_conf, _st.owner_name = now, score, prof["name"]
+            arrived, _st.owner_present = (not _st.owner_present), True
+        if arrived:
+            log_event("owner_arrived", prof["id"], prof["name"], score)
+            _maybe_greet(prof["name"], now)
+    else:
+        with _st_lock:
+            if _st.owner_present and now - _st.owner_last_seen > owner_absent_after_s():
+                _st.owner_present, left = False, True
+        if left:
+            log_event("owner_left", owner["id"], owner["name"])
+
+    # --- unknown people
+    released = False
+    if unknown:
+        with _st_lock:
+            _st.unknown_streak += 1
+            _st.unknown_last_seen = now
+            declared = _st.unknown_streak >= UNKNOWN_CONFIRM_POLLS
+            newly = declared and not _st.unknown_present
+            if declared:
+                _st.unknown_present = True
+        if declared:
+            for o, _p, score in unknown:
+                event_id = None
+                if newly:
+                    event_id = log_event(
+                        "unknown_seen", confidence=score,
+                        detail=f"best match {score:.2f} < threshold {match_threshold():.2f}",
+                    )
+                    newly = False
+                _maybe_snapshot(frame, o, score, event_id, now)
+    else:
+        with _st_lock:
+            _st.unknown_streak = 0
+            if _st.unknown_present and now - _st.unknown_last_seen > UNKNOWN_CLEAR_S:
+                _st.unknown_present, released = False, True
+        if released:
+            log_event("unknown_left")
+            _hooks["release"]()
+    return "ok"
+
+
+def _maybe_greet(name: str, now: float) -> None:
+    try:
+        last = float(get_setting("last_greeting", "0") or 0)
+    except ValueError:
+        last = 0.0
+    if now - last < GREETING_COOLDOWN_S:
+        return
+    set_setting("last_greeting", str(now))
+    try:
+        _hooks["greet"](_greeting_text(name))
+    except Exception as e:
+        log.warning("face greeting failed: %s", e)
+
+
+def _maybe_snapshot(frame, obs: Observation, score: float, event_id: int | None, now: float) -> None:
+    """Picture of an unknown face: only if enabled, only a real face (high detector score), and
+    only once per person per visit."""
+    if not save_unknown_enabled() or obs.det_score < SAMPLE_DET_SCORE:
+        return
+    if _already_seen_recently(obs.embedding, now):
+        return
+    try:
+        _save_snapshot(_crop_jpeg(frame, obs.bbox), score, event_id)
+    except Exception as e:
+        log.warning("Could not save unknown-face picture: %s", e)
+
+
+# --- polling thread ---------------------------------------------------------------------------
+_poll_thread: threading.Thread | None = None
+_poll_stop = threading.Event()
+
+
+def start_polling(greet_fn=None, notify_fn=None, quiet_fn=None, release_fn=None) -> bool:
+    """Start the low-duty background poll (no-op unless JARVIS_FACE_ENABLED=1). The callbacks
+    keep this module free of any import of jarvis.py: greet_fn speaks the greeting, notify_fn
+    delivers a proactive notice, quiet_fn says Sleep Mode is on, release_fn runs when an
+    unrecognized person leaves."""
+    global _poll_thread
+    if not enabled():
+        return False
+    _hooks.update(
+        greet=greet_fn or _noop, notify=notify_fn or _noop,
+        quiet=quiet_fn or (lambda: False), release=release_fn or _noop,
+    )
+    if _poll_thread and _poll_thread.is_alive():
+        return True
+    _poll_stop.clear()
+
+    def loop() -> None:
+        errors = 0
+        while not _poll_stop.is_set():
+            try:
+                poll_once()
+                errors = 0
+            except Exception as e:
+                errors += 1
+                log.warning("Face poll failed (%d): %s", errors, e)
+                if errors >= 3:
+                    log.error("Face polling stopped after repeated failures: %s", e)
+                    return
+            with _st_lock:
+                fails = _st.camera_fails
+                settled = _st.owner_present and not _st.unknown_present
+            wait = FAIL_BACKOFF_S if fails >= CAMERA_FAILS_BEFORE_NOTICE else (
+                settled_poll_interval() if settled else poll_interval())
+            _poll_stop.wait(wait)
+
+    _poll_thread = threading.Thread(target=loop, daemon=True, name="face-poll")
+    _poll_thread.start()
+    log.info("Face recognition polling started (every %ds, %ds once settled).", poll_interval(), settled_poll_interval())
+    return True
+
+
+def stop_polling() -> None:
+    _poll_stop.set()
+
+
+# --- voice-facing helpers ---------------------------------------------------------------------
+def describe_presence(refresh: bool = True) -> str:
+    if not enabled():
+        return "Face recognition is switched off."
+    if is_paused():
+        return "Face recognition is paused, so I'm not looking through the camera."
+    if not list_profiles():
+        return "No one is enrolled yet, so I can't recognize anyone."
+    if refresh:
+        with _st_lock:
+            fresh = _fresh(time.time())
+        if not fresh:
+            status = poll_once()
+            if status == "quiet":
+                return "Sleep Mode is on, so I'm not watching the camera."
+            if status == "camera-error":
+                return "I can't reach the camera right now."
+    snap = state_snapshot()
+    if snap["camera_covered"]:
+        return "The camera is covered, so I can't tell who's there."
+    parts = []
+    if snap["owner_present"]:
+        conf = snap["owner_confidence"]
+        parts.append(f"{snap['owner_name']} is at the computer" + (f", with {int(conf * 100)} percent confidence" if conf else ""))
+    if snap["unknown_present"]:
+        parts.append("there's also someone I don't recognize")
+    if not parts:
+        return "I can't see anyone right now."
+    text = ", and ".join(parts) + "."
+    return text[0].upper() + text[1:]
+
+
+def set_paused(paused: bool, source: str | None) -> str:
+    """Camera privacy switch. Pausing is always allowed (it can only make things more private);
+    resuming turns a camera on, so it is refused from phone and unattended tasks."""
+    if not paused:
+        why = refuse_reason(source)
+        if why:
+            return why.replace("enroll or delete faces", "turn the camera back on")
+    was = is_paused()
+    set_setting("paused", "1" if paused else "0")
+    if paused:
+        _reset_transient()
+    if was != paused:
+        log_event("paused" if paused else "resumed", detail=f"source={source}")
+    return "Face recognition paused. The camera stays off." if paused else "Face recognition resumed."

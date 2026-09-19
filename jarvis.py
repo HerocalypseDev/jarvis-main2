@@ -2050,6 +2050,26 @@ FACE_TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "who_is_here",
+        "description": (
+            "Say who the camera currently sees: the recognized owner, an unrecognized person, "
+            "nobody, or a covered/unreachable camera. Read-only; may take one fresh look."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "face_privacy",
+        "description": (
+            "Camera privacy switch for face recognition. 'pause' stops all camera use immediately; "
+            "'resume' turns it back on (refused from phone); 'status' says whether it is paused."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["pause", "resume", "status"]}},
+            "required": ["action"],
+        },
+    },
+    {
         "name": "delete_face",
         "description": (
             "Permanently erase an enrolled face profile and its embeddings. Ask the user to say "
@@ -2939,6 +2959,16 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Queued non-urgent notification (Sleep Mode active): %r", text)
         return
+    if face.group_safe_suppress(urgent):
+        # An unrecognized person is in view: hold spoken proactive messages (they may carry email
+        # or message content) until they leave. Commands the user gives are unaffected.
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds"), "group_safe": True}
+            )
+            _save_session_context_locked()
+        log.info("Queued non-urgent notification (unrecognized person in view): %r", text)
+        return
     if urgent or bypass_busy_gate or not (user_is_actively_working() and _is_preferred_work_hours()):
         _speak_shaped(text)
         return
@@ -2958,14 +2988,34 @@ def flush_pending_notifications() -> None:
         everything = _session_context.get("pending_notifications") or []
         # Items queued by Sleep Mode wait for the wake-up digest (_sleep_wake_digest) instead of
         # being read out one by one — even if the user talks to Jarvis while still in Sleep Mode.
-        pending = [i for i in everything if not i.get("during_sleep")]
-        _session_context["pending_notifications"] = [i for i in everything if i.get("during_sleep")]
+        keep_held = face.group_safe()
+        pending = [
+            i for i in everything
+            if not i.get("during_sleep") and not (keep_held and i.get("group_safe"))
+        ]
+        _session_context["pending_notifications"] = [
+            i for i in everything if i.get("during_sleep") or (keep_held and i.get("group_safe"))
+        ]
         _save_session_context_locked()
     for item in pending:
         try:
             _speak_shaped(item.get("text", ""))
         except Exception as e:
             log.warning("Could not speak queued notification: %s", e)
+
+
+def _face_release_held_notifications() -> None:
+    """The unrecognized person left: read out what was held back for them."""
+    flush_pending_notifications()
+
+
+def _face_greet(text: str) -> None:
+    """Spoken greeting when the owner's face appears. Skipped (not queued: a stale "good morning"
+    delivered hours later is worse than none) while Sleep/Focus Mode or an unrecognized person
+    would make speech inappropriate."""
+    if sleep_mode.is_active() or focus_mode.should_suppress(False) or face.group_safe():
+        return
+    speak_text(text)
 
 
 USER_NAME = (os.environ.get("JARVIS_USER_NAME") or "Hero").strip() or "Hero"
@@ -4275,6 +4325,7 @@ def build_system_blocks(tone_line: str = "") -> list[dict]:
         + tone_line
         + workflow.get_context_summary()
         + sleep_mode.system_prompt_context_line()
+        + face.system_prompt_context_line()
     )
     stable_block: dict = {"type": "text", "text": stable}
     if cache.enabled("prompt"):
@@ -6408,6 +6459,16 @@ def _execute_tool_impl(
             result = face.enroll(str(inp.get("name") or ""), _current_command_source(), speak_text)
         elif tool_name == "list_faces":
             result = face.describe_profiles()
+        elif tool_name == "who_is_here":
+            result = face.describe_presence()
+        elif tool_name == "face_privacy":
+            act = str(inp.get("action") or "")
+            if act == "pause":
+                result = face.set_paused(True, _current_command_source())
+            elif act == "resume":
+                result = face.set_paused(False, _current_command_source())
+            else:
+                result = "Face recognition is paused." if face.is_paused() else "Face recognition is active."
         elif tool_name == "delete_face":
             result = face.delete(
                 str(inp.get("name") or ""), bool(inp.get("confirm")), _current_command_source()
@@ -6732,7 +6793,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     reply_key = None
     if cache.enabled("reply") and cache.is_self_contained(transcript):
         reply_key = cache.stable_hash(
-            cache.normalize_text(transcript), sleep_mode.system_prompt_context_line()
+            cache.normalize_text(transcript),
+            sleep_mode.system_prompt_context_line() + face.system_prompt_context_line(),
         )
         cached_reply = _reply_cache.get(reply_key)
         cache.record("reply", cached_reply is not cache.MISS, repr(transcript[:40]))
@@ -7338,6 +7400,13 @@ def main() -> int:
     _preload_mcp_async()
     start_prompt_cache_warmup()
     _start_scheduler()
+    if face.enabled():
+        face.start_polling(
+            greet_fn=_face_greet,
+            notify_fn=queue_or_deliver_notification,
+            quiet_fn=sleep_mode.is_active,
+            release_fn=_face_release_held_notifications,
+        )
     _start_health_monitor()
     filewatcher.start_watching(
         notifier=lambda text, urgent: queue_or_deliver_notification(text, urgent=urgent)
