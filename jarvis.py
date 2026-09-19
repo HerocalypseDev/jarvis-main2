@@ -43,6 +43,11 @@ from dotenv import load_dotenv
 import numpy as np
 import sounddevice as sd
 
+# Must run before the jarvis_* module imports below: several read their settings from the
+# environment at import time (e.g. JARVIS_SLEEP_GOAL_HOURS), so a .env value was silently ignored
+# when this happened after them.
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 # Modular improvements — each is self-contained (owns its own DB tables/connection,
 # no import-time dependency back on this module) and exposed here as extra agent tools.
 import jarvis_workflow as workflow

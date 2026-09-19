@@ -167,3 +167,28 @@ def test_urgent_during_sleep_is_spoken_live_and_recorded_as_important(jarvis, mo
     assert spoken == ["Smoke alarm!"]
     item = jarvis._session_context["pending_notifications"][0]
     assert item["important"] is True and item["during_sleep"] is True
+
+
+def test_dotenv_is_loaded_before_module_imports():
+    """A .env setting read at import time (sleep goal) must reach the modules jarvis.py imports."""
+    import subprocess, sys, tempfile, textwrap
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    code = textwrap.dedent(f"""
+        import sys; sys.path.insert(0, r"{root}")
+        import os
+        os.environ.pop("JARVIS_SLEEP_GOAL_HOURS", None)
+        import jarvis, jarvis_sleep_mode
+        print(jarvis_sleep_mode.SLEEP_GOAL_HOURS)
+    """)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+                         env={**__import__("os").environ, "JARVIS_MEMORY_DB_PATH": tempfile.mkdtemp() + "/t.db"})
+    expected = None
+    for line in (root / ".env").read_text(encoding="utf-8").splitlines():
+        if line.startswith("JARVIS_SLEEP_GOAL_HOURS="):
+            expected = float(line.split("=", 1)[1])
+    if expected is None:
+        import pytest
+        pytest.skip("no JARVIS_SLEEP_GOAL_HOURS in .env on this machine")
+    assert out.stdout.strip().splitlines()[-1] == str(expected), out.stderr[-500:]
