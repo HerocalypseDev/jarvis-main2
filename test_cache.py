@@ -198,7 +198,7 @@ def test_phone_command_gets_no_spoken_ack(jarvis, monkeypatch):
     spoken, sunk = [], []
     monkeypatch.setattr(jarvis, "speak_text", lambda t, *a, **k: spoken.append(t))
     monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
-    monkeypatch.setattr(jarvis, "run_agent_loop", lambda transcript, tone=None: "done")
+    monkeypatch.setattr(jarvis, "run_agent_loop", lambda transcript, tone=None, narrate=False: "done")
     jarvis.handle_text_command("hello", source="telegram", reply_sink=sunk.append)
     assert "Message received." not in spoken
     assert sunk == ["done"]
@@ -627,3 +627,47 @@ def test_bypass_busy_gate_still_respects_sleep_mode(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: True)
     jarvis.queue_or_deliver_notification("Reminder: x", bypass_busy_gate=True)
     assert spoken == []
+
+
+# --- mid-task narration ----------------------------------------------------------------------
+def _narrating_claude(monkeypatch, j):
+    calls = {"n": 0}
+
+    def fake(body, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "stop_reason": "tool_use",
+                "content": [
+                    {"type": "text", "text": "Sure, let me track that down."},
+                    {"type": "tool_use", "id": "t1", "name": "system_status", "input": {}},
+                ],
+                "usage": {},
+            }
+        return {"stop_reason": "end_turn", "content": [{"type": "text", "text": "All done."}], "usage": {}}
+
+    monkeypatch.setattr(j, "_claude_request", fake)
+
+
+def test_narrate_speaks_text_beside_a_tool_call_and_keeps_it_out_of_the_reply(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "ok")
+    spoken = []
+    monkeypatch.setattr(jarvis, "speak_text", spoken.append)
+    _narrating_claude(monkeypatch, jarvis)
+    reply = jarvis.run_agent_loop("fix the bugs in my project", narrate=True)
+    assert spoken == ["Sure, let me track that down."]
+    assert reply == "All done."  # not spoken twice
+
+
+def test_narrate_off_keeps_old_behaviour(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "ok")
+    spoken = []
+    monkeypatch.setattr(jarvis, "speak_text", spoken.append)
+    _narrating_claude(monkeypatch, jarvis)
+    reply = jarvis.run_agent_loop("fix the bugs in my project")
+    assert spoken == [] and reply == "Sure, let me track that down. All done."
+
+
+def test_prompt_asks_for_plain_english_progress_lines(jarvis):
+    text = " ".join(b.get("text", "") for b in jarvis.build_system_blocks(""))
+    assert "never name tools" in text

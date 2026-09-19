@@ -792,7 +792,17 @@ image's direct URL, then call download_image with it — don't use run_shell or 
 Say where it was saved, as a folder name rather than a full path.
 
 Call tools as needed — you can call several in a row, look at each result, and decide what to do \
-next, before giving your final spoken reply. When you're done, reply with a short (1-4 sentence) \
+next, before giving your final spoken reply. \
+Talk like a person, not a log: before you start a task that will take several steps (searching for \
+a folder, fixing bugs, researching, delegating to the coding agent), write ONE short, natural \
+sentence in the same turn as your first tool call, e.g. "Sure, let me track that down." or \
+"On it, give me a moment to look through that." If a later step takes a new direction or turns \
+up something notable, one more short line is fine ("Found it, now checking what's wrong."). \
+Keep these lines conversational and in plain, simple English, the way you'd talk to a friend \
+while working: never name tools, functions, commands, file paths or IDs, and never read out what \
+you're technically doing ("calling search_files with pattern..."). Vary the wording, skip it for \
+quick single-step requests, and don't repeat it every step. \
+When you're done, reply with a short (1-4 sentence) \
 spoken summary of the outcome; don't narrate tool mechanics. Always end your turn with that \
 spoken reply — never end a turn with only a tool call and no text, even when the tool result \
 already says everything that needs saying; briefly restate it instead of leaving Jarvis silent.
@@ -6646,14 +6656,22 @@ def _execute_tool_impl(
     return result
 
 
-def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
+MAX_NARRATED_LINES = 3  # spoken "on it" lines per command, so a long task isn't chatty
+
+
+def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = False) -> str:
     """Real observe-act-observe loop: Claude picks tools, sees each result, and decides
     what (if anything) to do next, up to MAX_AGENT_ITERATIONS round trips, before giving a
     final spoken reply. Replaces the old single forced perform_actions tool call.
 
     tone, if given (see jarvis_voice_tone.analyze_tone), is folded into the system prompt
     for every round trip of this call so the reply's tone/approach can adapt — e.g. terser
-    when the user sounds frustrated, more explanatory when curious."""
+    when the user sounds frustrated, more explanatory when curious.
+
+    narrate: when True (the caller is going to speak the reply out loud), any text Claude writes
+    *alongside* a tool call ("Let me find that folder.") is spoken right away, before the tools
+    run, so a long multi-tool task isn't silent until the end. Narrated text is left out of the
+    returned reply so it isn't spoken a second time."""
     if not _llm_configured():
         log.warning("No API key for the active brain (%s) — set it in .env.", _llm_provider())
         return ""
@@ -6674,6 +6692,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
     messages: list[dict] = _history_snapshot() + [{"role": "user", "content": transcript}]
     reply_parts: list[str] = []
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
+    narrated = 0
     used_tool_names: list[str] = []
     any_tool_failed = False
     tools = AGENT_TOOLS + get_mcp_tool_schemas()
@@ -6704,12 +6723,22 @@ def run_agent_loop(transcript: str, tone: dict | None = None) -> str:
         content = data.get("content", [])
         messages.append({"role": "assistant", "content": content})
 
-        reply_parts.extend(
-            b.get("text", "") for b in content if b.get("type") == "text" and b.get("text")
-        )
-
+        texts = [b.get("text", "") for b in content if b.get("type") == "text" and b.get("text")]
         tool_uses = [b for b in content if b.get("type") == "tool_use"]
-        if not tool_uses or data.get("stop_reason") != "tool_use":
+        going_on = bool(tool_uses) and data.get("stop_reason") == "tool_use"
+
+        if narrate and going_on and narrated < MAX_NARRATED_LINES and " ".join(texts).strip():
+            line = " ".join(t.strip() for t in texts if t.strip())
+            narrated += 1
+            log.info("Narrating mid-task: %r", line[:120])
+            try:
+                speak_text(_collapse_paths_for_speech(line))
+            except Exception as e:
+                log.warning("Mid-task narration failed: %s", e)
+        else:
+            reply_parts.extend(texts)
+
+        if not going_on:
             break
 
         # Every tool_use block above MUST get a matching tool_result, or Anthropic's API
@@ -6806,7 +6835,10 @@ def handle_text_command(
         {"type": "session_start", "data": {"id": session_id, "source": source, "transcript": transcript}}
     )
     try:
-        reply = run_agent_loop(transcript, tone=tone)
+        # Narrate mid-task only where the reply will also be spoken here (not phone-only).
+        reply = run_agent_loop(
+            transcript, tone=tone, narrate=(reply_sink is None or source == "dashboard")
+        )
     except Exception:
         dashboard.end_session(session_id, "failed", None)
         dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
