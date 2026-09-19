@@ -212,3 +212,32 @@ def test_tick_runs_every_30_minutes_only_while_asleep(jarvis, monkeypatch):
     tick(62); assert len(runs) == 2
     monkeypatch.setattr(jarvis.sleep_mode, "started_at", lambda: None)
     tick(200); assert len(runs) == 2 and jarvis._sleep_mail_last_check is None
+
+
+# --- test mode + own-message guard -----------------------------------------------------------
+def test_test_mode_answers_only_the_test_address_even_if_it_is_own(db):
+    g = FakeGmail(_search(("a", "hello", "Me <me@x.com>"), ("b", "hey", "sis@x.com"), ("c", "promo", "p@shop.com")))
+    rec = []
+    stats = sm.run_cycle(mcp=g, claude=lambda s, u, n: "hi there", record=rec.append,
+                         since_iso=STARTED, sleep_started_at=STARTED, sleep=lambda s: None,
+                         test_address="me@x.com")
+    assert stats["family_replied"] == 1 and [m["to"] for m in g.sent] == [["me@x.com"]]
+    conn = sm._connect()
+    assert conn.execute("SELECT message_id FROM sleep_mail_handled").fetchall() == [("a",)]  # others untouched
+    conn.close()
+
+
+def test_own_signature_is_skipped_but_quoted_signature_is_not(db):
+    sig = sm._sig_line()
+    assert sm._is_our_own_message(f"Hi\n\n{sig}")
+    assert not sm._is_our_own_message(f"Thanks!\n\nOn Sat, Jarvis wrote:\n> Hi\n> {sig}")
+
+    class G(FakeGmail):
+        def __call__(self, tool, args):
+            if tool == "read_email":
+                return f"Thread ID: T1\nSubject: s\nFrom: f\n\nHi there\n\n{sig}"
+            return super().__call__(tool, args)
+
+    g = G(_search(("m1", "Re: Dinner", "sis@x.com")))
+    stats = _run(g, lambda s, u, n: "x", [])
+    assert g.sent == [] and stats["skipped"] == 1

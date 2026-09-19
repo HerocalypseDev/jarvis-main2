@@ -188,8 +188,20 @@ def _system_prompt(label: str, first_reply: bool) -> str:
     )
 
 
+def _sig_line() -> str:
+    return f"— Jarvis, {USER_NAME}'s assistant ({USER_NAME} is asleep; I'll pass this on)"
+
+
 def _signature() -> str:
-    return f"\n\n— Jarvis, {USER_NAME}'s assistant ({USER_NAME} is asleep; I'll pass this on)"
+    return "\n\n" + _sig_line()
+
+
+def _is_our_own_message(body: str) -> bool:
+    """True if the body carries our signature as an unquoted line. Stops Jarvis answering its own
+    reply (when sender and mailbox coincide) or an auto-responder echo; a person's reply that merely
+    quotes our signature has it prefixed with '>' and doesn't count."""
+    sig = _sig_line()
+    return any(line.strip() == sig for line in (body or "").splitlines())
 
 
 def _handled(conn, mid: str) -> bool:
@@ -223,7 +235,7 @@ def _classify_critical(claude, others: list[dict]) -> set[int]:
 
 
 def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
-              sleep=time.sleep) -> dict:
+              sleep=time.sleep, test_address: str | None = None) -> dict:
     """mcp(tool, args) -> text ('search_emails' etc., un-prefixed); claude(system, user, max_tokens)
     -> text|None; record(text) files an item under the wake-up recap's important section.
     Returns counts, for logging/tests. Skips silently if another cycle is still running."""
@@ -232,6 +244,11 @@ def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
         return stats
     try:
         family, own = load_family(), own_addresses()
+        test_address = (test_address or "").strip().lower() or None
+        if test_address:
+            # Test mode: answer ONLY this one address (even though it's the user's own); ignore
+            # real family and everyone else, and leave their mail untouched and unmarked.
+            family, own = {test_address: f"{USER_NAME} (testing)"}, set()
         try:
             after = int(datetime.fromisoformat(since_iso).timestamp())
         except ValueError:
@@ -245,6 +262,8 @@ def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
             others: list[dict] = []
             for msg in parse_search(found):
                 if _handled(conn, msg["id"]):
+                    continue
+                if test_address and msg["sender"] != test_address:
                     continue
                 stats["seen"] += 1
                 sender = msg["sender"]
@@ -282,6 +301,9 @@ def _handle_family(conn, msg, label, mcp, claude, record, sleep_started_at, slee
     subject = msg["subject"]
     read = mcp("read_email", {"messageId": msg["id"]})
     thread_id, body = _body_of(read) if not looks_like_error(read) else ("", "")
+    if _is_our_own_message(body):
+        stats["skipped"] += 1
+        return
     heading = f"{label} emailed you \"{subject}\""
     if len(sent_before) >= MAX_REPLIES_PER_SENDER:
         record(f"{heading} again, but I've reached my reply limit for tonight, so you'll want to answer them yourself.")
