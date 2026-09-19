@@ -384,6 +384,13 @@ Rules:
   (steps only) still restores that way. pycaw is a no-op under pytest (`PYTEST_CURRENT_TEST`) so
   tests can never change the real machine volume. Consequence to remember: at 0% even urgent
   spoken alerts are silent until Sleep Mode ends (they still reach the recap).
+- **Dark mode not visibly switching (2026-09-19, user report):** the registry write always succeeded
+  (verified live: a fresh WinRT `UISettings` reports the app background flipping light->dark on the
+  write alone, and the taskbar/Start follow), but running apps (Explorer, browsers, editors) only
+  re-read the theme on `WM_SETTINGCHANGE("ImmersiveColorSet")`, which Windows Settings sends and
+  Jarvis did not. `_set_dark_mode` now broadcasts it (`_broadcast_theme_change`, a no-op under
+  pytest). Not confirmable without eyes on the screen: if apps still don't switch, the next suspect
+  is the app itself ignoring the OS theme.
 - **Removed at the user's request (2026-09-19): the wake-up alarm and distraction-site blocking.**
   Gone: `schedule_sleep_wakeup` tool, `check_wakeup`, the volume ramp, the hosts-file redirect
   (`JARVIS_SLEEP_BLOCK_DOMAINS`), and the scheduler tick call. Site blocking was the only reason

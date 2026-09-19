@@ -280,10 +280,28 @@ def _set_dark_mode(dark: bool) -> bool:
         winreg.SetValueEx(key, "AppsUseLightTheme", 0, winreg.REG_DWORD, value)
         winreg.SetValueEx(key, "SystemUsesLightTheme", 0, winreg.REG_DWORD, value)
         winreg.CloseKey(key)
+        _broadcast_theme_change()
         return True
     except OSError as e:
         log.warning("Could not set theme: %s", e)
         return False
+
+
+def _broadcast_theme_change() -> None:
+    """Tells running apps the theme changed (what Windows Settings does). The registry write alone
+    flips the taskbar/Start, but Explorer, browsers and most apps only re-read the theme when they
+    get WM_SETTINGCHANGE("ImmersiveColorSet"). Skipped under pytest."""
+    if sys.platform != "win32" or os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    try:
+        import ctypes
+
+        result = ctypes.c_ulong()
+        ctypes.windll.user32.SendMessageTimeoutW(
+            0xFFFF, 0x001A, 0, "ImmersiveColorSet", 0x0002, 3000, ctypes.byref(result)
+        )  # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG
+    except Exception as e:
+        log.warning("Could not broadcast the theme change: %s", e)
 
 
 # --- exact system volume (pycaw / Windows Core Audio) ------------------------------------------

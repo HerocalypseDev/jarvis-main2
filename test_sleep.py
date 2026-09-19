@@ -398,3 +398,30 @@ def test_old_style_state_without_a_saved_level_still_restores_by_steps(db, monke
     pressed = []
     sm.set_system_action_handler(pressed.append)
     assert "Volume restored." in sm.disable() and pressed == ["volume_up"] * 8
+
+
+def test_theme_change_is_broadcast_after_the_registry_write(monkeypatch):
+    import sys, types
+    writes, closed = [], []
+    fake = types.SimpleNamespace(
+        HKEY_CURRENT_USER=1, KEY_SET_VALUE=2, REG_DWORD=3,
+        OpenKey=lambda *a, **k: "key",
+        SetValueEx=lambda key, name, _r, _t, value: writes.append((name, value)),
+        CloseKey=lambda key: closed.append(key),
+    )
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    order = []
+    monkeypatch.setattr(sm, "_broadcast_theme_change", lambda: order.append(("broadcast", list(writes))))
+    assert sm._set_dark_mode(True) is True
+    assert writes == [("AppsUseLightTheme", 0), ("SystemUsesLightTheme", 0)]
+    assert order == [("broadcast", writes)]          # broadcast happens after both values are written
+    assert sm._set_dark_mode(False) is True and writes[-2:] == [("AppsUseLightTheme", 1), ("SystemUsesLightTheme", 1)]
+    assert len(order) == 2
+
+
+def test_broadcast_never_runs_under_pytest(monkeypatch):
+    called = []
+    monkeypatch.setattr("ctypes.windll", types_ns := __import__("types").SimpleNamespace(
+        user32=__import__("types").SimpleNamespace(SendMessageTimeoutW=lambda *a: called.append(a))), raising=False)
+    sm._broadcast_theme_change()       # PYTEST_CURRENT_TEST is set, so this must be a no-op
+    assert called == []
