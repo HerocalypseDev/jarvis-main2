@@ -1,0 +1,50 @@
+2026-09-16 11:47:41 INFO Listening (2 claps = serious mode, 3 claps = normal mode, 0.05–0.35s apart, rate=44100, block=40 ms, spike_ratio=9.0, cooldown=0.45s). Ctrl+C to stop.
+2026-09-16 11:47:41 INFO Normal mode (triple clap) will foreground an existing Cursor window (Windows API); falls back to launching Cursor if none is running.
+2026-09-16 11:47:41 INFO Triple clap (normal mode) says: 'Hey boss, how can I help you today?' (Piper voice=en_US-lessac-medium)
+2026-09-16 11:47:41 INFO Double clap (serious mode) says: "Serious mode activated. I'm in serious mode right now.", then reports weather + time for Ganmo, Ilorin, Kwara State, Nigeria
+2026-09-16 11:47:41 INFO Push-to-talk: hold 'left shift' and speak, release to run the command (Whisper=base, Claude model=claude-haiku-4-5-20251001). Locked until the first recognized clap pattern. Preloading Whisper in the background...
+2026-09-16 11:47:41 INFO Typed commands: hold 'right ctrl' for 2.0s to open a text box (no clap needed, no mic involved).
+2026-09-16 11:47:41 INFO Phone (ntfy): pushing notifications to topic 'jarvis-AhSnsDLK_Bl_eh_I'; commands read from 'jarvis-AhSnsDLK_Bl_eh_I-cmd'.
+2026-09-16 11:47:41 INFO ntfy command listener watching topic 'jarvis-AhSnsDLK_Bl_eh_I-cmd'
+2026-09-16 11:47:41 INFO Phone (Telegram): pushing notifications and listening for chat 8893662746.
+2026-09-16 11:47:41 INFO Telegram command listener running for chat 8893662746
+2026-09-16 11:47:41 INFO Proactive system health monitor running every 15 minutes (suggestions logged to C:\Users\USER\Downloads\jarvis-main2\proactive_suggestions.log).
+2026-09-16 11:47:41 INFO Audio devices:
+   0 Microsoft Sound Mapper - Input, MME (2 in, 0 out)
+>  1 Microphone Array (Realtek Audio, MME (4 in, 0 out)
+   2 Microsoft Sound Mapper - Output, MME (0 in, 2 out)
+<  3 Speakers / Headphones (Realtek , MME (0 in, 2 out)
+   4 Primary Sound Capture Driver, Windows DirectSound (2 in, 0 out)
+   5 Microphone Array (Realtek Audio), Windows DirectSound (4 in, 0 out)
+   6 Primary Sound Driver, Windows DirectSound (0 in, 2 out)
+   7 Speakers / Headphones (Realtek Audio), Windows DirectSound (0 in, 2 out)
+   8 Speakers / Headphones (Realtek Audio), Windows WASAPI (0 in, 2 out)
+   9 Microphone Array (Realtek Audio), Windows WASAPI (2 in, 0 out)
+  10 Jack Mic (Realtek HD Audio Front Mic input), Windows WDM-KS (2 in, 0 out)
+  11 Stereo Mix (Realtek HD Audio Stereo input), Windows WDM-KS (2 in, 0 out)
+  12 Microphone Array 1 (Realtek HD Audio Mic input with SST), Windows WDM-KS (2 in, 0 out)
+  13 Microphone Array 2 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  14 Microphone Array 3 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  15 Speakers (Realtek HD Audio output with SST), Windows WDM-KS (0 in, 2 out)
+2026-09-16 11:47:42 INFO Loading local Piper voice (en_US-lessac-medium)...
+2026-09-16 11:47:47 INFO Piper voice ready.
+2026-09-16 11:47:48 INFO Using default microphone [1]: Microphone Array (Realtek Audio (probe rms=0.01228)
+2026-09-16 11:47:48 INFO Loading local Whisper model (base)...
+2026-09-16 11:47:49 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:47:53 INFO Whisper model ready.
+2026-09-16 11:47:59 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:48:05 INFO Connected MCP server 'gmail' (19 tools).
+Valid tokens found for account(s): normal
+2026-09-16 11:48:16 INFO Connected MCP server 'calendar' (13 tools).
+2026-09-16 11:48:23 INFO Connected MCP server 'browser' (26 tools).
+2026-09-16 11:48:32 INFO Telegram command received: 'What time is it rn'
+2026-09-16 11:48:48 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:49:01 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:49:18 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:49:29 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:49:41 INFO Telegram command received: 'So any new news about animes'
+2026-09-16 11:49:49 INFO Tool web_search({'query': 'anime news today September 16 2026'}) -> Based on what's currently airing, there's a full schedule of anime episodes dropping this week (September 16-22, 2026), with several series ongoing from the summer season. The fall 2026 anime season i
+2026-09-16 11:50:32 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:50:36 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:50:37 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:50:42 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).

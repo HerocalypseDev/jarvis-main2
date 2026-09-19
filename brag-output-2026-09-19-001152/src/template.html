@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Jarvis Brag Chaos</title>
+<style>
+  @font-face { font-family: "Segoe UI"; src: local("Segoe UI"); }
+  :root { --bg:#050b14; --cyan:#2fd8ff; --danger:#ff5470; --warn:#ffb020; --ok:#35e39c; --text:#d7ecf5; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width:1920px; height:1080px; background:var(--bg); overflow:hidden; font-family:"Segoe UI",system-ui,sans-serif; color:var(--text); }
+  #root { position:relative; width:1920px; height:1080px; overflow:hidden; background:var(--bg); }
+  .scene { position:absolute; inset:0; overflow:hidden; }
+  .shot { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:0 0; }
+  .dim { position:absolute; inset:0; background:linear-gradient(180deg,rgba(5,11,20,0),rgba(5,11,20,.35)); }
+  /* compact tags: small so the real UI stays visible */
+  .slab { position:absolute; padding:8px 26px; font-weight:900; text-transform:uppercase; letter-spacing:2px; line-height:1.05;
+    background:#000; color:#fff; border:5px solid var(--cyan); box-shadow:8px 8px 0 rgba(0,0,0,.55); opacity:0; white-space:nowrap; z-index:5; font-size:68px; }
+  .red { border-color:var(--danger); background:var(--danger); color:#050b14; }
+  .cy  { border-color:var(--cyan); background:var(--cyan); color:#050b14; }
+  .yl  { border-color:var(--warn); background:var(--warn); color:#050b14; }
+  .blk { border-color:#fff; }
+  /* full-frame text only on the shot-less scenes (hook + outro) */
+  .huge { font-size:190px; padding:30px 60px; white-space:normal; text-align:center; border-width:8px; }
+  .mid { font-size:90px; }
+  .stack { position:absolute; left:60px; top:400px; display:flex; flex-direction:column; gap:14px; z-index:5; }
+  .stack .slab { position:relative; font-size:56px; width:max-content; }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; z-index:60; pointer-events:none; }
+  #fade { position:absolute; inset:0; background:#000; opacity:0; z-index:70; pointer-events:none; }
+  #s1, #s10 { background: radial-gradient(ellipse at 50% 50%, #12263a 0%, #050b14 70%); }
+  #s1 .flashred { position:absolute; inset:0; background:var(--danger); opacity:0; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="root" data-width="1920" data-height="1080" data-start="0" data-duration="24">
+
+  <div id="s1" class="scene clip" data-start="0" data-duration="1.9">
+    <div class="flashred"></div>
+    <div id="s1-t" class="slab huge red" style="left:110px;top:250px;width:1700px;">SHUT DOWN<br>MY COMPUTER</div>
+  </div>
+
+  <div id="s2" class="scene clip" data-start="1.9" data-duration="2.2">
+    <img class="shot" id="s2-i" src="assets/shots/dash_pending.png" /><div class="dim"></div>
+    <div id="s2-t" class="slab red" style="left:60px;top:900px;">JARVIS: HOLD ON.</div>
+  </div>
+
+  <div id="s3" class="scene clip" data-start="4.1" data-duration="2.18">
+    <img class="shot" id="s3-i" src="assets/shots/dash_review.png" /><div class="dim"></div>
+    <div id="s3-t" class="slab yl" style="left:60px;top:900px;">NOTHING RAN.</div>
+  </div>
+
+  <div id="s4" class="scene clip" data-start="6.28" data-duration="1.94">
+    <img class="shot" id="s4-i" src="assets/shots/dash_idle.png" /><div class="dim"></div>
+    <div id="s4-a" class="slab blk" style="left:60px;top:830px;">BUT SAFE STUFF?</div>
+    <div id="s4-b" class="slab cy" style="left:60px;top:940px;">IT JUST DOES IT.</div>
+  </div>
+
+  <div id="s5" class="scene clip" data-start="8.22" data-duration="2.71">
+    <img class="shot" id="s5-i" src="assets/shots/dash_task_detail.png" /><div class="dim"></div>
+    <div id="s5-a" class="slab red" style="left:60px;top:830px;">AUTONOMOUS TASKS.</div>
+    <div id="s5-b" class="slab blk" style="left:60px;top:940px;">PLANS. CODES. TESTS.</div>
+  </div>
+
+  <div id="s6" class="scene clip" data-start="10.93" data-duration="2.18">
+    <img class="shot" id="s6-i" src="assets/shots/dash_daily.png" /><div class="dim"></div>
+    <div id="s6-t" class="slab cy" style="left:60px;top:940px;">IT DECIDES FOR YOU.</div>
+  </div>
+
+  <div id="s7" class="scene clip" data-start="13.11" data-duration="2.17">
+    <img class="shot" id="s7-i" src="assets/shots/dash_victory.png" /><div class="dim"></div>
+    <div id="s7-t" class="slab yl" style="left:60px;top:940px;">THEN REPORTS BACK.</div>
+  </div>
+
+  <div id="s8" class="scene clip" data-start="15.28" data-duration="3.27">
+    <img class="shot" id="s8-i" src="assets/shots/dash_session_detail.png" /><div class="dim" style="background:rgba(5,11,20,.45)"></div>
+    <div class="stack">
+      <div id="s8-a" class="slab blk">VOICE</div>
+      <div id="s8-b" class="slab cy">TEXT</div>
+      <div id="s8-c" class="slab yl">PHONE</div>
+      <div id="s8-d" class="slab red">DASHBOARD</div>
+    </div>
+    <div id="s8-e" class="slab blk mid" style="left:60px;top:940px;">SAME GATE. EVERY TIME.</div>
+  </div>
+
+  <div id="s9" class="scene clip" data-start="18.55" data-duration="2.19">
+    <img class="shot" id="s9-i" src="assets/shots/dash_audit.png" /><div class="dim"></div>
+    <div id="s9-t" class="slab red" style="left:60px;top:940px;">EVERY TOOL CALL. LOGGED.</div>
+  </div>
+
+  <div id="s10" class="scene clip" data-start="20.74" data-duration="3.26">
+    <div id="s10-a" class="slab huge cy" style="left:360px;top:190px;width:1200px;font-size:260px;">JARVIS</div>
+    <div id="s10-b" class="slab mid blk" style="left:560px;top:560px;">SUPERVISION</div>
+    <div id="s10-c" class="slab red" style="left:200px;top:770px;font-size:96px;">YOUR MACHINE. YOUR CALL.</div>
+  </div>
+
+  <div id="flash"></div>
+  <div id="fade"></div>
+__AUDIO__
+  <script src="assets/gsap.min.js"></script>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    // slam-in: fast in, then HOLD (readability)
+    const slam = (sel, t, rot = -2, from = 1.5) =>
+      tl.fromTo(sel, { opacity: 0, scale: from, rotation: rot * 2 }, { opacity: 1, scale: 1, rotation: rot, duration: 0.18, ease: "back.out(2.2)" }, t);
+    const flash = (t, c = "#fff") => { tl.set("#flash", { backgroundColor: c }, t); tl.fromTo("#flash", { opacity: 0.6 }, { opacity: 0, duration: 0.14, immediateRender: false }, t); };
+    const zoom = (sel, ox, oy, s0, s1, t, d) => {
+      tl.set(sel, { transformOrigin: ox + "px " + oy + "px" }, t);
+      tl.fromTo(sel, { scale: s0 }, { scale: s1, duration: d, ease: "none" }, t);
+    };
+    const shake = (sel, t, amp = 10) => {
+      for (let i = 0; i < 5; i++) tl.to(sel, { x: (i % 2 ? amp : -amp), y: (i % 2 ? -amp / 2 : amp / 2), duration: 0.04 }, t + i * 0.04);
+      tl.to(sel, { x: 0, y: 0, duration: 0.04 }, t + 0.2);
+    };
+
+    // S1 0-1.9
+    tl.fromTo(".flashred", { opacity: 0.9 }, { opacity: 0, duration: 0.25, immediateRender: false }, 0.1);
+    slam("#s1-t", 0.1, -2, 2.2); shake("#s1-t", 0.28, 18);
+    // S2 1.9-4.1  (gentler zooms so the UI stays readable)
+    flash(1.9); zoom("#s2-i", 700, 45, 1.3, 1.9, 1.9, 2.2);
+    slam("#s2-t", 2.46);
+    // S3 4.1-6.28
+    flash(4.1, "#ff5470"); zoom("#s3-i", 1530, 450, 1.2, 1.7, 4.1, 2.18);
+    slam("#s3-t", 4.64, 2); shake("#s3-t", 4.82, 8);
+    // S4 6.28-8.22  autonomy pivot
+    flash(6.28, "#2fd8ff"); zoom("#s4-i", 400, 300, 1.05, 1.4, 6.28, 1.94);
+    slam("#s4-a", 6.82); slam("#s4-b", 7.35, 2);
+    // S5 8.22-10.93  autonomous plan running (step 3/5)
+    flash(8.22); zoom("#s5-i", 900, 300, 1.05, 1.5, 8.22, 2.71);
+    slam("#s5-a", 8.73); slam("#s5-b", 9.83, 2);
+    // S6 10.93-13.11  routines / decisions
+    flash(10.93, "#2fd8ff"); zoom("#s6-i", 400, 700, 1.05, 1.5, 10.93, 2.18);
+    slam("#s6-t", 11.47);
+    // S7 13.11-15.28  reports back (victory log)
+    flash(13.11, "#ffb020"); zoom("#s7-i", 400, 700, 1.05, 1.5, 13.11, 2.17);
+    slam("#s7-t", 13.64, 2);
+    // S8 15.28-18.55  beat-grid 15.28/15.82/16.38/16.93 (short labels, held); SAME GATE 17.47
+    flash(15.28); zoom("#s8-i", 300, 450, 1.05, 1.3, 15.28, 3.27);
+    slam("#s8-a", 15.28); slam("#s8-b", 15.82, 2); slam("#s8-c", 16.38); slam("#s8-d", 16.93, 2);
+    slam("#s8-e", 17.47, -2, 1.7);
+    // S9 18.55-20.74
+    flash(18.55, "#ff5470"); zoom("#s9-i", 600, 800, 1.05, 1.5, 18.55, 2.19);
+    slam("#s9-t", 19.10, 2);
+    // S10 20.74-24.0   beat-locked: title at 20.74 (strong cue)
+    flash(20.74, "#2fd8ff");
+    slam("#s10-a", 20.74, -2, 2.4); shake("#s10-a", 20.93, 16);
+    slam("#s10-b", 21.28, 2); slam("#s10-c", 21.83, -2);
+    tl.to("#fade", { opacity: 1, duration: 0.5 }, 23.5);
+
+    window.__timelines = window.__timelines || {};
+    window.__timelines["root"] = tl;
+  </script>
+</div>
+</body>
+</html>

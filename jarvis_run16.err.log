@@ -1,0 +1,95 @@
+2026-09-19 06:58:22 INFO Opening Cursor will foreground an existing instance (Windows API); falls back to launching it if none is running.
+2026-09-19 06:58:22 INFO Push-to-talk: hold 'right shift' and speak, release to run the command (Whisper=base, Claude model=claude-haiku-4-5-20251001). Preloading Whisper in the background...
+2026-09-19 06:58:22 INFO Typed commands: hold 'left ctrl' for 2.0s to open a text box.
+2026-09-19 06:58:22 INFO Phone (ntfy): pushing notifications to topic 'jarvis-AhSnsDLK_Bl_eh_I'; commands read from 'jarvis-AhSnsDLK_Bl_eh_I-cmd'.
+2026-09-19 06:58:22 INFO ntfy command listener watching topic 'jarvis-AhSnsDLK_Bl_eh_I-cmd'
+2026-09-19 06:58:22 INFO Phone (Telegram): pushing notifications and listening for chat 8893662746.
+2026-09-19 06:58:22 INFO Telegram command listener running for chat 8893662746
+2026-09-19 06:58:22 INFO Loading local Piper voice (en_US-lessac-medium)...
+2026-09-19 06:58:26 INFO Piper voice ready.
+2026-09-19 06:58:27 INFO Loading local Whisper model (base)...
+2026-09-19 06:58:27 INFO Dashboard: starting on http://127.0.0.1:8765 (localhost-only).
+2026-09-19 06:58:27 INFO File watcher running (C:\Users\USER\Downloads, poll every 15s).
+2026-09-19 06:58:27 INFO Proactive system health monitor running every 15 minutes (suggestions logged to C:\Users\USER\OneDrive\Documents\01_Projects\jarvis-main2\proactive_suggestions.log).
+2026-09-19 06:58:27 INFO Audio devices:
+   0 Microsoft Sound Mapper - Input, MME (2 in, 0 out)
+>  1 Microphone Array (Realtek Audio, MME (4 in, 0 out)
+   2 Microsoft Sound Mapper - Output, MME (0 in, 2 out)
+<  3 Speakers / Headphones (Realtek , MME (0 in, 2 out)
+   4 Primary Sound Capture Driver, Windows DirectSound (2 in, 0 out)
+   5 Microphone Array (Realtek Audio), Windows DirectSound (4 in, 0 out)
+   6 Primary Sound Driver, Windows DirectSound (0 in, 2 out)
+   7 Speakers / Headphones (Realtek Audio), Windows DirectSound (0 in, 2 out)
+   8 Speakers / Headphones (Realtek Audio), Windows WASAPI (0 in, 2 out)
+   9 Microphone Array (Realtek Audio), Windows WASAPI (2 in, 0 out)
+  10 Jack Mic (Realtek HD Audio Front Mic input), Windows WDM-KS (2 in, 0 out)
+  11 Stereo Mix (Realtek HD Audio Stereo input), Windows WDM-KS (2 in, 0 out)
+  12 Microphone Array 1 (Realtek HD Audio Mic input with SST), Windows WDM-KS (2 in, 0 out)
+  13 Microphone Array 2 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  14 Microphone Array 3 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  15 Speakers (Realtek HD Audio output with SST), Windows WDM-KS (0 in, 2 out)
+2026-09-19 06:58:28 INFO Dashboard: ready on http://127.0.0.1:8765
+2026-09-19 06:58:31 INFO Using default microphone [1]: Microphone Array (Realtek Audio (probe rms=0.00593)
+2026-09-19 06:58:32 INFO HTTP Request: GET https://huggingface.co/api/models/Systran/faster-whisper-base/revision/main "HTTP/1.1 200 OK"
+2026-09-19 06:58:34 INFO Whisper model ready.
+2026-09-19 06:58:42 INFO Connected MCP server 'gmail' (19 tools).
+Valid tokens found for account(s): normal
+2026-09-19 06:58:53 INFO Connected MCP server 'calendar' (13 tools).
+2026-09-19 06:58:57 INFO Connected MCP server 'browser' (25 tools).
+2026-09-19 06:58:58 INFO Push-to-talk: listening...
+2026-09-19 06:59:00 INFO Push-to-talk: released (2.48s), transcribing...
+2026-09-19 06:59:00 INFO Processing audio with duration 00:02.480
+2026-09-19 06:59:02 INFO Heard: 'Activate the map mode.'
+2026-09-19 06:59:03 INFO cache[reply] miss 'Activate the map mode.' (0/1 hits, 0%)
+2026-09-19 06:59:05 INFO agent loop tokens: 28883 uncached in, 0 cache-read, 0 cache-write, 16 out
+2026-09-19 06:59:05 INFO cache[prompt] miss (0/1 hits, 0%)
+2026-09-19 06:59:05 INFO cache[tts] HIT "Nap mode on. I'll keep things " (1/1 hits, 100%)
+2026-09-19 06:59:13 INFO Nap mode enabled.
+2026-09-19 06:59:13 INFO Tool sleep_mode({'action': 'nap'}) -> Nap mode is on: notifications quieted, dark mode switched on, volume set to 0% (it was 44%; I'll put it back when you wake), media will auto-pause in 30 minutes. This nap won't count toward your sleep
+2026-09-19 06:59:16 INFO agent loop tokens: 4849 uncached in, 24122 cache-read, 0 cache-write, 22 out
+2026-09-19 06:59:16 INFO cache[prompt] HIT (1/2 hits, 50%)
+2026-09-19 06:59:16 INFO cache[tts] miss 'Nap mode is activated, Hero. I' (1/2 hits, 50%)
+2026-09-19 06:59:40 INFO cache[reply] miss 'deactivate nap mode' (0/2 hits, 0%)
+2026-09-19 06:59:43 INFO agent loop tokens: 4794 uncached in, 24129 cache-read, 0 cache-write, 16 out
+2026-09-19 06:59:43 INFO cache[prompt] HIT (2/3 hits, 67%)
+2026-09-19 06:59:43 INFO Sleep Mode disabled. Nap logged: 0h 0m. It doesn't count toward your sleep time.
+2026-09-19 06:59:43 INFO Tool sleep_mode({'action': 'off'}) -> Sleep Mode is off. Nap logged: 0h 0m. It doesn't count toward your sleep time. Volume restored to 44%.
+2026-09-19 06:59:44 INFO cache[tts] HIT 'Hero, nothing came in while yo' (2/3 hits, 67%)
+2026-09-19 06:59:49 INFO agent loop tokens: 4862 uncached in, 24122 cache-read, 0 cache-write, 20 out
+2026-09-19 06:59:49 INFO cache[prompt] HIT (3/4 hits, 75%)
+2026-09-19 06:59:49 INFO cache[tts] miss "Nap mode is off, Hero. I'm all" (2/4 hits, 50%)
+2026-09-19 07:01:47 INFO Telegram command received: 'How many hours did I sleep for last night'
+2026-09-19 07:01:47 INFO cache[tts] HIT 'Message received.' (3/5 hits, 60%)
+2026-09-19 07:01:53 INFO agent loop tokens: 28861 uncached in, 0 cache-read, 0 cache-write, 16 out
+2026-09-19 07:01:53 INFO cache[prompt] miss (3/5 hits, 60%)
+2026-09-19 07:01:53 INFO cache[tool] miss recall_facts (0/1 hits, 0%)
+2026-09-19 07:01:53 INFO Tool recall_facts({'query': 'sleep'}) -> [fact] (last_sleep_duration) 2026-09-19T05:03:19: Hero slept for three hours and forty-nine minutes, ending on 2026-09-19 at 08:52 AM.
+[goal] (sleep_mode_analytics_goal) 2026-09-18T22:44:48: Expand Sl
+2026-09-19 07:01:58 INFO agent loop tokens: 4900 uncached in, 24123 cache-read, 0 cache-write, 35 out
+2026-09-19 07:01:58 INFO cache[prompt] HIT (4/6 hits, 67%)
+2026-09-19 07:02:18 INFO Telegram command received: 'What is my target slept hours goal'
+2026-09-19 07:02:18 INFO cache[tts] HIT 'Message received.' (4/6 hits, 67%)
+2026-09-19 07:02:19 INFO cache[reply] miss 'What is my target slept hours goal' (0/3 hits, 0%)
+2026-09-19 07:02:22 INFO agent loop tokens: 4736 uncached in, 24128 cache-read, 0 cache-write, 22 out
+2026-09-19 07:02:22 INFO cache[prompt] HIT (5/7 hits, 71%)
+2026-09-19 07:02:22 INFO cache[tool] miss semantic_recall (0/2 hits, 0%)
+2026-09-19 07:02:22 INFO Tool semantic_recall({'query': 'what is my target sleep hours goal'}) -> [fact/goal #40] Expand Sleep Mode with sleep tracking analytics: add weekly and monthly sleep schedule views, track sleep trends over time, generate detailed PDF reports of sleep data, and save report
+2026-09-19 07:02:25 INFO agent loop tokens: 4999 uncached in, 24124 cache-read, 0 cache-write, 40 out
+2026-09-19 07:02:25 INFO cache[prompt] HIT (6/8 hits, 75%)
+2026-09-19 07:02:40 INFO Telegram command received: 'I thought it was either 4 or 5 hours check'
+2026-09-19 07:02:40 INFO cache[tts] HIT 'Message received.' (5/7 hits, 71%)
+2026-09-19 07:02:46 INFO agent loop tokens: 4760 uncached in, 24129 cache-read, 0 cache-write, 17 out
+2026-09-19 07:02:46 INFO cache[prompt] HIT (7/9 hits, 78%)
+2026-09-19 07:02:46 INFO cache[tool] miss recall_facts (0/3 hits, 0%)
+2026-09-19 07:02:46 INFO Tool recall_facts({'query': 'sleep goal'}) -> No matching facts found.
+2026-09-19 07:02:50 INFO agent loop tokens: 4803 uncached in, 24121 cache-read, 0 cache-write, 19 out
+2026-09-19 07:02:50 INFO cache[prompt] HIT (8/10 hits, 80%)
+2026-09-19 07:02:50 INFO cache[tool] miss semantic_recall (0/4 hits, 0%)
+2026-09-19 07:02:50 INFO Tool semantic_recall({'query': 'sleep goal target hours'}) -> [fact/goal #40] Expand Sleep Mode with sleep tracking analytics: add weekly and monthly sleep schedule views, track sleep trends over time, generate detailed PDF reports of sleep data, and save report
+2026-09-19 07:02:53 INFO agent loop tokens: 4988 uncached in, 24116 cache-read, 0 cache-write, 83 out
+2026-09-19 07:02:53 INFO cache[prompt] HIT (9/11 hits, 82%)
+2026-09-19 07:03:41 INFO Telegram command received: "it's in your source code send James to check your source code for a target sleep hour goal"
+2026-09-19 07:03:41 INFO cache[tts] HIT 'Message received.' (6/8 hits, 75%)
+2026-09-19 07:03:48 INFO agent loop tokens: 4838 uncached in, 24130 cache-read, 0 cache-write, 47 out
+2026-09-19 07:03:48 INFO cache[prompt] HIT (10/12 hits, 83%)
+2026-09-19 07:03:49 INFO Tool delegate_to_claude_code({'task': "Search the repository for a variable or constant related to 'target sleep hours' or 'sleep goal' and report back the value found."}) -> Handed this off to James (background task #21) in C:\Users\USER\OneDrive\Documents\01_Projects\jarvis-main2: Search the repository for a variable or constant related to 'target sleep hours' or 'sleep 

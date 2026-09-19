@@ -1,0 +1,92 @@
+2026-09-19 06:10:45 INFO Connected MCP server 'gmail' (19 tools).
+Valid tokens found for account(s): normal
+2026-09-19 06:11:01 INFO Connected MCP server 'calendar' (13 tools).
+2026-09-19 06:11:04 INFO Connected MCP server 'browser' (25 tools).
+[06:10:38] monitoring gogorichard12@gmail.com (mail since 2026-09-19T05:55:38), polling every 60s for 45 min
+2026-09-19 06:11:06 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:11:06] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:12:07 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:12:07] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:13:08 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:13:08] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:14:10 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:14:10] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:15:11 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:15:11] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:16:12 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:16:12] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:17:13 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:17:13] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:18:14 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:18:14] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:19:15 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:19:15] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:20:17 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:20:17] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:21:51 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:21:51] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:22:53 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:22:53] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:23:55 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:23:55] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:24:56 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:24:56] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:25:57 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:25:57] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:26:59 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:26:59] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:28:00 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:28:00] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:29:02 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:29:02] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:30:03 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:30:03] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:31:05 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:31:05] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:32:06 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:32:06] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:33:08 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:33:08] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:34:09 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:34:09] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:35:10 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:35:10] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:36:11 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:36:11] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:37:13 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:37:13] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:38:14 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:38:14] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:39:15 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:39:15] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:40:17 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:40:17] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:41:18 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:41:18] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:42:20 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:42:20] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:43:21 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:43:21] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:44:23 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:44:23] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:45:24 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:45:24] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:46:26 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:46:26] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:47:28 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:47:28] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:48:29 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:48:29] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:49:31 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:49:31] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:50:32 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:50:32] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:51:34 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:51:34] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:52:36 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:52:36] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:53:37 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:53:37] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+2026-09-19 06:54:39 INFO Sleep-mail cycle: {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+[06:54:39] cycle {'seen': 0, 'inbound': 0, 'family_replied': 0, 'family_failed': 0, 'critical': 0, 'skipped': 0}
+test window over

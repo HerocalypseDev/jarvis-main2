@@ -1,0 +1,170 @@
+{
+  ".claude/settings.json": {
+    "mtime": 1789734657.998027,
+    "seen": 1789735211.8907037,
+    "ast_hash": "03ef5696f57b403ea51aef3706ba8164",
+    "semantic_hash": ""
+  },
+  ".claude/settings.local.json": {
+    "mtime": 1789622771.9289258,
+    "seen": 1789735211.8907104,
+    "ast_hash": "49d65bc3f4cdaff6670fa667dada04ef",
+    "semantic_hash": ""
+  },
+  "discord_selfbot_server.py": {
+    "mtime": 1789511096.2309308,
+    "seen": 1789735211.890713,
+    "ast_hash": "436c7e7f90b5b4bd2b3b4d97a6745e6a",
+    "semantic_hash": ""
+  },
+  "jarvis.py": {
+    "mtime": 1789762596.7416818,
+    "seen": 1789762831.98093,
+    "ast_hash": "266d19ab4e2a1fe5adcc8d58afb88978",
+    "semantic_hash": ""
+  },
+  "jarvis_filewatcher.py": {
+    "mtime": 1789557947.975381,
+    "seen": 1789735211.8907163,
+    "ast_hash": "1ad21f80c23ffc2fab7e19fad647f75f",
+    "semantic_hash": ""
+  },
+  "jarvis_memory_enhance.py": {
+    "mtime": 1789551162.9719028,
+    "seen": 1789735211.8907177,
+    "ast_hash": "8d1fb4dab1d6db15bc8fa39ced73a0f7",
+    "semantic_hash": ""
+  },
+  "jarvis_proactive.py": {
+    "mtime": 1789552265.4096713,
+    "seen": 1789735211.890719,
+    "ast_hash": "255c3ad2b8f3697ed41c0da0e19748e6",
+    "semantic_hash": ""
+  },
+  "jarvis_sleep_mode.py": {
+    "mtime": 1789754861.6940832,
+    "seen": 1789761024.72145,
+    "ast_hash": "26eb12908088a070d640627925813dd0",
+    "semantic_hash": ""
+  },
+  "jarvis_task_scheduler.py": {
+    "mtime": 1789557111.7889433,
+    "seen": 1789735211.8907218,
+    "ast_hash": "79300c055175fd0ab3beb8a417023845",
+    "semantic_hash": ""
+  },
+  "jarvis_tech_understanding.py": {
+    "mtime": 1789551125.605292,
+    "seen": 1789735211.890723,
+    "ast_hash": "d4ea055a03f578588a010f94b0d85608",
+    "semantic_hash": ""
+  },
+  "jarvis_voice_tone.py": {
+    "mtime": 1789557319.3027544,
+    "seen": 1789735211.8907244,
+    "ast_hash": "1abbc5fe00cedbefbd8cdba9c87b9017",
+    "semantic_hash": ""
+  },
+  "jarvis_window_control.py": {
+    "mtime": 1789741549.303518,
+    "seen": 1789742539.9624612,
+    "ast_hash": "be36f33e88430bc0ea063e096838d9d1",
+    "semantic_hash": ""
+  },
+  "jarvis_workflow.py": {
+    "mtime": 1789551043.0229123,
+    "seen": 1789735211.8907275,
+    "ast_hash": "dd2a1c513651fdcca3f12cd27bf030b6",
+    "semantic_hash": ""
+  },
+  "mcp_servers.example.json": {
+    "mtime": 1789513568.433084,
+    "seen": 1789735211.8907287,
+    "ast_hash": "24d8dea3991d01b1402a8d2fae3c93de",
+    "semantic_hash": ""
+  },
+  "skills/auto_save_code_to_box.json": {
+    "mtime": 1789622618.9424634,
+    "seen": 1789735211.89073,
+    "ast_hash": "8dca5649cfc57a671f54fce7714f8f6a",
+    "semantic_hash": ""
+  },
+  "skills/billing_watch.json": {
+    "mtime": 1789533536.657431,
+    "seen": 1789735211.8907316,
+    "ast_hash": "d7f3d56f3b7a2f2684bff8f436c67a0d",
+    "semantic_hash": ""
+  },
+  "skills/gmail_watch.json": {
+    "mtime": 1789532891.9531693,
+    "seen": 1789735211.8907328,
+    "ast_hash": "80c3a07d8478c2dfd9088e365f46ea85",
+    "semantic_hash": ""
+  },
+  "skills/morning_briefing.json": {
+    "mtime": 1789532316.4056933,
+    "seen": 1789735211.8907342,
+    "ast_hash": "2863175c07679f7aeefd24949161bc44",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1789762825.0507648,
+    "seen": 1789762831.98101,
+    "ast_hash": "4948644e3c0801fac7becdbc786b9676",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1789755118.035943,
+    "seen": 1789761024.7216215,
+    "ast_hash": "847d3846a4c7f24897ddd5f847eeb3f9",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1789736826.2826967,
+    "seen": 1789737588.892618,
+    "ast_hash": "b227b18761a2ec99664872834a3f41df",
+    "semantic_hash": ""
+  },
+  "dashboard_static/app.js": {
+    "mtime": 1789762621.823446,
+    "seen": 1789762831.9809225,
+    "ast_hash": "aee4911d332d8cc8151c04692372a97d",
+    "semantic_hash": ""
+  },
+  "jarvis_dashboard.py": {
+    "mtime": 1789762596.751743,
+    "seen": 1789762831.9809363,
+    "ast_hash": "24e20f5696b6cd595dbdb2e1ef99b533",
+    "semantic_hash": ""
+  },
+  "dashboard_static/index.html": {
+    "mtime": 1789762621.8214364,
+    "seen": 1789762831.9810185,
+    "ast_hash": "4db3c995de6a3280774fe0b4bd561696",
+    "semantic_hash": ""
+  },
+  "test_dashboard.py": {
+    "mtime": 1789762650.5409436,
+    "seen": 1789762831.981006,
+    "ast_hash": "77d50a8f12da04a4ddc18f37227ced46",
+    "semantic_hash": ""
+  },
+  "jarvis_cache.py": {
+    "mtime": 1789761307.2422094,
+    "seen": 1789761592.289021,
+    "ast_hash": "fe5e32f7eb11340623001e7485a2fb44",
+    "semantic_hash": ""
+  },
+  "test_cache.py": {
+    "mtime": 1789762650.769754,
+    "seen": 1789762831.981002,
+    "ast_hash": "46611d3e9e7546d3ea1bd996105f6d74",
+    "semantic_hash": ""
+  },
+  "jarvis_billing.py": {
+    "mtime": 1789762576.193664,
+    "seen": 1789762831.980932,
+    "ast_hash": "5d182421df5bb0f65f0cb2f1fbe8384a",
+    "semantic_hash": ""
+  }
+}

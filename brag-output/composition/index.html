@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Jarvis Brag</title>
+<style>
+  @font-face { font-family: "Cascadia Code"; src: local("Cascadia Code"), local("Cascadia Mono"), local("Consolas"); }
+  @font-face { font-family: "Segoe UI"; src: local("Segoe UI"); }
+  :root {
+    --bg: #050b14; --panel: #0a1420; --panel-alt: #0d1826; --border: #123047;
+    --cyan: #2fd8ff; --cyan-dim: #1a6b85; --text: #d7ecf5; --muted: #6f92a6;
+    --danger: #ff5470; --warn: #ffb020; --ok: #35e39c;
+    --glow: 0 0 24px rgba(47,216,255,.35);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; background: var(--bg); overflow: hidden;
+    font-family: "Segoe UI", system-ui, sans-serif; color: var(--text); }
+  #root { position: relative; width: 1920px; height: 1080px; background:
+    radial-gradient(ellipse at 50% 40%, #0a1b2c 0%, var(--bg) 70%); overflow: hidden; }
+  .scene { position: absolute; inset: 0; }
+  .mono { font-family: "Cascadia Code", Consolas, monospace; }
+  .abs { position: absolute; }
+  .center { left: 0; right: 0; text-align: center; }
+
+  /* Scene 1 */
+  #s1-line { top: 330px; font-size: 96px; font-weight: 300; letter-spacing: 2px; opacity: 0; text-shadow: var(--glow); }
+  #s1-line b { color: var(--cyan); font-weight: 600; }
+  #s1-key { top: 500px; left: 680px; width: 220px; padding: 16px 0; text-align: center; border: 2px solid var(--cyan-dim);
+    border-radius: 12px; font-size: 26px; letter-spacing: 3px; color: var(--muted); opacity: 0; }
+  #s1-pill { top: 500px; left: 930px; width: 560px; padding: 16px 26px; border: 2px solid var(--border); border-radius: 14px;
+    background: var(--panel); font-size: 32px; color: var(--cyan); opacity: 0; white-space: nowrap; }
+  #s1-caret { display: inline-block; width: 14px; height: 30px; background: var(--cyan); vertical-align: -4px; margin-left: 4px; }
+
+  /* Scene 2 */
+  #s2-bar { top: 110px; left: 120px; right: 120px; height: 120px; border: 2px solid var(--border); border-radius: 16px;
+    background: var(--panel); display: flex; align-items: center; padding: 0 40px; gap: 40px; opacity: 0; }
+  #s2-brand { font-size: 40px; font-weight: 700; letter-spacing: 6px; color: var(--cyan); text-shadow: var(--glow); }
+  #s2-brand span { font-size: 22px; color: var(--muted); letter-spacing: 3px; font-weight: 400; margin-left: 12px; }
+  #s2-queue { flex: 1; position: relative; height: 80px; }
+  #s2-empty { position: absolute; left: 0; top: 24px; font-size: 30px; color: var(--muted); font-style: italic; }
+  #s2-pending { position: absolute; inset: 0; border: 2px solid var(--danger); border-radius: 12px; background: rgba(255,84,112,.08);
+    display: flex; align-items: center; gap: 28px; padding: 0 24px; opacity: 0; box-shadow: 0 0 30px rgba(255,84,112,.35); }
+  #s2-pending .cmd { font-size: 30px; color: var(--text); flex: 1; }
+  #s2-pending .tag { font-size: 20px; letter-spacing: 3px; color: var(--danger); }
+  .btn { padding: 12px 34px; border: 2px solid var(--cyan); border-radius: 10px; color: var(--cyan); font-size: 28px; font-weight: 600; }
+  #s2-review { position: relative; }
+  #s2-reply { top: 330px; font-size: 64px; font-weight: 300; opacity: 0; }
+  #s2-reply em { font-style: normal; color: var(--cyan); }
+  #s2-detail { top: 520px; left: 360px; right: 360px; padding: 34px 44px; border: 2px solid var(--border); border-radius: 16px;
+    background: var(--panel-alt); opacity: 0; }
+  #s2-detail h3 { font-size: 34px; color: var(--danger); letter-spacing: 3px; margin-bottom: 14px; font-weight: 600; }
+  #s2-detail p { font-size: 34px; color: var(--text); margin-bottom: 22px; }
+  #s2-detail .row { display: flex; gap: 24px; }
+  .btn.ok { border-color: var(--ok); color: var(--ok); }
+  .btn.no { border-color: var(--danger); color: var(--danger); }
+  #s2-cursor { width: 34px; height: 34px; left: 0; top: 0; opacity: 0; z-index: 9; }
+
+  /* Scene 3 */
+  #s3-head { top: 56px; font-size: 76px; font-weight: 300; opacity: 0; text-shadow: var(--glow); }
+  #s3-head b { color: var(--cyan); font-weight: 600; }
+  #s3-metrics { top: 190px; left: 100px; right: 100px; height: 110px; border: 2px solid var(--border); border-radius: 14px;
+    background: var(--panel); display: flex; align-items: center; gap: 56px; padding: 0 44px; opacity: 0; }
+  .metric small { display: block; font-size: 18px; letter-spacing: 3px; color: var(--muted); }
+  .metric strong { font-size: 40px; color: var(--cyan); font-weight: 600; }
+  #s3-cores { display: grid; grid-template-columns: repeat(8, 34px); gap: 6px; margin-left: auto; }
+  #s3-cores i { display: block; height: 44px; border-radius: 6px; background: var(--cyan); }
+  .cols { top: 330px; left: 100px; right: 100px; height: 640px; display: flex; gap: 28px; }
+  .col { flex: 1; border: 2px solid var(--border); border-radius: 14px; background: var(--panel); padding: 26px; opacity: 0; }
+  .col h2 { font-size: 26px; letter-spacing: 4px; color: var(--cyan); margin-bottom: 22px; font-weight: 600; }
+  .item { padding: 18px 20px; border: 2px solid var(--border); border-radius: 10px; background: var(--panel-alt);
+    margin-bottom: 16px; font-size: 27px; opacity: 0; }
+  .item small { display: block; font-size: 20px; color: var(--muted); margin-top: 6px; }
+  .st-warn { color: var(--warn); } .st-ok { color: var(--ok); } .st-cy { color: var(--cyan); }
+
+  /* Scene 4 */
+  #s4-cards { top: 300px; left: 160px; right: 160px; display: flex; gap: 36px; }
+  .icard { flex: 1; height: 300px; border: 2px solid var(--border); border-radius: 18px; background: var(--panel);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; opacity: 0; }
+  .icard .glyph { font-size: 84px; color: var(--cyan); text-shadow: var(--glow); line-height: 1; }
+  .icard .label { font-size: 40px; font-weight: 600; }
+  #s4-line { top: 730px; font-size: 68px; font-weight: 300; opacity: 0; }
+  #s4-line b { color: var(--cyan); font-weight: 600; }
+
+  /* Scene 5 */
+  #s5-title { top: 320px; font-size: 200px; font-weight: 700; letter-spacing: 20px; color: var(--cyan); opacity: 0;
+    text-shadow: 0 0 60px rgba(47,216,255,.5); }
+  #s5-sub { top: 660px; font-size: 44px; letter-spacing: 14px; color: var(--muted); opacity: 0; }
+  #s5-tag { top: 790px; font-size: 52px; font-weight: 300; opacity: 0; }
+  #s5-tag b { color: var(--cyan); font-weight: 600; }
+  #fade { position: absolute; inset: 0; background: #000; opacity: 0; z-index: 50; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="root" data-width="1920" data-height="1080" data-start="0" data-duration="21.3">
+
+  <!-- Scene 1 — Hook -->
+  <div id="s1" class="scene clip" data-start="0" data-duration="3.3">
+    <div id="s1-line" class="abs center">Hold a key. <b>Say it.</b></div>
+    <div id="s1-key" class="abs mono">LEFT SHIFT</div>
+    <div id="s1-pill" class="abs mono"><span id="s1-text"></span><span id="s1-caret"></span></div>
+  </div>
+
+  <!-- Scene 2 — The gate -->
+  <div id="s2" class="scene clip" data-start="3.3" data-duration="5.44">
+    <div id="s2-bar" class="abs">
+      <div id="s2-brand">JARVIS<span>SUPERVISION</span></div>
+      <div id="s2-queue">
+        <div id="s2-empty">No pending confirmations</div>
+        <div id="s2-pending">
+          <div class="cmd mono">run_shell &nbsp;shutdown /s /t 0</div>
+          <div class="tag">STAGED · NOT RUN</div>
+          <div class="btn" id="s2-review">Review</div>
+        </div>
+      </div>
+    </div>
+    <div id="s2-reply" class="abs center">&ldquo;I&rsquo;m about to shut down. <em>Say yes.</em>&rdquo;</div>
+    <div id="s2-detail" class="abs">
+      <h3>CATASTROPHIC ACTION</h3>
+      <p>Staged, not run. Nothing happens until you approve.</p>
+      <div class="row"><div class="btn ok">Approve</div><div class="btn no">Reject</div></div>
+    </div>
+    <svg id="s2-cursor" class="abs" viewBox="0 0 24 24"><path d="M3 2 L3 19 L8 14.5 L11.5 22 L14.5 20.7 L11 13.4 L18 13 Z" fill="#fff" stroke="#000" stroke-width="1.2"/></svg>
+  </div>
+
+  <!-- Scene 3 — The dashboard -->
+  <div id="s3" class="scene clip" data-start="8.74" data-duration="4.37">
+    <div id="s3-head" class="abs center">Every command. <b>On the record.</b></div>
+    <div id="s3-metrics" class="abs">
+      <div class="metric"><small>CPU</small><strong class="mono">14%</strong></div>
+      <div class="metric"><small>RAM</small><strong class="mono">61%</strong></div>
+      <div class="metric"><small>DISK</small><strong class="mono">72%</strong></div>
+      <div class="metric"><small>UPTIME</small><strong class="mono">3h 12m</strong></div>
+      <div id="s3-cores"></div>
+    </div>
+    <div class="cols abs">
+      <div class="col" id="s3-c1"><h2>SESSIONS</h2>
+        <div class="item" id="s3-i1">shut down my computer<small class="st-warn">voice &middot; awaiting approval</small></div>
+        <div class="item" id="s3-i2">summarize my email<small class="st-ok">text &middot; done</small></div>
+        <div class="item" id="s3-i3">what&rsquo;s on my calendar<small class="st-ok">phone &middot; done</small></div>
+      </div>
+      <div class="col" id="s3-c2"><h2>TASKS</h2>
+        <div class="item" style="opacity:1">Research task<small class="st-cy">running</small></div>
+        <div class="item" style="opacity:1">gmail_watch<small class="st-ok">scheduled</small></div>
+      </div>
+      <div class="col" id="s3-c3"><h2>DETAIL</h2>
+        <div class="item mono" style="opacity:1;font-size:23px">run_shell<small>staged &middot; not executed</small></div>
+        <div class="item" style="opacity:1">Audit trail<small>every tool call, searchable</small></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scene 4 — Four ways in -->
+  <div id="s4" class="scene clip" data-start="13.11" data-duration="4.36">
+    <div id="s4-cards" class="abs">
+      <div class="icard" id="s4-c1"><div class="glyph">&#127908;</div><div class="label">Voice</div></div>
+      <div class="icard" id="s4-c2"><div class="glyph">&#9000;</div><div class="label">Text hotkey</div></div>
+      <div class="icard" id="s4-c3"><div class="glyph">&#128241;</div><div class="label">Phone</div></div>
+      <div class="icard" id="s4-c4"><div class="glyph">&#9635;</div><div class="label">Dashboard</div></div>
+    </div>
+    <div id="s4-line" class="abs center">Same gate for <b>all of them.</b></div>
+  </div>
+
+  <!-- Scene 5 — Outro -->
+  <div id="s5" class="scene clip" data-start="17.47" data-duration="3.83">
+    <div id="s5-title" class="abs center">JARVIS</div>
+    <div id="s5-sub" class="abs center">SUPERVISION</div>
+    <div id="s5-tag" class="abs center">Localhost only. Your machine. <b>Your call.</b></div>
+  </div>
+
+  <div id="fade"></div>
+
+  <!-- Audio -->
+  <audio id="bg-music" data-start="0" data-duration="21.3" data-track-index="10" data-volume="0.3" src="assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3"></audio>
+  <audio id="sfx-k1" data-start="1.3" data-duration="0.3" data-track-index="11" data-volume="0.5" src="assets/sfx/keyboard/keypress-003.wav"></audio>
+  <audio id="sfx-k2" data-start="1.7" data-duration="0.3" data-track-index="12" data-volume="0.5" src="assets/sfx/keyboard/keypress-011.wav"></audio>
+  <audio id="sfx-k3" data-start="2.1" data-duration="0.3" data-track-index="13" data-volume="0.5" src="assets/sfx/keyboard/keypress-020.wav"></audio>
+  <audio id="sfx-pending" data-start="5.1" data-duration="1.48" data-track-index="14" data-volume="0.75" src="assets/sfx/impact/impactBell_heavy_000.ogg"></audio>
+  <audio id="sfx-click" data-start="6.9" data-duration="0.1" data-track-index="15" data-volume="0.6" src="assets/sfx/ui/click1.ogg"></audio>
+  <audio id="sfx-reveal" data-start="8.7" data-duration="0.19" data-track-index="16" data-volume="0.7" src="assets/sfx/impact/impactSoft_medium_001.ogg"></audio>
+  <audio id="sfx-row1" data-start="9.83" data-duration="0.6" data-track-index="17" data-volume="0.55" src="assets/sfx/casino/card-place-1.ogg"></audio>
+  <audio id="sfx-row3" data-start="12.02" data-duration="0.46" data-track-index="18" data-volume="0.55" src="assets/sfx/casino/card-place-2.ogg"></audio>
+  <audio id="sfx-in1" data-start="13.64" data-duration="0.6" data-track-index="19" data-volume="0.55" src="assets/sfx/casino/card-slide-1.ogg"></audio>
+  <audio id="sfx-in4" data-start="15.29" data-duration="0.6" data-track-index="20" data-volume="0.55" src="assets/sfx/casino/card-place-1.ogg"></audio>
+  <audio id="sfx-title" data-start="17.47" data-duration="0.66" data-track-index="21" data-volume="0.75" src="assets/sfx/impact/impactBell_heavy_003.ogg"></audio>
+
+  <script src="assets/gsap.min.js"></script>
+  <script>
+    // Build the CPU heatmap cells (deterministic heights/opacity)
+    const cores = document.getElementById("s3-cores");
+    [0.35, 0.6, 0.25, 0.8, 0.45, 0.3, 0.7, 0.2].forEach(v => {
+      const i = document.createElement("i"); i.style.opacity = String(0.25 + v * 0.75); cores.appendChild(i);
+    });
+
+    const tl = gsap.timeline({ paused: true });
+    const fadeIn = (sel, t, d = 0.5, extra = {}) => tl.fromTo(sel, { opacity: 0, ...extra.from }, { opacity: 1, duration: d, ...extra.to }, t);
+
+    // ---- Scene 1 (0 – 3.3) ----
+    fadeIn("#s1-line", 0.2, 0.5, { from: { y: 20 }, to: { y: 0 } });
+    fadeIn("#s1-key", 0.7, 0.3);
+    tl.to("#s1-key", { color: "#050b14", backgroundColor: "#2fd8ff", borderColor: "#2fd8ff", duration: 0.15 }, 1.0);
+    fadeIn("#s1-pill", 1.1, 0.2);
+    const typed = { n: 0 }, phrase = "shut down my computer";
+    tl.to(typed, { n: phrase.length, duration: 1.3, ease: "none",
+      onUpdate: () => { document.getElementById("s1-text").textContent = phrase.slice(0, Math.round(typed.n)); } }, 1.25);
+    tl.to("#s1", { opacity: 0, duration: 0.2 }, 3.1);
+
+    // ---- Scene 2 (3.3 – 8.74) ----
+    fadeIn("#s2-bar", 3.5, 0.5);
+    tl.to("#s2-reply", { opacity: 1, duration: 0.5 }, 4.2);
+    tl.to("#s2-empty", { opacity: 0, duration: 0.2 }, 5.0);
+    tl.fromTo("#s2-pending", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, 5.1);
+    tl.set("#s2-cursor", { x: 1500, y: 900 }, 0);
+    tl.set("#s2-cursor", { opacity: 1 }, 6.0);
+    tl.to("#s2-cursor", { x: 1610, y: 170, duration: 0.8, ease: "power2.inOut" }, 6.0);
+    tl.to("#s2-review", { backgroundColor: "#2fd8ff", color: "#050b14", duration: 0.12 }, 6.9);
+    tl.fromTo("#s2-detail", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 7.0);
+    tl.to("#s2-cursor", { opacity: 0, duration: 0.2 }, 7.4);
+    // beat-locked: dashboard reveal at 8.74s (strong cue)
+    tl.to("#s2", { opacity: 0, duration: 0.25 }, 8.5);
+
+    // ---- Scene 3 (8.74 – 13.11) ----
+    fadeIn("#s3-head", 8.84, 0.45, { from: { y: 16 }, to: { y: 0 } });
+    fadeIn("#s3-metrics", 9.0, 0.4);
+    fadeIn(".col", 9.2, 0.4);
+    // beat-grid: session rows at 9.83, 10.93, 12.02 (every other beat: readable text)
+    fadeIn("#s3-i1", 9.83, 0.3, { from: { x: -30 }, to: { x: 0 } });
+    fadeIn("#s3-i2", 10.93, 0.3, { from: { x: -30 }, to: { x: 0 } });
+    fadeIn("#s3-i3", 12.02, 0.3, { from: { x: -30 }, to: { x: 0 } });
+    tl.to("#s3", { opacity: 0, duration: 0.25 }, 12.86);
+
+    // ---- Scene 4 (13.11 – 17.47) ----
+    // beat-locked: four inputs at 13.11s, cards on consecutive beats 13.64/14.20/14.73/15.29 (short labels; full set held after)
+    ["#s4-c1", "#s4-c2", "#s4-c3", "#s4-c4"].forEach((s, i) =>
+      fadeIn(s, [13.64, 14.2, 14.73, 15.29][i], 0.3, { from: { y: 30 }, to: { y: 0 } }));
+    fadeIn("#s4-line", 15.84, 0.4, { from: { y: 16 }, to: { y: 0 } });
+    tl.to("#s4", { opacity: 0, duration: 0.25 }, 17.22);
+
+    // ---- Scene 5 (17.47 – 21.3) ----
+    // beat-locked: title at 17.47s (strong cue)
+    tl.fromTo("#s5-title", { opacity: 0, scale: 0.95 }, { opacity: 1, scale: 1, duration: 0.7, ease: "power3.out" }, 17.47);
+    fadeIn("#s5-sub", 18.2, 0.5);
+    fadeIn("#s5-tag", 18.9, 0.5, { from: { y: 14 }, to: { y: 0 } });
+    tl.to("#fade", { opacity: 1, duration: 0.6 }, 20.7);
+
+    window.__timelines = window.__timelines || {};
+    window.__timelines["root"] = tl;
+  </script>
+</div>
+</body>
+</html>

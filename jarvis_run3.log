@@ -1,0 +1,67 @@
+2026-09-16 11:31:09 INFO Listening (2 claps = serious mode, 3 claps = normal mode, 0.05–0.35s apart, rate=44100, block=40 ms, spike_ratio=9.0, cooldown=0.45s). Ctrl+C to stop.
+2026-09-16 11:31:09 INFO Normal mode (triple clap) will foreground an existing Cursor window (Windows API); falls back to launching Cursor if none is running.
+2026-09-16 11:31:09 INFO Triple clap (normal mode) says: 'Hey boss, how can I help you today?' (Piper voice=en_US-lessac-medium)
+2026-09-16 11:31:09 INFO Double clap (serious mode) says: "Serious mode activated. I'm in serious mode right now.", then reports weather + time for Ganmo, Ilorin, Kwara State, Nigeria
+2026-09-16 11:31:09 INFO Push-to-talk: hold 'left shift' and speak, release to run the command (Whisper=base, Claude model=claude-haiku-4-5-20251001). Locked until the first recognized clap pattern. Preloading Whisper in the background...
+2026-09-16 11:31:09 INFO Typed commands: hold 'right ctrl' for 2.0s to open a text box (no clap needed, no mic involved).
+2026-09-16 11:31:09 INFO Phone (ntfy): pushing notifications to topic 'jarvis-AhSnsDLK_Bl_eh_I'; commands read from 'jarvis-AhSnsDLK_Bl_eh_I-cmd'.
+2026-09-16 11:31:09 INFO ntfy command listener watching topic 'jarvis-AhSnsDLK_Bl_eh_I-cmd'
+2026-09-16 11:31:09 INFO Proactive system health monitor running every 15 minutes (suggestions logged to C:\Users\USER\Downloads\jarvis-main2\proactive_suggestions.log).
+2026-09-16 11:31:09 INFO Audio devices:
+   0 Microsoft Sound Mapper - Input, MME (2 in, 0 out)
+>  1 Microphone Array (Realtek Audio, MME (4 in, 0 out)
+   2 Microsoft Sound Mapper - Output, MME (0 in, 2 out)
+<  3 Speakers / Headphones (Realtek , MME (0 in, 2 out)
+   4 Primary Sound Capture Driver, Windows DirectSound (2 in, 0 out)
+   5 Microphone Array (Realtek Audio), Windows DirectSound (4 in, 0 out)
+   6 Primary Sound Driver, Windows DirectSound (0 in, 2 out)
+   7 Speakers / Headphones (Realtek Audio), Windows DirectSound (0 in, 2 out)
+   8 Speakers / Headphones (Realtek Audio), Windows WASAPI (0 in, 2 out)
+   9 Microphone Array (Realtek Audio), Windows WASAPI (2 in, 0 out)
+  10 Jack Mic (Realtek HD Audio Front Mic input), Windows WDM-KS (2 in, 0 out)
+  11 Stereo Mix (Realtek HD Audio Stereo input), Windows WDM-KS (2 in, 0 out)
+  12 Microphone Array 1 (Realtek HD Audio Mic input with SST), Windows WDM-KS (2 in, 0 out)
+  13 Microphone Array 2 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  14 Microphone Array 3 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  15 Speakers (Realtek HD Audio output with SST), Windows WDM-KS (0 in, 2 out)
+2026-09-16 11:31:09 INFO Running scheduled skill 'gmail_watch'.
+2026-09-16 11:31:10 INFO Loading local Piper voice (en_US-lessac-medium)...
+2026-09-16 11:31:15 INFO Piper voice ready.
+2026-09-16 11:31:15 INFO Tool mcp_gmail_list_messages({'query': 'is:unread', 'max_results': '10'}) -> Unknown MCP tool: 'mcp_gmail_list_messages'
+2026-09-16 11:31:15 INFO Using default microphone [1]: Microphone Array (Realtek Audio (probe rms=0.01602)
+2026-09-16 11:31:16 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:31:17 INFO Loading local Whisper model (base)...
+2026-09-16 11:31:18 INFO Tool remember_fact({'category': 'fact', 'content': 'Gmail check 11:31 on 2026-09-16: Gmail MCP tools not available — unable to check inbox'}) -> Remembered: Gmail check 11:31 on 2026-09-16: Gmail MCP tools not available — unable to check inbox
+2026-09-16 11:31:19 INFO HTTP Request: GET https://huggingface.co/api/models/Systran/faster-whisper-base/revision/main "HTTP/1.1 200 OK"
+2026-09-16 11:31:21 INFO Whisper model ready.
+2026-09-16 11:31:34 INFO Connected MCP server 'gmail' (19 tools).
+2026-09-16 11:31:39 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:31:43 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:31:45 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+Valid tokens found for account(s): normal
+2026-09-16 11:31:46 INFO Connected MCP server 'calendar' (13 tools).
+2026-09-16 11:31:49 INFO Connected MCP server 'browser' (26 tools).
+2026-09-16 11:31:51 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:31:55 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:31:56 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:32:02 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:32:06 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:32:07 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:32:10 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:32:11 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:32:14 INFO Clap burst of 1 ignored (recognized: 2 = serious mode, 3 = normal mode).
+2026-09-16 11:32:15 INFO Double clap detected (rms=0.00577, noise_floor=0.00010, threshold=0.01200) — activating serious mode (push-to-talk unlocked). Claps are now ignored; say "switch to normal mode" to change modes.
+2026-09-16 11:32:15 INFO Playing cached phrase: C:\Users\USER\Downloads\jarvis-main2\.cache\jarvis_welcome\97ab0c1639196b83eb6213c7.wav
+2026-09-16 11:35:52 INFO ntfy command received: 'What time is it'
+2026-09-16 11:36:55 INFO Push-to-talk: listening...
+2026-09-16 11:36:56 INFO Push-to-talk: released (0.28s), transcribing...
+2026-09-16 11:36:56 INFO Processing audio with duration 00:00.280
+2026-09-16 11:36:57 INFO Push-to-talk: heard nothing.
+2026-09-16 11:40:17 INFO Text command box closed with no input.
+2026-09-16 11:41:28 INFO Text command box closed with no input.
+2026-09-16 11:43:25 INFO Typed command: 'set areminder for the next 15mis'
+2026-09-16 11:43:29 INFO Tool create_reminder({'text': '15 minute reminder', 'due_in_minutes': 15}) -> Reminder set for 11:58: 15 minute reminder.
+2026-09-16 11:46:00 INFO ntfy command received: 'What are my system details'
+2026-09-16 11:46:04 INFO Full system status report: {'cpu': {'overall_percent': 39.6, 'per_core_percent': [37.0, 23.1, 46.2, 25.9, 34.6, 30.8, 92.3, 26.9], 'physical_cores': 4, 'logical_cores': 8, 'frequency_current_mhz': 1600.0, 'frequency_max_mhz': 1800.0}, 'memory': {'total_gb': 15.861637115478516, 'used_gb': 15.397354125976562, 'available_gb': 0.4642829895019531, 'percent': 97.1}, 'swap': {'total_gb': 21.79495620727539, 'used_gb': 2.9736976623535156, 'percent': 13.6}, 'disks': [{'device': 'C:\\', 'mountpoint': 'C:\\', 'total_gb': 236.97800064086914, 'used_gb': 196.30859375, 'free_gb': 40.66940689086914, 'percent': 82.8}], 'disk_io': {'read_mb': 1208341.2641601562, 'write_mb': 559074.9282226562}, 'network': {'sent_mb': 314.70384311676025, 'recv_mb': 715.881233215332}, 'system': {'boot_time': '2026-09-10T17:51:47', 'uptime_hours': 137.90471322423883, 'process_count': 391}, 'battery': {'percent': 100, 'power_plugged': True, 'minutes_left': None}, 'temperatures': {}}
+2026-09-16 11:46:04 INFO Tool system_status({}) -> CPU is at 40 percent across 8 cores, RAM is at 97 percent used, 0.5 gigabytes available, swap is at 14 percent, drive C:\ has 41 gigabytes free, battery is at 100 percent and charging, uptime is 5 day
+2026-09-16 11:46:33 INFO ntfy command received: 'triggered'

@@ -1,0 +1,45 @@
+2026-09-19 06:17:06 INFO Opening Cursor will foreground an existing instance (Windows API); falls back to launching it if none is running.
+2026-09-19 06:17:06 INFO Push-to-talk: hold 'right shift' and speak, release to run the command (Whisper=base, Claude model=claude-haiku-4-5-20251001). Preloading Whisper in the background...
+2026-09-19 06:17:06 INFO Typed commands: hold 'right ctrl' for 2.0s to open a text box.
+2026-09-19 06:17:06 INFO Phone (ntfy): pushing notifications to topic 'jarvis-AhSnsDLK_Bl_eh_I'; commands read from 'jarvis-AhSnsDLK_Bl_eh_I-cmd'.
+2026-09-19 06:17:06 INFO ntfy command listener watching topic 'jarvis-AhSnsDLK_Bl_eh_I-cmd'
+2026-09-19 06:17:06 INFO Phone (Telegram): pushing notifications and listening for chat 8893662746.
+2026-09-19 06:17:06 INFO Telegram command listener running for chat 8893662746
+2026-09-19 06:17:07 INFO Loading local Piper voice (en_US-lessac-medium)...
+2026-09-19 06:17:10 INFO Piper voice ready.
+2026-09-19 06:17:10 INFO Loading local Whisper model (base)...
+2026-09-19 06:17:11 INFO Dashboard: starting on http://127.0.0.1:8765 (localhost-only).
+2026-09-19 06:17:11 INFO File watcher running (C:\Users\USER\Downloads, poll every 15s).
+2026-09-19 06:17:11 INFO Proactive system health monitor running every 15 minutes (suggestions logged to C:\Users\USER\OneDrive\Documents\01_Projects\jarvis-main2\proactive_suggestions.log).
+2026-09-19 06:17:11 INFO Audio devices:
+   0 Microsoft Sound Mapper - Input, MME (2 in, 0 out)
+>  1 Microphone Array (Realtek Audio, MME (4 in, 0 out)
+   2 Microsoft Sound Mapper - Output, MME (0 in, 2 out)
+<  3 Speakers / Headphones (Realtek , MME (0 in, 2 out)
+   4 Primary Sound Capture Driver, Windows DirectSound (2 in, 0 out)
+   5 Microphone Array (Realtek Audio), Windows DirectSound (4 in, 0 out)
+   6 Primary Sound Driver, Windows DirectSound (0 in, 2 out)
+   7 Speakers / Headphones (Realtek Audio), Windows DirectSound (0 in, 2 out)
+   8 Speakers / Headphones (Realtek Audio), Windows WASAPI (0 in, 2 out)
+   9 Microphone Array (Realtek Audio), Windows WASAPI (2 in, 0 out)
+  10 Jack Mic (Realtek HD Audio Front Mic input), Windows WDM-KS (2 in, 0 out)
+  11 Stereo Mix (Realtek HD Audio Stereo input), Windows WDM-KS (2 in, 0 out)
+  12 Microphone Array 1 (Realtek HD Audio Mic input with SST), Windows WDM-KS (2 in, 0 out)
+  13 Microphone Array 2 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  14 Microphone Array 3 (Realtek HD Audio Mic input with SST), Windows WDM-KS (4 in, 0 out)
+  15 Speakers (Realtek HD Audio output with SST), Windows WDM-KS (0 in, 2 out)
+2026-09-19 06:17:12 INFO Dashboard: ready on http://127.0.0.1:8765
+2026-09-19 06:17:14 INFO HTTP Request: GET https://huggingface.co/api/models/Systran/faster-whisper-base/revision/main "HTTP/1.1 200 OK"
+2026-09-19 06:17:15 INFO Whisper model ready.
+2026-09-19 06:17:20 INFO Connected MCP server 'gmail' (19 tools).
+Valid tokens found for account(s): normal
+2026-09-19 06:17:25 INFO Connected MCP server 'calendar' (13 tools).
+2026-09-19 06:17:29 INFO Connected MCP server 'browser' (25 tools).
+2026-09-19 06:18:33 INFO Using default microphone [1]: Microphone Array (Realtek Audio (probe rms=0.00501)
+2026-09-19 06:19:04 INFO Text command box closed with no input.
+2026-09-19 06:19:09 INFO Text command box closed with no input.
+2026-09-19 06:20:42 WARNING Telegram listener error (reconnecting): The read operation timed out
+2026-09-19 06:21:03 INFO Push-to-talk: listening...
+2026-09-19 06:21:03 INFO Push-to-talk: released (0.20s), transcribing...
+2026-09-19 06:21:03 INFO Processing audio with duration 00:00.200
+2026-09-19 06:21:05 INFO Push-to-talk: heard nothing.

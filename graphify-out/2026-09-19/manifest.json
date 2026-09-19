@@ -1,0 +1,440 @@
+{
+  ".claude/settings.json": {
+    "mtime": 1789734657.998027,
+    "seen": 1789735211.8907037,
+    "ast_hash": "03ef5696f57b403ea51aef3706ba8164",
+    "semantic_hash": ""
+  },
+  ".claude/settings.local.json": {
+    "mtime": 1789622771.9289258,
+    "seen": 1789735211.8907104,
+    "ast_hash": "49d65bc3f4cdaff6670fa667dada04ef",
+    "semantic_hash": ""
+  },
+  "discord_selfbot_server.py": {
+    "mtime": 1789511096.2309308,
+    "seen": 1789735211.890713,
+    "ast_hash": "436c7e7f90b5b4bd2b3b4d97a6745e6a",
+    "semantic_hash": ""
+  },
+  "jarvis.py": {
+    "mtime": 1789796794.1677074,
+    "seen": 1789796865.1353486,
+    "ast_hash": "22698c899a347bab7037ca8eca7e2758",
+    "semantic_hash": ""
+  },
+  "jarvis_filewatcher.py": {
+    "mtime": 1789557947.975381,
+    "seen": 1789735211.8907163,
+    "ast_hash": "1ad21f80c23ffc2fab7e19fad647f75f",
+    "semantic_hash": ""
+  },
+  "jarvis_memory_enhance.py": {
+    "mtime": 1789551162.9719028,
+    "seen": 1789735211.8907177,
+    "ast_hash": "8d1fb4dab1d6db15bc8fa39ced73a0f7",
+    "semantic_hash": ""
+  },
+  "jarvis_proactive.py": {
+    "mtime": 1789552265.4096713,
+    "seen": 1789735211.890719,
+    "ast_hash": "255c3ad2b8f3697ed41c0da0e19748e6",
+    "semantic_hash": ""
+  },
+  "jarvis_sleep_mode.py": {
+    "mtime": 1789796785.900571,
+    "seen": 1789796865.1353848,
+    "ast_hash": "d8a1d6e11e43fa4628e365c7f5657397",
+    "semantic_hash": ""
+  },
+  "jarvis_task_scheduler.py": {
+    "mtime": 1789557111.7889433,
+    "seen": 1789735211.8907218,
+    "ast_hash": "79300c055175fd0ab3beb8a417023845",
+    "semantic_hash": ""
+  },
+  "jarvis_tech_understanding.py": {
+    "mtime": 1789551125.605292,
+    "seen": 1789735211.890723,
+    "ast_hash": "d4ea055a03f578588a010f94b0d85608",
+    "semantic_hash": ""
+  },
+  "jarvis_voice_tone.py": {
+    "mtime": 1789557319.3027544,
+    "seen": 1789735211.8907244,
+    "ast_hash": "1abbc5fe00cedbefbd8cdba9c87b9017",
+    "semantic_hash": ""
+  },
+  "jarvis_window_control.py": {
+    "mtime": 1789741549.303518,
+    "seen": 1789742539.9624612,
+    "ast_hash": "be36f33e88430bc0ea063e096838d9d1",
+    "semantic_hash": ""
+  },
+  "jarvis_workflow.py": {
+    "mtime": 1789551043.0229123,
+    "seen": 1789735211.8907275,
+    "ast_hash": "dd2a1c513651fdcca3f12cd27bf030b6",
+    "semantic_hash": ""
+  },
+  "mcp_servers.example.json": {
+    "mtime": 1789513568.433084,
+    "seen": 1789735211.8907287,
+    "ast_hash": "24d8dea3991d01b1402a8d2fae3c93de",
+    "semantic_hash": ""
+  },
+  "skills/auto_save_code_to_box.json": {
+    "mtime": 1789622618.9424634,
+    "seen": 1789735211.89073,
+    "ast_hash": "8dca5649cfc57a671f54fce7714f8f6a",
+    "semantic_hash": ""
+  },
+  "skills/billing_watch.json": {
+    "mtime": 1789533536.657431,
+    "seen": 1789735211.8907316,
+    "ast_hash": "d7f3d56f3b7a2f2684bff8f436c67a0d",
+    "semantic_hash": ""
+  },
+  "skills/gmail_watch.json": {
+    "mtime": 1789532891.9531693,
+    "seen": 1789735211.8907328,
+    "ast_hash": "80c3a07d8478c2dfd9088e365f46ea85",
+    "semantic_hash": ""
+  },
+  "skills/morning_briefing.json": {
+    "mtime": 1789532316.4056933,
+    "seen": 1789735211.8907342,
+    "ast_hash": "2863175c07679f7aeefd24949161bc44",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1789796852.891968,
+    "seen": 1789796865.1354434,
+    "ast_hash": "831cedab9ecfed93ae363dc36bc160e6",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1789795562.297647,
+    "seen": 1789795963.0516782,
+    "ast_hash": "be5de41482627b787023985d4e8c474b",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1789794415.7034285,
+    "seen": 1789795963.051748,
+    "ast_hash": "97b39cdc053b12357cf900a4cfc0420a",
+    "semantic_hash": ""
+  },
+  "dashboard_static/app.js": {
+    "mtime": 1789796188.1519828,
+    "seen": 1789796284.6932604,
+    "ast_hash": "b5a5072e73ba2f781903c697544bc3af",
+    "semantic_hash": ""
+  },
+  "jarvis_dashboard.py": {
+    "mtime": 1789791157.086023,
+    "seen": 1789791458.735233,
+    "ast_hash": "dbfa525e43939a58cb532e2beddfd742",
+    "semantic_hash": ""
+  },
+  "dashboard_static/index.html": {
+    "mtime": 1789795792.4027207,
+    "seen": 1789795963.0517406,
+    "ast_hash": "1a2801b67aec7e68c4ab40b9816d4b04",
+    "semantic_hash": ""
+  },
+  "test_dashboard.py": {
+    "mtime": 1789791362.7539895,
+    "seen": 1789791458.7352695,
+    "ast_hash": "287452738c77454a5cd2aa4187fdfd04",
+    "semantic_hash": ""
+  },
+  "jarvis_cache.py": {
+    "mtime": 1789761307.2422094,
+    "seen": 1789761592.289021,
+    "ast_hash": "fe5e32f7eb11340623001e7485a2fb44",
+    "semantic_hash": ""
+  },
+  "test_cache.py": {
+    "mtime": 1789771625.7430556,
+    "seen": 1789771688.3386784,
+    "ast_hash": "fd828c25896038ddc0f28658bf4c212a",
+    "semantic_hash": ""
+  },
+  "jarvis_billing.py": {
+    "mtime": 1789771524.5525248,
+    "seen": 1789771688.338645,
+    "ast_hash": "be76089f4fc3b5571ead8fe6d141e622",
+    "semantic_hash": ""
+  },
+  "jarvis_gemini.py": {
+    "mtime": 1789794300.019348,
+    "seen": 1789795963.0515237,
+    "ast_hash": "47e617b405444a8bdb1f49649e5e7db9",
+    "semantic_hash": ""
+  },
+  "test_gemini.py": {
+    "mtime": 1789771586.703038,
+    "seen": 1789771688.3386817,
+    "ast_hash": "aa9996dcf7b8f379f60a864155af3658",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/gsap.min.js": {
+    "mtime": 1789773179.1488192,
+    "seen": 1789791458.735212,
+    "ast_hash": "bf3fd8ec2a5d9f4531b4c310222361f8",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/src/gen.py": {
+    "mtime": 1789774517.8280976,
+    "seen": 1789791458.7352152,
+    "ast_hash": "84fe9def9de79795e66a9c85cc63327c",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/gsap.min.js": {
+    "mtime": 1789772059.2733305,
+    "seen": 1789791458.7352173,
+    "ast_hash": "bf3fd8ec2a5d9f4531b4c310222361f8",
+    "semantic_hash": ""
+  },
+  "test_sleep.py": {
+    "mtime": 1789796811.091651,
+    "seen": 1789796865.1354368,
+    "ast_hash": "8d472cbe0a7765ae8e2d7613aa2c5d35",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/brag-plan.md": {
+    "mtime": 1789774932.2579618,
+    "seen": 1789791458.7352786,
+    "ast_hash": "daa68660af8131a4ebd3eae7fe3c8545",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/index.html": {
+    "mtime": 1789774570.2528653,
+    "seen": 1789791458.7352803,
+    "ast_hash": "78661a51bf02af2eccf348d4327f4702",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/share-copy.txt": {
+    "mtime": 1789774932.2178133,
+    "seen": 1789791458.735282,
+    "ast_hash": "dcc0203792d0d76d346244e4c9425843",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/src/template.html": {
+    "mtime": 1789774569.9337041,
+    "seen": 1789791458.7352834,
+    "ast_hash": "ffc87731d6a62c2e0fa5b8223e7da956",
+    "semantic_hash": ""
+  },
+  "brag-output/brag-plan.md": {
+    "mtime": 1789771960.4507992,
+    "seen": 1789791458.7352848,
+    "ast_hash": "6aaedaeff022d298f85365377bbfadc5",
+    "semantic_hash": ""
+  },
+  "brag-output/composition-brief.md": {
+    "mtime": 1789772220.4331322,
+    "seen": 1789791458.7352865,
+    "ast_hash": "7cbc2193ec1ef8443265cb82af08287f",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/index.html": {
+    "mtime": 1789772180.7155116,
+    "seen": 1789791458.7352884,
+    "ast_hash": "b87940505378aa8da118a4c10c6330d2",
+    "semantic_hash": ""
+  },
+  "brag-output/share-copy.txt": {
+    "mtime": 1789772853.6351564,
+    "seen": 1789791458.7352898,
+    "ast_hash": "bbcca7a393f46065d579d070aef73c50",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/brag.jpg": {
+    "mtime": 1789774861.48674,
+    "seen": 1789791458.7352953,
+    "ast_hash": "24be31d3b3d36c94a913016b001b3cb1",
+    "semantic_hash": ""
+  },
+  "brag-output/brag.jpg": {
+    "mtime": 1789772840.4396906,
+    "seen": 1789791458.7352977,
+    "ast_hash": "216417072762644e81a00c458d34b31b",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/brag-autonomy.mp4": {
+    "mtime": 1789774905.9852314,
+    "seen": 1789791458.7352996,
+    "ast_hash": "a6f3d72f1becb9de1276668f7fd7a7f0",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3": {
+    "mtime": 1789773179.4078724,
+    "seen": 1789791458.735301,
+    "ast_hash": "97c0f8cb988e32177efdb69886d31d61",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/casino/card-slide-2.ogg": {
+    "mtime": 1789773181.742266,
+    "seen": 1789791458.7353027,
+    "ast_hash": "c95f5054aa26d3baa779a3ace09eb2e5",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/casino/dice-throw-1.ogg": {
+    "mtime": 1789773181.9783397,
+    "seen": 1789791458.735304,
+    "ast_hash": "a370437badd7b3373923702e9a7385c9",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/impact/impactBell_heavy_004.ogg": {
+    "mtime": 1789773180.5204918,
+    "seen": 1789791458.7353058,
+    "ast_hash": "98e3ab9ab5d9d0e26cdf5f872a83e73c",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/impact/impactMetal_heavy_000.ogg": {
+    "mtime": 1789773180.2774773,
+    "seen": 1789791458.7353075,
+    "ast_hash": "7e54f01fa9104a0bbf7b15edb96785bd",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/impact/impactPunch_heavy_000.ogg": {
+    "mtime": 1789773179.7812488,
+    "seen": 1789791458.735309,
+    "ast_hash": "ca11d4171148a6f1fa0441fb0db4db5c",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/impact/impactPunch_heavy_002.ogg": {
+    "mtime": 1789773180.0336742,
+    "seen": 1789791458.7353103,
+    "ast_hash": "4edf5276c44bae5d98032235180c202c",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/interface/error_005.ogg": {
+    "mtime": 1789773181.238772,
+    "seen": 1789791458.7353125,
+    "ast_hash": "b6723b1ad48ef3c9b743ab2f81a53318",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/interface/glitch_002.ogg": {
+    "mtime": 1789773180.7559965,
+    "seen": 1789791458.7353141,
+    "ast_hash": "5767e40852cf9d11254174667b6ff0c6",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/interface/glitch_004.ogg": {
+    "mtime": 1789773181.0011208,
+    "seen": 1789791458.7353158,
+    "ast_hash": "fc9f21d945671eaf7413bfd06a13fe90",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/keyboard/keypress-003.wav": {
+    "mtime": 1789773182.2309873,
+    "seen": 1789791458.7353172,
+    "ast_hash": "dc505cace4a40069f49015774f521c5e",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/keyboard/keypress-011.wav": {
+    "mtime": 1789773182.4696758,
+    "seen": 1789791458.735319,
+    "ast_hash": "09f77cae86e7120080475ca451441de9",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/keyboard/keypress-020.wav": {
+    "mtime": 1789773182.7516522,
+    "seen": 1789791458.7353203,
+    "ast_hash": "7728b8da3316efb5eb2d36605b1be268",
+    "semantic_hash": ""
+  },
+  "brag-output-2026-09-19-001152/composition/assets/sfx/ui/mouseclick1.ogg": {
+    "mtime": 1789773181.4909358,
+    "seen": 1789791458.7353215,
+    "ast_hash": "e6a43cef5261e870e9e821b632d230a2",
+    "semantic_hash": ""
+  },
+  "brag-output/brag.mp4": {
+    "mtime": 1789772853.216371,
+    "seen": 1789791458.7353232,
+    "ast_hash": "216bae10d49354bbb8469130d72d2b6a",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3": {
+    "mtime": 1789771960.5730565,
+    "seen": 1789791458.7353246,
+    "ast_hash": "8161d01395fe356fb0795e803dece7c8",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/casino/card-place-1.ogg": {
+    "mtime": 1789772057.550404,
+    "seen": 1789791458.7353263,
+    "ast_hash": "880c4eabbad1c6618e325f279d1ac3ec",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/casino/card-place-2.ogg": {
+    "mtime": 1789772057.746254,
+    "seen": 1789791458.7353277,
+    "ast_hash": "431fe80fac7c44710edb7a304d2f63c8",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/casino/card-slide-1.ogg": {
+    "mtime": 1789772057.9134576,
+    "seen": 1789791458.735329,
+    "ast_hash": "de1affbe9a474646b72943f875301215",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/impact/impactBell_heavy_000.ogg": {
+    "mtime": 1789772056.901909,
+    "seen": 1789791458.7353306,
+    "ast_hash": "59698e3609b413aedcd7d96c27badd4d",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/impact/impactBell_heavy_003.ogg": {
+    "mtime": 1789772057.2155125,
+    "seen": 1789791458.7353318,
+    "ast_hash": "c9762ab28fc9c6690ff4e2ac0ade34af",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/impact/impactSoft_medium_001.ogg": {
+    "mtime": 1789772057.0589106,
+    "seen": 1789791458.7353334,
+    "ast_hash": "daf869c83db8d9799689a01836439d2c",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/keyboard/keypress-003.wav": {
+    "mtime": 1789772058.0618672,
+    "seen": 1789791458.7353349,
+    "ast_hash": "dc505cace4a40069f49015774f521c5e",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/keyboard/keypress-011.wav": {
+    "mtime": 1789772058.2149675,
+    "seen": 1789791458.7353365,
+    "ast_hash": "09f77cae86e7120080475ca451441de9",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/keyboard/keypress-020.wav": {
+    "mtime": 1789772058.3750455,
+    "seen": 1789791458.735338,
+    "ast_hash": "7728b8da3316efb5eb2d36605b1be268",
+    "semantic_hash": ""
+  },
+  "brag-output/composition/assets/sfx/ui/click1.ogg": {
+    "mtime": 1789772057.404059,
+    "seen": 1789791458.7353392,
+    "ast_hash": "e4a92339e0719c37b8af574651eca77a",
+    "semantic_hash": ""
+  },
+  "jarvis_sleep_mail.py": {
+    "mtime": 1789794476.6885989,
+    "seen": 1789795963.0515432,
+    "ast_hash": "0cb57cc744b0ba61b6a92670d5fe979d",
+    "semantic_hash": ""
+  },
+  "test_sleep_mail.py": {
+    "mtime": 1789794477.3267398,
+    "seen": 1789795963.0516677,
+    "ast_hash": "37cb996351c6b7963bab9b67b072de21",
+    "semantic_hash": ""
+  }
+}

@@ -1,0 +1,2 @@
+Jarvis.
+A voice assistant that runs on your own machine, and the first thing it learned was to ask "are you sure?" before it shuts anything down.
