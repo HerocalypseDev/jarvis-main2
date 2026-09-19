@@ -4357,6 +4357,9 @@ def _run_system_action(name: str) -> None:
         log.warning("Unknown system action: %r", name)
 
 
+sleep_mode.set_system_action_handler(_run_system_action)  # lets disable() undo the volume drop
+
+
 # --- screen interaction: click / drag / scroll / window focus -------------------------
 def click_at(x: int, y: int, button: str = "left", clicks: int = 1) -> None:
     try:

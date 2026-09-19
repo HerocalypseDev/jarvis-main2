@@ -21,6 +21,7 @@ def db(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setattr(sm, "_wake_digest_handler", None)
     monkeypatch.setattr(sm, "SLEEP_GOAL_HOURS", 8.0)  # .env may set another goal; don't let it leak in
+    monkeypatch.setattr(sm, "_system_action", None)
     return tmp_path
 
 
@@ -292,3 +293,70 @@ def test_tool_nap_action_starts_a_nap_and_recap_uses_kind(jarvis, monkeypatch):
     jarvis._sleep_wake_digest("2026-09-19T14:00:00", "2026-09-19T14:40:00", "nap")
     import time as _t; _t.sleep(0.3)
     assert texts == [True]
+
+
+# --- what Sleep Mode actually does, and undoing it -------------------------------------------
+def _fake_env(monkeypatch, dark=False, dark_ok=True, hosts=False):
+    monkeypatch.setattr(sm, "_dark_mode_is_on", lambda: dark)
+    monkeypatch.setattr(sm, "_set_dark_mode", lambda d: dark_ok)
+    monkeypatch.setattr(sm, "_block_distractions", lambda: hosts)
+    monkeypatch.setattr(sm, "_start_media_autopause", lambda r: None)
+    monkeypatch.setattr(sm, "_cancel_media_autopause", lambda: None)
+
+
+def test_enable_reports_what_really_happened(db, monkeypatch):
+    _fake_env(monkeypatch, dark=True, hosts=False)
+    out = sm.enable(lambda a: None, lambda t: None)
+    assert "dark mode was already on" in out and "lowered 8 steps" in out
+    assert "site blocking skipped (needs admin rights)" in out
+    sm.disable()
+    _fake_env(monkeypatch, dark=False, dark_ok=False, hosts=True)
+    out = sm.enable(lambda a: None, lambda t: None)
+    assert "couldn't switch dark mode" in out and "distracting sites blocked" in out
+
+
+def test_disable_puts_the_volume_back(db, monkeypatch):
+    _fake_env(monkeypatch)
+    pressed = []
+    sm.enable(pressed.append, lambda t: None)
+    assert pressed.count("volume_down") == 8
+    out = sm.disable()
+    assert pressed.count("volume_up") == 8 and "Volume restored." in out
+    assert sm._get_state()["volume_steps"] is None
+
+
+def test_disable_restores_volume_via_registered_handler_after_a_restart(db, monkeypatch):
+    _fake_env(monkeypatch)
+    sm.enable(lambda a: None, lambda t: None)
+    sm._system_action = None                      # simulates Jarvis restarting mid-sleep
+    pressed = []
+    sm.set_system_action_handler(pressed.append)  # jarvis.py registers this at import
+    sm.disable()
+    assert pressed == ["volume_up"] * 8
+
+
+def test_failed_volume_press_records_only_the_steps_done(db, monkeypatch):
+    _fake_env(monkeypatch)
+    n = {"c": 0}
+
+    def flaky(a):
+        n["c"] += 1
+        if n["c"] > 3:
+            raise RuntimeError("no keyboard")
+
+    out = sm.enable(flaky, lambda t: None)
+    assert "lowered 3 steps" in out and sm._get_state()["volume_steps"] == 3
+
+
+def test_wake_alarm_ramps_up_and_does_not_also_jump_the_volume(db, monkeypatch):
+    _fake_env(monkeypatch)
+    pressed = []
+    sm.enable(lambda a: None, lambda t: None)
+    sm.set_system_action_handler(pressed.append)
+    sm.schedule_wakeup("07:00", 10)
+    ramp = {}
+    monkeypatch.setattr(sm, "_ramp_volume_up", lambda run, steps: ramp.setdefault("steps", steps))
+    sm.check_wakeup(datetime(2026, 9, 20, 6, 55), pressed.append, lambda t: None)
+    assert ramp["steps"] == 8            # same number of steps enable() lowered
+    assert "volume_up" not in pressed    # disable() left the gradual ramp to do the restoring
+    assert not sm.is_active()

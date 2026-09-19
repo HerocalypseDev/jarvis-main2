@@ -371,6 +371,19 @@ Rules:
   no wake time unless `schedule_sleep_wakeup` is used, and that alarm says "Good morning"), counting
   naps toward a 24-hour goal. Not exercised live (it toggles dark mode/volume/hosts); unit-tested
   with those faked.
+- **"Nothing changed" investigation (2026-09-19):** the 2026-09-19 01:13-05:02 Sleep Mode run *did*
+  work (reminders held, media auto-paused at 01:43) but looked like nothing: the PC was already in
+  dark mode (the code restores the prior state, so no visible change); volume drops are only ~2%
+  per key press (verified live: 8 presses took the master volume 44% -> 28%); site blocking failed
+  with "Permission denied" on the hosts file because Jarvis isn't run as admin (deliberately not
+  changed: running Jarvis elevated would give every tool it runs admin rights); and `disable()`
+  never put the volume back (only the wake-alarm ramp did). Fixed: `enable()` now returns what
+  really happened ("dark mode was already on", "volume lowered 8 steps", "site blocking skipped
+  (needs admin rights)"), and `disable()` presses Volume Up for the recorded number of steps
+  (`sleep_state.volume_steps`; `jarvis.py` registers `_run_system_action` via
+  `sleep_mode.set_system_action_handler` so this survives a restart mid-sleep; the wake alarm passes
+  `restore_volume=False` and ramps the same number of steps instead). Volume is still relative
+  key presses, not an absolute level.
 - **Hotkeys (2026-09-19):** push-to-talk defaults to **Right Shift**, the typed-command hotkey to
   **Left Ctrl** (hold 2s). Left Ctrl is also used for shortcuts; a 2s hold is unlikely but possible
   while dragging with Ctrl held — change `JARVIS_TEXT_HOTKEY_KEY` if it misfires.

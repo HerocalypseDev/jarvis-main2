@@ -104,6 +104,14 @@ _db_lock = threading.Lock()
 # jarvis.py registers this so disable() can hand off "what was queued while you slept" without
 # this module importing jarvis.py. Called as handler(started_at_iso, ended_at_iso, kind).
 _wake_digest_handler = None
+# jarvis.py registers its system-action runner here so disable() can press Volume Up to undo what
+# enable() did, no matter which path ends Sleep Mode (a restart mid-sleep loses enable()'s callback).
+_system_action = None
+
+
+def set_system_action_handler(fn) -> None:
+    global _system_action
+    _system_action = fn
 
 
 def set_wake_digest_handler(fn) -> None:
@@ -150,6 +158,7 @@ def _connect() -> sqlite3.Connection:
         "ALTER TABLE sleep_log ADD COLUMN digest TEXT",
         "ALTER TABLE sleep_log ADD COLUMN kind TEXT",    # 'sleep' | 'nap'; NULL (old rows) = sleep
         "ALTER TABLE sleep_state ADD COLUMN kind TEXT",
+        "ALTER TABLE sleep_state ADD COLUMN volume_steps INTEGER",  # volume-down presses to undo on wake
     ):
         try:
             conn.execute(ddl)
@@ -165,13 +174,13 @@ def _get_state() -> dict:
         try:
             row = conn.execute(
                 "SELECT active, started_at, wake_time, wake_ramp_minutes, wake_fired_date, "
-                "dark_mode_was_on, hosts_blocked, kind FROM sleep_state WHERE id = 1"
+                "dark_mode_was_on, hosts_blocked, kind, volume_steps FROM sleep_state WHERE id = 1"
             ).fetchone()
         finally:
             conn.close()
     keys = (
         "active", "started_at", "wake_time", "wake_ramp_minutes", "wake_fired_date",
-        "dark_mode_was_on", "hosts_blocked", "kind",
+        "dark_mode_was_on", "hosts_blocked", "kind", "volume_steps",
     )
     return dict(zip(keys, row)) if row else {k: None for k in keys}
 
@@ -362,12 +371,16 @@ def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
     if is_active():
         return "Sleep Mode is already on."
 
+    global _system_action
+    _system_action = run_system_action
     was_dark = _dark_mode_is_on()
-    _set_dark_mode(True)
+    dark_ok = _set_dark_mode(True)
     hosts_ok = _block_distractions()
+    steps_done = 0
     try:
         for _ in range(VOLUME_DOWN_STEPS):
             run_system_action("volume_down")
+            steps_done += 1
     except Exception as e:
         log.warning("Sleep Mode could not lower volume: %s", e)
     _start_media_autopause(run_system_action)
@@ -379,6 +392,7 @@ def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
         dark_mode_was_on=(1 if was_dark else 0) if was_dark is not None else None,
         hosts_blocked=1 if hosts_ok else 0,
         kind=kind,
+        volume_steps=steps_done,
     )
     with _db_lock:
         conn = _connect()
@@ -397,11 +411,24 @@ def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
     except Exception as e:
         log.warning("Sleep Mode speak failed: %s", e)
     log.info("%s enabled.", label)
-    return (f"{label} is on: notifications quieted, dark mode on, volume lowered, media will "
-            "auto-pause." + (" This nap won't count toward your sleep time." if kind == "nap" else ""))
+    # Say what actually happened, not what was attempted: an already-dark PC shows no change, and
+    # blocking sites needs admin rights.
+    if not dark_ok:
+        dark = "couldn't switch dark mode"
+    elif was_dark:
+        dark = "dark mode was already on"
+    else:
+        dark = "dark mode switched on"
+    volume = (f"volume lowered {steps_done} step{'s' if steps_done != 1 else ''} "
+              "(each is about 2%; I'll put it back when you wake)" if steps_done else "couldn't lower the volume")
+    sites = "distracting sites blocked" if hosts_ok else "site blocking skipped (needs admin rights)"
+    return (f"{label} is on: notifications quieted, {dark}, {volume}, media will auto-pause in "
+            f"{MEDIA_AUTOPAUSE_MINUTES} minutes, {sites}."
+            + (" This nap won't count toward your sleep time." if kind == "nap" else ""))
 
 
-def disable() -> str:
+def disable(restore_volume: bool = True) -> str:
+    """restore_volume=False is for the wake alarm, which raises the volume gradually itself."""
     state = _get_state()
     if not state.get("active"):
         return "Sleep Mode is already off."
@@ -411,6 +438,15 @@ def disable() -> str:
         _set_dark_mode(False)
     if state.get("hosts_blocked"):
         _unblock_distractions()
+    steps = int(state.get("volume_steps") or 0)
+    volume_line = ""
+    if restore_volume and steps and _system_action:
+        try:
+            for _ in range(steps):
+                _system_action("volume_up")
+            volume_line = " Volume restored."
+        except Exception as e:
+            log.warning("Sleep Mode could not restore volume: %s", e)
 
     now = datetime.now()
     duration_line = ""
@@ -442,6 +478,7 @@ def disable() -> str:
     _set_state(
         active=0, started_at=None, wake_time=None, wake_ramp_minutes=None,
         wake_fired_date=None, dark_mode_was_on=None, hosts_blocked=0, kind=None,
+        volume_steps=None,
     )
     log.info("Sleep Mode disabled.%s", duration_line)
     if _wake_digest_handler and started_at:
@@ -449,7 +486,7 @@ def disable() -> str:
             _wake_digest_handler(started_at, now.isoformat(timespec="seconds"), state.get("kind") or "sleep")
         except Exception as e:
             log.warning("Sleep Mode wake digest failed: %s", e)
-    return f"Sleep Mode is off.{duration_line}"
+    return f"Sleep Mode is off.{duration_line}{volume_line}"
 
 
 def toggle(run_system_action, speak_fn) -> str:
@@ -708,12 +745,13 @@ def check_wakeup(now: datetime, run_system_action, speak_fn) -> None:
     if not (ramp_start <= now.time() <= target):
         return
     _set_state(wake_fired_date=today)
-    _ramp_volume_up(run_system_action, steps=max(1, ramp_minutes // 2))
+    # Raise it back over time by the same number of steps enable() lowered it (or a default).
+    _ramp_volume_up(run_system_action, steps=max(1, int(state.get("volume_steps") or ramp_minutes // 2)))
     try:
         speak_fn("Good morning. Gently waking you up now.")
     except Exception as e:
         log.warning("Sleep Mode wake speak failed: %s", e)
-    disable()
+    disable(restore_volume=False)
     log.info("Sleep Mode: smart wake-up fired for %s.", wake_time)
 
 
