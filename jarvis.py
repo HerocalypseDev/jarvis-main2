@@ -3551,6 +3551,7 @@ def _run_queued_task(description: str, instructions: str) -> None:
 
 
 _sleep_mail_last_check: datetime | None = None
+_sleep_mail_fast_until: datetime | None = None
 
 
 def _sleep_mail_claude(system: str, user: str, max_tokens: int) -> str | None:
@@ -3568,19 +3569,22 @@ def _sleep_mail_mcp(tool: str, args: dict) -> str:
 
 def _sleep_mail_tick(now: datetime) -> None:
     """While Sleep Mode is on, check Gmail every SLEEP_MAIL_INTERVAL_MIN minutes (first check that
-    long after it started) and let jarvis_sleep_mail answer family. Off the scheduler thread,
-    because a send retries for up to five minutes."""
-    global _sleep_mail_last_check
+    long after it started) and let jarvis_sleep_mail answer family. As soon as a check finds a real
+    inbound message, checks speed up to every ACTIVE_INTERVAL_MIN minutes until ACTIVE_WINDOW_MIN
+    minutes pass with nothing new. Off the scheduler thread, because a send can retry for minutes."""
+    global _sleep_mail_last_check, _sleep_mail_fast_until
     started = sleep_mode.started_at()
     if not started:
-        _sleep_mail_last_check = None
+        _sleep_mail_last_check = _sleep_mail_fast_until = None
         return
     try:
         started_dt = datetime.fromisoformat(started)
     except ValueError:
         return
     last = max(_sleep_mail_last_check or started_dt, started_dt)
-    if (now - last).total_seconds() < sleep_mail.SLEEP_MAIL_INTERVAL_MIN * 60:
+    fast = _sleep_mail_fast_until is not None and now < _sleep_mail_fast_until
+    interval_min = sleep_mail.ACTIVE_INTERVAL_MIN if fast else sleep_mail.SLEEP_MAIL_INTERVAL_MIN
+    if (now - last).total_seconds() < interval_min * 60:
         return
     _sleep_mail_last_check = now
 
@@ -3590,10 +3594,15 @@ def _sleep_mail_tick(now: datetime) -> None:
             if "mcp_gmail_search_emails" not in _mcp_tool_index:
                 log.warning("Sleep-mail: Gmail MCP tools unavailable; skipping this check.")
                 return
-            sleep_mail.run_cycle(
+            global _sleep_mail_fast_until
+            stats = sleep_mail.run_cycle(
                 mcp=_sleep_mail_mcp, claude=_sleep_mail_claude, record=_record_sleep_important,
                 since_iso=started, sleep_started_at=started,
             )
+            if stats and stats.get("inbound"):
+                _sleep_mail_fast_until = datetime.now() + timedelta(minutes=sleep_mail.ACTIVE_WINDOW_MIN)
+                log.info("Sleep-mail: message seen, checking every %d min for the next %d min.",
+                         sleep_mail.ACTIVE_INTERVAL_MIN, sleep_mail.ACTIVE_WINDOW_MIN)
         except Exception as e:
             log.warning("Sleep-mail cycle failed: %s", e)
 

@@ -101,7 +101,7 @@ def convert_messages(messages: list[dict]) -> list[dict]:
                     "name": id_to_name.get(b.get("tool_use_id", ""), "tool"),
                     "response": {"result": _result_text(b.get("content"))},
                 }})
-            elif t == "image":
+            elif t in ("image", "document"):  # Gemini's inlineData takes images and PDFs alike
                 src = b.get("source") or {}
                 if src.get("type") == "base64":
                     parts.append({"inlineData": {"mimeType": src.get("media_type", "image/png"), "data": src.get("data", "")}})

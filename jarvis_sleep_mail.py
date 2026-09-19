@@ -31,7 +31,16 @@ from pathlib import Path
 
 log = logging.getLogger("jarvis.sleep_mail")
 
-SLEEP_MAIL_INTERVAL_MIN = int(os.environ.get("JARVIS_SLEEP_MAIL_INTERVAL_MIN") or 30)
+SLEEP_MAIL_INTERVAL_MIN = int(os.environ.get("JARVIS_SLEEP_MAIL_INTERVAL_MIN") or 15)
+# Once a real message arrives, poll faster for a while so a back-and-forth doesn't crawl.
+ACTIVE_INTERVAL_MIN = int(os.environ.get("JARVIS_SLEEP_MAIL_ACTIVE_INTERVAL_MIN") or 2)
+ACTIVE_WINDOW_MIN = int(os.environ.get("JARVIS_SLEEP_MAIL_ACTIVE_WINDOW_MIN") or 20)
+MAX_ATTACHMENTS = 3
+MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+MAX_ATTACHMENT_TEXT = 6000
+_IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp"}
+_TEXT_SUFFIXES = {".txt", ".md", ".csv", ".json", ".log"}
 MAX_REPLIES_PER_SENDER = int(os.environ.get("JARVIS_SLEEP_MAIL_MAX_REPLIES") or 6)
 SEND_RETRIES = 5  # after the first attempt
 SEND_RETRY_DELAY_S = 60
@@ -159,11 +168,82 @@ def parse_search(text: str) -> list[dict]:
     return out
 
 
+def parse_attachments(read_text: str) -> list[dict]:
+    """read_email lists attachments as '- name (mime, N KB, ID: xxx)' under 'Attachments (n):'."""
+    out = []
+    for m in re.finditer(r"^- (.+?) \(([^,()]+), ([\d.]+) KB, ID: (\S+?)\)\s*$", read_text or "", re.M):
+        out.append({"name": m.group(1), "mime": m.group(2).strip(), "kb": float(m.group(3)), "id": m.group(4)})
+    return out
+
+
+def read_attachments(mcp, message_id: str, atts: list[dict]) -> tuple[str, list[dict]]:
+    """Downloads (to a throwaway folder, deleted afterwards) and reads what it can. Returns
+    (text_for_prompt, extra_content_blocks): text/docx/text-PDF become text; scanned PDFs and
+    images become model-readable blocks. Anything else is reported as unreadable, never executed."""
+    import base64
+    import shutil
+
+    notes: list[str] = []
+    blocks: list[dict] = []
+    folder = Path(__file__).resolve().parent / ".cache" / "sleep_mail_att" / re.sub(r"\W", "", message_id)
+    try:
+        for att in atts[:MAX_ATTACHMENTS]:
+            name, suffix = att["name"], Path(att["name"]).suffix.lower()
+            if att["kb"] * 1024 > MAX_ATTACHMENT_BYTES:
+                notes.append(f"[attachment '{name}' is too large to read]")
+                continue
+            folder.mkdir(parents=True, exist_ok=True)
+            res = mcp("download_attachment", {"messageId": message_id, "attachmentId": att["id"],
+                                              "filename": Path(name).name, "savePath": str(folder)})
+            path = folder / Path(name).name
+            if looks_like_error(res) or not path.is_file():
+                notes.append(f"[attachment '{name}' could not be downloaded]")
+                continue
+            try:
+                if suffix in _TEXT_SUFFIXES:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                elif suffix == ".docx":
+                    import docx
+                    text = "\n".join(p.text for p in docx.Document(str(path)).paragraphs)
+                elif suffix == ".pdf":
+                    text = ""
+                    try:
+                        import pypdf
+                        text = "\n".join((pg.extract_text() or "") for pg in pypdf.PdfReader(str(path)).pages)
+                    except Exception as e:
+                        log.info("PDF text extraction failed for %s: %s", name, e)
+                    if len(text.strip()) < 100:  # scanned/handwritten: let the model read the pages
+                        data = base64.standard_b64encode(path.read_bytes()).decode()
+                        blocks.append({"type": "text", "text": f"[attached PDF '{name}':]"})
+                        blocks.append({"type": "document", "source": {
+                            "type": "base64", "media_type": "application/pdf", "data": data}})
+                        continue
+                elif suffix in _IMAGE_TYPES:
+                    data = base64.standard_b64encode(path.read_bytes()).decode()
+                    blocks.append({"type": "text", "text": f"[attached image '{name}':]"})
+                    blocks.append({"type": "image", "source": {
+                        "type": "base64", "media_type": _IMAGE_TYPES[suffix], "data": data}})
+                    continue
+                else:
+                    notes.append(f"[attachment '{name}' ({att['mime']}) is a type I can't read]")
+                    continue
+                notes.append(f"[attachment '{name}':]\n{text.strip()[:MAX_ATTACHMENT_TEXT]}")
+            except Exception as e:
+                log.warning("Could not read attachment %s: %s", name, e)
+                notes.append(f"[attachment '{name}' could not be read]")
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    if len(atts) > MAX_ATTACHMENTS:
+        notes.append(f"[{len(atts) - MAX_ATTACHMENTS} more attachment(s) were not read]")
+    return "\n\n".join(notes), blocks
+
+
 def _body_of(read_text: str) -> tuple[str, str]:
     """(thread_id, body) from read_email output."""
     tid = re.search(r"^Thread ID:\s*(\S+)", read_text or "", re.M | re.I)
     parts = re.split(r"\n\s*\n", read_text or "", maxsplit=1)
     body = parts[1] if len(parts) > 1 else read_text or ""
+    body = re.split(r"^Attachments \(\d+\):", body, maxsplit=1, flags=re.M)[0]
     return (tid.group(1) if tid else ""), _strip_quoted(body).strip()[:3000]
 
 
@@ -190,7 +270,9 @@ def _system_prompt(label: str, first_reply: bool) -> str:
            f"{USER_NAME}'s assistant, and that {USER_NAME} is asleep. " if first_reply else
            "You have already introduced yourself; do not repeat the introduction. ")
         + f"Never claim to be {USER_NAME}. Refer to {USER_NAME} by name and avoid gendered "
-        "pronouns for them. Be warm and brief (under 120 words), plain text, no markdown. Have a "
+        "pronouns for them. Be warm and brief (under 120 words; up to about 250 if asked to "
+        "summarize or explain an attachment), plain text, no markdown. Any attachments the sender "
+        "included are provided to you: read and use them; if one could not be read, say so. Have a "
         "real conversation: answer questions and help with what you can. Do NOT commit "
         f"{USER_NAME} to anything (money, plans, meetings, promises, decisions), do not share "
         "private information (passwords, addresses, finances, health details, other people's "
@@ -252,7 +334,7 @@ def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
     """mcp(tool, args) -> text ('search_emails' etc., un-prefixed); claude(system, user, max_tokens)
     -> text|None; record(text) files an item under the wake-up recap's important section.
     Returns counts, for logging/tests. Skips silently if another cycle is still running."""
-    stats = {"seen": 0, "family_replied": 0, "family_failed": 0, "critical": 0, "skipped": 0}
+    stats = {"seen": 0, "inbound": 0, "family_replied": 0, "family_failed": 0, "critical": 0, "skipped": 0}
     if not _cycle_lock.acquire(blocking=False):
         return stats
     try:
@@ -289,6 +371,7 @@ def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
                     _mark(conn, msg["id"], sender, "family")
                 else:
                     others.append(msg)
+                    stats["inbound"] += 1
             if others:
                 for i in _classify_critical(claude, others):
                     if 0 <= i < len(others):
@@ -317,15 +400,20 @@ def _handle_family(conn, msg, label, mcp, claude, record, sleep_started_at, slee
     if _is_our_own_message(body):
         stats["skipped"] += 1
         return
-    heading = f"{label} emailed you \"{subject}\""
+    stats["inbound"] += 1
+    atts = parse_attachments(read) if not looks_like_error(read) else []
+    heading = f"{label} emailed you \"{subject}\"" + (
+        f" (with attachment: {', '.join(a['name'] for a in atts[:MAX_ATTACHMENTS])})" if atts else "")
     if len(sent_before) >= MAX_REPLIES_PER_SENDER:
         record(f"{heading} again, but I've reached my reply limit for tonight, so you'll want to answer them yourself.")
         stats["skipped"] += 1
         return
     convo = "".join(f"\n[Your earlier reply]: {b[:400]}" for (b,) in sent_before[-3:])
-    reply = (claude(_system_prompt(label, first_reply=not sent_before),
-                    f"Email from {label}, subject \"{subject}\":\n{body or '(could not read the body)'}{convo}",
-                    400) or "").strip()
+    att_text, blocks = read_attachments(mcp, msg["id"], atts) if atts else ("", [])
+    prompt = (f"Email from {label}, subject \"{subject}\":\n{body or '(could not read the body)'}"
+              f"{convo}" + (f"\n\n{att_text}" if att_text else ""))
+    user = [{"type": "text", "text": prompt}, *blocks] if blocks else prompt
+    reply = (claude(_system_prompt(label, first_reply=not sent_before), user, 700) or "").strip()
     if not reply:
         record(f"{heading}, but I couldn't write a reply. It needs your attention.")
         stats["family_failed"] += 1

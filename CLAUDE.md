@@ -361,7 +361,10 @@ Rules:
 ## Sleep Mode mail take-over (2026-09-19)
 
 - `jarvis_sleep_mail.py`, ticked from the scheduler (`_sleep_mail_tick`): **only while Sleep Mode is
-  on**, every 30 min (`JARVIS_SLEEP_MAIL_INTERVAL_MIN`; first check 30 min after it starts) it
+  on**, every 15 min (`JARVIS_SLEEP_MAIL_INTERVAL_MIN`; first check 15 min after it starts; as of
+  2026-09-19 — was 30). Once a check finds a real inbound message it speeds up to every 2 min
+  (`JARVIS_SLEEP_MAIL_ACTIVE_INTERVAL_MIN`) until 20 min pass with nothing new
+  (`JARVIS_SLEEP_MAIL_ACTIVE_WINDOW_MIN`); any non-self sender triggers it, family or not. It
   searches the Gmail inbox (via the existing Gmail MCP) for mail that arrived since Sleep Mode
   began. **Family** senders get a reply sent *as Jarvis* ("I'm Jarvis, <name>'s assistant, they're
   asleep"), continuing the conversation across cycles; everything goes in the wake-up recap's
@@ -378,6 +381,13 @@ Rules:
   carries a disclosure signature; the prompt forbids commitments, private info and claiming actions,
   and avoids gendered pronouns for the user. Messages are marked handled in `sleep_mail_handled`
   (no double replies across restarts); replies logged in `sleep_mail_replies`. Both tables are new.
+- **Attachments (family replies only):** up to 3 per email, each <= 8 MB, downloaded via the Gmail
+  MCP into `.cache/sleep_mail_att/<id>/` and deleted right after. Text/md/csv/json and .docx are read
+  as text; PDFs via `pypdf` text, and scanned/handwritten PDFs (no text layer) plus png/jpg/gif/webp
+  are sent to the model as `document`/`image` blocks (`jarvis_gemini` maps both to `inlineData`).
+  Anything else (e.g. .exe) is never opened and is reported as unreadable. Verified live on a real
+  5-page scanned PDF (summarised correctly, no send). **Data exposure:** attachment content goes to
+  the active brain; if that is Gemini's free tier it may be used to improve Google products.
 - **Open items:** Dad Jacob's address (`ayojacobgo@gmail.com`, same as the Claude account email) was
   confirmed by the user as his on 2026-09-19 and is on the family list; Racheal's old address was
   superseded in memory the same day (`rachealpower25@gmail.com` is the true one). An "error" that

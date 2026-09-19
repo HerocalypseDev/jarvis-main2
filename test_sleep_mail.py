@@ -248,3 +248,108 @@ def test_quoted_history_is_stripped_from_replies():
            "On Sat, 19 Sept 2026 at 05:54, Someone <a@b.com> wrote:\n> Hello. I am Jarvis.\n> more")
     tid, body = sm._body_of(raw)
     assert tid == "T1" and body == "but am scared, summarize the note"
+
+
+# --- attachments ----------------------------------------------------------------------------
+READ_WITH_ATT = ("Thread ID: T1\nSubject: notes\nFrom: f\n\nplease summarize\n\n"
+                 "Attachments (2):\n- Chemical bonding notes.pdf (application/pdf, 12 KB, ID: AAA111)\n"
+                 "- plan.txt (text/plain, 1 KB, ID: BBB222)")
+
+
+def test_parse_attachments_and_body_excludes_listing():
+    atts = sm.parse_attachments(READ_WITH_ATT)
+    assert [(a["name"], a["mime"], a["id"]) for a in atts] == [
+        ("Chemical bonding notes.pdf", "application/pdf", "AAA111"), ("plan.txt", "text/plain", "BBB222")]
+    assert sm._body_of(READ_WITH_ATT)[1] == "please summarize"
+
+
+class AttGmail(FakeGmail):
+    """Writes the 'downloaded' file where the real tool would."""
+    files = {"plan.txt": b"Step 1: revise ionic bonding.", "Chemical bonding notes.pdf": b"%PDF-scan-no-text",
+             "pic.png": b"\x89PNG", "evil.exe": b"MZ"}
+
+    def __call__(self, tool, args):
+        if tool == "read_email":
+            return READ_WITH_ATT
+        if tool == "download_attachment":
+            from pathlib import Path
+            if args["filename"] not in self.files:
+                return "MCP tool call failed: not found"
+            (Path(args["savePath"]) / args["filename"]).write_bytes(self.files[args["filename"]])
+            return "Attachment downloaded successfully"
+        return super().__call__(tool, args)
+
+
+def test_read_attachments_text_scanned_pdf_image_and_unreadable(db, monkeypatch):
+    monkeypatch.setattr(sm, "MAX_ATTACHMENTS", 4)
+    g = AttGmail("")
+    atts = [{"name": "plan.txt", "mime": "text/plain", "kb": 1, "id": "b"},
+            {"name": "Chemical bonding notes.pdf", "mime": "application/pdf", "kb": 12, "id": "a"},
+            {"name": "pic.png", "mime": "image/png", "kb": 1, "id": "c"},
+            {"name": "evil.exe", "mime": "application/x-msdownload", "kb": 1, "id": "d"}]
+    text, blocks = sm.read_attachments(g, "msg1", atts)
+    assert "revise ionic bonding" in text and "can't read" in text  # .txt read, .exe refused
+    assert [b["type"] for b in blocks] == ["text", "document", "text", "image"]  # scanned PDF + image -> model
+    assert blocks[1]["source"]["media_type"] == "application/pdf"
+    from pathlib import Path
+    assert not any((Path(sm.__file__).parent / ".cache" / "sleep_mail_att" / "msg1").glob("*"))  # cleaned up
+
+
+def test_oversized_and_failed_downloads_are_reported(db):
+    g = AttGmail("")
+    g.files = {}
+    text, blocks = sm.read_attachments(g, "m2", [
+        {"name": "huge.pdf", "mime": "application/pdf", "kb": 999999, "id": "x"},
+        {"name": "missing.txt", "mime": "text/plain", "kb": 1, "id": "y"}])
+    assert "too large" in text and "could not be" in text and blocks == []
+    text, _ = sm.read_attachments(g, "m3", [{"name": f"f{i}.bin", "mime": "x/y", "kb": 1, "id": str(i)} for i in range(5)])
+    assert "2 more attachment(s) were not read" in text
+
+
+def test_family_reply_with_attachment_sends_blocks_to_model(db):
+    g = AttGmail(_search(("m1", "Notes", "sis@x.com")))
+    got = {}
+
+    def claude(system, user, n):
+        got["user"] = user
+        return "Here is the summary."
+
+    rec = []
+    stats = _run(g, claude, rec)
+    assert stats["family_replied"] == 1 and stats["inbound"] == 1
+    assert isinstance(got["user"], list) and got["user"][0]["type"] == "text"
+    assert "revise ionic bonding" in got["user"][0]["text"] and any(b["type"] == "document" for b in got["user"])
+    assert "with attachment: Chemical bonding notes.pdf, plan.txt" in rec[0]
+
+
+def test_inbound_counts_real_messages_only(db):
+    g = FakeGmail(_search(("a", "x", "me@x.com"), ("b", "promo", "p@shop.com")))
+    assert _run(g, lambda *a: "[]", [])["inbound"] == 1  # own address doesn't count
+
+
+def test_cadence_defaults():
+    assert sm.SLEEP_MAIL_INTERVAL_MIN == 15 and sm.ACTIVE_INTERVAL_MIN == 2
+
+
+def test_tick_speeds_up_to_2_minutes_after_a_message_then_relaxes(jarvis, monkeypatch):
+    import time as _t
+    runs, script = [], iter([{"inbound": 1}, {"inbound": 0}, {"inbound": 0}, {"inbound": 0}])
+    monkeypatch.setattr(jarvis.sleep_mail, "run_cycle", lambda **k: runs.append(1) or next(script))
+    monkeypatch.setattr(jarvis, "ensure_mcp_started", lambda: None)
+    monkeypatch.setitem(jarvis._mcp_tool_index, "mcp_gmail_search_emails", ("gmail", "search_emails"))
+    started = datetime.now().replace(microsecond=0)
+    monkeypatch.setattr(jarvis.sleep_mode, "started_at", lambda: started.isoformat())
+    jarvis._sleep_mail_last_check = jarvis._sleep_mail_fast_until = None
+
+    def tick(minutes):
+        jarvis._sleep_mail_tick(started + timedelta(minutes=minutes))
+        _t.sleep(0.15)
+
+    tick(16); assert len(runs) == 1          # normal 15-min cadence: first check
+    tick(17); assert len(runs) == 1          # only 1 min later, and (fast window runs from wall-clock now)
+    jarvis._sleep_mail_fast_until = started + timedelta(minutes=16 + 20)  # window as set by the message
+    tick(19); assert len(runs) == 2          # >= 2 min later while fast
+    tick(21); assert len(runs) == 3
+    tick(23); assert len(runs) == 4
+    tick(60); tick(61)                       # window over: back to 15-min cadence
+    assert len(runs) == 4 or len(runs) == 5  # at most one check, not one per 2 min
