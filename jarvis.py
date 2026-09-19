@@ -1085,25 +1085,6 @@ AGENT_TOOLS = [
         },
     },
     {
-        "name": "schedule_sleep_wakeup",
-        "description": (
-            "Set a smart wake-up alarm for when Sleep Mode is on: volume gradually ramps up "
-            "before the target time, Jarvis speaks a short morning greeting, and Sleep Mode "
-            "turns itself off."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "wake_time": {"type": "string", "description": "24h HH:MM, e.g. '07:30'"},
-                "ramp_minutes": {
-                    "type": "integer",
-                    "description": "how many minutes before wake_time to start the volume ramp, default 10",
-                },
-            },
-            "required": ["wake_time"],
-        },
-    },
-    {
         "name": "play_ambient_sound",
         "description": "Play calming ambient/sleep sounds to help you fall asleep.",
         "input_schema": {
@@ -3629,7 +3610,6 @@ def _scheduler_loop() -> None:
             _check_background_tasks(now)
             _retry_failed_mcp_servers(now)
             task_scheduler.tick(now, _run_queued_task, queue_or_deliver_notification)
-            sleep_mode.check_wakeup(now, _run_system_action, speak_text)
             _sleep_mail_tick(now)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
@@ -6225,10 +6205,6 @@ def _execute_tool_impl(
                 result = sleep_mode.status()
             else:
                 result = f"{action!r} is not a known sleep_mode action."
-        elif tool_name == "schedule_sleep_wakeup":
-            result = sleep_mode.schedule_wakeup(
-                str(inp.get("wake_time") or ""), inp.get("ramp_minutes")
-            )
         elif tool_name == "play_ambient_sound":
             result = sleep_mode.play_ambient(str(inp.get("kind") or "rain"))
         elif tool_name == "guided_breathing_exercise":

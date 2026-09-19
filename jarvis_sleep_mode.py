@@ -12,14 +12,9 @@ What's real, on this Windows desktop-assistant architecture:
     urgent=True (already used for medication/security-style alerts) or a whitelisted sender
     always gets through; everything else queues until sleep mode ends.
   - Dark mode: real Windows registry toggle (AppsUseLightTheme/SystemUsesLightTheme).
-  - Volume: lowered/restored via the existing relative volume_up/down system actions (no
-    absolute volume API is wired up in jarvis.py, so this is N steps down, N steps up).
-  - Distraction blocking: real hosts-file redirect of a configurable domain list. Needs the
-    process to be elevated (admin) to write %SystemRoot%\\System32\\drivers\\etc\\hosts; if
-    it isn't, this fails soft with a warning instead of breaking the rest of sleep mode.
+  - Volume: set to an exact level (default 0) through Windows Core Audio (pycaw) and restored to
+    the exact previous level on wake; falls back to relative volume_down/up key presses.
   - Sleep tracking: real sqlite log of start/end/duration, with a rolling history summary.
-  - Smart wake-up: a scheduled gradual volume ramp + spoken morning line, checked from
-    jarvis.py's existing 60s scheduler tick — no new background thread needed.
   - Calmer voice: real Piper SynthesisConfig knobs (length_scale slower, volume softer).
   - Ambient sound / breathing: opens a curated calming stream, or speaks a short guided
     breathing script through the existing TTS.
@@ -50,16 +45,10 @@ WHITELIST_CONTACTS = [
     for c in (os.environ.get("JARVIS_SLEEP_WHITELIST_CONTACTS") or "").split(",")
     if c.strip()
 ]
-BLOCK_DOMAINS = [
-    d.strip().lower()
-    for d in (
-        os.environ.get("JARVIS_SLEEP_BLOCK_DOMAINS")
-        or "youtube.com,twitter.com,x.com,reddit.com,instagram.com,tiktok.com,facebook.com"
-    ).split(",")
-    if d.strip()
-]
+# Sleep/nap mode sets the system volume to this percent (0 = silent) and restores the exact
+# previous level on wake. VOLUME_DOWN_STEPS is only the fallback when exact control isn't available.
+SLEEP_VOLUME_PERCENT = max(0, min(100, int(os.environ.get("JARVIS_SLEEP_VOLUME_PERCENT") or 0)))
 VOLUME_DOWN_STEPS = int(os.environ.get("JARVIS_SLEEP_VOLUME_STEPS") or 8)
-DEFAULT_WAKE_RAMP_MINUTES = int(os.environ.get("JARVIS_SLEEP_WAKE_RAMP_MINUTES") or 10)
 MEDIA_AUTOPAUSE_MINUTES = int(os.environ.get("JARVIS_SLEEP_MEDIA_AUTOPAUSE_MINUTES") or 30)
 # Calmer TTS: slower (higher length_scale) and quieter (lower volume) than the default 1.0/1.0.
 SLEEP_LENGTH_SCALE = float(os.environ.get("JARVIS_SLEEP_TTS_LENGTH_SCALE") or 1.25)
@@ -159,6 +148,7 @@ def _connect() -> sqlite3.Connection:
         "ALTER TABLE sleep_log ADD COLUMN kind TEXT",    # 'sleep' | 'nap'; NULL (old rows) = sleep
         "ALTER TABLE sleep_state ADD COLUMN kind TEXT",
         "ALTER TABLE sleep_state ADD COLUMN volume_steps INTEGER",  # volume-down presses to undo on wake
+        "ALTER TABLE sleep_state ADD COLUMN volume_level REAL",     # exact prior level (0-1) to restore
     ):
         try:
             conn.execute(ddl)
@@ -173,14 +163,13 @@ def _get_state() -> dict:
         conn = _connect()
         try:
             row = conn.execute(
-                "SELECT active, started_at, wake_time, wake_ramp_minutes, wake_fired_date, "
-                "dark_mode_was_on, hosts_blocked, kind, volume_steps FROM sleep_state WHERE id = 1"
+                "SELECT active, started_at, dark_mode_was_on, kind, volume_steps, volume_level "
+                "FROM sleep_state WHERE id = 1"
             ).fetchone()
         finally:
             conn.close()
     keys = (
-        "active", "started_at", "wake_time", "wake_ramp_minutes", "wake_fired_date",
-        "dark_mode_was_on", "hosts_blocked", "kind", "volume_steps",
+        "active", "started_at", "dark_mode_was_on", "kind", "volume_steps", "volume_level",
     )
     return dict(zip(keys, row)) if row else {k: None for k in keys}
 
@@ -297,46 +286,38 @@ def _set_dark_mode(dark: bool) -> bool:
         return False
 
 
-# --- distraction blocking (real hosts-file redirect; needs admin to write) --------------
-_HOSTS_BLOCK_MARK = "# jarvis-sleep-mode"
-
-
-def _hosts_path() -> Path:
-    return Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "drivers" / "etc" / "hosts"
-
-
-def _block_distractions() -> bool:
-    if sys.platform != "win32" or not BLOCK_DOMAINS:
-        return False
-    path = _hosts_path()
+# --- exact system volume (pycaw / Windows Core Audio) ------------------------------------------
+def _endpoint_volume_call(fn):
+    """Runs fn(endpoint_volume) with COM initialised on this thread. None on any failure (pycaw not
+    installed, no audio device, non-Windows), and always None under pytest so tests can never
+    change the real machine's volume."""
+    if sys.platform != "win32" or os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
     try:
-        original = path.read_text(encoding="utf-8", errors="ignore")
-        if _HOSTS_BLOCK_MARK in original:
-            return True  # already blocked (e.g. from a prior crash before disable ran)
-        lines = [f"127.0.0.1 {d} {_HOSTS_BLOCK_MARK}" for d in BLOCK_DOMAINS]
-        lines += [f"127.0.0.1 www.{d} {_HOSTS_BLOCK_MARK}" for d in BLOCK_DOMAINS]
-        with path.open("a", encoding="utf-8") as f:
-            f.write("\n" + "\n".join(lines) + "\n")
-        return True
-    except OSError as e:
-        log.warning(
-            "Could not edit hosts file to block distractions (run as admin?): %s", e
-        )
-        return False
-
-
-def _unblock_distractions() -> None:
-    if sys.platform != "win32":
-        return
-    path = _hosts_path()
+        import comtypes
+        from pycaw.pycaw import AudioUtilities
+    except ImportError:
+        return None
     try:
-        original = path.read_text(encoding="utf-8", errors="ignore")
-        if _HOSTS_BLOCK_MARK not in original:
-            return
-        kept = [ln for ln in original.splitlines() if _HOSTS_BLOCK_MARK not in ln]
-        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
-    except OSError as e:
-        log.warning("Could not remove hosts-file blocks (run as admin?): %s", e)
+        comtypes.CoInitialize()
+        try:
+            return fn(AudioUtilities.GetSpeakers().EndpointVolume)
+        finally:
+            comtypes.CoUninitialize()
+    except Exception as e:
+        log.warning("Exact volume control failed: %s", e)
+        return None
+
+
+def _get_volume() -> float | None:
+    """Master volume as 0.0-1.0, or None if it can't be read."""
+    v = _endpoint_volume_call(lambda ev: ev.GetMasterVolumeLevelScalar())
+    return None if v is None else float(v)
+
+
+def _set_volume(level: float) -> bool:
+    level = max(0.0, min(1.0, float(level)))
+    return _endpoint_volume_call(lambda ev: ev.SetMasterVolumeLevelScalar(level, None) or True) is True
 
 
 # --- media auto-pause --------------------------------------------------------------------
@@ -375,14 +356,7 @@ def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
     _system_action = run_system_action
     was_dark = _dark_mode_is_on()
     dark_ok = _set_dark_mode(True)
-    hosts_ok = _block_distractions()
-    steps_done = 0
-    try:
-        for _ in range(VOLUME_DOWN_STEPS):
-            run_system_action("volume_down")
-            steps_done += 1
-    except Exception as e:
-        log.warning("Sleep Mode could not lower volume: %s", e)
+    prev_volume = _get_volume()  # exact level, so wake-up can put it back precisely
     _start_media_autopause(run_system_action)
 
     now = datetime.now()
@@ -390,9 +364,9 @@ def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
         active=1,
         started_at=now.isoformat(timespec="seconds"),
         dark_mode_was_on=(1 if was_dark else 0) if was_dark is not None else None,
-        hosts_blocked=1 if hosts_ok else 0,
         kind=kind,
-        volume_steps=steps_done,
+        volume_steps=None,
+        volume_level=prev_volume,
     )
     with _db_lock:
         conn = _connect()
@@ -411,6 +385,18 @@ def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
     except Exception as e:
         log.warning("Sleep Mode speak failed: %s", e)
     log.info("%s enabled.", label)
+    # Lower the volume only after the spoken confirmation, or it would be inaudible.
+    steps_done = 0
+    volume_set = prev_volume is not None and _set_volume(SLEEP_VOLUME_PERCENT / 100)
+    if not volume_set:
+        # No exact control available (pycaw missing/failing): fall back to relative key presses.
+        try:
+            for _ in range(VOLUME_DOWN_STEPS):
+                run_system_action("volume_down")
+                steps_done += 1
+        except Exception as e:
+            log.warning("Sleep Mode could not lower volume: %s", e)
+        _set_state(volume_steps=steps_done, volume_level=None)
     # Say what actually happened, not what was attempted: an already-dark PC shows no change, and
     # blocking sites needs admin rights.
     if not dark_ok:
@@ -419,16 +405,20 @@ def enable(run_system_action, speak_fn, kind: str = "sleep") -> str:
         dark = "dark mode was already on"
     else:
         dark = "dark mode switched on"
-    volume = (f"volume lowered {steps_done} step{'s' if steps_done != 1 else ''} "
-              "(each is about 2%; I'll put it back when you wake)" if steps_done else "couldn't lower the volume")
-    sites = "distracting sites blocked" if hosts_ok else "site blocking skipped (needs admin rights)"
+    if volume_set:
+        volume = (f"volume set to {SLEEP_VOLUME_PERCENT}% (it was {round(prev_volume * 100)}%; "
+                  "I'll put it back when you wake)")
+    elif steps_done:
+        volume = (f"volume lowered {steps_done} step{'s' if steps_done != 1 else ''} "
+                  "(each is about 2%; I'll put it back when you wake)")
+    else:
+        volume = "couldn't lower the volume"
     return (f"{label} is on: notifications quieted, {dark}, {volume}, media will auto-pause in "
-            f"{MEDIA_AUTOPAUSE_MINUTES} minutes, {sites}."
+            f"{MEDIA_AUTOPAUSE_MINUTES} minutes."
             + (" This nap won't count toward your sleep time." if kind == "nap" else ""))
 
 
-def disable(restore_volume: bool = True) -> str:
-    """restore_volume=False is for the wake alarm, which raises the volume gradually itself."""
+def disable() -> str:
     state = _get_state()
     if not state.get("active"):
         return "Sleep Mode is already off."
@@ -436,11 +426,13 @@ def disable(restore_volume: bool = True) -> str:
     _cancel_media_autopause()
     if not state.get("dark_mode_was_on"):
         _set_dark_mode(False)
-    if state.get("hosts_blocked"):
-        _unblock_distractions()
     steps = int(state.get("volume_steps") or 0)
+    level = state.get("volume_level")
     volume_line = ""
-    if restore_volume and steps and _system_action:
+    if level is not None:
+        if _set_volume(float(level)):
+            volume_line = f" Volume restored to {round(float(level) * 100)}%."
+    elif steps and _system_action:
         try:
             for _ in range(steps):
                 _system_action("volume_up")
@@ -476,9 +468,8 @@ def disable(restore_volume: bool = True) -> str:
             pass
 
     _set_state(
-        active=0, started_at=None, wake_time=None, wake_ramp_minutes=None,
-        wake_fired_date=None, dark_mode_was_on=None, hosts_blocked=0, kind=None,
-        volume_steps=None,
+        active=0, started_at=None, dark_mode_was_on=None, kind=None,
+        volume_steps=None, volume_level=None,
     )
     log.info("Sleep Mode disabled.%s", duration_line)
     if _wake_digest_handler and started_at:
@@ -508,8 +499,6 @@ def status() -> str:
             except ValueError:
                 pass
         lines.append(f"Sleep Mode is ON{since}.")
-        if state.get("wake_time"):
-            lines.append(f"Wake-up alarm set for {state['wake_time']}.")
     else:
         lines.append("Sleep Mode is OFF.")
 
@@ -694,65 +683,6 @@ def stats_summary(now: datetime | None = None) -> dict:
             "and never counts toward your sleep time or goal."
         ),
     }
-
-
-# --- smart wake-up ---------------------------------------------------------------------
-def schedule_wakeup(wake_time: str, ramp_minutes: int | None = None) -> str:
-    """wake_time: 'HH:MM' 24h local time. Checked every scheduler tick by check_wakeup()."""
-    wake_time = (wake_time or "").strip()
-    try:
-        datetime.strptime(wake_time, "%H:%M")
-    except ValueError:
-        return "Give the wake time as HH:MM, e.g. 07:30."
-    _set_state(
-        wake_time=wake_time,
-        wake_ramp_minutes=int(ramp_minutes) if ramp_minutes else DEFAULT_WAKE_RAMP_MINUTES,
-        wake_fired_date=None,
-    )
-    return f"Wake-up alarm set for {wake_time}, with a gentle volume ramp beforehand."
-
-
-def _ramp_volume_up(run_system_action, steps: int) -> None:
-    def _run():
-        for _ in range(steps):
-            try:
-                run_system_action("volume_up")
-            except Exception as e:
-                log.warning("Sleep Mode wake ramp failed: %s", e)
-                return
-            threading.Event().wait(20)  # spread the ramp out instead of one loud jump
-
-    threading.Thread(target=_run, daemon=True, name="sleep-wake-ramp").start()
-
-
-def check_wakeup(now: datetime, run_system_action, speak_fn) -> None:
-    """Call once per scheduler tick (jarvis.py's existing 60s loop). Fires at most once per
-    calendar day for the configured wake_time, ramping volume up over wake_ramp_minutes and
-    then speaking a brief morning line, and turns Sleep Mode off."""
-    state = _get_state()
-    wake_time = state.get("wake_time")
-    if not wake_time or not state.get("active"):
-        return
-    today = now.date().isoformat()
-    if state.get("wake_fired_date") == today:
-        return
-    try:
-        target = datetime.strptime(wake_time, "%H:%M").time()
-    except ValueError:
-        return
-    ramp_minutes = state.get("wake_ramp_minutes") or DEFAULT_WAKE_RAMP_MINUTES
-    ramp_start = (datetime.combine(now.date(), target) - timedelta(minutes=ramp_minutes)).time()
-    if not (ramp_start <= now.time() <= target):
-        return
-    _set_state(wake_fired_date=today)
-    # Raise it back over time by the same number of steps enable() lowered it (or a default).
-    _ramp_volume_up(run_system_action, steps=max(1, int(state.get("volume_steps") or ramp_minutes // 2)))
-    try:
-        speak_fn("Good morning. Gently waking you up now.")
-    except Exception as e:
-        log.warning("Sleep Mode wake speak failed: %s", e)
-    disable(restore_volume=False)
-    log.info("Sleep Mode: smart wake-up fired for %s.", wake_time)
 
 
 # --- ambient sound / breathing -----------------------------------------------------------

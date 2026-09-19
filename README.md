@@ -96,7 +96,6 @@ Named tools (more reliable — Claude prefers these when one fits):
 | "open cursor" / "open notepad" / "open calculator" / "open explorer" / "open chrome" / "open spotify" | Launches or focuses that app (`open_app`, allowlist in `ALLOWED_APPS`) |
 | "lock my computer" / "minimize everything" / "minimize this window" / "turn the volume up/down" / "mute" / "skip this track" / "pause the music" | System-level actions and media keys (`system_action`) |
 | "turn on sleep mode" / "turn off sleep mode" / "is sleep mode on?" | Quiets non-urgent notifications, dims to dark mode, lowers volume, and speaks more softly (`sleep_mode`) |
-| "wake me up at 7:30" | Sets a smart wake-up alarm with a gradual volume ramp (`schedule_sleep_wakeup`) |
 | "play some rain sounds" | Ambient/sleep sounds (`play_ambient_sound`) |
 | "guide me through a breathing exercise" | Spoken guided breathing exercise (`guided_breathing_exercise`) |
 | "what does this error say" / "summarize this page" / "fix this error" | Screenshot → Claude vision (`read_screen`); if you explicitly ask for a fix, it's typed at your cursor automatically. **The screenshot is sent to Anthropic's API.** |

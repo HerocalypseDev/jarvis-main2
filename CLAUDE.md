@@ -349,8 +349,8 @@ Rules:
   on, goal is `JARVIS_SLEEP_GOAL_HOURS` (8). Only schema change: `sleep_log.digest TEXT` (auto-migrated).
 - **Wake-up digest**: notifications queued during Sleep Mode are flagged `during_sleep` in
   `session_state.json`'s `pending_notifications`. `flush_pending_notifications` leaves them alone
-  (even if the user talks to Jarvis mid-sleep). When Sleep Mode ends by any route (tool, toggle,
-  wake alarm) `disable()` calls the handler `jarvis._sleep_wake_digest`, which drains those items
+  (even if the user talks to Jarvis mid-sleep). When Sleep Mode ends by either route (the tool or the
+  toggle) `disable()` calls the handler `jarvis._sleep_wake_digest`, which drains those items
   synchronously and, on a thread, has one Claude call write a <=3-sentence recap starting "Hero,
   while you were asleep, ...", speaks it, and saves it to `sleep_log.digest` (shown in the tab).
   The recap is two-part: first the *important* items (urgent messages that came through live during sleep — `queue_or_deliver_notification` still speaks them, and also records them with `important: True`), or "nothing important happened"; then, only if there are held-back items, the exact words "On a lighter note," and those. If the model drops that structure, or the call fails, a deterministic fallback builds the same two parts from the raw items; says "nothing came in" if empty.
@@ -367,23 +367,29 @@ Rules:
   (count, average, total), a violet nap segment stacked on the day's night bar, "(nap)" in the
   header, and a separate line in the voice `status()`. Naps under `JARVIS_NAP_MIN_MINUTES` (10) are
   ignored. Deliberately explicit: an earlier same-day version guessed naps from the clock
-  (afternoon start) and was replaced at the user's request. Not built: a nap alarm/timer (a nap has
-  no wake time unless `schedule_sleep_wakeup` is used, and that alarm says "Good morning"), counting
+  (afternoon start) and was replaced at the user's request. Not built: a nap timer/alarm (the wake alarm was
+  removed), counting
   naps toward a 24-hour goal. Not exercised live (it toggles dark mode/volume/hosts); unit-tested
   with those faked.
-- **"Nothing changed" investigation (2026-09-19):** the 2026-09-19 01:13-05:02 Sleep Mode run *did*
-  work (reminders held, media auto-paused at 01:43) but looked like nothing: the PC was already in
-  dark mode (the code restores the prior state, so no visible change); volume drops are only ~2%
-  per key press (verified live: 8 presses took the master volume 44% -> 28%); site blocking failed
-  with "Permission denied" on the hosts file because Jarvis isn't run as admin (deliberately not
-  changed: running Jarvis elevated would give every tool it runs admin rights); and `disable()`
-  never put the volume back (only the wake-alarm ramp did). Fixed: `enable()` now returns what
-  really happened ("dark mode was already on", "volume lowered 8 steps", "site blocking skipped
-  (needs admin rights)"), and `disable()` presses Volume Up for the recorded number of steps
-  (`sleep_state.volume_steps`; `jarvis.py` registers `_run_system_action` via
-  `sleep_mode.set_system_action_handler` so this survives a restart mid-sleep; the wake alarm passes
-  `restore_volume=False` and ramps the same number of steps instead). Volume is still relative
-  key presses, not an absolute level.
+- **"Nothing changed" investigation (2026-09-19):** the 01:13-05:02 Sleep Mode run *did* work
+  (reminders held, media auto-paused at 01:43) but looked like nothing: the PC was already in dark
+  mode (the prior state is restored, so no visible change); volume key presses are only ~2% each;
+  site blocking failed on the hosts file (no admin rights); and `disable()` never put the volume
+  back. Fixes, in order: `enable()` now returns what really happened ("dark mode was already on",
+  "volume set to 0% (it was 44%...)"); the volume is now set to an **exact level** through
+  Windows Core Audio (`pycaw`, `JARVIS_SLEEP_VOLUME_PERCENT`, default **0** = silent, by explicit
+  user request) *after* the spoken confirmation, the exact previous level is stored in
+  `sleep_state.volume_level`, and `disable()` restores it. If pycaw/audio control is unavailable it
+  falls back to 8 relative key presses (`volume_steps`), and a state left by the older version
+  (steps only) still restores that way. pycaw is a no-op under pytest (`PYTEST_CURRENT_TEST`) so
+  tests can never change the real machine volume. Consequence to remember: at 0% even urgent
+  spoken alerts are silent until Sleep Mode ends (they still reach the recap).
+- **Removed at the user's request (2026-09-19): the wake-up alarm and distraction-site blocking.**
+  Gone: `schedule_sleep_wakeup` tool, `check_wakeup`, the volume ramp, the hosts-file redirect
+  (`JARVIS_SLEEP_BLOCK_DOMAINS`), and the scheduler tick call. Site blocking was the only reason
+  Jarvis would need admin rights, so it keeps running as a normal user; no Sleep Mode step needs
+  elevation now. Legacy columns (`wake_time`, `hosts_blocked`, ...) remain in `sleep_state`,
+  unused. Sleep Mode/nap mode now ends only when the user says so.
 - **Hotkeys (2026-09-19):** push-to-talk defaults to **Right Shift**, the typed-command hotkey to
   **Left Ctrl** (hold 2s). Left Ctrl is also used for shortcuts; a 2s hold is unlikely but possible
   while dragging with Ctrl held — change `JARVIS_TEXT_HOTKEY_KEY` if it misfires.

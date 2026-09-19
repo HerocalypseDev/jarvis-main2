@@ -68,7 +68,7 @@ def test_stats_two_sessions_same_night_are_summed(db):
 def test_disable_calls_digest_handler_and_digest_is_saved(db):
     calls = []
     sm.set_wake_digest_handler(lambda a, b, kind: calls.append((a, b)))
-    sm._set_state(active=1, started_at="2026-09-18T23:00:00", hosts_blocked=0, dark_mode_was_on=1)
+    sm._set_state(active=1, started_at="2026-09-18T23:00:00", dark_mode_was_on=1)
     _log("2026-09-18T23:00:00", "2026-09-18T23:00:00")  # placeholder row to attach digest to
     sm.disable()
     assert len(calls) == 1 and calls[0][0] == "2026-09-18T23:00:00"
@@ -239,7 +239,6 @@ def test_nap_only_day_has_no_night_and_status_line_separates_them(db):
 def test_enable_nap_logs_kind_and_disable_reports_it(db, monkeypatch):
     monkeypatch.setattr(sm, "_set_dark_mode", lambda d: True)
     monkeypatch.setattr(sm, "_dark_mode_is_on", lambda: False)
-    monkeypatch.setattr(sm, "_block_distractions", lambda: False)
     monkeypatch.setattr(sm, "_start_media_autopause", lambda r: None)
     monkeypatch.setattr(sm, "_cancel_media_autopause", lambda: None)
     spoken, handled = [], []
@@ -296,23 +295,22 @@ def test_tool_nap_action_starts_a_nap_and_recap_uses_kind(jarvis, monkeypatch):
 
 
 # --- what Sleep Mode actually does, and undoing it -------------------------------------------
-def _fake_env(monkeypatch, dark=False, dark_ok=True, hosts=False):
+def _fake_env(monkeypatch, dark=False, dark_ok=True):
     monkeypatch.setattr(sm, "_dark_mode_is_on", lambda: dark)
     monkeypatch.setattr(sm, "_set_dark_mode", lambda d: dark_ok)
-    monkeypatch.setattr(sm, "_block_distractions", lambda: hosts)
     monkeypatch.setattr(sm, "_start_media_autopause", lambda r: None)
     monkeypatch.setattr(sm, "_cancel_media_autopause", lambda: None)
 
 
 def test_enable_reports_what_really_happened(db, monkeypatch):
-    _fake_env(monkeypatch, dark=True, hosts=False)
+    _fake_env(monkeypatch, dark=True)
     out = sm.enable(lambda a: None, lambda t: None)
     assert "dark mode was already on" in out and "lowered 8 steps" in out
-    assert "site blocking skipped (needs admin rights)" in out
+    assert "site" not in out.lower()
     sm.disable()
-    _fake_env(monkeypatch, dark=False, dark_ok=False, hosts=True)
+    _fake_env(monkeypatch, dark=False, dark_ok=False)
     out = sm.enable(lambda a: None, lambda t: None)
-    assert "couldn't switch dark mode" in out and "distracting sites blocked" in out
+    assert "couldn't switch dark mode" in out
 
 
 def test_disable_puts_the_volume_back(db, monkeypatch):
@@ -348,15 +346,55 @@ def test_failed_volume_press_records_only_the_steps_done(db, monkeypatch):
     assert "lowered 3 steps" in out and sm._get_state()["volume_steps"] == 3
 
 
-def test_wake_alarm_ramps_up_and_does_not_also_jump_the_volume(db, monkeypatch):
+def test_wake_alarm_and_site_blocking_are_gone(jarvis):
+    for name in ("schedule_wakeup", "check_wakeup", "_block_distractions", "_unblock_distractions",
+                 "cleanup_stale_blocks", "_ramp_volume_up"):
+        assert not hasattr(sm, name), name
+    assert not any(t["name"] == "schedule_sleep_wakeup" for t in jarvis.AGENT_TOOLS)
+    assert "wake-up alarm" not in sm.status().lower()
+
+
+def test_volume_goes_to_zero_and_comes_back_to_the_exact_level(db, monkeypatch):
     _fake_env(monkeypatch)
+    level = {"now": 0.44}
+    monkeypatch.setattr(sm, "_get_volume", lambda: level["now"])
+    monkeypatch.setattr(sm, "_set_volume", lambda v: level.update(now=v) or True)
     pressed = []
-    sm.enable(lambda a: None, lambda t: None)
+    out = sm.enable(pressed.append, lambda t: None)
+    assert level["now"] == 0.0 and pressed == []                    # exact zero, no key presses
+    assert "volume set to 0% (it was 44%" in out
+    assert sm._get_state()["volume_level"] == 0.44
+    off = sm.disable()
+    assert level["now"] == 0.44 and "Volume restored to 44%." in off and pressed == []
+
+
+def test_volume_target_is_configurable_and_confirmation_is_spoken_before_muting(db, monkeypatch):
+    _fake_env(monkeypatch)
+    monkeypatch.setattr(sm, "SLEEP_VOLUME_PERCENT", 10)
+    level = {"now": 0.5}
+    monkeypatch.setattr(sm, "_get_volume", lambda: level["now"])
+    monkeypatch.setattr(sm, "_set_volume", lambda v: level.update(now=v) or True)
+    heard_at = []
+    sm.enable(lambda a: None, lambda t: heard_at.append(level["now"]))
+    assert heard_at == [0.5]          # spoken while still audible
+    assert level["now"] == 0.1
+
+
+def test_falls_back_to_key_presses_when_exact_control_is_unavailable(db, monkeypatch):
+    _fake_env(monkeypatch)
+    monkeypatch.setattr(sm, "_get_volume", lambda: None)
+    monkeypatch.setattr(sm, "_set_volume", lambda v: False)
+    pressed = []
+    out = sm.enable(pressed.append, lambda t: None)
+    assert pressed.count("volume_down") == 8 and "volume lowered 8 steps" in out
+    sm.disable()
+    assert pressed.count("volume_up") == 8
+
+
+def test_old_style_state_without_a_saved_level_still_restores_by_steps(db, monkeypatch):
+    """A mode started by the previous version (volume_steps only) must still end cleanly."""
+    _fake_env(monkeypatch)
+    sm._set_state(active=1, started_at="2026-09-19T06:49:04", kind="nap", volume_steps=8, volume_level=None)
+    pressed = []
     sm.set_system_action_handler(pressed.append)
-    sm.schedule_wakeup("07:00", 10)
-    ramp = {}
-    monkeypatch.setattr(sm, "_ramp_volume_up", lambda run, steps: ramp.setdefault("steps", steps))
-    sm.check_wakeup(datetime(2026, 9, 20, 6, 55), pressed.append, lambda t: None)
-    assert ramp["steps"] == 8            # same number of steps enable() lowered
-    assert "volume_up" not in pressed    # disable() left the gradual ramp to do the restoring
-    assert not sm.is_active()
+    assert "Volume restored." in sm.disable() and pressed == ["volume_up"] * 8
