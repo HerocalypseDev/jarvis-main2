@@ -2838,7 +2838,11 @@ def _record_sleep_important(text: str) -> None:
 
 
 def queue_or_deliver_notification(
-    text: str, urgent: bool = False, force_phone: bool = False, quiet_asleep: bool = False
+    text: str,
+    urgent: bool = False,
+    force_phone: bool = False,
+    quiet_asleep: bool = False,
+    bypass_busy_gate: bool = False,
 ) -> None:
     """The interrupt gate every proactive message (scheduled skills, health-check suggestions)
     goes through, instead of calling speak_text directly: speaks immediately unless the user
@@ -2846,7 +2850,9 @@ def queue_or_deliver_notification(
     seconds) during their stated afternoon focus hours, in which case it's queued and only
     delivered the next time they actually talk to Jarvis (see flush_pending_notifications,
     called from handle_text_command) — never interrupting mid-focus-block for something
-    non-urgent, but never getting lost either."""
+    non-urgent, but never getting lost either. `bypass_busy_gate` skips only that busy/focus-hours
+    hold (for things the user explicitly asked for, like reminders); Focus Mode and Sleep Mode
+    still hold the message."""
     text = (text or "").strip()
     if not text:
         return
@@ -2879,7 +2885,7 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Queued non-urgent notification (Sleep Mode active): %r", text)
         return
-    if urgent or not (user_is_actively_working() and _is_preferred_work_hours()):
+    if urgent or bypass_busy_gate or not (user_is_actively_working() and _is_preferred_work_hours()):
         _speak_shaped(text)
         return
     with _session_context_lock:
@@ -3338,7 +3344,10 @@ def _check_due_reminders(now: datetime) -> None:
         # a silent visual banner doesn't talk over anything, so it doesn't need to wait out
         # queue_or_deliver_notification's busy-gate to avoid being missed.
         send_windows_toast("Jarvis Reminder", text)
-        queue_or_deliver_notification(f"Reminder: {text}", urgent=bool(urgent))
+        # A reminder the user set must fire on time; only unprompted messages wait out the busy gate.
+        queue_or_deliver_notification(
+            f"Reminder: {text}", urgent=bool(urgent), bypass_busy_gate=True
+        )
         record_recent_task(f"reminder delivered: {text}")
         with _memory_db_lock:
             conn = _memory_db_connect()

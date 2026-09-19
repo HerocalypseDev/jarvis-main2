@@ -598,3 +598,32 @@ def test_gmail_watch_skill_requires_spoken_alert_for_important_mail():
     assert "MUST be a short spoken alert" in text
     assert "security/account alert" in text
     assert "NO spoken reply" in text
+
+
+def _gate_env(jarvis, monkeypatch):
+    spoken = []
+    monkeypatch.setattr(jarvis, "_speak_shaped", lambda t: spoken.append(t))
+    monkeypatch.setattr(jarvis, "_notify_phone", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis, "refresh_session_context", lambda: None)
+    monkeypatch.setattr(jarvis, "_save_session_context_locked", lambda: None)
+    monkeypatch.setattr(jarvis.focus_mode, "should_suppress", lambda urgent: False)
+    monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: False)
+    monkeypatch.setattr(jarvis, "user_is_actively_working", lambda: True)
+    monkeypatch.setattr(jarvis, "_is_preferred_work_hours", lambda now=None: True)
+    monkeypatch.setitem(jarvis._session_context, "pending_notifications", [])
+    return spoken
+
+
+def test_busy_gate_holds_ordinary_notification_but_not_reminders(jarvis, monkeypatch):
+    spoken = _gate_env(jarvis, monkeypatch)
+    jarvis.queue_or_deliver_notification("suggestion")
+    assert spoken == []
+    jarvis.queue_or_deliver_notification("Reminder: drink water", bypass_busy_gate=True)
+    assert spoken == ["Reminder: drink water"]
+
+
+def test_bypass_busy_gate_still_respects_sleep_mode(jarvis, monkeypatch):
+    spoken = _gate_env(jarvis, monkeypatch)
+    monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: True)
+    jarvis.queue_or_deliver_notification("Reminder: x", bypass_busy_gate=True)
+    assert spoken == []
