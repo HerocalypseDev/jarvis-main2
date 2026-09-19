@@ -65,6 +65,10 @@ import jarvis_billing as billing
 import jarvis_gemini as gemini
 import jarvis_dashboard as dashboard
 import jarvis_image_download as image_download
+import jarvis_devtools as devtools
+import jarvis_focus as focus_mode
+import jarvis_roblox as roblox
+import jarvis_vibes as vibes
 import jarvis_restart as restart_mod
 
 # --- tuning knobs -----------------------------------------------------------
@@ -1184,6 +1188,71 @@ AGENT_TOOLS = [
                 "append": {"type": "boolean", "description": "true to append instead of overwrite"},
             },
             "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "dev_tools",
+        "description": (
+            "Repository analysis and boilerplate. 'analyze' summarises a Python repo's public code "
+            "and which modules lack tests; 'generate_tests' writes skeleton pytest files for "
+            "untested modules into <repo>/tests_generated (new files only, never overwrites, "
+            "never runs the code); 'scaffold' creates a new module plus its test file. "
+            "Python only. Use for 'generate tests for this repo' or 'scaffold a module'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["analyze", "generate_tests", "scaffold"]},
+                "repo_path": {"type": "string", "description": "folder of the repository"},
+                "name": {"type": "string", "description": "scaffold: new module name (snake_case)"},
+                "description": {"type": "string", "description": "scaffold: one-line module docstring"},
+                "max_files": {"type": "integer", "description": "generate_tests: cap on files (default 10)"},
+            },
+            "required": ["action", "repo_path"],
+        },
+    },
+    {
+        "name": "focus_mode",
+        "description": (
+            "Focus Mode: queues non-urgent notifications (urgent still come through), opens the "
+            "tools listed in JARVIS_FOCUS_APPS, and switches to dark mode. 'spotify' reports the "
+            "mood of the track Spotify is playing (from the window title; lofi/study/instrumental "
+            "means focus) and, if it suggests focus, says so without starting anything. "
+            "No smart-light support."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["on", "off", "status", "spotify"]}},
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "roblox_companion",
+        "description": (
+            "Roblox game-dev companion. 'start' watches Roblox Studio's CPU/memory and flags "
+            "sustained load (optionally with a project folder of .lua/.luau scripts); 'stop'; "
+            "'status'; 'review' scans the scripts in a folder and suggests Luau optimizations "
+            "(deprecated wait/spawn, hot-path GetChildren, etc). Read-only, never edits scripts."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["start", "stop", "status", "review"]},
+                "project_path": {"type": "string", "description": "folder with the game's Lua scripts"},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "vibe_mode",
+        "description": (
+            "Turn on/off casual anime-style reactions (kaomoji + a short quip) added to the "
+            "written reply on the dashboard/phone. Never spoken aloud. Text only, no images."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["on", "off"]}},
+            "required": ["action"],
         },
     },
     {
@@ -2790,6 +2859,14 @@ def queue_or_deliver_notification(
         if quiet_asleep:
             log.info("Held for the wake-up recap (Sleep Mode active): %r", text)
             return
+    if focus_mode.should_suppress(urgent):
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds")}
+            )
+            _save_session_context_locked()
+        log.info("Queued non-urgent notification (Focus Mode active): %r", text)
+        return
     if sleep_mode.should_suppress(urgent):
         with _session_context_lock:
             _session_context.setdefault("pending_notifications", []).append(
@@ -3664,6 +3741,8 @@ def _scheduler_loop() -> None:
             _retry_failed_mcp_servers(now)
             task_scheduler.tick(now, _run_queued_task, queue_or_deliver_notification)
             _sleep_mail_tick(now)
+            focus_mode.tick(_launch_focus_app, queue_or_deliver_notification)
+            roblox.tick(queue_or_deliver_notification)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -4311,6 +4390,12 @@ def _launch_app(name: str) -> None:
         _launch_app_spotify()
     else:
         log.warning("Unknown app: %r", name)
+
+
+def _launch_focus_app(name: str) -> None:
+    if name not in ALLOWED_APPS:
+        raise ValueError(f"{name!r} is not an allowed app")
+    _launch_app(name)
 
 
 def _system_action_lock() -> None:
@@ -6244,6 +6329,51 @@ def _execute_tool_impl(
                 )
             else:
                 result = "Missing window_title."
+        elif tool_name == "dev_tools":
+            act = str(inp.get("action") or "")
+            repo = str(inp.get("repo_path") or "")
+            if act == "analyze":
+                result = devtools.analyze_repo(repo)
+            elif act == "generate_tests":
+                result = devtools.generate_tests(repo, int(inp.get("max_files") or 10))
+            elif act == "scaffold":
+                result = devtools.scaffold_module(repo, str(inp.get("name") or ""), str(inp.get("description") or ""))
+            else:
+                result = f"{act!r} is not a known dev_tools action."
+        elif tool_name == "focus_mode":
+            act = str(inp.get("action") or "")
+            if act == "on":
+                result = focus_mode.enable(_launch_focus_app)
+            elif act == "off":
+                result = focus_mode.disable()
+                flush_pending_notifications()
+            elif act == "status":
+                result = focus_mode.status()
+            elif act == "spotify":
+                m = focus_mode.classify_mood(focus_mode.current_track())
+                if m["track"]:
+                    result = f"Spotify is playing {m['track']} (mood: {m['mood']})."
+                    if m["focus_suggested"]:
+                        result += " That sounds like focus music; say the word and I'll start Focus Mode."
+                else:
+                    result = "Spotify isn't playing anything I can see."
+            else:
+                result = f"{act!r} is not a known focus_mode action."
+        elif tool_name == "roblox_companion":
+            act = str(inp.get("action") or "")
+            path = inp.get("project_path") or None
+            if act == "start":
+                result = roblox.start(path)
+            elif act == "stop":
+                result = roblox.stop()
+            elif act == "status":
+                result = roblox.status()
+            elif act == "review":
+                result = roblox.review_folder(str(path or roblox._state.get("project") or ""))
+            else:
+                result = f"{act!r} is not a known roblox_companion action."
+        elif tool_name == "vibe_mode":
+            result = vibes.set_enabled(str(inp.get("action") or "") == "on")
         elif tool_name == "sleep_mode":
             action = str(inp.get("action") or "").strip().lower()
             if action == "on":
@@ -6670,11 +6800,12 @@ def handle_text_command(
         dashboard.end_session(session_id, "failed", None)
         dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
         raise
-    dashboard.end_session(session_id, "done", reply)
-    dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": reply}})
+    shown = vibes.decorate(transcript, reply)  # text surfaces only; speech below uses `reply`
+    dashboard.end_session(session_id, "done", shown)
+    dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
     if reply:
         if reply_sink:
-            reply_sink(reply)
+            reply_sink(shown)
         # Phone is remote — the room shouldn't hear the full answer read into an empty space,
         # so it gets reply_sink only (no spoken ack). Dashboard is
         # different: the user is normally sitting right there, typing into a box they can see —
