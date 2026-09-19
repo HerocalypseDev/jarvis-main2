@@ -588,3 +588,13 @@ def test_second_instance_cannot_take_the_single_instance_lock(jarvis, monkeypatc
         assert jarvis._acquire_single_instance_lock() is False
     finally:
         held.close()
+
+
+def test_gmail_watch_skill_requires_spoken_alert_for_important_mail():
+    import json
+    from pathlib import Path
+    skill = json.loads((Path(__file__).parent / "skills" / "gmail_watch.json").read_text(encoding="utf-8"))
+    text = skill["instructions"]
+    assert "MUST be a short spoken alert" in text
+    assert "security/account alert" in text
+    assert "NO spoken reply" in text
