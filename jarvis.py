@@ -6892,7 +6892,38 @@ def open_cursor_window() -> None:
             log.warning("Cursor fullscreen: no Cursor window found to send F11.")
 
 
+_single_instance_sock = None
+
+
+def _acquire_single_instance_lock() -> bool:
+    """Only one Jarvis may run per machine. Two instances each hear the same mic, each poll
+    the same Telegram bot and ntfy topic, so every command was transcribed and executed twice
+    (observed live: two jarvis.py processes started an hour apart). A localhost-only socket
+    bind is the lock — the OS releases it when the process dies, so a crash never leaves a
+    stale lock behind. Returns False if another instance already holds it."""
+    global _single_instance_sock
+    import socket
+
+    port = int(os.environ.get("JARVIS_SINGLE_INSTANCE_PORT", "48765"))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        sock.close()
+        return False
+    _single_instance_sock = sock
+    return True
+
+
 def main() -> int:
+    if not _acquire_single_instance_lock():
+        log.error(
+            "Another Jarvis instance is already running; exiting so commands aren't "
+            "heard and executed twice. Close the other one first."
+        )
+        return 1
     blocksize = block_samples()
     ptt_active = False
     ptt_buffer: list[np.ndarray] = []

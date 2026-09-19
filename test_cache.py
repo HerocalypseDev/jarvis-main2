@@ -562,3 +562,19 @@ def test_a_lookalike_jarvis_folder_is_not_treated_as_jarvis_itself(jarvis, deleg
     assert cmd[cmd.index("-p") + 1] == "add a feature"  # no self-edit rules: it's another project
     assert not jarvis._SELF_EDIT_TASK_IDS
     assert kw["cwd"] == str(lookalike)
+
+
+def test_second_instance_cannot_take_the_single_instance_lock(jarvis, monkeypatch):
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setenv("JARVIS_SINGLE_INSTANCE_PORT", str(port))
+    monkeypatch.setattr(jarvis, "_single_instance_sock", None)
+    assert jarvis._acquire_single_instance_lock() is True
+    held = jarvis._single_instance_sock
+    try:
+        assert jarvis._acquire_single_instance_lock() is False
+    finally:
+        held.close()
