@@ -164,7 +164,20 @@ def _body_of(read_text: str) -> tuple[str, str]:
     tid = re.search(r"^Thread ID:\s*(\S+)", read_text or "", re.M | re.I)
     parts = re.split(r"\n\s*\n", read_text or "", maxsplit=1)
     body = parts[1] if len(parts) > 1 else read_text or ""
-    return (tid.group(1) if tid else ""), body.strip()[:3000]
+    return (tid.group(1) if tid else ""), _strip_quoted(body).strip()[:3000]
+
+
+def _strip_quoted(body: str) -> str:
+    """Drops the quoted earlier thread from a reply: everything from an 'On ... wrote:' line on,
+    plus any '>'-prefixed lines, so only what the sender newly wrote reaches the model/recap."""
+    kept = []
+    for line in (body or "").splitlines():
+        if re.match(r"^\s*On .{5,200}wrote:\s*$", line) or re.match(r"^\s*On .{5,120}$", line) and "wrote" in line:
+            break
+        if line.lstrip().startswith(">"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 # --- the cycle -------------------------------------------------------------------------------

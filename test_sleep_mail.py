@@ -241,3 +241,10 @@ def test_own_signature_is_skipped_but_quoted_signature_is_not(db):
     g = G(_search(("m1", "Re: Dinner", "sis@x.com")))
     stats = _run(g, lambda s, u, n: "x", [])
     assert g.sent == [] and stats["skipped"] == 1
+
+
+def test_quoted_history_is_stripped_from_replies():
+    raw = ("Thread ID: T1\nSubject: Re: hi\nFrom: f\n\nbut am scared, summarize the note\n\n"
+           "On Sat, 19 Sept 2026 at 05:54, Someone <a@b.com> wrote:\n> Hello. I am Jarvis.\n> more")
+    tid, body = sm._body_of(raw)
+    assert tid == "T1" and body == "but am scared, summarize the note"
