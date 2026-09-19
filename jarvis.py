@@ -1260,7 +1260,7 @@ AGENT_TOOLS = [
         "name": "download_image",
         "description": (
             "Download ONE image from a direct image URL and save it to the user's Jarvis "
-            "pictures folder (Pictures\\Jarvis). To get an image from a site like Pinterest: use "
+            "Jarvis_Workspace\\Assets folder. To get an image from a site like Pinterest: use "
             "the browser tools to open the page, find the pin's image URL (an i.pinimg.com link "
             "on the img element), then call this with that URL — Pinterest thumbnails are "
             "automatically upgraded to full size. Only real jpg/png/gif/webp/bmp/avif images "
