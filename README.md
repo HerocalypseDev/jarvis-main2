@@ -36,7 +36,7 @@ Without this, holding the push-to-talk key still transcribes locally but no acti
 | `PIPER_VOICE` | Piper voice model name (default `en_US-lessac-medium`). Browse options at the [Piper voice samples page](https://rhasspy.github.io/piper-samples/). Downloaded automatically on first use. |
 | `PIPER_VOICES_DIR` | Custom folder for downloaded Piper voice models (default: `.cache/piper_voices/` under the project). |
 | `JARVIS_MEMORY_DB_PATH` | Custom path for the SQLite memory database (default: `jarvis_memory.db` in the project folder). |
-| `JARVIS_PTT_KEY` | Push-to-talk key name, per the `keyboard` package (default `left shift`). Hold to record, release to send. |
+| `JARVIS_PTT_KEY` | Push-to-talk key name, per the `keyboard` package (default `right shift`). Hold to record, release to send. |
 | `WHISPER_MODEL_SIZE` | Local Whisper model size: `tiny`, `base`, `small`, `medium`, ... (default `base`). Bigger = more accurate, slower, more RAM. Downloaded once on first use. |
 | `WHISPER_LANGUAGE` | Language code for transcription (default `en`). Set empty to let Whisper auto-detect (less reliable on short clips). |
 | `CLAUDE_MODEL` | Claude model id for command interpretation and screen/search understanding (default `claude-haiku-4-5-20251001`). |
@@ -71,7 +71,7 @@ Set `JARVIS_TEXT_HOTKEY_ENABLED = False` at the top of `jarvis.py` to disable it
 
 ## Talking to Jarvis (push-to-talk)
 
-Hold **Left Shift** (or your `JARVIS_PTT_KEY`), say a command, then release. On release:
+Hold **Right Shift** (or your `JARVIS_PTT_KEY`), say a command, then release. On release:
 
 1. **Local Whisper** transcribes what you said (no cloud call, no cost).
 2. The transcript goes to **Claude** running a real tool-use loop (`run_agent_loop` in `jarvis.py`): Claude picks a tool, sees the result, and decides what to do next — it can call several tools in a row before replying, up to `MAX_AGENT_ITERATIONS` round trips. This is **not** a fixed menu anymore.

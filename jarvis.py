@@ -78,7 +78,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 # Push-to-talk voice commands: hold JARVIS_PTT_KEY, speak, release. Local Whisper
 # transcribes, Claude decides zero or more actions from a fixed safe set, Piper speaks the reply.
 JARVIS_PTT_ENABLED = True
-JARVIS_PTT_KEY = (os.environ.get("JARVIS_PTT_KEY") or "left shift").strip() or "left shift"
+JARVIS_PTT_KEY = (os.environ.get("JARVIS_PTT_KEY") or "right shift").strip() or "right shift"
 WHISPER_MODEL_SIZE = (os.environ.get("WHISPER_MODEL_SIZE") or "base").strip() or "base"
 CLAUDE_MODEL = (
     os.environ.get("CLAUDE_MODEL") or "claude-haiku-4-5-20251001"
