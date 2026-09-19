@@ -451,6 +451,20 @@ Rules:
   throwaway test window. Test this one against a single spawned process in the future, not the
   live desktop.
 
+## Image download (2026-09-19)
+
+- `download_image(url, filename?, referer?)` (`jarvis_image_download.py`, tests in
+  `test_image_download.py`) saves ONE image to `JARVIS_IMAGE_DIR` (default `~/Pictures/Jarvis`).
+  Flow: the Playwright `browser` MCP finds the image URL on the page (Pinterest etc.), this tool
+  fetches it — deliberately not via run_shell/run_python. Guardrails: http(s) only, private/
+  loopback hosts refused (re-checked on every redirect), must be a real raster image by
+  content-type AND magic bytes (SVG refused), 25 MB cap, caller picks a name never a path, never
+  overwrites. `i.pinimg.com/236x|736x/` URLs are upgraded to `/originals/` with fallback to the
+  given size. Verified live against a real public PNG; **not verified against a real Pinterest
+  session** (login wall / bot checks are the likely failure; the Playwright profile needs a
+  one-time manual sign-in). Pinterest's ToS restricts automated scraping — keep to one image per
+  request, personal use.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -487,4 +501,5 @@ row there each phase rather than only stating the total in chat.
 | 12 (Gemini brain option + runtime switch + research) | Sonnet 5 | ~50 min | ~$2.00–$2.80 |
 | 13 (sleep trends tab + wake-up digest) | Sonnet 5 | ~30 min | ~$1.20–$1.70 |
 | 14 (wake-up recap split, hotkey move, sleep-mode mail take-over + retry) | Sonnet 5 | ~45 min | ~$2.10–$2.90 |
-| **Running total (final)** | | **~385 min** | **~$13.90–$19.65** |
+| 15 (download_image tool for Pinterest-style image saves) | Sonnet 5 | ~10 min | ~$0.40–$0.60 |
+| **Running total (final)** | | **~395 min** | **~$14.30–$20.25** |

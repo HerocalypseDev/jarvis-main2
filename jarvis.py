@@ -64,6 +64,7 @@ import jarvis_cache as cache
 import jarvis_billing as billing
 import jarvis_gemini as gemini
 import jarvis_dashboard as dashboard
+import jarvis_image_download as image_download
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -780,6 +781,10 @@ file operation, or an HTTP call could actually do it; you're expected to figure 
 accomplish novel requests with these general tools, the way a capable engineer sitting at this \
 machine would.
 
+To save an image from a website (Pinterest, etc.): open the page with the browser tools, find the \
+image's direct URL, then call download_image with it — don't use run_shell or run_python for that. \
+Say where it was saved, as a folder name rather than a full path.
+
 Call tools as needed — you can call several in a row, look at each result, and decide what to do \
 next, before giving your final spoken reply. When you're done, reply with a short (1-4 sentence) \
 spoken summary of the outcome; don't narrate tool mechanics. Always end your turn with that \
@@ -1178,6 +1183,33 @@ AGENT_TOOLS = [
                 "append": {"type": "boolean", "description": "true to append instead of overwrite"},
             },
             "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "download_image",
+        "description": (
+            "Download ONE image from a direct image URL and save it to the user's Jarvis "
+            "pictures folder (Pictures\\Jarvis). To get an image from a site like Pinterest: use "
+            "the browser tools to open the page, find the pin's image URL (an i.pinimg.com link "
+            "on the img element), then call this with that URL — Pinterest thumbnails are "
+            "automatically upgraded to full size. Only real jpg/png/gif/webp/bmp/avif images "
+            "up to 25 MB; never overwrites. One image per request unless the user asks for more. "
+            "Returns the saved file path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "direct link to the image file"},
+                "filename": {
+                    "type": "string",
+                    "description": "optional name for the file (no folder; extension is set automatically)",
+                },
+                "referer": {
+                    "type": "string",
+                    "description": "optional page URL the image came from, for sites that check it",
+                },
+            },
+            "required": ["url"],
         },
     },
     {
@@ -6262,6 +6294,12 @@ def _execute_tool_impl(
         elif tool_name == "write_file":
             result = _write_file_tool(
                 str(inp.get("path") or ""), str(inp.get("content") or ""), bool(inp.get("append"))
+            )
+        elif tool_name == "download_image":
+            result = image_download.download_image(
+                str(inp.get("url") or ""),
+                inp.get("filename") or None,
+                inp.get("referer") or None,
             )
         elif tool_name == "http_request":
             result = _http_request_tool(
