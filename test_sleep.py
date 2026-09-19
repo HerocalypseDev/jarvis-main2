@@ -107,7 +107,7 @@ def test_wake_digest_summarizes_speaks_and_drains(jarvis, monkeypatch):
 
     def fake_claude(body, timeout=None):
         seen["body"] = body
-        return {"content": [{"type": "text", "text": "Hero, while you were asleep, you had one reminder."}]}
+        return {"content": [{"type": "text", "text": "Hero, while you were asleep, nothing important happened. On a lighter note, you had one reminder."}]}
 
     spoken, done, saved = [], threading.Event(), []
     monkeypatch.setattr(jarvis, "_claude_request", fake_claude)
@@ -115,7 +115,7 @@ def test_wake_digest_summarizes_speaks_and_drains(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "speak_text", lambda t: (spoken.append(t), done.set()))
     jarvis._sleep_wake_digest("2026-09-18T23:00:00", "2026-09-19T07:00:00")
     assert done.wait(5)
-    assert spoken == ["Hero, while you were asleep, you had one reminder."]
+    assert spoken == ["Hero, while you were asleep, nothing important happened. On a lighter note, you had one reminder."]
     assert "call mom" in seen["body"]["messages"][0]["content"]
     assert "Busy-gate" not in seen["body"]["messages"][0]["content"]
     assert saved and saved[0][0] == "2026-09-18T23:00:00"
@@ -127,5 +127,43 @@ def test_digest_fallback_when_claude_fails_and_empty_case(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "_claude_request", lambda *a, **k: None)
     items = [{"text": "Reminder: call mom"}, {"text": "Build finished"}]
     text = jarvis._build_sleep_digest(items)
-    assert text.startswith("Hero, while you were asleep, 2 things came in") and "call mom" in text
+    assert text.startswith("Hero, while you were asleep, nothing important happened.")
+    assert "On a lighter note," in text and "call mom" in text
     assert "nothing came in" in jarvis._build_sleep_digest([])
+
+
+def test_digest_important_first_then_lighter_note(jarvis, monkeypatch):
+    seen = {}
+
+    def fake(body, timeout=None):
+        seen["user"] = body["messages"][0]["content"]
+        return {"content": [{"type": "text", "text":
+                "Hero, while you were asleep, the door alarm fired. On a lighter note, you had a reminder."}]}
+
+    monkeypatch.setattr(jarvis, "_claude_request", fake)
+    items = [{"text": "Reminder: call mom"}, {"text": "Door alarm triggered", "important": True}]
+    text = jarvis._build_sleep_digest(items)
+    assert "On a lighter note" in text
+    u = seen["user"]
+    assert u.index("IMPORTANT") < u.index("Door alarm") < u.index("LIGHTER") < u.index("call mom")
+
+
+def test_digest_falls_back_when_model_drops_the_lighter_note(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_claude_request",
+                        lambda *a, **k: {"content": [{"type": "text", "text": "Hero, while you were asleep, stuff."}]})
+    items = [{"text": "Door alarm", "important": True}, {"text": "Reminder: call mom"}]
+    text = jarvis._build_sleep_digest(items)
+    assert "Door alarm" in text and "On a lighter note, Reminder: call mom" in text
+    # No lighter items -> no "lighter note" required or added.
+    only = jarvis._build_sleep_digest([{"text": "Door alarm", "important": True}])
+    assert "lighter" not in only
+
+
+def test_urgent_during_sleep_is_spoken_live_and_recorded_as_important(jarvis, monkeypatch):
+    spoken = []
+    monkeypatch.setattr(jarvis, "_speak_shaped", spoken.append)
+    monkeypatch.setattr(jarvis.sleep_mode, "is_active", lambda: True)
+    jarvis.queue_or_deliver_notification("Smoke alarm!", urgent=True)
+    assert spoken == ["Smoke alarm!"]
+    item = jarvis._session_context["pending_notifications"][0]
+    assert item["important"] is True and item["during_sleep"] is True

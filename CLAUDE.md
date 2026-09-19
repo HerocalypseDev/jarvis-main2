@@ -353,7 +353,7 @@ Rules:
   wake alarm) `disable()` calls the handler `jarvis._sleep_wake_digest`, which drains those items
   synchronously and, on a thread, has one Claude call write a <=3-sentence recap starting "Hero,
   while you were asleep, ...", speaks it, and saves it to `sleep_log.digest` (shown in the tab).
-  Falls back to a plain count + first items if the call fails; says "nothing came in" if empty.
+  The recap is two-part: first the *important* items (urgent messages that came through live during sleep — `queue_or_deliver_notification` still speaks them, and also records them with `important: True`), or "nothing important happened"; then, only if there are held-back items, the exact words "On a lighter note," and those. If the model drops that structure, or the call fails, a deterministic fallback builds the same two parts from the raw items; says "nothing came in" if empty.
   Name comes from `JARVIS_USER_NAME` (default Hero). Urgent messages still speak live and are not
   in the digest. Cost: one small extra model call per wake-up. Same data exposure as the existing
   speech summarizer (queued text goes to the active brain). Tests: `test_sleep.py`.

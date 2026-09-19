@@ -2727,6 +2727,18 @@ def queue_or_deliver_notification(
         return
     _notify_phone(text, force=force_phone)
     refresh_session_context()
+    if urgent and sleep_mode.is_active():
+        # Still spoken live below, but also remembered so the wake-up recap can report it first.
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {
+                    "text": text,
+                    "queued_at": datetime.now().isoformat(timespec="seconds"),
+                    "during_sleep": True,
+                    "important": True,
+                }
+            )
+            _save_session_context_locked()
     if sleep_mode.should_suppress(urgent):
         with _session_context_lock:
             _session_context.setdefault("pending_notifications", []).append(
@@ -2796,31 +2808,50 @@ def _sleep_wake_digest(started_at: str, ended_at: str) -> None:
 
 
 def _build_sleep_digest(items: list[dict]) -> str:
+    """Two-part recap: what mattered first (urgent things that came through live while asleep),
+    then "On a lighter note," the held-back reminders/notifications."""
     prefix = f"{USER_NAME}, while you were asleep, "
     if not items:
         return f"{USER_NAME}, nothing came in while you were asleep."
-    lines = [f"- {(i.get('text') or '').strip()[:300]}" for i in items[:40]]
+    important = [i for i in items if i.get("important")]
+    lighter = [i for i in items if not i.get("important")]
+
+    def _fmt(group: list[dict]) -> str:
+        return "\n".join(f"-{(i.get('text') or '').strip()[:300]}" for i in group[:30]) or "(none)"
+
     body = {
         "model": CLAUDE_MODEL,
-        "max_tokens": 250,
+        "max_tokens": 300,
         "system": (
-            f"You are a voice assistant. The user ({USER_NAME}) just woke up. Below are the "
-            "notifications and reminders that were held back while they slept. Write a short "
-            f"spoken recap of at most three sentences that starts exactly with: \"{prefix}\". "
-            "Group related items, keep the key facts, drop filler. Never read out a full file "
-            "path or URL. Plain spoken prose only: no lists, no markdown."
+            f"You are a voice assistant. The user ({USER_NAME}) just woke up. You get two lists "
+            "of what happened while they slept: IMPORTANT (urgent things that came through) and "
+            "LIGHTER (reminders and notifications held back). Write a short spoken recap of at "
+            f"most four sentences that starts exactly with: \"{prefix}\". First report the "
+            "IMPORTANT items; if that list is empty say nothing important happened. Then, only "
+            "if LIGHTER is not empty, continue with the exact words \"On a lighter note,\" and "
+            "summarize those. Group related items, keep key facts, drop filler. Never read out "
+            "a full file path or URL. Plain spoken prose: no lists, no markdown."
         ),
-        "messages": [{"role": "user", "content": "\n".join(lines)}],
+        "messages": [
+            {"role": "user", "content": f"IMPORTANT:\n{_fmt(important)}\n\nLIGHTER:\n{_fmt(lighter)}"}
+        ],
     }
     data = _claude_request(body, timeout=SPEECH_SUMMARY_TIMEOUT_S)
     text = _claude_text(data).strip() if data is not None else ""
-    if text:
+    # Trust the model's wording only if it kept the requested structure.
+    if text and (not lighter or "on a lighter note" in text.lower()):
         return text
-    # Fallback: never go silent or drop the items just because summarizing failed.
-    count = len(items)
-    heads = "; ".join((i.get("text") or "").strip()[:80] for i in items[:3])
-    more = f", and {count - 3} more" if count > 3 else ""
-    return f"{prefix}{count} thing{'s' if count != 1 else ''} came in: {heads}{more}."
+    # Fallback: never go silent or drop items just because summarizing failed or ignored the format.
+    def _heads(group: list[dict]) -> str:
+        more = f", and {len(group) - 3} more" if len(group) > 3 else ""
+        return "; ".join((i.get("text") or "").strip()[:80] for i in group[:3]) + more
+
+    out = prefix + (
+        f"this happened: {_heads(important)}." if important else "nothing important happened."
+    )
+    if lighter:
+        out += f" On a lighter note, {_heads(lighter)}."
+    return out
 
 
 sleep_mode.set_wake_digest_handler(_sleep_wake_digest)
