@@ -12,3 +12,5 @@ __pycache__/
 jarvis_memory.db.corrupted-*.bak
 *.png
 llm_provider.json
+jarvis_standalone.log
+jarvis_python.txt

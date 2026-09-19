@@ -465,6 +465,18 @@ Rules:
   one-time manual sign-in). Pinterest's ToS restricts automated scraping — keep to one image per
   request, personal use.
 
+## Standalone launch (2026-09-19)
+
+- `Jarvis.vbs` starts `python -u jarvis.py` hidden via `cmd /c` (a hidden *console* rather than
+  `pythonw`, because pythonw has no valid stdio handles and breaks `subprocess` calls that pipe
+  only some streams), logging to `jarvis_standalone.log`. `stop_jarvis.ps1` kills python/cmd
+  processes whose command line has `jarvis.py`. `install_shortcuts.ps1` writes `jarvis_python.txt`
+  (PATH's `python` may be the Store stub), makes Desktop shortcuts, and `-Autostart` adds a
+  Startup-folder shortcut (opt-in; not enabled). VBScript gotcha: `log` is reserved.
+- Verified live: launch, single hidden process, log output, stop script, relaunch. Not verified:
+  the Autostart shortcut across a real sign-in, or push-to-talk/hotkeys from the hidden process
+  over a long session.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -502,4 +514,5 @@ row there each phase rather than only stating the total in chat.
 | 13 (sleep trends tab + wake-up digest) | Sonnet 5 | ~30 min | ~$1.20–$1.70 |
 | 14 (wake-up recap split, hotkey move, sleep-mode mail take-over + retry) | Sonnet 5 | ~45 min | ~$2.10–$2.90 |
 | 15 (download_image tool for Pinterest-style image saves) | Sonnet 5 | ~10 min | ~$0.40–$0.60 |
-| **Running total (final)** | | **~395 min** | **~$14.30–$20.25** |
+| 16 (standalone launcher: hidden start, stop, shortcuts, autostart option) | Sonnet 5 | ~10 min | ~$0.35–$0.50 |
+| **Running total (final)** | | **~405 min** | **~$14.65–$20.75** |

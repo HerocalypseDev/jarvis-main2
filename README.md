@@ -48,6 +48,10 @@ Example `.env`:
 ANTHROPIC_API_KEY=your_key_here
 ```
 
+## Run without VS Code
+
+One-time: `powershell -ExecutionPolicy Bypass -File install_shortcuts.ps1` (add `-Autostart` to also start Jarvis at login; `-RemoveAutostart` undoes it). It puts **Jarvis** and **Stop Jarvis** shortcuts on the Desktop and records which `python.exe` to use in `jarvis_python.txt`. Double-click *Jarvis* to start it hidden (no console window); output goes to `jarvis_standalone.log` (trimmed at 5 MB). *Stop Jarvis* ends it. Only one instance can run at a time, so starting it twice is harmless.
+
 ## Run
 
 ```bash
