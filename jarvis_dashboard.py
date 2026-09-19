@@ -453,6 +453,16 @@ def _build_state(
     }
 
 
+_LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
+
+
+def _origin_is_loopback(origin: str) -> bool:
+    """True if an Origin header names this machine. "null" (sandboxed iframes, file://) and any
+    other site are not loopback."""
+    host = origin.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]").lower()
+    return host in _LOOPBACK_NAMES
+
+
 # --- web server (heavy imports live here, not at module load) ------------------------------
 def _build_app(
     *,
@@ -666,10 +676,8 @@ def _build_app(
         # origin (browsers always send Origin on cross-origin POST/DELETE).
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("origin")
-            if origin:
-                o_host = origin.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]").lower()
-                if o_host not in ("127.0.0.1", "localhost", "::1"):
-                    return JSONResponse({"error": "forbidden origin"}, status_code=403)
+            if origin and not _origin_is_loopback(origin):
+                return JSONResponse({"error": "forbidden origin"}, status_code=403)
         return None
 
     def _face_unavailable():
@@ -775,6 +783,13 @@ def _build_app(
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
+        # Cross-site WebSocket hijacking: any web page can open ws://127.0.0.1:port/ws, and this
+        # socket now carries presence events (face_event) as well as session/task updates. Browsers
+        # always send Origin on a WebSocket handshake, so refuse one that isn't this machine.
+        origin = websocket.headers.get("origin")
+        if origin and not _origin_is_loopback(origin):
+            await websocket.close(code=1008)
+            return
         await websocket.accept()
         manager.add(websocket)
         try:

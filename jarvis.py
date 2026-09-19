@@ -3013,8 +3013,8 @@ def _face_greet(text: str) -> None:
     """Spoken greeting when the owner's face appears. Skipped (not queued: a stale "good morning"
     delivered hours later is worse than none) while Sleep/Focus Mode or an unrecognized person
     would make speech inappropriate."""
-    if sleep_mode.is_active() or focus_mode.should_suppress(False) or face.group_safe():
-        return
+    if sleep_mode.is_active() or focus_mode.should_suppress(False) or face.group_safe() or jarvis_speaking.is_set():
+        return  # (last one: don't talk over a reply Jarvis is already giving)
     speak_text(text)
 
 
@@ -6471,7 +6471,8 @@ def _execute_tool_impl(
                 result = "Face recognition is paused." if face.is_paused() else "Face recognition is active."
         elif tool_name == "delete_face":
             result = face.delete(
-                str(inp.get("name") or ""), bool(inp.get("confirm")), _current_command_source()
+                str(inp.get("name") or ""), bool(inp.get("confirm")), _current_command_source(),
+                turn_id=transcript,
             )
         elif tool_name == "focus_mode":
             act = str(inp.get("action") or "")

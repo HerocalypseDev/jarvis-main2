@@ -610,9 +610,42 @@ Rules:
   way to the threshold - a hand-held photo would jitter similarly. Liveness here is a speed bump
   against a *static* photo only; do not raise its trust. Consider a higher default (~0.40) once the
   owner's real head-turn swing has been measured.
-- Status: Phases 0-4 shipped (73 face tests, 266 total). Verified live: real model + camera + the
-  full poll pipeline against a throwaway temp profile; the Identity tab in headless Chromium against
-  synthetic data; `calibrate` on the real webcam. **Not verified live**: a real `enroll_face` by
+- **Code review of the whole feature (2026-09-19)** - a line-by-line second pass found 11 more
+  defects, all fixed and each pinned by a test:
+  1. *Model-integrity bypass*: `FaceAnalysis` silently downloads a missing pack itself, with no
+     hash check (e.g. polling after the model dir was deleted). `_InsightEngine` now refuses if
+     `models_ready()` is false; `health_problem()` reports missing files.
+  2. *Two racing enrollments could create two profiles* (the one-person rule was checked before
+     waiting for the camera lock). Now re-checked under the lock and the INSERT is atomic
+     (`... WHERE NOT EXISTS`).
+  3. *`delete_face(confirm=true)` was prompt-only* (a model has passed `force=true` unprompted
+     before). The code now requires an earlier unconfirmed call within 120s in a **different user
+     message** (`turn_id` = the message text); the dashboard's click-through uses `ui_confirmed`.
+  4. *WebSocket `/ws` had no Origin check* while now carrying presence events (`face_event`); a web
+     page could listen in. A non-loopback Origin is refused (no Origin = non-browser, allowed).
+  5. Camera stayed open if a warm-up read raised; now released.
+  6. Poll thread gave up for good after 3 failures; now backs off 5 min and keeps trying.
+  7. A slow greeting/notice held `_poll_lock`, freezing `who_is_here` and the dashboard's
+     pause/erase; hooks now run after the lock is released, and pause/erase wait for an in-flight
+     poll so it cannot write stale presence back over the reset.
+  8. First-time key creation was not locked (two callers could each mint a key, orphaning data).
+  9. ONNX inference burst across every core and could stutter the voice loop/Whisper: capped at
+     `JARVIS_FACE_THREADS` (2; measured 292ms vs 302ms at 4 threads, so it costs nothing) and the
+     poll thread runs below normal priority.
+  10. Model extraction was non-atomic (a killed extract left a truncated `.onnx` that
+      `models_ready()` accepted) and hashing read ~290MB into RAM; now write-aside + rename, chunked.
+  11. The greeting could talk over a reply already playing; skipped while `jarvis_speaking`.
+- **Held for the owner's decision (not applied - it loosens matching)**: when the owner looks down or
+  turns away the match can dip under 0.50, and two polls in a row (~10s) then declares an "unknown
+  person": group-safe mode holds non-urgent speech (including reminders) and a picture of the owner
+  is saved. A "recently seen owner" hysteresis (accept >=0.35 when exactly one face is in frame and
+  the owner was seen in the last 2 min) would fix it at the cost of a looser match. Untested on real
+  data - tune `JARVIS_FACE_MATCH_THRESHOLD` from real `unknown_seen` confidences first.
+- Also open: reminders are held by group-safe mode like other proactive speech (the owner's decision
+  was "hold proactive messages"); whether time-critical reminders should bypass it is a policy call.
+- Status: Phases 0-4 + review shipped (90 face tests, 283 total). Verified live: real model + camera
+  + the full poll pipeline against a throwaway temp profile (re-run after the review fixes); the
+  Identity tab in headless Chromium against synthetic data; `calibrate` on the real webcam. **Not verified live**: a real `enroll_face` by
   voice (writes a real biometric profile - the owner should do it), the head-turn threshold on a
   deliberate turn, an actual stranger (group-safe/picture path is unit-tested only), greeting
   audio, covered-lens detection on the real webcam, the tab against real data.
@@ -662,4 +695,5 @@ row there each phase rather than only stating the total in chat.
 | 21 (face recognition Phase 2: polling, recognition, group-safe mode, unknown pictures, privacy switch) | Sonnet 5 | ~45 min | ~$2.50–$3.40 |
 | 22 (face recognition Phase 3: dashboard Identity tab, consent view, export/erase, event stream, Host-header guard) | Sonnet 5 | ~35 min | ~$2.00–$2.80 |
 | 23 (face recognition Phase 4: self-audit fixes, gate-isolation test, calibrate tool, Origin guard) | Sonnet 5 | ~30 min | ~$1.60–$2.30 |
-| **Running total (final)** | | **~598 min** | **~$24.65–$34.60** |
+| 24 (face recognition code review: 11 defects fixed, 17 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
+| **Running total (final)** | | **~638 min** | **~$26.85–$37.60** |

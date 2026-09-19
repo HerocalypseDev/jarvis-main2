@@ -967,7 +967,7 @@ def test_enroll_waits_for_an_inflight_poll_but_not_forever(fx, monkeypatch):
     threading.Timer(0.3, face._camera_lock.release).start()  # a poll finishing its ~1.5s look
     assert face.enroll("Hero", "voice").startswith("Done")
     monkeypatch.setattr(face, "CAMERA_WAIT_S", 0.05)
-    face.delete("Hero", True, "voice")
+    face.delete("Hero", True, "voice", ui_confirmed=True)
     face._camera_lock.acquire()
     try:
         assert "busy" in face.enroll("Hero", "voice")
@@ -979,7 +979,7 @@ def test_erasing_the_profile_clears_presence_immediately(enrolled, monkeypatch):
     _look(monkeypatch, _obs(0.0, BASE))
     face.poll_once(time.time())
     assert "Hero is at the computer" in face.system_prompt_context_line()
-    assert face.delete("Hero", True, "voice").startswith("Deleted")
+    assert face.delete("Hero", True, "voice", ui_confirmed=True).startswith("Deleted")
     assert face.system_prompt_context_line() == ""  # not "still here" for another ~90s
     assert not face.state_snapshot()["owner_present"]
 
@@ -1034,3 +1034,297 @@ def test_calibrate_reports_the_head_turn_and_stores_nothing(fx, monkeypatch):
     out.clear()
     assert face.calibrate(seconds=0.2, out=out.append)["single_face_frames"] == 0
     assert any("No single face" in line for line in out)
+
+
+# ===============================================================================================
+# Code-review fixes (2026-09-19): each test pins one defect found in the review
+# ===============================================================================================
+_REAL_DOWNLOAD_MODELS = face.download_models  # captured before any fixture stubs it
+
+
+def test_engine_refuses_when_models_are_missing_instead_of_letting_insightface_download(fx, monkeypatch):
+    """insightface would silently fetch the pack itself with no size/hash check, bypassing the pin."""
+    import insightface.app as iapp
+
+    def boom(*a, **k):
+        raise AssertionError("FaceAnalysis must not be constructed without verified model files")
+
+    monkeypatch.setattr(iapp, "FaceAnalysis", boom)
+    assert not face.models_ready()
+    with pytest.raises(RuntimeError, match="model files are missing"):
+        face._InsightEngine()
+
+
+def test_engine_caps_onnx_threads_so_it_cannot_stall_the_voice_loop(fx, monkeypatch):
+    import insightface.app as iapp
+
+    seen = {}
+
+    class FakeApp:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+        def prepare(self, **kw):
+            pass
+
+    monkeypatch.setattr(iapp, "FaceAnalysis", FakeApp)
+    monkeypatch.setattr(face, "models_ready", lambda: True)
+    face._InsightEngine()
+    assert seen["sess_options"].intra_op_num_threads == 2 and seen["sess_options"].inter_op_num_threads == 1
+    assert seen["providers"] == ["CPUExecutionProvider"]
+    monkeypatch.setenv("JARVIS_FACE_THREADS", "1")
+    face._InsightEngine()
+    assert seen["sess_options"].intra_op_num_threads == 1
+
+
+def test_health_problem_flags_missing_model_files_when_a_profile_exists(enrolled):
+    assert "model files are missing" in face.health_problem()
+    assert "model files are missing" in face.dashboard_state()["problem"]
+
+
+def test_model_download_success_extracts_atomically_and_cleans_up(fx, monkeypatch):
+    import hashlib
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("det_10g.onnx", b"detector-bytes")
+        zf.writestr("w600k_r50.onnx", b"recognizer-bytes")
+        zf.writestr("unused.onnx", b"never extracted")
+    data = buf.getvalue()
+    monkeypatch.setattr(face, "download_models", _REAL_DOWNLOAD_MODELS)
+    monkeypatch.setattr(face, "MODEL_ZIP_SIZE", len(data))
+    monkeypatch.setattr(face, "MODEL_ZIP_SHA256", hashlib.sha256(data).hexdigest())
+    monkeypatch.setattr(face.urllib.request, "urlopen", lambda url, timeout=0: _Resp(data))
+    msgs = []
+    face.download_models(msgs.append)
+    d = face._model_root() / "models" / face.MODEL_PACK
+    assert sorted(p.name for p in d.iterdir()) == ["det_10g.onnx", "w600k_r50.onnx"]  # only the two we use
+    assert (d / "det_10g.onnx").read_bytes() == b"detector-bytes"
+    assert not list(face._model_root().rglob("*.tmp")) and not list(face._model_root().rglob("*.part"))
+    assert face.models_ready() and msgs and "Downloading" in msgs[0]
+
+
+# --- one-person rule under a race ------------------------------------------------------------------
+def test_second_profile_cannot_be_inserted_even_if_two_enrollments_race(fx, monkeypatch):
+    frames = _turning_frames()
+    assert face._run_enrollment("Hero", _Engine(frames), _Cap()).startswith("Done")
+    msg = face._run_enrollment("Deborah", _Engine(frames), _Cap())  # bypasses enroll()'s pre-checks
+    assert "didn't add a second profile" in msg
+    assert [p["name"] for p in face.list_profiles()] == ["Hero"]
+    assert "enroll_failed" in _kinds()
+
+
+def test_concurrent_enroll_calls_leave_exactly_one_profile(fx, monkeypatch):
+    _install(monkeypatch, _turning_frames())
+    results = {}
+
+    def go(n):
+        results[n] = face.enroll(n, "voice")
+
+    threads = [threading.Thread(target=go, args=(n,)) for n in ("Hero", "Deborah")]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(face.list_profiles()) == 1
+    assert sorted(r.startswith("Done") for r in results.values()) == [False, True]
+    assert any("already enrolled" in r for r in results.values())
+
+
+# --- delete must be confirmed in a separate user message -------------------------------------------
+def test_delete_confirm_in_the_same_turn_is_refused(enrolled):
+    """A model that stages and confirms inside one turn (hallucination / prompt injection) gets nowhere."""
+    assert "confirm" in face.delete("Hero", False, "voice", turn_id="erase my face")
+    r = face.delete("Hero", True, "voice", turn_id="erase my face")
+    assert "separate message" in r and len(face.list_profiles()) == 1
+    assert face.delete("Hero", True, "voice", turn_id="yes").startswith("Deleted")  # the user's next message
+
+
+def test_delete_confirm_without_staging_or_after_expiry_is_refused(enrolled, monkeypatch):
+    assert "separate message" in face.delete("Hero", True, "voice", turn_id="yes")  # nothing was staged
+    monkeypatch.setattr(face, "STAGE_TTL_S", 0.0)
+    face.delete("Hero", False, "voice", turn_id="erase my face")
+    assert "separate message" in face.delete("Hero", True, "voice", turn_id="yes")  # too late
+    assert len(face.list_profiles()) == 1
+    assert face.delete("Hero", True, "voice", ui_confirmed=True).startswith("Deleted")  # a dashboard click
+
+
+def test_delete_via_the_real_tool_path_needs_two_user_messages(jarvis, monkeypatch, enrolled):
+    """Goes through handle_text_command -> _execute_tool (not _execute_impl): also proves the command
+    source survives the real dispatch wrapper, which the earlier tests skipped."""
+    replies = []
+
+    def agent_turn(script):
+        def run(transcript, tone=None, narrate=False):
+            for conf in script:
+                replies.append(jarvis._execute_tool("delete_face", {"name": "Hero", "confirm": conf}, transcript))
+            return "ok"
+
+        monkeypatch.setattr(jarvis, "run_agent_loop", run)
+
+    agent_turn([False, True])  # stage + confirm inside ONE user message
+    jarvis.handle_text_command("erase my face", source="voice", reply_sink=lambda r: None)
+    assert "separate message" in replies[-1] and len(face.list_profiles()) == 1
+    agent_turn([True])  # the user's next message: "yes"
+    jarvis.handle_text_command("yes", source="voice", reply_sink=lambda r: None)
+    assert replies[-1].startswith("Deleted") and face.list_profiles() == []
+
+
+# --- camera / thread hygiene -----------------------------------------------------------------------
+def test_camera_is_released_if_warmup_raises(monkeypatch):
+    import cv2
+
+    state = {"released": False, "reads": 0}
+
+    class FlakyCap:
+        def isOpened(self):
+            return True
+
+        def read(self):
+            state["reads"] += 1
+            if state["reads"] > 2:
+                raise RuntimeError("driver fault")
+            return True, np.full((4, 4, 3), 50.0, dtype="float32")
+
+        def release(self):
+            state["released"] = True
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *a, **k: FlakyCap())
+    with pytest.raises(RuntimeError, match="driver fault"):
+        face._open_camera(0)
+    assert state["released"]  # the camera light must not stay on
+
+
+def test_poll_thread_keeps_trying_after_repeated_failures(fx, monkeypatch):
+    calls = []
+
+    def bad(now=None):
+        calls.append(1)
+        raise RuntimeError("model missing")
+
+    monkeypatch.setattr(face, "poll_once", bad)
+    monkeypatch.setattr(face, "POLL_ERROR_BACKOFF_S", 0.01)
+    monkeypatch.setattr(face, "poll_interval", lambda: 0.01)
+    monkeypatch.setattr(face, "settled_poll_interval", lambda: 0.01)
+    monkeypatch.setattr(face, "_poll_thread", None)
+    assert face.start_polling()
+    deadline = time.time() + 3
+    while len(calls) < 6 and time.time() < deadline:
+        time.sleep(0.01)
+    alive = face._poll_thread.is_alive()
+    face.stop_polling()
+    assert len(calls) >= 6 and alive  # it used to return for good after 3 failures
+
+
+def test_lowering_poll_priority_is_safe_and_does_not_touch_the_calling_thread(monkeypatch):
+    errors = []
+
+    def run():
+        try:
+            face._lower_thread_priority()  # runs on its own thread: must never lower pytest's
+        except Exception as e:
+            errors.append(e)
+
+    t = threading.Thread(target=run)
+    t.start()
+    t.join()
+    assert not errors and not t.is_alive()
+
+
+def test_hooks_run_after_the_poll_lock_is_released(enrolled, monkeypatch):
+    """A slow greeting/notification must not freeze who_is_here or the dashboard's pause/erase."""
+    _look(monkeypatch, _obs(0.0, BASE))
+    in_hook, let_go = threading.Event(), threading.Event()
+    lock_was_free = []
+
+    def slow_greet(_text):
+        lock_was_free.append(face._poll_lock.acquire(blocking=False))
+        if lock_was_free[-1]:
+            face._poll_lock.release()
+        in_hook.set()
+        let_go.wait(3)
+
+    face._hooks["greet"] = slow_greet
+    t = threading.Thread(target=face.poll_once, args=(time.time(),))
+    t.start()
+    assert in_hook.wait(3)
+    started = time.time()
+    assert "paused" in face.set_paused(True, "voice")  # returns while the greeting is still "speaking"
+    assert time.time() - started < 1.0
+    let_go.set()
+    t.join(3)
+    assert lock_was_free == [True]
+
+
+def test_pause_during_an_inflight_poll_is_not_overwritten_by_it(enrolled, monkeypatch):
+    """The in-flight poll must finish first, THEN the reset lands; otherwise the poll writes
+    "owner present" back over a pause/erase and the prompt keeps saying so for ~90s."""
+    entered, proceed = threading.Event(), threading.Event()
+
+    def blocked_capture():
+        entered.set()
+        proceed.wait(3)
+        return list(_obs(0.0, BASE)), 100.0, 40.0, FRAME
+
+    monkeypatch.setattr(face, "_capture_and_analyze", blocked_capture)
+    poller = threading.Thread(target=face.poll_once, args=(time.time(),))
+    poller.start()
+    assert entered.wait(3)
+    pauser = threading.Thread(target=face.set_paused, args=(True, "voice"))
+    pauser.start()
+    time.sleep(0.1)
+    assert pauser.is_alive()  # waiting for the poll, not racing it
+    proceed.set()
+    poller.join(3)
+    pauser.join(3)
+    snap = face.state_snapshot()
+    assert not snap["owner_present"] and snap["updated_at"] == 0.0 and not face.group_safe()
+
+
+def test_first_time_key_creation_is_race_free(fx, monkeypatch):
+    import time as _t
+
+    def slow_dpapi(data, protect):
+        if protect:
+            _t.sleep(0.05)  # widen the window in which a second caller could mint its own key
+        return data
+
+    monkeypatch.setattr(face, "_dpapi", slow_dpapi)
+    face._key_cache.clear()
+    keys = []
+    threads = [threading.Thread(target=lambda: keys.append(face._key())) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(set(keys)) == 1 and (face._data_dir() / "face.key").read_bytes() == keys[0]
+
+
+# --- dashboard WebSocket origin --------------------------------------------------------------------
+def test_websocket_rejects_a_cross_site_origin_but_accepts_the_dashboard(fx):
+    from fastapi.testclient import TestClient
+
+    import jarvis_dashboard as dashboard
+
+    with TestClient(dashboard._build_app(), base_url="http://127.0.0.1:8765") as c:
+        for evil in ("https://evil.example", "null", "http://localhost.evil.example:8765"):
+            with pytest.raises(Exception):
+                with c.websocket_connect("/ws", headers={"origin": evil}):
+                    pass
+        with c.websocket_connect("/ws", headers={"origin": "http://127.0.0.1:8765"}):
+            pass
+        with c.websocket_connect("/ws", headers={"origin": "http://localhost:8765"}):
+            pass
+        with c.websocket_connect("/ws"):  # non-browser client: no Origin header
+            pass
+
+
+def test_greeting_does_not_talk_over_a_reply_already_playing(quiet_jarvis, monkeypatch):
+    j, _ = quiet_jarvis
+    said = []
+    monkeypatch.setattr(j, "speak_text", said.append)
+    monkeypatch.setattr(face, "group_safe", lambda now=None: False)
+    j.jarvis_speaking.set()
+    try:
+        j._face_greet("Good evening, Hero.")
+    finally:
+        j.jarvis_speaking.clear()
+    assert said == []

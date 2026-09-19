@@ -28,6 +28,7 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import threading
@@ -201,9 +202,15 @@ def _dpapi(data: bytes, protect: bool) -> bytes:
 
 
 _key_cache: dict[str, bytes] = {}
+_key_lock = threading.Lock()
 
 
 def _key() -> bytes:
+    with _key_lock:  # two first-time callers must not each mint a key (the loser's data is lost)
+        return _key_locked()
+
+
+def _key_locked() -> bytes:
     path = _data_dir() / "face.key"
     cache_id = str(path)
     if cache_id in _key_cache:
@@ -246,6 +253,8 @@ def health_problem() -> str | None:
     try:
         if _has_encrypted_data():
             _key()
+            if not models_ready():
+                return "The face model files are missing, so I can't recognize anyone until they are downloaded again."
     except Exception as e:
         return str(e)
     return None
@@ -336,16 +345,21 @@ def download_models(progress_fn=None) -> None:
         size = part.stat().st_size
         part.unlink(missing_ok=True)
         raise RuntimeError(f"Face model download was cut short ({size} of {MODEL_ZIP_SIZE} bytes).")
-    digest = hashlib.sha256(part.read_bytes()).hexdigest()
-    if digest != MODEL_ZIP_SHA256:
+    h = hashlib.sha256()
+    with open(part, "rb") as f:  # chunked: the pack is ~290MB, don't hold it in memory
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if h.hexdigest() != MODEL_ZIP_SHA256:
         part.unlink(missing_ok=True)
         raise RuntimeError("Face model download failed its integrity check; refusing to use it.")
     dest = root / "models" / MODEL_PACK
     dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(part) as zf:
         for name in MODEL_FILES:
-            with zf.open(name) as src, open(dest / name, "wb") as dst:
-                dst.write(src.read())
+            tmp = dest / (name + ".tmp")  # write aside, then rename: a killed extract must not
+            with zf.open(name) as src, open(tmp, "wb") as dst:  # leave a truncated file that
+                shutil.copyfileobj(src, dst)  # models_ready() would then accept
+            os.replace(tmp, dest / name)
     part.unlink(missing_ok=True)
 
 
@@ -364,13 +378,28 @@ _engine_lock = threading.Lock()
 
 class _InsightEngine:
     def __init__(self) -> None:
+        # insightface silently downloads a missing model pack itself, with no size or hash check,
+        # which would bypass the pinned download above. Refuse instead; enrolling (or
+        # `python jarvis_face.py calibrate`) fetches and verifies it.
+        if not models_ready():
+            raise RuntimeError(
+                "The face model files are missing. Enroll once, or run 'python jarvis_face.py "
+                "calibrate', to download and verify them."
+            )
+        import onnxruntime as ort
         from insightface.app import FaceAnalysis
 
+        # Cap ONNX Runtime's threads: by default one inference bursts across every core, which
+        # can stutter the voice loop / Whisper that share this process.
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = max(1, int(_float_env("JARVIS_FACE_THREADS", 2)))
+        opts.inter_op_num_threads = 1
         self.app = FaceAnalysis(
             name=MODEL_PACK,
             root=str(_model_root()),
             allowed_modules=["detection", "recognition"],
             providers=["CPUExecutionProvider"],
+            sess_options=opts,
         )
         self.app.prepare(ctx_id=-1, det_size=(320, 320))
 
@@ -413,15 +442,19 @@ def _open_camera(index: int):
     # brightness ~100 then ~58, and no face found in the first frame). Discard frames until the
     # brightness stops moving, so every poll - each one a cold open - sees a usable image.
     last, stable = None, 0
-    for i in range(WARMUP_MAX_FRAMES):
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            continue
-        mean = float(frame.mean())
-        stable = stable + 1 if last is not None and abs(mean - last) < WARMUP_STABLE_DELTA else 0
-        last = mean
-        if i >= WARMUP_MIN_FRAMES and stable >= 3:
-            break
+    try:
+        for i in range(WARMUP_MAX_FRAMES):
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+            mean = float(frame.mean())
+            stable = stable + 1 if last is not None and abs(mean - last) < WARMUP_STABLE_DELTA else 0
+            last = mean
+            if i >= WARMUP_MIN_FRAMES and stable >= 3:
+                break
+    except Exception:
+        cap.release()  # never leave the camera (and its LED) on because a read blew up
+        raise
     return cap
 
 
@@ -469,15 +502,15 @@ def enroll(name: str, source: str | None, speak_fn=None) -> str:
         return "I need a name of letters only, up to forty characters, to enroll a face."
     existing = list_profiles()
     if existing:
-        return (
-            f"{existing[0]['name']} is already enrolled, and I only keep one profile. "
-            "Say 'delete my face' first if you want to enroll again."
-        )
+        return _already_enrolled(existing[0]["name"])
     if is_paused():
         return "Face recognition is paused, so I won't turn the camera on. Say resume first."
     if not _camera_lock.acquire(timeout=CAMERA_WAIT_S):  # a poll may be mid-look (~1.5s)
         return "The camera is busy right now. Try again in a moment."
     try:
+        existing = list_profiles()  # another enroll may have finished while we waited for the lock
+        if existing:
+            return _already_enrolled(existing[0]["name"])
         try:
             download_models(speak_fn)
         except Exception as e:
@@ -502,6 +535,13 @@ def enroll(name: str, source: str | None, speak_fn=None) -> str:
             cap.release()
     finally:
         _camera_lock.release()
+
+
+def _already_enrolled(name: str) -> str:
+    return (
+        f"{name} is already enrolled, and I only keep one profile. "
+        "Say 'delete my face' first if you want to enroll again."
+    )
 
 
 def _run_enrollment(name: str, engine, cap) -> str:
@@ -553,20 +593,37 @@ def _run_enrollment(name: str, engine, cap) -> str:
     stored = np.vstack([centroid[None, :], arr])  # row 0 = centroid, then the raw samples
     ts = _now()
     with _db_lock, _db() as conn:
+        # Atomic "only if nobody is enrolled": the one-person rule must hold even if two enrolls race.
         cur = conn.execute(
             "INSERT INTO face_profiles (name, role, created_at, consent_at, n_samples, embeddings) "
-            "VALUES (?,?,?,?,?,?)",
+            "SELECT ?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM face_profiles)",
             (name, "admin", ts, ts, len(samples), _pack_embeddings(stored)),
         )
-        pid = cur.lastrowid
+        pid = cur.lastrowid if cur.rowcount == 1 else None
+    if pid is None:
+        log_event("enroll_failed", name=name, detail="someone was enrolled while this was in progress")
+        return "Someone was enrolled while I was working, so I didn't add a second profile."
     invalidate_profile_cache()
     log_event("enroll", profile_id=pid, name=name, detail=f"consent given by explicit enroll command; head-turn swing {swing:.2f}")
     return f"Done, {name}. I've enrolled your face. It's stored only on this computer, encrypted, and you can delete it any time."
 
 
-def delete(name: str, confirm: bool, source: str | None) -> str:
+STAGE_TTL_S = 120.0
+_staged_deletes: dict[str, tuple[float, str | None]] = {}
+_stage_lock = threading.Lock()
+
+
+def delete(name: str, confirm: bool, source: str | None, turn_id: str | None = None,
+           ui_confirmed: bool = False) -> str:
     """Remove a profile and its embeddings. The audit trail of events is kept (it holds no
-    biometric data). Needs confirm=True, which the agent may only set after the user said yes."""
+    biometric data).
+
+    `confirm=True` is model-supplied, and "only set it after the user said yes" is just a prompt
+    (a model has passed force=true unprompted before). So the code enforces it: a confirming call
+    only counts if an earlier, unconfirmed call for the same profile was made within STAGE_TTL_S
+    *in a different user message* (`turn_id` = that message's text), so the model cannot stage and
+    confirm inside one turn. The dashboard, where a person just clicked through a browser
+    confirm(), passes ui_confirmed=True."""
     why = refuse_reason(source)
     if why:
         return why
@@ -577,12 +634,29 @@ def delete(name: str, confirm: bool, source: str | None) -> str:
         row = conn.execute("SELECT id, name FROM face_profiles WHERE name=?", (clean,)).fetchone()
     if not row:
         return f"I don't have a face enrolled as {clean}."
-    if not confirm:
-        return f"That will erase {row[1]}'s face profile. Ask the user to confirm, then call again with confirm set."
+    if not ui_confirmed:
+        key, now = row[1].lower(), time.time()
+        with _stage_lock:
+            staged = _staged_deletes.get(key)
+            ok = bool(
+                confirm and staged and now - staged[0] <= STAGE_TTL_S
+                and (turn_id is None or staged[1] is None or staged[1] != turn_id)
+            )
+            if not ok:
+                _staged_deletes[key] = (now, turn_id)
+            else:
+                _staged_deletes.pop(key, None)
+        if not ok:
+            if confirm:
+                return (
+                    "I need the user's yes in a separate message first. Ask them whether to erase "
+                    f"{row[1]}'s face profile, then call again once they've said yes."
+                )
+            return f"That will erase {row[1]}'s face profile. Ask the user to confirm, then call again with confirm set."
     with _db_lock, _db() as conn:
         conn.execute("DELETE FROM face_profiles WHERE id=?", (row[0],))
     invalidate_profile_cache()
-    _reset_transient()  # otherwise "Hero is at the computer" lingers in the prompt for ~90s
+    _reset_presence_serialized()  # otherwise "Hero is at the computer" lingers in the prompt for ~90s
     log_event("delete", profile_id=row[0], name=row[1], detail="profile and embeddings erased")
     return f"Deleted {row[1]}'s face profile. Nothing biometric is left on this computer."
 
@@ -914,7 +988,7 @@ def _greeting_text(name: str) -> str:
     return f"Good {'morning' if h < 12 else 'afternoon' if h < 18 else 'evening'}, {name}."
 
 
-def _camera_failed(err: Exception) -> None:
+def _camera_failed(err: Exception, out: list) -> None:
     with _st_lock:
         _st.camera_fails += 1
         alert = _st.camera_fails >= CAMERA_FAILS_BEFORE_NOTICE and not _st.camera_alert_sent
@@ -922,7 +996,7 @@ def _camera_failed(err: Exception) -> None:
             _st.camera_alert_sent = True
     if alert:
         log_event("camera_unreachable", detail=str(err)[:200])
-        _hooks["notify"]("I can't reach the camera right now; another app may be using it, or it's unplugged.")
+        out.append(("notify", "I can't reach the camera right now; another app may be using it, or it's unplugged."))
 
 
 def _camera_ok() -> None:
@@ -941,11 +1015,27 @@ def poll_once(now: float | None = None) -> str:
     """One recognition cycle. Returns a short status word (used by tests and who_is_here).
     Serialized: the poll thread and a voice-triggered who_is_here must not interleave state
     updates (each would otherwise see the other's half-finished presence)."""
+    out: list = []
     with _poll_lock:
-        return _poll_once_locked(now)
+        status = _poll_once_locked(now, out)
+    # Speaking / notifying can take many seconds (TTS, a summarizer call); doing it while holding
+    # the poll lock would freeze who_is_here and the dashboard's pause/erase behind it.
+    for hook, *args in out:
+        try:
+            _hooks[hook](*args)
+        except Exception as e:
+            log.warning("face %s hook failed: %s", hook, e)
+    return status
 
 
-def _poll_once_locked(now: float | None = None) -> str:
+def _reset_presence_serialized() -> None:
+    """Reset live presence *after* any in-flight poll finishes, so that poll cannot write a
+    stale "owner present"/"stranger present" back over the reset (pause / erase)."""
+    with _poll_lock:
+        _reset_transient()
+
+
+def _poll_once_locked(now: float | None, out: list) -> str:
     now = time.time() if now is None else now
     if not enabled() or is_paused():
         _reset_transient()
@@ -962,7 +1052,7 @@ def _poll_once_locked(now: float | None = None) -> str:
         try:
             obs, mean, std, frame = _capture_and_analyze()
         except CameraUnavailable as e:
-            _camera_failed(e)
+            _camera_failed(e, out)
             return "camera-error"
     finally:
         _camera_lock.release()
@@ -978,7 +1068,7 @@ def _poll_once_locked(now: float | None = None) -> str:
     if covered_now:
         if not was_covered:
             log_event("camera_covered", detail=f"mean brightness {mean:.1f}")
-            _hooks["notify"](f"{owner['name']}, the camera looks covered, so I can't see the room.")
+            out.append(("notify", f"{owner['name']}, the camera looks covered, so I can't see the room."))
         return "covered"
     if was_covered:
         log_event("camera_uncovered")
@@ -999,7 +1089,7 @@ def _poll_once_locked(now: float | None = None) -> str:
             arrived, _st.owner_present = (not _st.owner_present), True
         if arrived:
             log_event("owner_arrived", prof["id"], prof["name"], score)
-            _maybe_greet(prof["name"], now)
+            _maybe_greet(prof["name"], now, out)
     else:
         with _st_lock:
             if _st.owner_present and now - _st.owner_last_seen > owner_absent_after_s():
@@ -1034,11 +1124,11 @@ def _poll_once_locked(now: float | None = None) -> str:
                 _st.unknown_present, released = False, True
         if released:
             log_event("unknown_left")
-            _hooks["release"]()
+            out.append(("release",))
     return "ok"
 
 
-def _maybe_greet(name: str, now: float) -> None:
+def _maybe_greet(name: str, now: float, out: list) -> None:
     try:
         last = float(get_setting("last_greeting", "0") or 0)
     except ValueError:
@@ -1046,10 +1136,7 @@ def _maybe_greet(name: str, now: float) -> None:
     if now - last < GREETING_COOLDOWN_S:
         return
     set_setting("last_greeting", str(now))
-    try:
-        _hooks["greet"](_greeting_text(name))
-    except Exception as e:
-        log.warning("face greeting failed: %s", e)
+    out.append(("greet", _greeting_text(name)))
 
 
 def _maybe_snapshot(frame, obs: Observation, score: float, event_id: int | None, now: float) -> None:
@@ -1068,6 +1155,20 @@ def _maybe_snapshot(frame, obs: Observation, score: float, event_id: int | None,
 # --- polling thread ---------------------------------------------------------------------------
 _poll_thread: threading.Thread | None = None
 _poll_stop = threading.Event()
+POLL_ERROR_BACKOFF_S = 300.0
+
+
+def _lower_thread_priority() -> None:
+    """Run the poll below normal priority so an inference burst yields to the voice loop."""
+    if sys.platform != "win32":
+        return
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.GetCurrentThread.restype = ctypes.c_void_p
+        k32.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        k32.SetThreadPriority(k32.GetCurrentThread(), -1)  # THREAD_PRIORITY_BELOW_NORMAL
+    except Exception as e:
+        log.debug("could not lower face poll priority: %s", e)
 
 
 def start_polling(greet_fn=None, notify_fn=None, quiet_fn=None, release_fn=None) -> bool:
@@ -1087,18 +1188,23 @@ def start_polling(greet_fn=None, notify_fn=None, quiet_fn=None, release_fn=None)
     _poll_stop.clear()
 
     def loop() -> None:
+        _lower_thread_priority()
         errors = 0
         while not _poll_stop.is_set():
+            failed = False
             try:
                 housekeeping()
                 poll_once()
                 errors = 0
             except Exception as e:
                 errors += 1
+                failed = True
                 log.warning("Face poll failed (%d): %s", errors, e)
-                if errors >= 3:
-                    log.error("Face polling stopped after repeated failures: %s", e)
-                    return
+            if failed and errors >= 3:
+                # Was: give up for good (a fixed model / restored camera was never noticed until a
+                # restart). Now: back off and keep trying; the dashboard's health note says why.
+                _poll_stop.wait(POLL_ERROR_BACKOFF_S)
+                continue
             with _st_lock:
                 fails = _st.camera_fails
                 settled = _st.owner_present and not _st.unknown_present
@@ -1158,7 +1264,7 @@ def set_paused(paused: bool, source: str | None) -> str:
     was = is_paused()
     set_setting("paused", "1" if paused else "0")
     if paused:
-        _reset_transient()
+        _reset_presence_serialized()
     if was != paused:
         log_event("paused" if paused else "resumed", detail=f"source={source}")
     return "Face recognition paused. The camera stays off." if paused else "Face recognition resumed."
@@ -1283,7 +1389,7 @@ def delete_by_id(profile_id: int, source: str | None) -> str:
     prof = next((p for p in list_profiles() if p["id"] == profile_id), None)
     if prof is None:
         return "No such face profile."
-    return delete(prof["name"], True, source)
+    return delete(prof["name"], True, source, ui_confirmed=True)
 
 
 def calibrate(seconds: float = 10.0, out=print) -> dict:
