@@ -54,6 +54,7 @@ import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
 import jarvis_voice_tone as voice_tone
 import jarvis_sleep_mode as sleep_mode
+import jarvis_sleep_mail as sleep_mail
 import jarvis_cache as cache
 import jarvis_billing as billing
 import jarvis_gemini as gemini
@@ -2712,8 +2713,22 @@ def _speak_shaped(text: str) -> None:
     speak_text(_collapse_paths_for_speech(_summarize_for_speech(text)))
 
 
+def _record_sleep_important(text: str) -> None:
+    """Files something under the wake-up recap's important section without speaking it."""
+    with _session_context_lock:
+        _session_context.setdefault("pending_notifications", []).append(
+            {
+                "text": text,
+                "queued_at": datetime.now().isoformat(timespec="seconds"),
+                "during_sleep": True,
+                "important": True,
+            }
+        )
+        _save_session_context_locked()
+
+
 def queue_or_deliver_notification(
-    text: str, urgent: bool = False, force_phone: bool = False
+    text: str, urgent: bool = False, force_phone: bool = False, quiet_asleep: bool = False
 ) -> None:
     """The interrupt gate every proactive message (scheduled skills, health-check suggestions)
     goes through, instead of calling speak_text directly: speaks immediately unless the user
@@ -2728,17 +2743,12 @@ def queue_or_deliver_notification(
     _notify_phone(text, force=force_phone)
     refresh_session_context()
     if urgent and sleep_mode.is_active():
-        # Still spoken live below, but also remembered so the wake-up recap can report it first.
-        with _session_context_lock:
-            _session_context.setdefault("pending_notifications", []).append(
-                {
-                    "text": text,
-                    "queued_at": datetime.now().isoformat(timespec="seconds"),
-                    "during_sleep": True,
-                    "important": True,
-                }
-            )
-            _save_session_context_locked()
+        # Remembered so the wake-up recap can report it first. Spoken live too, unless the caller
+        # says it can wait for morning (quiet_asleep, e.g. a finished background agent).
+        _record_sleep_important(text)
+        if quiet_asleep:
+            log.info("Held for the wake-up recap (Sleep Mode active): %r", text)
+            return
     if sleep_mode.should_suppress(urgent):
         with _session_context_lock:
             _session_context.setdefault("pending_notifications", []).append(
@@ -3540,6 +3550,56 @@ def _run_queued_task(description: str, instructions: str) -> None:
         _set_scheduled_task_running(False)
 
 
+_sleep_mail_last_check: datetime | None = None
+
+
+def _sleep_mail_claude(system: str, user: str, max_tokens: int) -> str | None:
+    data = _claude_request(
+        {"model": CLAUDE_MODEL, "max_tokens": max_tokens, "system": system,
+         "messages": [{"role": "user", "content": user}]},
+        timeout=30,
+    )
+    return _claude_text(data) if data is not None else None
+
+
+def _sleep_mail_mcp(tool: str, args: dict) -> str:
+    return execute_mcp_tool(f"mcp_gmail_{tool}", args)
+
+
+def _sleep_mail_tick(now: datetime) -> None:
+    """While Sleep Mode is on, check Gmail every SLEEP_MAIL_INTERVAL_MIN minutes (first check that
+    long after it started) and let jarvis_sleep_mail answer family. Off the scheduler thread,
+    because a send retries for up to five minutes."""
+    global _sleep_mail_last_check
+    started = sleep_mode.started_at()
+    if not started:
+        _sleep_mail_last_check = None
+        return
+    try:
+        started_dt = datetime.fromisoformat(started)
+    except ValueError:
+        return
+    last = max(_sleep_mail_last_check or started_dt, started_dt)
+    if (now - last).total_seconds() < sleep_mail.SLEEP_MAIL_INTERVAL_MIN * 60:
+        return
+    _sleep_mail_last_check = now
+
+    def _run() -> None:
+        try:
+            ensure_mcp_started()
+            if "mcp_gmail_search_emails" not in _mcp_tool_index:
+                log.warning("Sleep-mail: Gmail MCP tools unavailable; skipping this check.")
+                return
+            sleep_mail.run_cycle(
+                mcp=_sleep_mail_mcp, claude=_sleep_mail_claude, record=_record_sleep_important,
+                since_iso=started, sleep_started_at=started,
+            )
+        except Exception as e:
+            log.warning("Sleep-mail cycle failed: %s", e)
+
+    threading.Thread(target=_run, daemon=True, name="sleep-mail").start()
+
+
 def _scheduler_loop() -> None:
     while True:
         try:
@@ -3552,6 +3612,7 @@ def _scheduler_loop() -> None:
             _retry_failed_mcp_servers(now)
             task_scheduler.tick(now, _run_queued_task, queue_or_deliver_notification)
             sleep_mode.check_wakeup(now, _run_system_action, speak_text)
+            _sleep_mail_tick(now)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -5432,7 +5493,9 @@ def _finish_background_task(task_id: int, status: str, summary: str, kind: str =
         lead = f"Background task #{task_id} finished:" if ok else f"Background task #{task_id} failed:"
     message = f"{lead} {summary}"
     send_windows_toast("Jarvis — background task done", message[:250])
-    queue_or_deliver_notification(message, urgent=True, force_phone=task_id in _SELF_EDIT_TASK_IDS)
+    queue_or_deliver_notification(
+        message, urgent=True, force_phone=task_id in _SELF_EDIT_TASK_IDS, quiet_asleep=True
+    )
     record_recent_task(f"background task #{task_id} {'finished' if ok else 'failed'}")
 
 

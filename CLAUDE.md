@@ -358,6 +358,33 @@ Rules:
   in the digest. Cost: one small extra model call per wake-up. Same data exposure as the existing
   speech summarizer (queued text goes to the active brain). Tests: `test_sleep.py`.
 
+## Sleep Mode mail take-over (2026-09-19)
+
+- `jarvis_sleep_mail.py`, ticked from the scheduler (`_sleep_mail_tick`): **only while Sleep Mode is
+  on**, every 30 min (`JARVIS_SLEEP_MAIL_INTERVAL_MIN`; first check 30 min after it starts) it
+  searches the Gmail inbox (via the existing Gmail MCP) for mail that arrived since Sleep Mode
+  began. **Family** senders get a reply sent *as Jarvis* ("I'm Jarvis, <name>'s assistant, they're
+  asleep"), continuing the conversation across cycles; everything goes in the wake-up recap's
+  important section. Non-family senders get one classification call over sender+subject only;
+  critical ones (security/payment/deadline/emergency) are reported, never answered.
+- **Explicit user decisions (2026-09-19):** reply scope is "open conversation" (highest-risk
+  option, chosen knowingly over acknowledge-only); the family list is read from Jarvis's own memory
+  (non-superseded `memory_facts` rows with category `relationship` that contain an email address);
+  failed sends retry every 1 min, up to 5 retries (6 attempts) — implemented for these replies only
+  (`send_with_retry`); an agent finishing during sleep is held for the recap instead of spoken at night.
+- **Guardrails that stay regardless:** exact-address match only; the user's own addresses (from
+  `user_profile`/`user_email` facts/`JARVIS_OWN_EMAILS`) are never replied to; `JARVIS_SLEEP_FAMILY_EXCLUDE`
+  removes addresses; 6 replies per sender per night (`JARVIS_SLEEP_MAIL_MAX_REPLIES`); every reply
+  carries a disclosure signature; the prompt forbids commitments, private info and claiming actions,
+  and avoids gendered pronouns for the user. Messages are marked handled in `sleep_mail_handled`
+  (no double replies across restarts); replies logged in `sleep_mail_replies`. Both tables are new.
+- **Open items:** Dad Jacob's address in memory equals the Claude account email, so it is excluded
+  in `.env` until confirmed; Racheal has two addresses in memory (both used). An "error" that
+  actually delivered would send a duplicate. Real emergencies are recorded and the sender is told to
+  call directly, but Jarvis does not wake the user. Live-verified read-only (search, parse, read,
+  send_email schema) against the real Gmail MCP; **no real send was made** — the first real send is
+  untested. Tests: `test_sleep_mail.py`. Push-to-talk default moved to Right Shift the same day.
+
 ## Window control
 
 - `resize_window(title, width=, height=, width_percent=, height_percent=)` and
@@ -405,4 +432,5 @@ row there each phase rather than only stating the total in chat.
 | 11 (shutdown staging fix, proactive speech shaping, change_jarvis_code + phone) | Sonnet 5 | ~35 min | ~$1.40–$2.00 |
 | 12 (Gemini brain option + runtime switch + research) | Sonnet 5 | ~50 min | ~$2.00–$2.80 |
 | 13 (sleep trends tab + wake-up digest) | Sonnet 5 | ~30 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~340 min** | **~$11.80–$16.75** |
+| 14 (wake-up recap split, hotkey move, sleep-mode mail take-over + retry) | Sonnet 5 | ~45 min | ~$2.10–$2.90 |
+| **Running total (final)** | | **~385 min** | **~$13.90–$19.65** |

@@ -180,6 +180,12 @@ def _set_state(**fields) -> None:
             conn.close()
 
 
+def started_at() -> str | None:
+    """ISO start time of the current Sleep Mode session, or None if it's off."""
+    state = _get_state()
+    return state.get("started_at") if state.get("active") else None
+
+
 def is_active() -> bool:
     return bool(_get_state().get("active"))
 
