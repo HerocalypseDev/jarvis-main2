@@ -378,8 +378,9 @@ Rules:
   carries a disclosure signature; the prompt forbids commitments, private info and claiming actions,
   and avoids gendered pronouns for the user. Messages are marked handled in `sleep_mail_handled`
   (no double replies across restarts); replies logged in `sleep_mail_replies`. Both tables are new.
-- **Open items:** Dad Jacob's address in memory equals the Claude account email, so it is excluded
-  in `.env` until confirmed; Racheal has two addresses in memory (both used). An "error" that
+- **Open items:** Dad Jacob's address (`ayojacobgo@gmail.com`, same as the Claude account email) was
+  confirmed by the user as his on 2026-09-19 and is on the family list; Racheal's old address was
+  superseded in memory the same day (`rachealpower25@gmail.com` is the true one). An "error" that
   actually delivered would send a duplicate. Real emergencies are recorded and the sender is told to
   call directly, but Jarvis does not wake the user. Live-verified read-only (search, parse, read,
   send_email schema) against the real Gmail MCP; **no real send was made** — the first real send is
