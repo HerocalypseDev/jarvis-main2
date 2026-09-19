@@ -4,7 +4,7 @@ Purpose-built so "grab that Pinterest image" doesn't need run_shell/run_python (
 confirmation gate). Narrow on purpose: http(s) only, no private/loopback hosts, the response must
 really be a raster image (content-type AND magic bytes; SVG is refused since it can carry
 scripts), a size cap, and the destination is always `JARVIS_IMAGE_DIR` (default
-~/Pictures/Jarvis) — the caller can choose a file name, never a path. Never overwrites.
+Jarvis_Workspace/Assets) — the caller can choose a file name, never a path. Never overwrites.
 """
 
 from __future__ import annotations
@@ -37,7 +37,10 @@ _EXT_BY_TYPE = {
 
 def save_dir() -> Path:
     raw = os.environ.get("JARVIS_IMAGE_DIR", "").strip()
-    return Path(raw) if raw else Path.home() / "Pictures" / "Jarvis"
+    if raw:
+        return Path(raw)
+    import jarvis_workspace
+    return jarvis_workspace.root() / "Assets"
 
 
 def upgrade_pinterest_url(url: str) -> str:

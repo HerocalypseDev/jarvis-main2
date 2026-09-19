@@ -60,6 +60,7 @@ import jarvis_task_scheduler as task_scheduler
 import jarvis_voice_tone as voice_tone
 import jarvis_sleep_mode as sleep_mode
 import jarvis_sleep_mail as sleep_mail
+import jarvis_workspace
 import jarvis_cache as cache
 import jarvis_billing as billing
 import jarvis_gemini as gemini
@@ -1170,7 +1171,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "read_file",
-        "description": "Read a text file from anywhere on disk and return its contents (truncated if very large).",
+        "description": "Read a text file and return its contents (truncated if very large). A relative path or bare filename is looked up in Jarvis_Workspace and its subfolders; absolute paths work anywhere.",
         "input_schema": {
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -1179,7 +1180,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "write_file",
-        "description": "Write (or append to) a text file anywhere on disk, creating parent folders if needed.",
+        "description": "Write (or append to) a text file, creating parent folders if needed. Default location is Jarvis_Workspace: give just a filename (or relative path) and it is filed automatically into Bugs, Code_Projects, Learning_Resources, Notes, Assets, Roblox_Projects or Temp by what it is. Only pass an absolute path when the user named an exact location.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1666,7 +1667,7 @@ AGENT_TOOLS = [
                     "type": "string",
                     "description": (
                         "absolute path to save the summary to; omit to default to a "
-                        "timestamped file under ~/Jarvis_Research/"
+                        "timestamped file under Jarvis_Workspace/Notes/"
                     ),
                 },
             },
@@ -5495,7 +5496,7 @@ def _read_file_tool(path: str) -> str:
     if not path:
         return "No path given."
     try:
-        data = Path(path).expanduser().read_text(encoding="utf-8", errors="replace")
+        data = jarvis_workspace.resolve_read_path(path).read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return f"Failed to read {path}: {e}"
     if len(data) > MAX_TOOL_RESULT_CHARS * 2:
@@ -5506,8 +5507,10 @@ def _read_file_tool(path: str) -> str:
 def _write_file_tool(path: str, content: str, append: bool) -> str:
     if not path:
         return "No path given."
+    p, refusal = jarvis_workspace.resolve_write_path(path, content or "")
+    if p is None:
+        return refusal
     try:
-        p = Path(path).expanduser()
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a" if append else "w", encoding="utf-8") as f:
             f.write(content or "")
@@ -5913,8 +5916,7 @@ def _delegate_research(task: str, output_path: str) -> str:
 
     output_path = (output_path or "").strip()
     if not output_path:
-        default_dir = Path.home() / "Jarvis_Research"
-        default_dir.mkdir(parents=True, exist_ok=True)
+        default_dir = jarvis_workspace.default_dir("Notes")
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         output_path = str(default_dir / f"research-{stamp}.md")
 
