@@ -58,13 +58,13 @@ Allow the microphone if Windows prompts you. Stop with **Ctrl+C**.
 
 ## Typing to Jarvis (text hotkey)
 
-Don't want to talk out loud? Hold **Right Ctrl** (or your `JARVIS_TEXT_HOTKEY_KEY`) for 2 seconds and a small always-on-top text box pops up. Type your command and press **Enter** — it goes straight into the same Claude tool loop as a voice command (no Whisper, no mic) and Jarvis speaks the reply as usual. Press **Escape**, click away, or close the box to cancel without sending anything.
+Don't want to talk out loud? Hold **Left Ctrl** (or your `JARVIS_TEXT_HOTKEY_KEY`) for 2 seconds and a small always-on-top text box pops up. Type your command and press **Enter** — it goes straight into the same Claude tool loop as a voice command (no Whisper, no mic) and Jarvis speaks the reply as usual. Press **Escape**, click away, or close the box to cancel without sending anything.
 
 Unlike push-to-talk, there's no live mic involved, so there's no risk of a stray sound being misread as a command — it works as soon as Jarvis starts.
 
 | Variable | Purpose |
 | -------- | ------- |
-| `JARVIS_TEXT_HOTKEY_KEY` | Hotkey name, per the `keyboard` package (default `right ctrl`). |
+| `JARVIS_TEXT_HOTKEY_KEY` | Hotkey name, per the `keyboard` package (default `left ctrl`). |
 | `JARVIS_TEXT_HOTKEY_HOLD_S` | Seconds to hold before the box appears (default `2.0`). |
 
 Set `JARVIS_TEXT_HOTKEY_ENABLED = False` at the top of `jarvis.py` to disable it.

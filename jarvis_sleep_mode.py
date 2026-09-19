@@ -69,6 +69,13 @@ SLEEP_TTS_VOLUME = float(os.environ.get("JARVIS_SLEEP_TTS_VOLUME") or 0.7)
 # night's sleep, and left out of averages. Goal is the nightly target used for "sleep debt".
 MIN_SESSION_MINUTES = int(os.environ.get("JARVIS_SLEEP_MIN_SESSION_MINUTES") or 20)
 SLEEP_GOAL_HOURS = float(os.environ.get("JARVIS_SLEEP_GOAL_HOURS") or 8)
+# A nap is a Sleep Mode session that *starts* in this afternoon window and lasts at most
+# NAP_MAX_HOURS. Naps are tracked on their own and never count toward night averages, bedtime,
+# sleep debt or the goal streak.
+NAP_START_HOUR = int(os.environ.get("JARVIS_NAP_START_HOUR") or 12)
+NAP_END_HOUR = int(os.environ.get("JARVIS_NAP_END_HOUR") or 18)
+NAP_MAX_HOURS = float(os.environ.get("JARVIS_NAP_MAX_HOURS") or 4)
+NAP_MIN_MINUTES = int(os.environ.get("JARVIS_NAP_MIN_MINUTES") or 10)
 
 AMBIENT_SOUNDS = {
     "rain": "https://www.youtube.com/results?search_query=rain+sounds+for+sleep+10+hours",
@@ -462,15 +469,24 @@ def status() -> str:
         try:
             rows = conn.execute(
                 "SELECT started_at, duration_minutes FROM sleep_log "
-                "WHERE duration_minutes IS NOT NULL ORDER BY id DESC LIMIT 7"
+                "WHERE duration_minutes IS NOT NULL ORDER BY id DESC LIMIT 30"
             ).fetchall()
         finally:
             conn.close()
-    if rows:
-        avg = sum(r[1] for r in rows) / len(rows)
+    nights, naps = [], []
+    for started_at, minutes in rows:
+        try:
+            (naps if is_nap(datetime.fromisoformat(started_at), minutes) else nights).append(minutes)
+        except ValueError:
+            nights.append(minutes)
+    nights = nights[:7]
+    if nights:
+        avg = sum(nights) / len(nights)
         lines.append(
-            f"Last {len(rows)} session(s) averaged {int(avg // 60)}h {int(avg % 60)}m."
+            f"Last {len(nights)} night(s) averaged {int(avg // 60)}h {int(avg % 60)}m."
         )
+    if naps:
+        lines.append(f"{len(naps)} nap(s) recently, averaging {int(sum(naps) / len(naps))} minutes.")
     return " ".join(lines)
 
 
@@ -480,14 +496,35 @@ def _hhmm(minutes: float) -> str:
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
-def _period_stats(nights: dict, end_day, days: int, goal_h: float) -> dict:
-    """Stats over the `days` calendar days ending at end_day (inclusive), tracked nights only."""
+def is_nap(started: datetime, minutes: float) -> bool:
+    """Afternoon start (NAP_START_HOUR <= hour < NAP_END_HOUR) and no longer than NAP_MAX_HOURS."""
+    return NAP_START_HOUR <= started.hour < NAP_END_HOUR and minutes <= NAP_MAX_HOURS * 60
+
+
+def is_nap_session(started_at: str, ended_at: str) -> bool:
+    """is_nap for a logged session given its ISO start/end; False if unparseable."""
+    try:
+        start, end = datetime.fromisoformat(started_at), datetime.fromisoformat(ended_at)
+    except (TypeError, ValueError):
+        return False
+    return is_nap(start, (end - start).total_seconds() / 60)
+
+
+def _period_stats(nights: dict, end_day, days: int, goal_h: float, naps: dict | None = None) -> dict:
+    """Stats over the `days` calendar days ending at end_day (inclusive): tracked nights (goal,
+    bedtime, debt) plus, separately, naps."""
     keys = [(end_day - timedelta(days=i)).isoformat() for i in range(days)]
     rows = [nights[k] for k in keys if k in nights]
+    nap_rows = [naps[k] for k in keys if naps and k in naps]
+    nap_count = sum(n["count"] for n in nap_rows)
+    nap_minutes = sum(n["minutes"] for n in nap_rows)
     out = {
         "days": days, "nights_tracked": len(rows), "avg_hours": None, "best_hours": None,
         "worst_hours": None, "total_hours": None, "avg_bedtime": None, "avg_wake": None,
         "bedtime_variability_min": None, "goal_hit_nights": 0, "debt_hours": 0.0,
+        "nap_count": nap_count, "nap_days": len(nap_rows),
+        "nap_total_hours": round(nap_minutes / 60, 2),
+        "nap_avg_minutes": round(nap_minutes / nap_count) if nap_count else None,
     }
     if not rows:
         return out
@@ -523,7 +560,7 @@ def stats_summary(now: datetime | None = None) -> dict:
             rows = conn.execute(
                 "SELECT started_at, ended_at, duration_minutes FROM sleep_log "
                 "WHERE ended_at IS NOT NULL AND duration_minutes >= ? ORDER BY id",
-                (MIN_SESSION_MINUTES,),
+                (min(MIN_SESSION_MINUTES, NAP_MIN_MINUTES),),
             ).fetchall()
             digests = conn.execute(
                 "SELECT started_at, ended_at, digest FROM sleep_log "
@@ -533,10 +570,19 @@ def stats_summary(now: datetime | None = None) -> dict:
             conn.close()
 
     nights: dict[str, dict] = {}
+    naps: dict[str, dict] = {}
     for started_at, ended_at, minutes in rows:
         try:
             start, end = datetime.fromisoformat(started_at), datetime.fromisoformat(ended_at)
         except (TypeError, ValueError):
+            continue
+        if is_nap(start, minutes):
+            if minutes >= NAP_MIN_MINUTES:
+                nap = naps.setdefault(end.date().isoformat(), {"minutes": 0.0, "count": 0})
+                nap["minutes"] += minutes
+                nap["count"] += 1
+            continue
+        if minutes < MIN_SESSION_MINUTES:
             continue
         n = nights.setdefault(end.date().isoformat(), {
             "minutes": 0.0, "sessions": 0, "first_start": start, "last_end": end,
@@ -554,8 +600,11 @@ def stats_summary(now: datetime | None = None) -> dict:
     for i in range(89, -1, -1):
         d = today - timedelta(days=i)
         n = nights.get(d.isoformat())
+        nap = naps.get(d.isoformat())
         daily.append({
             "date": d.isoformat(),
+            "nap_hours": round(nap["minutes"] / 60, 2) if nap else None,
+            "naps": nap["count"] if nap else 0,
             "hours": round(n["hours"], 2) if n else None,
             "bedtime": _hhmm(n["bed_min"] + 18 * 60) if n else None,
             "wake": _hhmm(n["wake_min"]) if n else None,
@@ -584,11 +633,12 @@ def stats_summary(now: datetime | None = None) -> dict:
     current = None
     if state.get("active") and state.get("started_at"):
         try:
+            started_dt = datetime.fromisoformat(state["started_at"])
+            elapsed = (now - started_dt).total_seconds() / 60
             current = {
                 "started_at": state["started_at"],
-                "elapsed_minutes": round(
-                    (now - datetime.fromisoformat(state["started_at"])).total_seconds() / 60
-                ),
+                "elapsed_minutes": round(elapsed),
+                "is_nap": is_nap(started_dt, elapsed),
             }
         except ValueError:
             pass
@@ -597,17 +647,20 @@ def stats_summary(now: datetime | None = None) -> dict:
         "goal_hours": goal,
         "min_session_minutes": MIN_SESSION_MINUTES,
         "current": current,
-        "week": _period_stats(nights, today, 7, goal),
-        "prev_week": _period_stats(nights, today - timedelta(days=7), 7, goal),
-        "month": _period_stats(nights, today, 30, goal),
-        "prev_month": _period_stats(nights, today - timedelta(days=30), 30, goal),
+        "nap_window": f"{NAP_START_HOUR:02d}:00-{NAP_END_HOUR:02d}:00, up to {NAP_MAX_HOURS:g}h",
+        "week": _period_stats(nights, today, 7, goal, naps),
+        "prev_week": _period_stats(nights, today - timedelta(days=7), 7, goal, naps),
+        "month": _period_stats(nights, today, 30, goal, naps),
+        "prev_month": _period_stats(nights, today - timedelta(days=30), 30, goal, naps),
         "goal_streak_nights": streak,
         "daily": daily,
         "weekday": weekday,
         "digests": [{"started_at": a, "ended_at": b, "digest": c} for a, b, c in digests],
         "note": (
             "Based on time spent in Sleep Mode, not measured sleep: turn it on when you go to "
-            f"bed and off when you get up. Sessions under {MIN_SESSION_MINUTES} min are ignored."
+            f"bed and off when you get up. Night sessions under {MIN_SESSION_MINUTES} min are "
+            f"ignored. Sessions starting {NAP_START_HOUR:02d}:00-{NAP_END_HOUR:02d}:00 and up to "
+            f"{NAP_MAX_HOURS:g}h count as naps: shown separately, never in night averages or the goal."
         ),
     }
 

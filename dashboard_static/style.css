@@ -487,3 +487,6 @@ body {
 
 /* The Sleep tab's charts need more room than the default bottom panel; a manual drag-resize (inline height) still wins. */
 .bottom.tall { height: 62vh; }
+
+.sleep-fig .bar-nap { fill: #8f9bff; }
+.sw-nap { background: #8f9bff; }

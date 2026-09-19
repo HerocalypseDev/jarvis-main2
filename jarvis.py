@@ -95,8 +95,8 @@ CLAUDE_MODEL = (
 # voice command (no Whisper involved), Escape/closing the box cancels.
 JARVIS_TEXT_HOTKEY_ENABLED = True
 JARVIS_TEXT_HOTKEY_KEY = (
-    os.environ.get("JARVIS_TEXT_HOTKEY_KEY") or "right ctrl"
-).strip() or "right ctrl"
+    os.environ.get("JARVIS_TEXT_HOTKEY_KEY") or "left ctrl"
+).strip() or "left ctrl"
 JARVIS_TEXT_HOTKEY_HOLD_S = float(os.environ.get("JARVIS_TEXT_HOTKEY_HOLD_S") or 2.0)
 
 # Phone integration: two independent, optionally-both-enabled channels. Both push every
@@ -2813,7 +2813,7 @@ def _sleep_wake_digest(started_at: str, ended_at: str) -> None:
 
     def _run() -> None:
         try:
-            digest = _build_sleep_digest(items)
+            digest = _build_sleep_digest(items, nap=sleep_mode.is_nap_session(started_at, ended_at))
             sleep_mode.save_digest(started_at, digest)
             speak_text(_collapse_paths_for_speech(digest))
         except Exception as e:
@@ -2822,12 +2822,14 @@ def _sleep_wake_digest(started_at: str, ended_at: str) -> None:
     threading.Thread(target=_run, daemon=True, name="sleep-wake-digest").start()
 
 
-def _build_sleep_digest(items: list[dict]) -> str:
+def _build_sleep_digest(items: list[dict], nap: bool = False) -> str:
     """Two-part recap: what mattered first (urgent things that came through live while asleep),
-    then "On a lighter note," the held-back reminders/notifications."""
-    prefix = f"{USER_NAME}, while you were asleep, "
+    then "On a lighter note," the held-back reminders/notifications. `nap` only changes the
+    wording ("while you were napping")."""
+    state = "napping" if nap else "asleep"
+    prefix = f"{USER_NAME}, while you were {state}, "
     if not items:
-        return f"{USER_NAME}, nothing came in while you were asleep."
+        return f"{USER_NAME}, nothing came in while you were {state}."
     important = [i for i in items if i.get("important")]
     lighter = [i for i in items if not i.get("important")]
 

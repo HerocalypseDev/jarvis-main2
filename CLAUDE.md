@@ -358,6 +358,19 @@ Rules:
   in the digest. Cost: one small extra model call per wake-up. Same data exposure as the existing
   speech summarizer (queued text goes to the active brain). Tests: `test_sleep.py`.
 
+- **Naps (2026-09-19):** a Sleep Mode session that *starts* 12:00-18:00 (`JARVIS_NAP_START_HOUR`/
+  `_END_HOUR`) and lasts <= 4h (`JARVIS_NAP_MAX_HOURS`) and >= 10 min (`JARVIS_NAP_MIN_MINUTES`) is a
+  nap, classified automatically (`jarvis_sleep_mode.is_nap`, no new table/UX — same on/off flow).
+  Naps never count toward night averages, bedtime/wake, sleep debt or the goal streak (before this,
+  an afternoon nap would have been summed into that day's "night"). They get their own card (count,
+  average length, total), a violet segment stacked on the night bar, and their own line in the voice
+  `status()`; the recap says "while you were napping". Everything else Sleep Mode does (quiet
+  notifications, mail take-over, dark mode) applies to naps too. Not built: counting naps toward a
+  24-hour goal.
+- **Hotkeys (2026-09-19):** push-to-talk defaults to **Right Shift**, the typed-command hotkey to
+  **Left Ctrl** (hold 2s). Left Ctrl is also used for shortcuts; a 2s hold is unlikely but possible
+  while dragging with Ctrl held — change `JARVIS_TEXT_HOTKEY_KEY` if it misfires.
+
 ## Sleep Mode mail take-over (2026-09-19)
 
 - `jarvis_sleep_mail.py`, ticked from the scheduler (`_sleep_mail_tick`): **only while Sleep Mode is

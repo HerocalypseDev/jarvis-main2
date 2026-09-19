@@ -792,7 +792,7 @@ async function fetchSleep() {
 // labelFn(d, i) -> x-axis label or "" to skip.
 function sleepBarsSvg(days, goal, labelFn) {
   const W = 420, H = 130, L = 26, B = 16, T = 8;
-  const vals = days.map((d) => d.hours || 0);
+  const vals = days.map((d) => (d.hours || 0) + (d.nap_hours || 0));
   const max = Math.max(goal + 1, ...vals, 1);
   const y = (h) => T + (H - T - B) * (1 - h / max);
   const slot = (W - L) / days.length;
@@ -803,10 +803,19 @@ function sleepBarsSvg(days, goal, labelFn) {
   }
   days.forEach((d, i) => {
     const x = L + i * slot + (slot - bw) / 2;
+    const r = Math.min(3, bw / 2);
+    // Rounded-top bar from `from` (px) up to `top` (px).
+    const seg = (cls, from, top, tip) =>
+      `<path class="bar ${cls}" d="M${x},${from} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${from} Z"><title>${esc(tip)}</title></path>`;
+    let base = H - B;
     if (d.hours != null) {
       const top = y(d.hours);
-      const r = Math.min(3, bw / 2);
-      out += `<path class="bar ${d.hours >= goal ? "" : "bar-low"}" d="M${x},${H - B} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${H - B} Z"><title>${esc(d.date)}: ${esc(fmtHours(d.hours))}${d.sessions > 1 ? " (" + d.sessions + " sessions)" : ""}</title></path>`;
+      out += seg(d.hours >= goal ? "" : "bar-low", base, top, `${d.date}: ${fmtHours(d.hours)}${d.sessions > 1 ? " (" + d.sessions + " sessions)" : ""}`);
+      base = top - 2; // 2px gap between the night and nap segments
+    }
+    if (d.nap_hours != null) {
+      const top = Math.min(y((d.hours || 0) + d.nap_hours), base - 3);
+      out += seg("bar-nap", base, top, `${d.date}: ${d.naps} nap${d.naps > 1 ? "s" : ""}, ${fmtHours(d.nap_hours)}`);
     }
     const lab = labelFn(d, i);
     if (lab) out += `<text class="ax" x="${x + bw / 2}" y="${H - 4}" text-anchor="middle">${esc(lab)}</text>`;
@@ -856,6 +865,7 @@ function renderSleep() {
     ["Avg bedtime → wake", `${cur.avg_bedtime || "–"} → ${cur.avg_wake || "–"}`, cur.bedtime_variability_min != null ? `bedtime varies ±${cur.bedtime_variability_min} min` : "", ""],
     [`Goal (${u.goal_hours}h)`, `${cur.goal_hit_nights}/${cur.nights_tracked}`, `${u.goal_streak_nights}-night streak`, ""],
     ["Sleep debt", `${cur.debt_hours}h`, `vs ${u.goal_hours}h/night`, ""],
+    ["Naps", cur.nap_count ? `${cur.nap_count}` : "0", cur.nap_count ? `avg ${cur.nap_avg_minutes} min &middot; ${fmtHours(cur.nap_total_hours)} total` : `none (${esc(u.nap_window)})`, ""],
   ];
   cards.innerHTML = c
     .map(([label, val, sub, delta]) => `<div class="usage-card"><div class="usage-card-label">${esc(label)}</div>
@@ -872,7 +882,7 @@ function renderSleep() {
   document.getElementById("sleep-weekday").innerHTML = sleepBarsSvg(wd, u.goal_hours, (d) => d.date);
 
   document.getElementById("sleep-current").textContent = u.current
-    ? `Sleep Mode is on — ${fmtHours(u.current.elapsed_minutes / 60)} so far`
+    ? `Sleep Mode is on (${u.current.is_nap ? "nap" : "night"}) — ${fmtHours(u.current.elapsed_minutes / 60)} so far`
     : "Sleep Mode is off";
   document.getElementById("sleep-digests").innerHTML = u.digests.length
     ? u.digests

@@ -20,6 +20,7 @@ NOW = datetime(2026, 9, 19, 12, 0, 0)
 def db(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setattr(sm, "_wake_digest_handler", None)
+    monkeypatch.setattr(sm, "SLEEP_GOAL_HOURS", 8.0)  # .env may set another goal; don't let it leak in
     return tmp_path
 
 
@@ -192,3 +193,55 @@ def test_dotenv_is_loaded_before_module_imports():
         import pytest
         pytest.skip("no JARVIS_SLEEP_GOAL_HOURS in .env on this machine")
     assert out.stdout.strip().splitlines()[-1] == str(expected), out.stderr[-500:]
+
+
+# --- naps ------------------------------------------------------------------------------------
+def test_is_nap_window_and_length():
+    assert sm.is_nap(datetime(2026, 9, 18, 14, 0), 45)
+    assert sm.is_nap(datetime(2026, 9, 18, 12, 0), 240)          # exactly at the limits
+    assert not sm.is_nap(datetime(2026, 9, 18, 11, 59), 45)      # before the window
+    assert not sm.is_nap(datetime(2026, 9, 18, 18, 0), 45)       # window is [12, 18)
+    assert not sm.is_nap(datetime(2026, 9, 18, 14, 0), 241)      # too long to be a nap
+    assert not sm.is_nap(datetime(2026, 9, 18, 23, 0), 480)      # a normal night
+    assert sm.is_nap_session("2026-09-18T14:00:00", "2026-09-18T14:40:00")
+    assert not sm.is_nap_session("garbage", "x")
+
+
+def test_naps_are_separate_from_nights(db):
+    _log("2026-09-18T23:00:00", "2026-09-19T05:00:00")   # 6h night
+    _log("2026-09-19T14:00:00", "2026-09-19T14:45:00")   # 45 min nap, same calendar day as wake-up
+    _log("2026-09-19T15:30:00", "2026-09-19T15:40:00")   # 10 min nap: counted (>= NAP_MIN_MINUTES)
+    _log("2026-09-19T16:00:00", "2026-09-19T16:05:00")   # 5 min: ignored
+    s = sm.stats_summary(NOW)
+    assert s["week"]["nights_tracked"] == 1 and s["week"]["avg_hours"] == 6.0  # nap did not inflate the night
+    assert s["week"]["avg_bedtime"] == "23:00" and s["week"]["debt_hours"] == 2.0  # 6h night vs the 8h goal
+    assert s["week"]["nap_count"] == 2 and s["week"]["nap_days"] == 1
+    assert s["week"]["nap_avg_minutes"] == 28 and s["week"]["nap_total_hours"] == 0.92
+    d = s["daily"][-1]
+    assert d["hours"] == 6.0 and d["nap_hours"] == 0.92 and d["naps"] == 2
+
+
+def test_nap_only_day_has_no_night_and_status_line_separates_them(db):
+    _log("2026-09-19T14:00:00", "2026-09-19T14:30:00")
+    d = sm.stats_summary(NOW)["daily"][-1]
+    assert d["hours"] is None and d["bedtime"] is None and d["nap_hours"] == 0.5
+    assert sm.stats_summary(NOW)["week"]["nights_tracked"] == 0
+    assert "nap(s) recently" in sm.status() and "night(s)" not in sm.status()
+
+
+def test_recap_wording_for_a_nap(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_claude_request", lambda *a, **k: None)
+    assert jarvis._build_sleep_digest([], nap=True) == "Hero, nothing came in while you were napping."
+    assert "while you were napping" in jarvis._build_sleep_digest([{"text": "x"}], nap=True)
+    assert "while you were asleep" in jarvis._build_sleep_digest([{"text": "x"}])
+
+
+def test_text_hotkey_and_ptt_defaults():
+    import subprocess, sys, os
+    from pathlib import Path
+    root = Path(__file__).resolve().parent
+    env = {k: v for k, v in os.environ.items() if k not in ("JARVIS_TEXT_HOTKEY_KEY", "JARVIS_PTT_KEY")}
+    env["JARVIS_MEMORY_DB_PATH"] = str(Path(os.environ.get("TEMP", ".")) / "hk_test.db")
+    code = f"import sys; sys.path.insert(0, r'{root}'); import jarvis; print(jarvis.JARVIS_TEXT_HOTKEY_KEY, '|', jarvis.JARVIS_PTT_KEY)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, env=env)
+    assert out.stdout.strip().splitlines()[-1] == "left ctrl | right shift", out.stderr[-300:]
