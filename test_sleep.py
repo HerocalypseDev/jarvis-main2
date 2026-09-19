@@ -273,7 +273,7 @@ def test_text_hotkey_and_ptt_defaults():
     env["JARVIS_MEMORY_DB_PATH"] = str(Path(os.environ.get("TEMP", ".")) / "hk_test.db")
     code = f"import sys; sys.path.insert(0, r'{root}'); import jarvis; print(jarvis.JARVIS_TEXT_HOTKEY_KEY, '|', jarvis.JARVIS_PTT_KEY)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, env=env)
-    assert out.stdout.strip().splitlines()[-1] == "left ctrl | right shift", out.stderr[-300:]
+    assert out.stdout.strip().splitlines()[-1] == "left alt | right shift", out.stderr[-300:]
 
 
 def test_tool_nap_action_starts_a_nap_and_recap_uses_kind(jarvis, monkeypatch):

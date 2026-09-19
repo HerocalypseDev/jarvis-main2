@@ -101,8 +101,8 @@ CLAUDE_MODEL = (
 # voice command (no Whisper involved), Escape/closing the box cancels.
 JARVIS_TEXT_HOTKEY_ENABLED = True
 JARVIS_TEXT_HOTKEY_KEY = (
-    os.environ.get("JARVIS_TEXT_HOTKEY_KEY") or "left ctrl"
-).strip() or "left ctrl"
+    os.environ.get("JARVIS_TEXT_HOTKEY_KEY") or "left alt"
+).strip() or "left alt"
 JARVIS_TEXT_HOTKEY_HOLD_S = float(os.environ.get("JARVIS_TEXT_HOTKEY_HOLD_S") or 2.0)
 
 # Phone integration: two independent, optionally-both-enabled channels. Both push every
