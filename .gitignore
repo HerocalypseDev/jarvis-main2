@@ -14,3 +14,7 @@ jarvis_memory.db.corrupted-*.bak
 llm_provider.json
 jarvis_standalone.log
 jarvis_python.txt
+
+# face recognition data lives outside the repo; this is a belt-and-braces guard
+face.db*
+face.key

@@ -15,3 +15,6 @@ fastapi>=0.110,<1
 uvicorn[standard]>=0.27,<1
 pypdf
 pycaw
+insightface>=2,<3
+cryptography>=42
+opencv-python>=4.9

@@ -68,6 +68,7 @@ import jarvis_dashboard as dashboard
 import jarvis_image_download as image_download
 import jarvis_devtools as devtools
 import jarvis_focus as focus_mode
+import jarvis_face as face
 import jarvis_roblox as roblox
 import jarvis_vibes as vibes
 import jarvis_restart as restart_mod
@@ -2024,6 +2025,48 @@ AGENT_TOOLS = [
         },
     },
 ]
+
+# Face recognition tools are only advertised when JARVIS_FACE_ENABLED=1, so the cached tool
+# prefix is unchanged (and no tokens are spent) for anyone not using the feature.
+FACE_TOOLS = [
+    {
+        "name": "enroll_face",
+        "description": (
+            "Enroll the user's own face so Jarvis can recognize them, using the local webcam "
+            "(the user is asked to look at the camera and turn their head; nothing is stored "
+            "except an encrypted embedding, no images). Only ever enrolls ONE person, the owner, "
+            "and only when no one is enrolled yet. Refused automatically from phone or scheduled "
+            "tasks. Face is a personalization signal only and never approves or unlocks anything."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The name to enroll, e.g. Hero"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "list_faces",
+        "description": "Say who is enrolled for face recognition (name, role, when). Read-only.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "delete_face",
+        "description": (
+            "Permanently erase an enrolled face profile and its embeddings. Ask the user to say "
+            "yes first; only set confirm=true after they have. Refused from phone or scheduled tasks."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "confirm": {"type": "boolean", "description": "true only after the user explicitly said yes"},
+            },
+            "required": ["name"],
+        },
+    },
+]
+if face.enabled():
+    AGENT_TOOLS.extend(FACE_TOOLS)
 
 
 CLAUDE_UNAVAILABLE_REPLY = "Sorry, I couldn't reach Claude just now."
@@ -6361,6 +6404,14 @@ def _execute_tool_impl(
                 result = devtools.scaffold_module(repo, str(inp.get("name") or ""), str(inp.get("description") or ""))
             else:
                 result = f"{act!r} is not a known dev_tools action."
+        elif tool_name == "enroll_face":
+            result = face.enroll(str(inp.get("name") or ""), _current_command_source(), speak_text)
+        elif tool_name == "list_faces":
+            result = face.describe_profiles()
+        elif tool_name == "delete_face":
+            result = face.delete(
+                str(inp.get("name") or ""), bool(inp.get("confirm")), _current_command_source()
+            )
         elif tool_name == "focus_mode":
             act = str(inp.get("action") or "")
             if act == "on":
@@ -6780,7 +6831,28 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     return reply
 
 
+_command_ctx = threading.local()
+
+
+def _current_command_source() -> str | None:
+    """Where the command being run came from ("voice"/"text"/"dashboard"/"phone"), or None on a
+    thread that isn't serving a user command (scheduled skills, background tasks). Lets a tool
+    refuse to run from the phone or unattended, without threading `source` through every call."""
+    return getattr(_command_ctx, "source", None)
+
+
 def handle_text_command(
+    transcript: str, reply_sink=None, tone: dict | None = None, source: str = "text"
+) -> None:
+    prev = getattr(_command_ctx, "source", None)
+    _command_ctx.source = source
+    try:
+        _handle_text_command_impl(transcript, reply_sink, tone, source)
+    finally:
+        _command_ctx.source = prev
+
+
+def _handle_text_command_impl(
     transcript: str, reply_sink=None, tone: dict | None = None, source: str = "text"
 ) -> None:
     """Runs one already-transcribed command (typed or spoken) through the confirmation

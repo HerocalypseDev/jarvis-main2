@@ -492,6 +492,51 @@ Rules:
   spot: the model passed `force: true` unprompted once (harmless with no tasks running); the
   guard is prompt-level (description says leave false), not code-enforced.
 
+## Face recognition (2026-09-19)
+
+- `jarvis_face.py` + `test_face.py`: a **local-only** identity/context layer (insightface 2.0
+  `buffalo_l`, CPU/ONNX; ~0.3-0.5 s per frame, so it is polled, never streamed). Additive: it does
+  not touch the agent loop, the catastrophic gate, Sleep Mode or any input path. Off by default:
+  `JARVIS_FACE_ENABLED=1` (only then are the `enroll_face`/`list_faces`/`delete_face` tools even
+  advertised to the model, so the cached tool prefix is unchanged otherwise).
+- **A face is a personalization signal only.** It never confirms, approves or unlocks anything and
+  has no path into `_pending_action`/`_execute_confirmed_action`. Keep it that way in later phases.
+- **Storage is outside the repo and OneDrive**: `%LOCALAPPDATA%\Jarvis\face.db` (+ `face.key`,
+  `models/`); `JARVIS_FACE_DIR` overrides, but a path under OneDrive is refused (a synced biometric
+  DB would leave the machine). Embeddings are AES-GCM encrypted (AAD-bound to the column) with a
+  random key wrapped by **Windows DPAPI** (tied to this Windows login; ctypes, no new dependency).
+  No camera frame is ever written to disk. Tables: `face_profiles`, `face_events` (audit; never
+  holds an image or embedding, survives profile deletion), `face_settings` (e.g. `paused`).
+- **User decisions (2026-09-19)**: low-duty polling (5 s) paused during Sleep Mode; higher-accuracy
+  library (insightface, `buffalo_l`); Integrated Webcam (index 0, `JARVIS_FACE_CAMERA_INDEX`);
+  exactly **one** enrolled person, the owner/Admin - nobody else is ever enrolled (a second
+  `enroll_face` is refused; delete first to re-enroll); roles Admin/User/Guest as proposed
+  (Guest/unknown = quiet mode only, never a refused command); unknown faces get an event row
+  **and a saved picture** (see limits below); enroll/delete refused from phone.
+- **Command source**: `handle_text_command` is now a thin wrapper that records the source in a
+  thread-local (`_current_command_source()`); only `voice`/`text`/`dashboard` may enroll/delete.
+  Phone, and any thread with no user command (scheduled skills, background tasks) are refused.
+- **Model download** (`download_models`): one-time 288 MB fetch from insightface's GitHub release,
+  size + SHA-256 pinned in code (trust-on-first-use, recorded 2026-09-19); extracts only the
+  detector + ArcFace files. insightface's own downloader does no integrity check and a dropped
+  connection left a silently truncated file (seen live) - don't switch back to it.
+- **Liveness is a speed bump, not a guarantee**: head-turn swing from the detector's 5 landmarks
+  (`JARVIS_FACE_LIVENESS_SWING`, default 0.30, **not yet tuned on a real head turn**). It stops a
+  held-still photo; a replayed video defeats it, which is why a match never gates anything.
+- Enrollment consistency check uses the *minimum pairwise* cosine between samples (>= 0.45);
+  comparing to the centroid let a 2-vs-3 mix of different people through (caught by a test).
+- **Approved but not built yet (Phase 2)**: saved pictures of unknown faces - face crop only,
+  encrypted, one per person per 10 min, auto-delete after 14 days, cap 200, dashboard-only viewing
+  with a "delete all", never sent to Claude/Gemini or included in exports,
+  `JARVIS_FACE_SAVE_UNKNOWN=0` to disable.
+- **Known gap**: deleting the only profile re-opens the bootstrap window - anyone at the PC could
+  then enroll themselves as Admin. Harmless while face grants no power; revisit if that changes.
+- Status: Phase 0 (analysis) and Phase 1 (module, storage, enroll/list/delete, liveness, wiring,
+  21 tests) shipped. Verified live: real model + webcam frame through the real engine (detect,
+  embed, yaw). **Not verified live**: an actual `enroll_face` end to end by voice (it writes a
+  real biometric profile - do this yourself), the head-turn threshold. Phases 2-4 (recognition +
+  policy, dashboard Identity tab, hardening) not started.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -531,4 +576,7 @@ row there each phase rather than only stating the total in chat.
 | 15 (download_image tool for Pinterest-style image saves) | Sonnet 5 | ~10 min | ~$0.40–$0.60 |
 | 16 (standalone launcher: hidden start, stop, shortcuts, autostart option) | Sonnet 5 | ~10 min | ~$0.35–$0.50 |
 | 17 (voice-triggered self-restart + live debugging of the helper) | Sonnet 5 | ~25 min | ~$1.10–$1.50 |
-| **Running total (final)** | | **~430 min** | **~$15.75–$22.25** |
+| 18 (spoken progress lines during multi-step tasks) | Sonnet 5 | ~10 min | ~$0.35–$0.50 |
+| 19 (face recognition Phase 0: analysis + risk review, no code) | Sonnet 5 | ~8 min | ~$0.25–$0.35 |
+| 20 (face recognition Phase 1: module, DPAPI storage, enroll/delete, liveness) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
+| **Running total (final)** | | **~488 min** | **~$18.55–$26.10** |
