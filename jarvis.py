@@ -6572,9 +6572,6 @@ def handle_text_command(
     # health check or scheduled skill happens to notice.
     flush_pending_notifications()
 
-    if reply_sink and source != "dashboard":
-        speak_text("Message received.")
-
     with _pending_action_lock:
         pending = _pending_action
     if pending is not None:
@@ -6613,7 +6610,7 @@ def handle_text_command(
         if reply_sink:
             reply_sink(reply)
         # Phone is remote — the room shouldn't hear the full answer read into an empty space,
-        # so it gets reply_sink only (plus the "Message received." ack above). Dashboard is
+        # so it gets reply_sink only (no spoken ack). Dashboard is
         # different: the user is normally sitting right there, typing into a box they can see —
         # muting speech just because they used the dashboard instead of push-to-talk surprised
         # the user in practice ("it's not even talking anymore"), so dashboard gets *both* the

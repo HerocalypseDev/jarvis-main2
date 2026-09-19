@@ -194,6 +194,16 @@ def test_tts_cache_skips_synthesis_on_repeat(jarvis, monkeypatch, tmp_path):
     assert len(fish_calls) == 2
 
 
+def test_phone_command_gets_no_spoken_ack(jarvis, monkeypatch):
+    spoken, sunk = [], []
+    monkeypatch.setattr(jarvis, "speak_text", lambda t, *a, **k: spoken.append(t))
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+    monkeypatch.setattr(jarvis, "run_agent_loop", lambda transcript, tone=None: "done")
+    jarvis.handle_text_command("hello", source="telegram", reply_sink=sunk.append)
+    assert "Message received." not in spoken
+    assert sunk == ["done"]
+
+
 def test_tts_fallback_audio_not_stored_under_fish_key(jarvis, monkeypatch, tmp_path):
     monkeypatch.setattr(jarvis, "_tts_disk_cache", cache.TTSDiskCache(tmp_path / "tts"))
     monkeypatch.setattr(jarvis, "FISH_AUDIO_API_KEY", "k")
