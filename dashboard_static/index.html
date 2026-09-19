@@ -56,6 +56,7 @@
     <button class="tab-btn active" data-tab="activity">Activity</button>
     <button class="tab-btn" data-tab="daily">Daily</button>
     <button class="tab-btn" data-tab="sleep">Sleep</button>
+    <button class="tab-btn" data-tab="identity">Identity</button>
     <button class="tab-btn" data-tab="usage">Usage</button>
     <button class="tab-btn" data-tab="audit">Audit Trail</button>
     <button class="tab-btn" data-tab="victory">Victory Log</button>
@@ -84,6 +85,21 @@
     <h4 class="sleep-sub">While you were asleep</h4>
     <ul id="sleep-digests" class="list compact"></ul>
     <p id="sleep-note" class="muted"></p>
+  </div>
+  <div id="tab-identity" class="tab-panel">
+    <div class="identity-head">
+      <span id="identity-status" class="muted"></span>
+      <button class="btn btn-small" id="identity-pause-btn" hidden>Pause camera</button>
+    </div>
+    <div id="identity-cards" class="usage-cards"></div>
+    <div id="identity-profile"></div>
+    <h4 class="sleep-sub">Unknown visitors <span id="identity-snap-count" class="muted"></span>
+      <button class="btn btn-small btn-danger" id="identity-snap-delete" hidden>Delete all pictures</button></h4>
+    <div id="identity-snaps" class="snap-grid"></div>
+    <h4 class="sleep-sub">Recognition events
+      <select id="identity-kind"><option value="">All events</option></select></h4>
+    <ul id="identity-events" class="list compact"></ul>
+    <p id="identity-note" class="muted"></p>
   </div>
   <div id="tab-usage" class="tab-panel">
     <div id="usage-cards" class="usage-cards"></div>

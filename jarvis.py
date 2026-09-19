@@ -7376,6 +7376,7 @@ def main() -> int:
                     get_sleep=_dashboard_get_sleep,
                     get_llm=_llm_status,
                     set_llm=set_llm_provider,
+                    face=face,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same
                     # handle_text_command pipeline (run_agent_loop, _execute_tool, and the
@@ -7401,6 +7402,7 @@ def main() -> int:
     start_prompt_cache_warmup()
     _start_scheduler()
     if face.enabled():
+        face.set_event_hook(lambda ev: dashboard.notify({"type": "face_event", "data": ev}))
         face.start_polling(
             greet_fn=_face_greet,
             notify_fn=queue_or_deliver_notification,

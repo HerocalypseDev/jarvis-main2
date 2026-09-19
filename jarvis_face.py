@@ -151,10 +151,12 @@ def log_event(kind: str, profile_id: int | None = None, name: str | None = None,
     Returns the new row id (None if the write failed)."""
     try:
         with _db_lock, _db() as conn:
-            return conn.execute(
+            row_id = conn.execute(
                 "INSERT INTO face_events (ts, profile_id, name, kind, confidence, detail) VALUES (?,?,?,?,?,?)",
                 (_now(), profile_id, name, kind, confidence, detail),
             ).lastrowid
+        _emit(kind, name, confidence)
+        return row_id
     except Exception as e:
         log.warning("face event log failed: %s", e)
         return None
@@ -501,7 +503,7 @@ def _run_enrollment(name: str, engine, cap) -> str:
         return "I couldn't get a clear look at your face. Face the camera in decent light and try again."
     swing = (max(yaws) - min(yaws)) if yaws else 0.0
     if swing < liveness_min_swing():
-        log_event("enroll_failed", name=name, detail=f"liveness: head turn {swing:.2f}", confidence=swing)
+        log_event("enroll_failed", name=name, detail=f"liveness: head turn {swing:.2f} (needs {liveness_min_swing():.2f})")
         return "I didn't see you turn your head, so I can't confirm it's really you. Please try again and turn slowly."
     arr = np.stack(samples)
     centroid = _unit(arr.mean(axis=0))
@@ -521,7 +523,7 @@ def _run_enrollment(name: str, engine, cap) -> str:
         )
         pid = cur.lastrowid
     invalidate_profile_cache()
-    log_event("enroll", profile_id=pid, name=name, confidence=float(swing), detail="consent given by explicit enroll command")
+    log_event("enroll", profile_id=pid, name=name, detail=f"consent given by explicit enroll command; head-turn swing {swing:.2f}")
     return f"Done, {name}. I've enrolled your face. It's stored only on this computer, encrypted, and you can delete it any time."
 
 
@@ -1079,3 +1081,124 @@ def set_paused(paused: bool, source: str | None) -> str:
     if was != paused:
         log_event("paused" if paused else "resumed", detail=f"source={source}")
     return "Face recognition paused. The camera stays off." if paused else "Face recognition resumed."
+
+
+# ===============================================================================================
+# Phase 3: dashboard-facing helpers (read models, export, delete-by-id). Nothing here ever
+# returns an embedding; pictures are only ever returned by get_snapshot() one at a time.
+# ===============================================================================================
+_event_hook = None
+
+
+def set_event_hook(fn) -> None:
+    """fn(event_dict) is called after every audit row (kind/name/confidence/ts only) so the
+    dashboard can refresh live. Best-effort; a failing hook never affects recognition."""
+    global _event_hook
+    _event_hook = fn
+
+
+def _emit(kind: str, name: str | None, confidence: float | None) -> None:
+    hook = _event_hook
+    if hook is None:
+        return
+    try:
+        hook({"kind": kind, "name": name, "confidence": confidence, "ts": _now()})
+    except Exception as e:
+        log.debug("face event hook failed: %s", e)
+
+
+def recent_events(limit: int = 100, offset: int = 0, kind: str | None = None) -> list[dict]:
+    limit, offset = max(1, min(int(limit), 500)), max(0, int(offset))
+    sql = "SELECT id, ts, profile_id, name, kind, confidence, detail FROM face_events"
+    args: list = []
+    if kind:
+        sql += " WHERE kind = ?"
+        args.append(kind)
+    sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
+    with _db_lock, _db() as conn:
+        rows = conn.execute(sql, (*args, limit, offset)).fetchall()
+    return [
+        {"id": r[0], "ts": r[1], "profile_id": r[2], "name": r[3], "kind": r[4], "confidence": r[5], "detail": r[6]}
+        for r in rows
+    ]
+
+
+def event_kinds() -> list[str]:
+    with _db_lock, _db() as conn:
+        return [r[0] for r in conn.execute("SELECT DISTINCT kind FROM face_events ORDER BY kind")]
+
+
+def snapshot_count() -> int:
+    with _db_lock, _db() as conn:
+        return conn.execute("SELECT COUNT(*) FROM face_snapshots").fetchone()[0]
+
+
+def _consent_summary(profile: dict) -> dict:
+    return {
+        "consent_given_at": profile["consent_at"],
+        "how": "explicit enroll command, with a head-turn check, at this computer",
+        "stored": [
+            f"{profile['n_samples'] + 1} encrypted face vectors (numbers, not images)",
+            "audit events: when you were recognized, confidence, and enroll/delete actions",
+        ],
+        "never_stored": [
+            "camera frames or video of you",
+            "your face vectors in plain form, in OneDrive, or on any server",
+        ],
+        "who_can_read_it": "only this Windows account on this computer (key protected by Windows DPAPI)",
+        "how_to_remove": "the Erase button here, or say 'delete my face'",
+    }
+
+
+def dashboard_state() -> dict:
+    """Everything the Identity tab shows in one call. Touches no disk when the feature is off."""
+    if not enabled():
+        return {"enabled": False}
+    profiles = list_profiles()
+    return {
+        "enabled": True,
+        "paused": is_paused(),
+        "polling": bool(_poll_thread and _poll_thread.is_alive()),
+        "presence": state_snapshot(),
+        "profiles": [{**p, "consent": _consent_summary(p)} for p in profiles],
+        "snapshot_count": snapshot_count(),
+        "settings": {
+            "poll_seconds": poll_interval(),
+            "settled_poll_seconds": settled_poll_interval(),
+            "match_threshold": match_threshold(),
+            "save_unknown_pictures": save_unknown_enabled(),
+            "picture_keep_days": snapshot_keep_days(),
+            "camera_index": camera_index(),
+            "absent_after_seconds": owner_absent_after_s(),
+        },
+        "event_kinds": event_kinds(),
+    }
+
+
+def export_profile(profile_id: int) -> dict | None:
+    """A person's own data, as JSON: profile record, consent summary and their audit events.
+    Deliberately excludes the face vectors (biometric, and useless to the person) and every
+    unknown-visitor picture (those belong to other people)."""
+    prof = next((p for p in list_profiles() if p["id"] == profile_id), None)
+    if prof is None:
+        return None
+    with _db_lock, _db() as conn:
+        rows = conn.execute(
+            "SELECT id, ts, kind, confidence, detail FROM face_events WHERE profile_id = ? OR name = ? ORDER BY id",
+            (profile_id, prof["name"]),
+        ).fetchall()
+    log_event("export", profile_id, prof["name"], detail="profile exported from the dashboard")
+    return {
+        "exported_at": _now(),
+        "profile": {k: prof[k] for k in ("name", "role", "created_at", "consent_at", "n_samples")},
+        "consent": _consent_summary(prof),
+        "events": [{"id": r[0], "ts": r[1], "kind": r[2], "confidence": r[3], "detail": r[4]} for r in rows],
+        "note": "Face vectors and unknown-visitor pictures are intentionally not included.",
+    }
+
+
+def delete_by_id(profile_id: int, source: str | None) -> str:
+    prof = next((p for p in list_profiles() if p["id"] == profile_id), None)
+    if prof is None:
+        return "No such face profile."
+    return delete(prof["name"], True, source)

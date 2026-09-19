@@ -705,3 +705,163 @@ def test_camera_warmup_is_bounded_when_exposure_never_settles(monkeypatch):
     monkeypatch.setattr(cv2, "VideoCapture", lambda *a, **k: FlickerCap())
     face._open_camera(0)
     assert FlickerCap.reads == face.WARMUP_MAX_FRAMES
+
+
+# ===============================================================================================
+# Phase 3: dashboard Identity endpoints
+# ===============================================================================================
+@pytest.fixture()
+def dash(enrolled):
+    from fastapi.testclient import TestClient
+
+    import jarvis_dashboard as dashboard
+
+    app = dashboard._build_app(face=face)
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        yield c
+
+
+def _snap(n=1):
+    for i in range(n):
+        face._save_snapshot(b"\xff\xd8\xff\xe0fakejpeg%d" % i, 0.12, None)
+
+
+def test_identity_off_returns_disabled_and_never_touches_disk(fx, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import jarvis_dashboard as dashboard
+
+    monkeypatch.setenv("JARVIS_FACE_ENABLED", "0")
+    with TestClient(dashboard._build_app(face=face), base_url="http://127.0.0.1:8765") as c:
+        assert c.get("/api/faces").json() == {"enabled": False}
+        assert c.get("/api/faces/events").json() == {"rows": []}
+        assert c.get("/api/faces/snapshots").json() == {"rows": []}
+        assert c.delete("/api/faces/1?confirm=true").status_code == 404
+        assert c.post("/api/faces/pause", json={"paused": True}).status_code == 404
+    assert not (fx / "facedata" / "face.db").exists()  # a machine without the feature gets no DB
+
+
+def test_identity_without_a_face_provider_is_disabled(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import jarvis_dashboard as dashboard
+
+    with TestClient(dashboard._build_app(), base_url="http://127.0.0.1:8765") as c:
+        assert c.get("/api/faces").json() == {"enabled": False}
+
+
+def test_identity_state_has_profile_consent_and_no_face_vectors(dash):
+    r = dash.get("/api/faces")
+    body = r.json()
+    assert r.headers["cache-control"] == "no-store"
+    assert body["enabled"] is True and body["paused"] is False
+    (p,) = body["profiles"]
+    assert p["name"] == "Hero" and p["consent"]["consent_given_at"]
+    assert any("never" in x or "camera frames" in x for x in p["consent"]["never_stored"])
+    assert body["settings"]["match_threshold"] == 0.5 and body["settings"]["save_unknown_pictures"] is True
+    assert "embeddings" not in r.text  # the column name / vectors never leave the server
+
+
+ROUTES = [
+    ("get", "/api/faces"),
+    ("get", "/api/faces/events"),
+    ("get", "/api/faces/snapshots"),
+    ("get", "/api/faces/snapshots/1/image"),
+    ("get", "/api/faces/1/export"),
+    ("delete", "/api/faces/snapshots"),
+    ("delete", "/api/faces/1?confirm=true"),
+]
+
+
+@pytest.mark.parametrize("method,path", ROUTES)
+def test_face_routes_reject_a_non_loopback_host_header(dash, method, path):
+    """DNS-rebinding defence: a hostile page re-pointing its domain at 127.0.0.1 sends its own Host."""
+    _snap()
+    r = getattr(dash, method)(path, headers={"host": "evil.example.com:8765"})
+    assert r.status_code == 403
+    r = dash.post("/api/faces/pause", json={"paused": True}, headers={"host": "evil.example.com"})
+    assert r.status_code == 403 and not face.is_paused()
+    assert getattr(dash, method)(path, headers={"host": "localhost:8765"}).status_code != 403
+
+
+def test_events_endpoint_filters_orders_and_clamps(dash):
+    for k in ("owner_arrived", "unknown_seen", "owner_left"):
+        face.log_event(k, name="Hero", confidence=0.8, detail="x")
+    rows = dash.get("/api/faces/events").json()["rows"]
+    assert [r["kind"] for r in rows] == ["owner_left", "unknown_seen", "owner_arrived"]  # newest first
+    assert [r["kind"] for r in dash.get("/api/faces/events?kind=unknown_seen").json()["rows"]] == ["unknown_seen"]
+    assert len(dash.get("/api/faces/events?limit=1").json()["rows"]) == 1
+    assert len(dash.get("/api/faces/events?limit=99999").json()["rows"]) == 3  # clamped, not an error
+    assert set(dash.get("/api/faces").json()["event_kinds"]) == {"owner_arrived", "unknown_seen", "owner_left"}
+
+
+def test_snapshot_endpoints_list_serve_and_delete(dash):
+    _snap(2)
+    rows = dash.get("/api/faces/snapshots").json()["rows"]
+    assert len(rows) == 2 and set(rows[0]) == {"id", "ts", "event_id", "confidence"}  # no image bytes in the list
+    img = dash.get(f"/api/faces/snapshots/{rows[0]['id']}/image")
+    assert img.status_code == 200 and img.headers["content-type"] == "image/jpeg"
+    assert img.headers["cache-control"] == "no-store" and img.headers["x-content-type-options"] == "nosniff"
+    assert img.content.startswith(b"\xff\xd8")
+    assert dash.get("/api/faces/snapshots/9999/image").status_code == 404
+    assert dash.delete("/api/faces/snapshots").json() == {"ok": True, "removed": 2}
+    assert dash.get("/api/faces/snapshots").json()["rows"] == []
+
+
+def test_export_contains_own_data_but_no_vectors_or_visitor_pictures(dash):
+    _snap()
+    face.log_event("owner_arrived", 1, "Hero", 0.8)
+    r = dash.get("/api/faces/1/export")
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
+    data = r.json()
+    assert data["profile"]["name"] == "Hero" and data["consent"]["how_to_remove"]
+    assert any(e["kind"] == "owner_arrived" for e in data["events"])
+    assert "embeddings" not in r.text and "jpeg" not in r.text.lower() and "fakejpeg" not in r.text
+    assert "export" in [e["kind"] for e in face.recent_events()]  # exporting is itself audited
+    assert dash.get("/api/faces/999/export").status_code == 404
+
+
+def test_delete_profile_needs_confirm_and_uses_dashboard_source(dash):
+    assert dash.delete("/api/faces/1").status_code == 400  # a bare DELETE erases nothing
+    assert len(face.list_profiles()) == 1
+    r = dash.delete("/api/faces/1?confirm=true")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert face.list_profiles() == []
+    assert dash.delete("/api/faces/1?confirm=true").status_code == 404
+    assert face.recent_events(kind="delete")[0]["name"] == "Hero"  # audit row survives the erase
+
+
+def test_pause_and_resume_from_the_dashboard(dash):
+    r = dash.post("/api/faces/pause", json={"paused": True}).json()
+    assert r["ok"] and r["paused"] is True and face.is_paused()
+    assert dash.get("/api/faces").json()["paused"] is True
+    r = dash.post("/api/faces/pause", json={"paused": False}).json()
+    assert r["paused"] is False and not face.is_paused()
+
+
+def test_event_hook_gets_labels_only_and_a_broken_hook_is_harmless(enrolled):
+    seen = []
+    face.set_event_hook(seen.append)
+    try:
+        face.log_event("unknown_seen", None, None, 0.31, "best match 0.31")
+        assert seen and set(seen[0]) == {"kind", "name", "confidence", "ts"}  # no image/vector fields
+
+        def boom(_ev):
+            raise RuntimeError("dashboard down")
+
+        face.set_event_hook(boom)
+        assert face.log_event("owner_left", 1, "Hero") is not None  # still logged
+    finally:
+        face.set_event_hook(None)
+
+
+def test_frontend_has_the_identity_tab_wired_to_the_api():
+    import pathlib
+
+    root = pathlib.Path(__file__).parent / "dashboard_static"
+    html, js = (root / "index.html").read_text(encoding="utf-8"), (root / "app.js").read_text(encoding="utf-8")
+    assert 'data-tab="identity"' in html and 'id="tab-identity"' in html
+    for path in ("/api/faces", "/api/faces/events", "/api/faces/snapshots", "/api/faces/pause", "?confirm=true"):
+        assert path in js
+    assert 'event.type === "face_event"' in js  # live refresh
+    assert "confirm(" in js  # erase / delete-all ask first

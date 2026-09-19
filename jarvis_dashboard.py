@@ -468,13 +468,14 @@ def _build_app(
     get_sleep: Callable[[], dict] | None = None,
     get_llm: Callable[[], dict] | None = None,
     set_llm: Callable[[str], str] | None = None,
+    face=None,
     port: int = DEFAULT_PORT,
 ):
     """Builds the FastAPI app (import-guarded, testable without binding a socket). Returns
     None if fastapi/uvicorn aren't installed."""
     try:
-        from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
-        from fastapi.responses import JSONResponse
+        from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
+        from fastapi.responses import JSONResponse, Response
         from fastapi.staticfiles import StaticFiles
     except ImportError as e:
         log.warning(
@@ -491,8 +492,9 @@ def _build_app(
     # requires fastapi to be installed), these names must be promoted into the module globals
     # or that resolution fails silently and the websocket route just refuses every connection.
     globals().update(
-        Body=Body, FastAPI=FastAPI, WebSocket=WebSocket, WebSocketDisconnect=WebSocketDisconnect,
-        JSONResponse=JSONResponse, StaticFiles=StaticFiles,
+        Body=Body, FastAPI=FastAPI, Request=Request, WebSocket=WebSocket,
+        WebSocketDisconnect=WebSocketDisconnect, JSONResponse=JSONResponse, Response=Response,
+        StaticFiles=StaticFiles,
     )
 
     manager = _ConnectionManager()
@@ -647,6 +649,121 @@ def _build_app(
         threading.Thread(target=run_command, args=(text, _sink), daemon=True).start()
         return {"ok": True}
 
+    # --- Identity tab (face recognition; see jarvis_face.py) ---------------------------------------
+    # `face` is the jarvis_face module (injected, like every other provider here). These are the
+    # most sensitive routes on the dashboard - pictures of visitors, profile export/erase - so
+    # every one rejects a request whose Host header isn't a loopback name. That defeats DNS
+    # rebinding (a hostile web page re-pointing its own domain at 127.0.0.1 to read same-origin).
+    # Nothing here ever returns a face vector; pictures are served one at a time, never cached.
+    _NO_STORE = {"Cache-Control": "no-store"}
+
+    def _face_guard(request):
+        host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            return JSONResponse({"error": "forbidden host"}, status_code=403)
+        return None
+
+    def _face_unavailable():
+        return face is None or not face.enabled()
+
+    @app.get("/api/faces")
+    def api_faces(request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if face is None:
+            return JSONResponse({"enabled": False}, headers=_NO_STORE)
+        try:
+            return JSONResponse(face.dashboard_state(), headers=_NO_STORE)
+        except Exception as e:
+            log.warning("face dashboard_state failed: %s", e)
+            return JSONResponse({"enabled": False, "error": "unavailable"}, headers=_NO_STORE)
+
+    @app.get("/api/faces/events")
+    def api_face_events(request: Request, limit: int = 100, offset: int = 0, kind: str | None = None):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"rows": []}, headers=_NO_STORE)
+        try:
+            rows = face.recent_events(limit=limit, offset=offset, kind=kind or None)
+        except Exception as e:
+            log.warning("face events failed: %s", e)
+            rows = []
+        return JSONResponse({"rows": rows}, headers=_NO_STORE)
+
+    @app.get("/api/faces/snapshots")
+    def api_face_snapshots(request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"rows": []}, headers=_NO_STORE)
+        return JSONResponse({"rows": face.list_snapshots(limit=200)}, headers=_NO_STORE)
+
+    @app.get("/api/faces/snapshots/{snapshot_id}/image")
+    def api_face_snapshot_image(snapshot_id: int, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"error": "face recognition is off"}, status_code=404)
+        data = face.get_snapshot(snapshot_id)
+        if data is None:
+            return JSONResponse({"error": "no such picture"}, status_code=404)
+        return Response(
+            content=data, media_type="image/jpeg",
+            headers={**_NO_STORE, "X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.delete("/api/faces/snapshots")
+    def api_face_delete_snapshots(request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"ok": False, "error": "face recognition is off"}, status_code=404)
+        return JSONResponse({"ok": True, "removed": face.delete_all_snapshots()}, headers=_NO_STORE)
+
+    @app.get("/api/faces/{profile_id}/export")
+    def api_face_export(profile_id: int, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"error": "face recognition is off"}, status_code=404)
+        data = face.export_profile(profile_id)
+        if data is None:
+            return JSONResponse({"error": "no such profile"}, status_code=404)
+        return JSONResponse(
+            data,
+            headers={**_NO_STORE, "Content-Disposition": f'attachment; filename="face-profile-{profile_id}.json"'},
+        )
+
+    @app.delete("/api/faces/{profile_id}")
+    def api_face_delete(profile_id: int, request: Request, confirm: bool = False):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"ok": False, "error": "face recognition is off"}, status_code=404)
+        if not confirm:  # the UI asks the user first; a bare DELETE never erases anything
+            return JSONResponse({"ok": False, "error": "confirm=true required"}, status_code=400)
+        message = face.delete_by_id(profile_id, "dashboard")
+        ok = message.startswith("Deleted")
+        return JSONResponse({"ok": ok, "message": message}, status_code=200 if ok else 404, headers=_NO_STORE)
+
+    @app.post("/api/faces/pause")
+    def api_face_pause(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _face_unavailable():
+            return JSONResponse({"ok": False, "error": "face recognition is off"}, status_code=404)
+        message = face.set_paused(bool((payload or {}).get("paused")), "dashboard")
+        return JSONResponse({"ok": True, "message": message, "paused": face.is_paused()}, headers=_NO_STORE)
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -682,6 +799,7 @@ def start(
     get_sleep: Callable[[], dict] | None = None,
     get_llm: Callable[[], dict] | None = None,
     set_llm: Callable[[str], str] | None = None,
+    face=None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
     127.0.0.1 only, by design: this server is a second surface that can (in later phases)
@@ -702,6 +820,7 @@ def start(
         get_sleep=get_sleep,
         get_llm=get_llm,
         set_llm=set_llm,
+        face=face,
         port=port,
     )
     if app is None:

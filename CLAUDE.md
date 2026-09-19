@@ -560,12 +560,30 @@ Rules:
   (max 45 frames). Unit tests alone could not have caught this; keep a live check when touching it.
 - **Known gap**: deleting the only profile re-opens the bootstrap window - anyone at the PC could
   then enroll themselves as Admin. Harmless while face grants no power; revisit if that changes.
-- Status: Phase 0 (analysis), Phase 1 (enroll/storage) and Phase 2 (recognition, presence, group-safe,
-  pictures, privacy switch; 46 tests) shipped. Verified live: real model + camera + the full poll
-  pipeline against a throwaway temp profile (match, greeting, presence line, no picture for the
-  owner). **Not verified live**: real `enroll_face` by voice, the head-turn threshold, an actual
-  stranger (group-safe/picture path is unit-tested only), greeting audio, covered-lens detection on
-  the real webcam. Phases 3-4 (dashboard Identity tab, hardening) not started.
+- **Phase 3 (dashboard Identity tab), shipped**: bottom-panel "Identity" tab (`dashboard_static/`,
+  `/api/faces*` in `jarvis_dashboard.py`, `face` module injected like the other providers). Shows
+  who the camera sees, the enrolled profile with a plain-language consent summary (what is stored,
+  never stored, who can read it, how consent was given), unknown-visitor pictures, the recognition
+  event stream with a kind filter, a Pause/Resume camera button, "Export my data", "Erase profile"
+  and "Delete all pictures" (each behind a browser `confirm()`; the API also needs `?confirm=true`,
+  so a bare DELETE erases nothing). Live-refreshes on a `face_event` WebSocket message
+  (`face.set_event_hook`, labels only) and every 10s while open.
+- **Identity API rules**: every `/api/faces*` route rejects a non-loopback `Host` header (403) as a
+  DNS-rebinding defence - pictures and erase are the most sensitive things this dashboard serves.
+  Responses are `Cache-Control: no-store`; images add `nosniff`; **no route ever returns a face
+  vector**. Pictures are only put in the page while the Identity tab is open (an `<img>` loads the
+  moment it is in the DOM). With the feature off, `/api/faces` returns `{"enabled": false}` and
+  touches no disk (no `face.db` on a machine that doesn't use it).
+- **Export excludes** the face vectors (biometric, useless to the person) and every unknown-visitor
+  picture (those are other people's). Exporting is itself logged as an `export` event. Erasing a
+  profile keeps the audit events (no biometric data in them). Recognition events live in their own
+  stream on this tab, not in the general Audit Trail.
+- Status: Phases 0-3 shipped (63 face tests). Verified live: real model + camera + the full poll
+  pipeline against a throwaway temp profile; the Identity tab rendered in headless Chromium against
+  synthetic data (cards, consent, pictures load, filter, pause, delete-all, erase all worked, no
+  console errors). **Not verified live**: real `enroll_face` by voice, the head-turn threshold, an
+  actual stranger (group-safe/picture path is unit-tested only), greeting audio, covered-lens
+  detection on the real webcam, the tab against real data. Phase 4 (hardening) not started.
 
 ### Cost reporting
 
@@ -610,4 +628,5 @@ row there each phase rather than only stating the total in chat.
 | 19 (face recognition Phase 0: analysis + risk review, no code) | Sonnet 5 | ~8 min | ~$0.25–$0.35 |
 | 20 (face recognition Phase 1: module, DPAPI storage, enroll/delete, liveness) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
 | 21 (face recognition Phase 2: polling, recognition, group-safe mode, unknown pictures, privacy switch) | Sonnet 5 | ~45 min | ~$2.50–$3.40 |
-| **Running total (final)** | | **~533 min** | **~$21.05–$29.50** |
+| 22 (face recognition Phase 3: dashboard Identity tab, consent view, export/erase, event stream, Host-header guard) | Sonnet 5 | ~35 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~568 min** | **~$23.05–$32.30** |

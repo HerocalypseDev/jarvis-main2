@@ -618,7 +618,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     if (btn.dataset.tab === "audit") fetchAuditResults();
     if (btn.dataset.tab === "daily") fetchDailyItems();
     if (btn.dataset.tab === "usage") fetchUsage();
-    document.querySelector("footer.bottom").classList.toggle("tall", btn.dataset.tab === "sleep");
+    document.querySelector("footer.bottom").classList.toggle("tall", btn.dataset.tab === "sleep" || btn.dataset.tab === "identity");
   });
 });
 
@@ -751,6 +751,7 @@ function connectWs() {
     await fetchState();
     if (event && event.type === "session_end") handleLiveEvent(event);
     if (isAuditTabActive()) fetchAuditResults();
+    if (event && event.type === "face_event" && isIdentityTabActive()) fetchIdentity();
   };
 }
 
@@ -903,3 +904,190 @@ document.querySelectorAll(".seg-btn").forEach((b) =>
 fetchSleep();
 setInterval(fetchSleep, 60000);
 document.querySelector('.tab-btn[data-tab="sleep"]').addEventListener("click", fetchSleep);
+
+
+// Identity tab (GET /api/faces*): who the camera sees, the enrolled profile and its consent
+// summary, pictures of unknown visitors, and the recognition event stream. Pictures are only put
+// in the page while this tab is open (an <img> loads the moment it is in the DOM), and the
+// server never sends face vectors at all.
+let identityState = null;
+
+function isIdentityTabActive() {
+  const panel = document.getElementById("tab-identity");
+  return !!panel && panel.classList.contains("active");
+}
+
+const IDENTITY_KIND_LABELS = {
+  owner_arrived: "arrived", owner_left: "left", unknown_seen: "unknown person", unknown_left: "unknown left",
+  camera_covered: "camera covered", camera_uncovered: "camera uncovered", camera_unreachable: "camera unreachable",
+  camera_restored: "camera back", enroll: "enrolled", enroll_failed: "enroll failed", delete: "erased",
+  paused: "paused", resumed: "resumed", export: "exported", snapshots_deleted: "pictures deleted",
+};
+
+function identityKindLabel(k) {
+  return IDENTITY_KIND_LABELS[k] || k;
+}
+
+async function fetchIdentity() {
+  try {
+    const res = await fetch("/api/faces");
+    identityState = await res.json();
+    renderIdentity();
+    if (identityState.enabled) {
+      await Promise.all([fetchIdentityEvents(), fetchIdentitySnaps()]);
+    }
+  } catch (e) {
+    /* leave the last render in place */
+  }
+}
+
+async function fetchIdentityEvents() {
+  const kind = document.getElementById("identity-kind").value;
+  try {
+    const res = await fetch("/api/faces/events?limit=100" + (kind ? "&kind=" + encodeURIComponent(kind) : ""));
+    const data = await res.json();
+    document.getElementById("identity-events").innerHTML = data.rows.length
+      ? data.rows
+          .map((r) => {
+            const conf = r.confidence == null ? "" : ` &middot; ${esc(Math.round(r.confidence * 100) + "%")}`;
+            const who = r.name ? ` &middot; ${esc(r.name)}` : "";
+            const detail = r.detail ? ` &middot; ${esc(r.detail)}` : "";
+            return `<li class="list-item compact"><span class="tool">${esc(identityKindLabel(r.kind))}</span>
+              <span class="muted">${esc(r.ts.replace("T", " "))}${who}${conf}${detail}</span></li>`;
+          })
+          .join("")
+      : '<li class="muted">No recognition events yet.</li>';
+  } catch (e) {
+    /* keep last render */
+  }
+}
+
+async function fetchIdentitySnaps() {
+  try {
+    const res = await fetch("/api/faces/snapshots");
+    const data = await res.json();
+    const box = document.getElementById("identity-snaps");
+    document.getElementById("identity-snap-count").textContent = data.rows.length ? `(${data.rows.length})` : "";
+    document.getElementById("identity-snap-delete").hidden = !data.rows.length;
+    if (!isIdentityTabActive()) return; // never load pictures into a hidden tab
+    box.innerHTML = data.rows.length
+      ? data.rows
+          .map(
+            (r) => `<figure class="snap"><img loading="lazy" alt="Unknown visitor" src="/api/faces/snapshots/${Number(r.id)}/image">
+              <figcaption>${esc(r.ts.replace("T", " ").slice(5, 16))}<br>${esc(Math.round((r.confidence || 0) * 100) + "% like you")}</figcaption></figure>`
+          )
+          .join("")
+      : '<span class="muted">No pictures saved. They are only kept for unrecognized faces, expire after 14 days, and never leave this computer.</span>';
+  } catch (e) {
+    /* keep last render */
+  }
+}
+
+function identityPresenceText(st) {
+  if (identityState.paused) return "Paused — the camera is off";
+  if (st.camera_unreachable) return "Camera unreachable";
+  if (st.camera_covered) return "Camera covered";
+  const bits = [];
+  if (st.owner_present) bits.push(`${st.owner_name} is here` + (st.owner_confidence ? ` (${Math.round(st.owner_confidence * 100)}%)` : ""));
+  if (st.unknown_present) bits.push("someone unrecognized is in view");
+  return bits.length ? bits.join(" · ") : "Nobody in view";
+}
+
+function renderIdentity() {
+  const s = identityState;
+  const cards = document.getElementById("identity-cards");
+  const pauseBtn = document.getElementById("identity-pause-btn");
+  if (!s || !s.enabled) {
+    cards.innerHTML = '<div class="muted">Face recognition is off. Set JARVIS_FACE_ENABLED=1 and restart Jarvis to use it.</div>';
+    document.getElementById("identity-status").textContent = "";
+    document.getElementById("identity-profile").innerHTML = "";
+    document.getElementById("identity-snaps").innerHTML = "";
+    document.getElementById("identity-events").innerHTML = "";
+    pauseBtn.hidden = true;
+    document.getElementById("identity-snap-delete").hidden = true;
+    return;
+  }
+  const st = s.presence;
+  const cfg = s.settings;
+  document.getElementById("identity-status").textContent = s.paused ? "Camera paused" : s.polling ? "Watching (low duty)" : "Not watching";
+  pauseBtn.hidden = false;
+  pauseBtn.textContent = s.paused ? "Resume camera" : "Pause camera";
+  const cardHtml = (label, value, sub) =>
+    `<div class="usage-card"><div class="usage-card-label">${esc(label)}</div><div class="usage-card-value id-value">${esc(value)}</div><div class="muted">${esc(sub || "")}</div></div>`;
+  cards.innerHTML = [
+    cardHtml("Right now", identityPresenceText(st), `looks every ${cfg.poll_seconds}s (${cfg.settled_poll_seconds}s once settled)`),
+    cardHtml("Enrolled", String(s.profiles.length), s.profiles.length ? s.profiles.map((p) => p.name).join(", ") : "say “enroll me as …”"),
+    cardHtml("Unknown pictures", String(s.snapshot_count), cfg.save_unknown_pictures ? `kept ${cfg.picture_keep_days} days` : "saving is off"),
+    cardHtml("Match threshold", String(cfg.match_threshold), "higher = stricter"),
+  ].join("");
+
+  document.getElementById("identity-profile").innerHTML = s.profiles
+    .map((p) => {
+      const c = p.consent;
+      const li = (arr) => arr.map((x) => `<li>${esc(x)}</li>`).join("");
+      return `<div class="profile-box">
+        <div class="profile-row"><strong>${esc(p.name)}</strong> <span class="pill">${esc(p.role)}</span>
+          <span class="muted">enrolled ${esc(p.created_at.replace("T", " "))} &middot; consent given ${esc(c.consent_given_at.replace("T", " "))}</span>
+          <span class="profile-actions">
+            <a class="btn btn-small" href="/api/faces/${Number(p.id)}/export" download>Export my data</a>
+            <button class="btn btn-small btn-danger" data-erase="${Number(p.id)}" data-name="${esc(p.name)}">Erase profile</button>
+          </span></div>
+        <div class="consent-cols">
+          <div><div class="muted">Stored</div><ul class="consent-list">${li(c.stored)}</ul></div>
+          <div><div class="muted">Never stored</div><ul class="consent-list">${li(c.never_stored)}</ul></div>
+          <div><div class="muted">Who can read it</div><p class="consent-list">${esc(c.who_can_read_it)}</p>
+            <div class="muted">How consent was given</div><p class="consent-list">${esc(c.how)}</p></div>
+        </div></div>`;
+    })
+    .join("");
+
+  const kindSel = document.getElementById("identity-kind");
+  const current = kindSel.value;
+  kindSel.innerHTML =
+    '<option value="">All events</option>' +
+    s.event_kinds.map((k) => `<option value="${esc(k)}">${esc(identityKindLabel(k))}</option>`).join("");
+  kindSel.value = s.event_kinds.includes(current) ? current : "";
+  document.getElementById("identity-note").textContent =
+    "A face only personalizes Jarvis — it never approves or unlocks anything. Everything here stays on this computer.";
+}
+
+document.getElementById("identity-profile").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-erase]");
+  if (!btn) return;
+  if (!confirm(`Erase ${btn.dataset.name}'s face profile? Jarvis will stop recognizing them. This can't be undone, but you can enroll again.`)) return;
+  try {
+    const res = await fetch(`/api/faces/${btn.dataset.erase}?confirm=true`, { method: "DELETE" });
+    const data = await res.json();
+    if (!data.ok) alert(data.message || data.error || "Couldn't erase that profile.");
+  } catch (err) {
+    alert("Couldn't reach Jarvis.");
+  }
+  fetchIdentity();
+});
+
+document.getElementById("identity-snap-delete").addEventListener("click", async () => {
+  if (!confirm("Delete every saved picture of unknown visitors? This can't be undone.")) return;
+  try {
+    await fetch("/api/faces/snapshots", { method: "DELETE" });
+  } catch (err) {
+    alert("Couldn't reach Jarvis.");
+  }
+  fetchIdentity();
+});
+
+document.getElementById("identity-pause-btn").addEventListener("click", async () => {
+  try {
+    await fetch("/api/faces/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: !(identityState && identityState.paused) }),
+    });
+  } catch (err) {
+    alert("Couldn't reach Jarvis.");
+  }
+  fetchIdentity();
+});
+
+document.getElementById("identity-kind").addEventListener("change", fetchIdentityEvents);
+document.querySelector('.tab-btn[data-tab="identity"]').addEventListener("click", fetchIdentity);
+setInterval(() => { if (isIdentityTabActive()) fetchIdentity(); }, 10000);
