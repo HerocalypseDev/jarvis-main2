@@ -1,6 +1,8 @@
 {
   "name": "gmail_watch",
-  "description": "Runs automatically every 6 hours to check Gmail, summarize what's new, and only speak up if something looks important. Also usable on request (\"check my email\", \"anything important in my inbox\").",
+  "description": "Runs automatically every 2 hours to check Gmail, summarize what's new, and only speak up if something looks important.",
   "instructions": "Use the mcp_gmail tools to check for unread/new email. Summarize it in a couple of sentences. Judge whether anything is genuinely important or time-sensitive (a real person needing a reply, a deadline, a security/account alert) versus routine newsletters/promos/notifications. Always call remember_fact (category=\"fact\") with a one-line record of this check, e.g. \"Gmail check <time>: N unread, nothing important\" or \"...: important - <what>\", so there's a saved log either way. If something important was found, give a short spoken summary of it as your final reply. If nothing important was found, give NO spoken reply at all - respond with empty text, since this is a silent background check and routine results shouldn't interrupt the user.",
-  "schedule": { "every_minutes": 360 }
+  "schedule": {
+    "every_minutes": 120
+  }
 }
