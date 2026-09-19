@@ -465,6 +465,7 @@ def _build_app(
     get_services: Callable[[], list[dict]] | None = None,
     get_daily: Callable[[], list[dict]] | None = None,
     get_usage: Callable[[], dict] | None = None,
+    get_sleep: Callable[[], dict] | None = None,
     get_llm: Callable[[], dict] | None = None,
     set_llm: Callable[[str], str] | None = None,
     port: int = DEFAULT_PORT,
@@ -567,6 +568,17 @@ def _build_app(
             log.warning("get_usage failed: %s", e)
             return {"usage": None}
 
+    @app.get("/api/sleep")
+    def api_sleep() -> dict:
+        # Read-only sleep trends from sleep_log (see jarvis_sleep_mode.stats_summary).
+        if not get_sleep:
+            return {"sleep": None}
+        try:
+            return {"sleep": get_sleep()}
+        except Exception as e:
+            log.warning("get_sleep failed: %s", e)
+            return {"sleep": None}
+
     @app.get("/api/llm")
     def api_llm() -> dict:
         if not get_llm:
@@ -667,6 +679,7 @@ def start(
     get_services: Callable[[], list[dict]] | None = None,
     get_daily: Callable[[], list[dict]] | None = None,
     get_usage: Callable[[], dict] | None = None,
+    get_sleep: Callable[[], dict] | None = None,
     get_llm: Callable[[], dict] | None = None,
     set_llm: Callable[[str], str] | None = None,
 ) -> None:
@@ -686,6 +699,7 @@ def start(
         get_services=get_services,
         get_daily=get_daily,
         get_usage=get_usage,
+        get_sleep=get_sleep,
         get_llm=get_llm,
         set_llm=set_llm,
         port=port,

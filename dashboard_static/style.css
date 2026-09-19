@@ -457,3 +457,33 @@ body {
 
 .llm-chip { cursor: pointer; }
 .llm-chip.llm-gemini { color: var(--warn); border-color: var(--warn); }
+
+/* Sleep tab */
+.sleep-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--cyan-dim); border-radius: 6px; overflow: hidden; }
+.seg-btn { background: transparent; color: var(--text-muted); border: 0; padding: 3px 12px; cursor: pointer; font: inherit; }
+.seg-btn.active { background: var(--cyan-dim); color: var(--text); }
+.sleep-charts { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.sleep-fig { margin: 0; flex: 1; min-width: 260px; }
+.sleep-fig figcaption { font-size: 0.8em; color: var(--text); margin-bottom: 2px; }
+.sleep-fig svg { width: 100%; height: auto; display: block; }
+.sleep-fig .ax { fill: var(--text-muted); font-size: 9px; }
+.sleep-fig .grid { stroke: var(--border); stroke-width: 1; }
+.sleep-fig .goal { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; }
+.sleep-fig .bar { fill: var(--cyan); }
+.sleep-fig .bar-low { fill: var(--cyan-dim); }
+.sleep-fig .line-bed { stroke: var(--cyan); fill: none; stroke-width: 2; }
+.sleep-fig .line-wake { stroke: var(--warn); fill: none; stroke-width: 2; }
+.sleep-fig .dot-bed { fill: var(--cyan); stroke: var(--bg-panel); stroke-width: 2; }
+.sleep-fig .dot-wake { fill: var(--warn); stroke: var(--bg-panel); stroke-width: 2; }
+.sleep-legend { margin-left: 8px; font-size: 0.9em; color: var(--text-muted); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; vertical-align: -1px; }
+.sw-bed { background: var(--cyan); }
+.sw-wake { background: var(--warn); }
+.sleep-sub { margin: 6px 0 4px; font-size: 0.85em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.usage-delta { font-size: 0.75em; }
+.usage-delta.up { color: var(--ok); }
+.usage-delta.down { color: var(--danger); }
+
+/* The Sleep tab's charts need more room than the default bottom panel; a manual drag-resize (inline height) still wins. */
+.bottom.tall { height: 62vh; }

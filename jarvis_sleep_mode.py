@@ -65,6 +65,11 @@ MEDIA_AUTOPAUSE_MINUTES = int(os.environ.get("JARVIS_SLEEP_MEDIA_AUTOPAUSE_MINUT
 SLEEP_LENGTH_SCALE = float(os.environ.get("JARVIS_SLEEP_TTS_LENGTH_SCALE") or 1.25)
 SLEEP_TTS_VOLUME = float(os.environ.get("JARVIS_SLEEP_TTS_VOLUME") or 0.7)
 
+# Sleep stats: a Sleep Mode session shorter than this is treated as an accidental toggle, not a
+# night's sleep, and left out of averages. Goal is the nightly target used for "sleep debt".
+MIN_SESSION_MINUTES = int(os.environ.get("JARVIS_SLEEP_MIN_SESSION_MINUTES") or 20)
+SLEEP_GOAL_HOURS = float(os.environ.get("JARVIS_SLEEP_GOAL_HOURS") or 8)
+
 AMBIENT_SOUNDS = {
     "rain": "https://www.youtube.com/results?search_query=rain+sounds+for+sleep+10+hours",
     "white_noise": "https://www.youtube.com/results?search_query=white+noise+for+sleep+10+hours",
@@ -92,6 +97,28 @@ def _db_path() -> Path:
 
 
 _db_lock = threading.Lock()
+# jarvis.py registers this so disable() can hand off "what was queued while you slept" without
+# this module importing jarvis.py. Called as handler(started_at_iso, ended_at_iso).
+_wake_digest_handler = None
+
+
+def set_wake_digest_handler(fn) -> None:
+    global _wake_digest_handler
+    _wake_digest_handler = fn
+
+
+def save_digest(started_at: str, digest: str) -> None:
+    with _db_lock:
+        conn = _connect()
+        try:
+            conn.execute(
+                "UPDATE sleep_log SET digest = ? WHERE started_at = ?", (digest, started_at)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
 _media_autopause_timer: threading.Timer | None = None
 
 
@@ -115,6 +142,10 @@ def _connect() -> sqlite3.Connection:
         "ended_at TEXT, "
         "duration_minutes REAL)"
     )
+    try:
+        conn.execute("ALTER TABLE sleep_log ADD COLUMN digest TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.execute("INSERT OR IGNORE INTO sleep_state (id, active) VALUES (1, 0)")
     return conn
 
@@ -388,6 +419,11 @@ def disable() -> str:
         wake_fired_date=None, dark_mode_was_on=None, hosts_blocked=0,
     )
     log.info("Sleep Mode disabled.%s", duration_line)
+    if _wake_digest_handler and started_at:
+        try:
+            _wake_digest_handler(started_at, now.isoformat(timespec="seconds"))
+        except Exception as e:
+            log.warning("Sleep Mode wake digest failed: %s", e)
     return f"Sleep Mode is off.{duration_line}"
 
 
@@ -430,6 +466,144 @@ def status() -> str:
             f"Last {len(rows)} session(s) averaged {int(avg // 60)}h {int(avg % 60)}m."
         )
     return " ".join(lines)
+
+
+# --- sleep trends (dashboard) ------------------------------------------------------------
+def _hhmm(minutes: float) -> str:
+    m = int(round(minutes)) % 1440
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _period_stats(nights: dict, end_day, days: int, goal_h: float) -> dict:
+    """Stats over the `days` calendar days ending at end_day (inclusive), tracked nights only."""
+    keys = [(end_day - timedelta(days=i)).isoformat() for i in range(days)]
+    rows = [nights[k] for k in keys if k in nights]
+    out = {
+        "days": days, "nights_tracked": len(rows), "avg_hours": None, "best_hours": None,
+        "worst_hours": None, "total_hours": None, "avg_bedtime": None, "avg_wake": None,
+        "bedtime_variability_min": None, "goal_hit_nights": 0, "debt_hours": 0.0,
+    }
+    if not rows:
+        return out
+    hours = [r["hours"] for r in rows]
+    out["avg_hours"] = round(sum(hours) / len(hours), 2)
+    out["best_hours"] = round(max(hours), 2)
+    out["worst_hours"] = round(min(hours), 2)
+    out["total_hours"] = round(sum(hours), 1)
+    out["goal_hit_nights"] = sum(1 for h in hours if h >= goal_h)
+    out["debt_hours"] = round(sum(max(0.0, goal_h - h) for h in hours), 1)
+    # Bedtime is measured from 18:00 so a 23:30 and a 00:30 bedtime average sensibly.
+    bed = [r["bed_min"] for r in rows]
+    mean_bed = sum(bed) / len(bed)
+    out["avg_bedtime"] = _hhmm(mean_bed + 18 * 60)
+    out["bedtime_variability_min"] = round(
+        math.sqrt(sum((b - mean_bed) ** 2 for b in bed) / len(bed))
+    )
+    wake = [r["wake_min"] for r in rows]
+    out["avg_wake"] = _hhmm(sum(wake) / len(wake))
+    return out
+
+
+def stats_summary(now: datetime | None = None) -> dict:
+    """Read-only sleep trends for the dashboard, from sleep_log alone (no new tables). Sessions are
+    grouped by the calendar day they ended on, so a night that crosses midnight is one night.
+    Time in Sleep Mode is a proxy for sleep, not a measurement of it."""
+    now = now or datetime.now()
+    today = now.date()
+    goal = SLEEP_GOAL_HOURS
+    with _db_lock:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT started_at, ended_at, duration_minutes FROM sleep_log "
+                "WHERE ended_at IS NOT NULL AND duration_minutes >= ? ORDER BY id",
+                (MIN_SESSION_MINUTES,),
+            ).fetchall()
+            digests = conn.execute(
+                "SELECT started_at, ended_at, digest FROM sleep_log "
+                "WHERE digest IS NOT NULL AND digest != '' ORDER BY id DESC LIMIT 8"
+            ).fetchall()
+        finally:
+            conn.close()
+
+    nights: dict[str, dict] = {}
+    for started_at, ended_at, minutes in rows:
+        try:
+            start, end = datetime.fromisoformat(started_at), datetime.fromisoformat(ended_at)
+        except (TypeError, ValueError):
+            continue
+        n = nights.setdefault(end.date().isoformat(), {
+            "minutes": 0.0, "sessions": 0, "first_start": start, "last_end": end,
+        })
+        n["minutes"] += minutes
+        n["sessions"] += 1
+        n["first_start"] = min(n["first_start"], start)
+        n["last_end"] = max(n["last_end"], end)
+    for n in nights.values():
+        n["hours"] = n["minutes"] / 60
+        n["bed_min"] = (n["first_start"].hour * 60 + n["first_start"].minute - 18 * 60) % 1440
+        n["wake_min"] = n["last_end"].hour * 60 + n["last_end"].minute
+
+    daily = []
+    for i in range(89, -1, -1):
+        d = today - timedelta(days=i)
+        n = nights.get(d.isoformat())
+        daily.append({
+            "date": d.isoformat(),
+            "hours": round(n["hours"], 2) if n else None,
+            "bedtime": _hhmm(n["bed_min"] + 18 * 60) if n else None,
+            "wake": _hhmm(n["wake_min"]) if n else None,
+            "bed_min": n["bed_min"] if n else None,
+            "wake_min": n["wake_min"] if n else None,
+            "sessions": n["sessions"] if n else 0,
+        })
+
+    weekday = []
+    for wd, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+        vals = [d["hours"] for d in daily if d["hours"] is not None
+                and datetime.fromisoformat(d["date"]).weekday() == wd]
+        weekday.append({"day": name, "avg_hours": round(sum(vals) / len(vals), 2) if vals else None,
+                        "nights": len(vals)})
+
+    streak = 0
+    for i in range(0, 90):
+        n = nights.get((today - timedelta(days=i)).isoformat())
+        if n is None and i == 0:
+            continue  # today's sleep may not be logged yet
+        if n is None or n["hours"] < goal:
+            break
+        streak += 1
+
+    state = _get_state()
+    current = None
+    if state.get("active") and state.get("started_at"):
+        try:
+            current = {
+                "started_at": state["started_at"],
+                "elapsed_minutes": round(
+                    (now - datetime.fromisoformat(state["started_at"])).total_seconds() / 60
+                ),
+            }
+        except ValueError:
+            pass
+
+    return {
+        "goal_hours": goal,
+        "min_session_minutes": MIN_SESSION_MINUTES,
+        "current": current,
+        "week": _period_stats(nights, today, 7, goal),
+        "prev_week": _period_stats(nights, today - timedelta(days=7), 7, goal),
+        "month": _period_stats(nights, today, 30, goal),
+        "prev_month": _period_stats(nights, today - timedelta(days=30), 30, goal),
+        "goal_streak_nights": streak,
+        "daily": daily,
+        "weekday": weekday,
+        "digests": [{"started_at": a, "ended_at": b, "digest": c} for a, b, c in digests],
+        "note": (
+            "Based on time spent in Sleep Mode, not measured sleep: turn it on when you go to "
+            f"bed and off when you get up. Sessions under {MIN_SESSION_MINUTES} min are ignored."
+        ),
+    }
 
 
 # --- smart wake-up ---------------------------------------------------------------------

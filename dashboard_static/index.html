@@ -55,6 +55,7 @@
   <div class="bottom-tabs">
     <button class="tab-btn active" data-tab="activity">Activity</button>
     <button class="tab-btn" data-tab="daily">Daily</button>
+    <button class="tab-btn" data-tab="sleep">Sleep</button>
     <button class="tab-btn" data-tab="usage">Usage</button>
     <button class="tab-btn" data-tab="audit">Audit Trail</button>
     <button class="tab-btn" data-tab="victory">Victory Log</button>
@@ -64,6 +65,25 @@
   </div>
   <div id="tab-daily" class="tab-panel">
     <ul id="daily-list" class="list compact"></ul>
+  </div>
+  <div id="tab-sleep" class="tab-panel">
+    <div class="sleep-head">
+      <div class="seg" role="group" aria-label="Sleep range">
+        <button class="seg-btn active" data-range="7">Week</button>
+        <button class="seg-btn" data-range="30">Month</button>
+      </div>
+      <span id="sleep-current" class="muted"></span>
+    </div>
+    <div id="sleep-cards" class="usage-cards"></div>
+    <div class="sleep-charts">
+      <figure class="sleep-fig"><figcaption>Hours slept per night <span class="muted">(dashed = goal)</span></figcaption><div id="sleep-hours"></div></figure>
+      <figure class="sleep-fig"><figcaption>Bedtime &amp; wake time
+        <span class="sleep-legend"><i class="sw sw-bed"></i>bedtime <i class="sw sw-wake"></i>wake</span></figcaption><div id="sleep-times"></div></figure>
+      <figure class="sleep-fig"><figcaption>Average by weekday <span class="muted">(last 90 days)</span></figcaption><div id="sleep-weekday"></div></figure>
+    </div>
+    <h4 class="sleep-sub">While you were asleep</h4>
+    <ul id="sleep-digests" class="list compact"></ul>
+    <p id="sleep-note" class="muted"></p>
   </div>
   <div id="tab-usage" class="tab-panel">
     <div id="usage-cards" class="usage-cards"></div>

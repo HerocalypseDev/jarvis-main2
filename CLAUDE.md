@@ -338,6 +338,26 @@ Rules:
   Chromium with no console errors). Rows older than 400 days are pruned on write.
   Cost note: the startup prompt-cache pre-warm is a ~32k-token 1h write, ~$0.065 per restart.
 
+## Sleep trends + wake-up digest (2026-09-19)
+
+- **Sleep tab** in the dashboard (`GET /api/sleep`, `jarvis_sleep_mode.stats_summary()`), built only
+  from the existing `sleep_log` table: Week/Month toggle, cards (last night, average with delta vs
+  the prior period, best/worst, avg bedtime -> wake + bedtime variability, goal hits + streak, sleep
+  debt), and three SVG charts (hours per night with goal line, bedtime/wake times, weekday averages).
+  Read-only. It measures time in Sleep Mode, not actual sleep; sessions under
+  `JARVIS_SLEEP_MIN_SESSION_MINUTES` (20) are ignored, sessions are grouped by the day they ended
+  on, goal is `JARVIS_SLEEP_GOAL_HOURS` (8). Only schema change: `sleep_log.digest TEXT` (auto-migrated).
+- **Wake-up digest**: notifications queued during Sleep Mode are flagged `during_sleep` in
+  `session_state.json`'s `pending_notifications`. `flush_pending_notifications` leaves them alone
+  (even if the user talks to Jarvis mid-sleep). When Sleep Mode ends by any route (tool, toggle,
+  wake alarm) `disable()` calls the handler `jarvis._sleep_wake_digest`, which drains those items
+  synchronously and, on a thread, has one Claude call write a <=3-sentence recap starting "Hero,
+  while you were asleep, ...", speaks it, and saves it to `sleep_log.digest` (shown in the tab).
+  Falls back to a plain count + first items if the call fails; says "nothing came in" if empty.
+  Name comes from `JARVIS_USER_NAME` (default Hero). Urgent messages still speak live and are not
+  in the digest. Cost: one small extra model call per wake-up. Same data exposure as the existing
+  speech summarizer (queued text goes to the active brain). Tests: `test_sleep.py`.
+
 ## Window control
 
 - `resize_window(title, width=, height=, width_percent=, height_percent=)` and
@@ -384,4 +404,5 @@ row there each phase rather than only stating the total in chat.
 | 10 (local spend tracking + dashboard Usage tab) | Sonnet 5 | ~25 min | ~$0.90–$1.30 |
 | 11 (shutdown staging fix, proactive speech shaping, change_jarvis_code + phone) | Sonnet 5 | ~35 min | ~$1.40–$2.00 |
 | 12 (Gemini brain option + runtime switch + research) | Sonnet 5 | ~50 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~310 min** | **~$10.60–$15.05** |
+| 13 (sleep trends tab + wake-up digest) | Sonnet 5 | ~30 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~340 min** | **~$11.80–$16.75** |

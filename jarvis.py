@@ -2730,7 +2730,11 @@ def queue_or_deliver_notification(
     if sleep_mode.should_suppress(urgent):
         with _session_context_lock:
             _session_context.setdefault("pending_notifications", []).append(
-                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds")}
+                {
+                    "text": text,
+                    "queued_at": datetime.now().isoformat(timespec="seconds"),
+                    "during_sleep": True,
+                }
             )
             _save_session_context_locked()
         log.info("Queued non-urgent notification (Sleep Mode active): %r", text)
@@ -2751,14 +2755,75 @@ def flush_pending_notifications() -> None:
     real command (handle_text_command) — the user talking to Jarvis is itself proof they're
     available to listen right now."""
     with _session_context_lock:
-        pending = _session_context.get("pending_notifications") or []
-        _session_context["pending_notifications"] = []
+        everything = _session_context.get("pending_notifications") or []
+        # Items queued by Sleep Mode wait for the wake-up digest (_sleep_wake_digest) instead of
+        # being read out one by one — even if the user talks to Jarvis while still in Sleep Mode.
+        pending = [i for i in everything if not i.get("during_sleep")]
+        _session_context["pending_notifications"] = [i for i in everything if i.get("during_sleep")]
         _save_session_context_locked()
     for item in pending:
         try:
             _speak_shaped(item.get("text", ""))
         except Exception as e:
             log.warning("Could not speak queued notification: %s", e)
+
+
+USER_NAME = (os.environ.get("JARVIS_USER_NAME") or "Hero").strip() or "Hero"
+
+
+def _sleep_wake_digest(started_at: str, ended_at: str) -> None:
+    """Registered with jarvis_sleep_mode: when Sleep Mode ends, replaces the old flood of queued
+    notifications with one spoken recap ("Hero, while you were asleep, ..."). Draining the queue
+    is synchronous (so a command issued right after waking can't replay the items); summarizing
+    and speaking happen on a thread. Urgent messages were already spoken live and aren't here."""
+    with _session_context_lock:
+        everything = _session_context.get("pending_notifications") or []
+        items = [i for i in everything if i.get("during_sleep")]
+        _session_context["pending_notifications"] = [
+            i for i in everything if not i.get("during_sleep")
+        ]
+        _save_session_context_locked()
+
+    def _run() -> None:
+        try:
+            digest = _build_sleep_digest(items)
+            sleep_mode.save_digest(started_at, digest)
+            speak_text(_collapse_paths_for_speech(digest))
+        except Exception as e:
+            log.warning("Could not deliver Sleep Mode wake digest: %s", e)
+
+    threading.Thread(target=_run, daemon=True, name="sleep-wake-digest").start()
+
+
+def _build_sleep_digest(items: list[dict]) -> str:
+    prefix = f"{USER_NAME}, while you were asleep, "
+    if not items:
+        return f"{USER_NAME}, nothing came in while you were asleep."
+    lines = [f"- {(i.get('text') or '').strip()[:300]}" for i in items[:40]]
+    body = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": 250,
+        "system": (
+            f"You are a voice assistant. The user ({USER_NAME}) just woke up. Below are the "
+            "notifications and reminders that were held back while they slept. Write a short "
+            f"spoken recap of at most three sentences that starts exactly with: \"{prefix}\". "
+            "Group related items, keep the key facts, drop filler. Never read out a full file "
+            "path or URL. Plain spoken prose only: no lists, no markdown."
+        ),
+        "messages": [{"role": "user", "content": "\n".join(lines)}],
+    }
+    data = _claude_request(body, timeout=SPEECH_SUMMARY_TIMEOUT_S)
+    text = _claude_text(data).strip() if data is not None else ""
+    if text:
+        return text
+    # Fallback: never go silent or drop the items just because summarizing failed.
+    count = len(items)
+    heads = "; ".join((i.get("text") or "").strip()[:80] for i in items[:3])
+    more = f", and {count - 3} more" if count > 3 else ""
+    return f"{prefix}{count} thing{'s' if count != 1 else ''} came in: {heads}{more}."
+
+
+sleep_mode.set_wake_digest_handler(_sleep_wake_digest)
 
 
 # --- Windows toast notifications: a real, visible Action Center banner for reminders, so one ---
@@ -3761,6 +3826,10 @@ def _dashboard_get_services_status() -> list[dict]:
         ),
     })
     return services
+
+
+def _dashboard_get_sleep() -> dict:
+    return sleep_mode.stats_summary()
 
 
 def _dashboard_get_usage() -> dict:
@@ -6809,6 +6878,7 @@ def main() -> int:
                     get_services=_dashboard_get_services_status,
                     get_daily=_dashboard_get_daily_items,
                     get_usage=_dashboard_get_usage,
+                    get_sleep=_dashboard_get_sleep,
                     get_llm=_llm_status,
                     set_llm=set_llm_provider,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside

@@ -618,6 +618,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     if (btn.dataset.tab === "audit") fetchAuditResults();
     if (btn.dataset.tab === "daily") fetchDailyItems();
     if (btn.dataset.tab === "usage") fetchUsage();
+    document.querySelector("footer.bottom").classList.toggle("tall", btn.dataset.tab === "sleep");
   });
 });
 
@@ -756,3 +757,139 @@ function connectWs() {
 fetchState();
 connectWs();
 setInterval(fetchState, 15000);
+
+
+// Sleep tab (GET /api/sleep): trends from Sleep Mode's own log. Week/Month toggle re-slices the
+// 90 days already fetched, no extra request.
+let sleepData = null;
+let sleepRange = 7;
+
+function fmtHours(h) {
+  if (h == null) return "–";
+  const m = Math.round(h * 60);
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+function sleepDelta(cur, prev, unit) {
+  if (cur == null || prev == null) return "";
+  const d = cur - prev;
+  if (Math.abs(d) < 0.05) return '<div class="usage-delta muted">same as before</div>';
+  const cls = d > 0 ? "up" : "down";
+  return `<div class="usage-delta ${cls}">${d > 0 ? "▲" : "▼"} ${fmtHours(Math.abs(d))} vs prior ${unit}</div>`;
+}
+
+async function fetchSleep() {
+  try {
+    const res = await fetch("/api/sleep");
+    const data = await res.json();
+    sleepData = data.sleep;
+    renderSleep();
+  } catch (e) {
+    /* keep last render */
+  }
+}
+
+// labelFn(d, i) -> x-axis label or "" to skip.
+function sleepBarsSvg(days, goal, labelFn) {
+  const W = 420, H = 130, L = 26, B = 16, T = 8;
+  const vals = days.map((d) => d.hours || 0);
+  const max = Math.max(goal + 1, ...vals, 1);
+  const y = (h) => T + (H - T - B) * (1 - h / max);
+  const slot = (W - L) / days.length;
+  const bw = Math.max(2, slot - 2);
+  let out = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hours slept">`;
+  for (let h = 0; h <= max; h += 2) {
+    out += `<line class="grid" x1="${L}" x2="${W}" y1="${y(h)}" y2="${y(h)}"/><text class="ax" x="${L - 4}" y="${y(h) + 3}" text-anchor="end">${h}</text>`;
+  }
+  days.forEach((d, i) => {
+    const x = L + i * slot + (slot - bw) / 2;
+    if (d.hours != null) {
+      const top = y(d.hours);
+      const r = Math.min(3, bw / 2);
+      out += `<path class="bar ${d.hours >= goal ? "" : "bar-low"}" d="M${x},${H - B} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${H - B} Z"><title>${esc(d.date)}: ${esc(fmtHours(d.hours))}${d.sessions > 1 ? " (" + d.sessions + " sessions)" : ""}</title></path>`;
+    }
+    const lab = labelFn(d, i);
+    if (lab) out += `<text class="ax" x="${x + bw / 2}" y="${H - 4}" text-anchor="middle">${esc(lab)}</text>`;
+  });
+  out += `<line class="goal" x1="${L}" x2="${W}" y1="${y(goal)}" y2="${y(goal)}"/></svg>`;
+  return out;
+}
+
+function sleepTimesSvg(days) {
+  const W = 420, H = 130, L = 34, B = 16, T = 8;
+  // Minutes since 18:00; bedtime and wake share one clock axis from 18:00 to 12:00 next day.
+  const hi = 18 * 60;
+  const y = (m) => T + (H - T - B) * (m / hi);
+  const slot = (W - L) / days.length;
+  const pts = (key, conv) =>
+    days.map((d, i) => (d[key] == null ? null : [L + i * slot + slot / 2, y(conv(d[key])), d])).filter(Boolean);
+  const bed = pts("bed_min", (m) => m);
+  const wake = pts("wake_min", (m) => (m - 18 * 60 + 1440) % 1440);
+  let out = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Bedtime and wake time per night">`;
+  for (let m = 0; m <= hi; m += 180) {
+    const clock = String(((18 * 60 + m) / 60) % 24).padStart(2, "0") + ":00";
+    out += `<line class="grid" x1="${L}" x2="${W}" y1="${y(m)}" y2="${y(m)}"/><text class="ax" x="${L - 4}" y="${y(m) + 3}" text-anchor="end">${clock}</text>`;
+  }
+  const line = (arr, cls) => (arr.length > 1 ? `<polyline class="${cls}" points="${arr.map((p) => p[0] + "," + p[1]).join(" ")}"/>` : "");
+  out += line(bed, "line-bed") + line(wake, "line-wake");
+  bed.forEach((p) => (out += `<circle class="dot-bed" cx="${p[0]}" cy="${p[1]}" r="4"><title>${esc(p[2].date)}: bed ${esc(p[2].bedtime)}</title></circle>`));
+  wake.forEach((p) => (out += `<circle class="dot-wake" cx="${p[0]}" cy="${p[1]}" r="4"><title>${esc(p[2].date)}: up ${esc(p[2].wake)}</title></circle>`));
+  return out + "</svg>";
+}
+
+function renderSleep() {
+  const u = sleepData;
+  const cards = document.getElementById("sleep-cards");
+  if (!u) {
+    cards.innerHTML = '<div class="muted">Sleep data unavailable.</div>';
+    return;
+  }
+  const isWeek = sleepRange === 7;
+  const cur = isWeek ? u.week : u.month;
+  const prev = isWeek ? u.prev_week : u.prev_month;
+  const unit = isWeek ? "week" : "month";
+  const last = [...u.daily].reverse().find((d) => d.hours != null);
+  const c = [
+    ["Last night", last ? fmtHours(last.hours) : "–", last ? `${esc(last.bedtime)} → ${esc(last.wake)}` : "no data yet", ""],
+    [`Average (${isWeek ? "7" : "30"} days)`, fmtHours(cur.avg_hours), `${cur.nights_tracked} nights tracked`, sleepDelta(cur.avg_hours, prev.avg_hours, unit)],
+    ["Best / worst", fmtHours(cur.best_hours), `worst ${fmtHours(cur.worst_hours)}`, ""],
+    ["Avg bedtime → wake", `${cur.avg_bedtime || "–"} → ${cur.avg_wake || "–"}`, cur.bedtime_variability_min != null ? `bedtime varies ±${cur.bedtime_variability_min} min` : "", ""],
+    [`Goal (${u.goal_hours}h)`, `${cur.goal_hit_nights}/${cur.nights_tracked}`, `${u.goal_streak_nights}-night streak`, ""],
+    ["Sleep debt", `${cur.debt_hours}h`, `vs ${u.goal_hours}h/night`, ""],
+  ];
+  cards.innerHTML = c
+    .map(([label, val, sub, delta]) => `<div class="usage-card"><div class="usage-card-label">${esc(label)}</div>
+      <div class="usage-card-value">${esc(val)}</div><div class="muted">${sub}</div>${delta}</div>`)
+    .join("");
+
+  const days = u.daily.slice(-sleepRange);
+  const dow = (d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(d.date + "T12:00").getDay()];
+  const labelFn = (d, i) =>
+    days.length <= 7 ? dow(d) : i % 5 === 0 || i === days.length - 1 ? d.date.slice(8) : "";
+  document.getElementById("sleep-hours").innerHTML = sleepBarsSvg(days, u.goal_hours, labelFn);
+  document.getElementById("sleep-times").innerHTML = sleepTimesSvg(days);
+  const wd = u.weekday.map((w) => ({ date: w.day, hours: w.avg_hours, sessions: 0 }));
+  document.getElementById("sleep-weekday").innerHTML = sleepBarsSvg(wd, u.goal_hours, (d) => d.date);
+
+  document.getElementById("sleep-current").textContent = u.current
+    ? `Sleep Mode is on — ${fmtHours(u.current.elapsed_minutes / 60)} so far`
+    : "Sleep Mode is off";
+  document.getElementById("sleep-digests").innerHTML = u.digests.length
+    ? u.digests
+        .map((d) => `<li class="list-item compact"><span class="muted">${esc(d.ended_at.replace("T", " ").slice(0, 16))}</span> ${esc(d.digest)}</li>`)
+        .join("")
+    : '<li class="muted">No wake-up recaps yet. One is saved each time Sleep Mode ends.</li>';
+  document.getElementById("sleep-note").textContent = u.note;
+}
+
+document.querySelectorAll(".seg-btn").forEach((b) =>
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".seg-btn").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    sleepRange = Number(b.dataset.range);
+    renderSleep();
+  })
+);
+fetchSleep();
+setInterval(fetchSleep, 60000);
+document.querySelector('.tab-btn[data-tab="sleep"]').addEventListener("click", fetchSleep);

@@ -397,3 +397,19 @@ def test_usage_endpoint_wired_and_exception_safe(dashboard):
     with TestClient(dashboard._build_app(get_usage=boom)) as c:
         r = c.get("/api/usage")
         assert r.status_code == 200 and r.json() == {"usage": None}
+
+
+def test_sleep_endpoint_empty_wired_and_exception_safe(client, dashboard):
+    from fastapi.testclient import TestClient
+
+    assert client.get("/api/sleep").json() == {"sleep": None}
+    fake = {"goal_hours": 8, "daily": []}
+    with TestClient(dashboard._build_app(get_sleep=lambda: fake)) as c:
+        assert c.get("/api/sleep").json() == {"sleep": fake}
+
+    def boom():
+        raise RuntimeError("db locked")
+
+    with TestClient(dashboard._build_app(get_sleep=boom)) as c:
+        r = c.get("/api/sleep")
+        assert r.status_code == 200 and r.json() == {"sleep": None}
