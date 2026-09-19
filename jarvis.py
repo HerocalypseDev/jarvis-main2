@@ -65,6 +65,7 @@ import jarvis_billing as billing
 import jarvis_gemini as gemini
 import jarvis_dashboard as dashboard
 import jarvis_image_download as image_download
+import jarvis_restart as restart_mod
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -1492,6 +1493,26 @@ AGENT_TOOLS = [
             "type": "object",
             "properties": {"provider": {"type": "string", "enum": ["claude", "gemini"]}},
             "required": ["provider"],
+        },
+    },
+    {
+        "name": "restart_jarvis",
+        "description": (
+            "Restart Jarvis itself so it loads the latest code (e.g. after a change_jarvis_code "
+            "task finished). Use for 'restart yourself', 'reload', 'restart Jarvis'. It checks "
+            "the code compiles first and refuses if it doesn't, and refuses while background "
+            "tasks are running unless force=true (ask the user first). Jarvis closes a few "
+            "seconds after this returns and reopens on its own — say a short goodbye like 'Restarting "
+            "now, back in about half a minute', not a long explanation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean",
+                    "description": "leave false. Only true after a first call said tasks are running AND the user then said to restart anyway",
+                }
+            },
         },
     },
     {
@@ -6369,6 +6390,13 @@ def _execute_tool_impl(
             result = quick_recall()
         elif tool_name == "set_llm_provider":
             result = set_llm_provider(str(inp.get("provider") or ""))
+        elif tool_name == "restart_jarvis":
+            result = restart_mod.restart(
+                Path(__file__).resolve().parent,
+                len(_RUNNING_BACKGROUND_PROCS),
+                bool(inp.get("force")),
+                jarvis_speaking,
+            )
         elif tool_name == "change_jarvis_code":
             result = _delegate_to_claude_code(str(inp.get("feature") or ""), "")
         elif tool_name == "delegate_to_claude_code":

@@ -477,6 +477,21 @@ Rules:
   the Autostart shortcut across a real sign-in, or push-to-talk/hotkeys from the hidden process
   over a long session.
 
+## Voice restart (2026-09-19)
+
+- `restart_jarvis(force?)` (`jarvis_restart.py`, `test_restart.py`): "restart yourself" reloads new
+  code. Order: refuse if `_RUNNING_BACKGROUND_PROCS` is non-empty (unless `force`) -> `compile()` every
+  `jarvis*.py` and abort on a syntax error, before stopping anything -> spawn a hidden PowerShell
+  helper that waits for this PID then runs `Jarvis.vbs` -> after `MIN_DELAY_S` (8s, so the spoken
+  goodbye happens) and once `jarvis_speaking` clears, kill MCP/npx children and `os._exit`.
+  The new copy is always the standalone hidden one, even if the old one was started from VS Code.
+- **Live-found bug:** the helper must NOT use `DETACHED_PROCESS` — with it PowerShell never
+  launches the new Jarvis (verified by comparing flag variants); `CREATE_NO_WINDOW` alone works and
+  still outlives the parent. Also `py_compile` to `NUL` fails on Windows; use `compile()`.
+- Verified live end to end (dashboard command -> new PID, MCP servers reconnected). Known soft
+  spot: the model passed `force: true` unprompted once (harmless with no tasks running); the
+  guard is prompt-level (description says leave false), not code-enforced.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -515,4 +530,5 @@ row there each phase rather than only stating the total in chat.
 | 14 (wake-up recap split, hotkey move, sleep-mode mail take-over + retry) | Sonnet 5 | ~45 min | ~$2.10–$2.90 |
 | 15 (download_image tool for Pinterest-style image saves) | Sonnet 5 | ~10 min | ~$0.40–$0.60 |
 | 16 (standalone launcher: hidden start, stop, shortcuts, autostart option) | Sonnet 5 | ~10 min | ~$0.35–$0.50 |
-| **Running total (final)** | | **~405 min** | **~$14.65–$20.75** |
+| 17 (voice-triggered self-restart + live debugging of the helper) | Sonnet 5 | ~25 min | ~$1.10–$1.50 |
+| **Running total (final)** | | **~430 min** | **~$15.75–$22.25** |
