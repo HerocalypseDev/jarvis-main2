@@ -62,6 +62,9 @@ import jarvis_sleep_mode as sleep_mode
 import jarvis_sleep_mail as sleep_mail
 import jarvis_workspace
 import jarvis_cache as cache
+import jarvis_autonomy as autonomy
+import jarvis_dynamic_tools as dyn_tools
+import jarvis_memory_consolidation as consolidation
 import jarvis_billing as billing
 import jarvis_gemini as gemini
 import jarvis_dashboard as dashboard
@@ -2029,6 +2032,78 @@ AGENT_TOOLS = [
 
 # Face recognition tools are only advertised when JARVIS_FACE_ENABLED=1, so the cached tool
 # prefix is unchanged (and no tokens are spent) for anyone not using the feature.
+AUTONOMY_TOOLS = [
+    {
+        "name": "autonomy",
+        "description": (
+            "Control Jarvis's autonomy layer (durable commitments/projects, proactive suggestions, "
+            "campaigns). Off by default. actions: status, enable, disable, dry_run_on, dry_run_off, "
+            "list_suggestions, approve/dismiss/never (id), list_commitments, complete_commitment/"
+            "cancel_commitment/accept_commitment (id), add_project (project, goal, risk_level), "
+            "add_action (project, description, scheduled_for), approve_campaign (project, approved), "
+            "set_policy (category, verdict auto_act|ask_once|always_ask|ignore, match_kind, match_value), "
+            "list_policies, run_tick. Use it when the user says 'turn on/off autonomy', 'approve/dismiss "
+            "suggestion N', 'what are my open commitments', etc. Turning things on or loosening rules is "
+            "refused from the phone; do not enable anything the user did not ask for."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "id": {"type": "integer"},
+                "project": {"type": "string"},
+                "goal": {"type": "string"},
+                "description": {"type": "string"},
+                "scheduled_for": {"type": "string"},
+                "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
+                "approved": {"type": "boolean"},
+                "category": {"type": "string"},
+                "verdict": {"type": "string"},
+                "match_kind": {"type": "string", "enum": ["category", "sender", "keyword"]},
+                "match_value": {"type": "string"},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "create_tool",
+        "description": (
+            "Create a NEW reusable tool from a small pure-Python function (becomes dyn_<name>). Use only "
+            "when the user asks for a new capability that is plain computation (parsing, math, text/date "
+            "handling). The code is safety-scanned and tested first: only pure stdlib modules (json, re, "
+            "math, datetime, statistics, collections, ...), no file/network/shell/eval access, one "
+            "top-level function named exactly `name` with typed parameters, JSON-serialisable return. "
+            "Give tests as [{args:{...}, expect: <value>}]. Set dry_run=true to validate without saving. "
+            "Refused from phone/unattended runs. Max 3 new tools per day."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code_string": {"type": "string"},
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "tests": {"type": "array", "items": {"type": "object"}},
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["code_string", "name", "description"],
+        },
+    },
+    {
+        "name": "manage_dynamic_tool",
+        "description": "List, enable, disable or revoke (delete) a dynamic tool created with create_tool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "enable", "disable", "revoke"]},
+                "name": {"type": "string"},
+            },
+            "required": ["action"],
+        },
+    },
+]
+AGENT_TOOLS.extend(AUTONOMY_TOOLS)
+
+
 FACE_TOOLS = [
     {
         "name": "enroll_face",
@@ -3925,6 +4000,7 @@ def _sleep_mail_tick(now: datetime) -> None:
             stats = sleep_mail.run_cycle(
                 mcp=_sleep_mail_mcp, claude=_sleep_mail_claude, record=_record_sleep_important,
                 since_iso=started, sleep_started_at=started,
+                on_inbound=lambda m: _autonomy_inbound(m["subject"], "", m["from"], "email"),
             )
             if stats and stats.get("inbound"):
                 _sleep_mail_fast_until = datetime.now() + timedelta(minutes=sleep_mail.ACTIVE_WINDOW_MIN)
@@ -3950,9 +4026,68 @@ def _scheduler_loop() -> None:
             _sleep_mail_tick(now)
             focus_mode.tick(_launch_focus_app, queue_or_deliver_notification)
             roblox.tick(queue_or_deliver_notification)
+            autonomy.tick(now)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
+
+
+# --- Full autonomy wiring (jarvis_autonomy.py / jarvis_dynamic_tools.py) ---------------------------
+def _autonomy_run_agent(instruction: str) -> str:
+    """Runs one approved autonomous action through the normal agent loop (so its tools, audit trail and
+    the catastrophic confirmation gate all apply) and returns the reply."""
+    _set_scheduled_task_running(True)
+    try:
+        return run_agent_loop(
+            f"(This is an autonomous action the user approved from an Autonomy suggestion; do it now.) {instruction}"
+        )
+    finally:
+        _set_scheduled_task_running(False)
+
+
+def _autonomy_calendar_events(hours: int) -> str:
+    """Best effort: the next `hours` of calendar via whatever Calendar MCP list tool is connected."""
+    name = next((n for n in _mcp_tool_index if "calendar" in n and "list_events" in n), None)
+    if not name:
+        return ""
+    now = datetime.now().astimezone()
+    res = execute_mcp_tool(name, {"timeMin": now.isoformat(), "timeMax": (now + timedelta(hours=hours)).isoformat()})
+    return "" if _looks_failed(res) else res
+
+
+def _autonomy_callbacks() -> dict:
+    return {
+        "claude": _sleep_mail_claude,
+        "notify": lambda text, urgent=False: queue_or_deliver_notification(text, urgent=urgent),
+        "user_busy": lambda: user_is_actively_working() or jarvis_speaking.is_set(),
+        "quiet": lambda: sleep_mode.should_suppress(False) or focus_mode.should_suppress(False),
+        "audit": _log_action_audit,
+        "create_reminder": lambda text, due_iso: create_reminder(text, due_at=due_iso),
+        "run_agent": _autonomy_run_agent,
+        "queue_task": lambda description, instructions, priority="normal", deadline=None: task_scheduler.queue_task(
+            description, priority=priority if priority in task_scheduler.PRIORITY_LEVELS else "normal",
+            instructions=instructions, deadline=deadline,
+        ),
+        "plan_queue": task_scheduler.plan_task_queue,
+        "running_background_count": lambda: len(_RUNNING_BACKGROUND_PROCS),
+        "semantic_recall": memory_enhance.semantic_recall,
+        "calendar_events": _autonomy_calendar_events,
+        "file_events": lambda: filewatcher.get_recent_file_events(5),
+        "workspace": workflow.get_context_summary,
+        "system_status": lambda: json.dumps(get_system_status_report(), default=str)[:400],
+        "consolidate": lambda now: consolidation.consolidate(now, _sleep_mail_claude),
+        "publish": dashboard.notify,
+    }
+
+
+def _autonomy_inbound(subject: str, body: str, sender: str, source: str = "email") -> None:
+    """Hook for mail/Telegram/Discord content written by someone else. Worker thread, never blocks."""
+    if not autonomy.enabled():
+        return
+    threading.Thread(
+        target=autonomy.process_inbound_message_for_events, args=(subject, body, sender, source),
+        daemon=True, name="autonomy-inbound",
+    ).start()
 
 
 def _start_scheduler() -> None:
@@ -4420,6 +4555,7 @@ def build_system_blocks(tone_line: str = "") -> list[dict]:
         + workflow.get_context_summary()
         + sleep_mode.system_prompt_context_line()
         + face.system_prompt_context_line()
+        + autonomy.agent_context_line()
     )
     stable_block: dict = {"type": "text", "text": stable}
     if cache.enabled("prompt"):
@@ -4494,7 +4630,7 @@ def _prompt_cache_warm_request() -> None:
                 "max_tokens": 1,
                 "system": build_system_blocks(),
                 "messages": [{"role": "user", "content": "warmup"}],
-                "tools": _cached_tools(AGENT_TOOLS + get_mcp_tool_schemas()),
+                "tools": _cached_tools(AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()),
             },
             timeout=30,
         )
@@ -6189,7 +6325,7 @@ def _run_plan_step(step_description: str, prior_context: str) -> str:
         intro += f" Relevant results from earlier steps this one depends on: {prior_context}"
     messages: list[dict] = [{"role": "user", "content": f"{intro}\n\nStep: {step_description}"}]
     reply_parts: list[str] = []
-    tools = [t for t in AGENT_TOOLS if t["name"] != "set_plan"] + get_mcp_tool_schemas()
+    tools = [t for t in AGENT_TOOLS if t["name"] != "set_plan"] + dyn_tools.schemas() + get_mcp_tool_schemas()
     system_blocks = build_system_blocks()
     cached_tools = _cached_tools(tools)
 
@@ -6871,6 +7007,21 @@ def _execute_tool_impl(
             )
         elif tool_name == "semantic_recall":
             result = memory_enhance.semantic_recall(str(inp.get("query") or ""))
+        elif tool_name == "autonomy":
+            result = autonomy.handle_tool(inp, _current_command_source())
+        elif tool_name == "create_tool":
+            if _current_command_source() not in ("voice", "text", "dashboard"):
+                result = "Creating tools is only accepted from the PC (voice, typed or dashboard), not the phone or unattended runs."
+            else:
+                result = dyn_tools.create_tool(
+                    str(inp.get("code_string") or ""), str(inp.get("name") or ""),
+                    str(inp.get("description") or ""), inp.get("tests") or None,
+                    bool(inp.get("dry_run")), {t["name"] for t in AGENT_TOOLS},
+                )
+        elif tool_name == "manage_dynamic_tool":
+            result = dyn_tools.handle_manage(inp)
+        elif dyn_tools.is_dynamic(tool_name):
+            result = dyn_tools.run(tool_name, inp)
     except Exception as e:
         log.warning("Tool %r raised: %s", tool_name, e)
         result = f"Tool failed: {e}"
@@ -6920,7 +7071,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     narrated = 0
     used_tool_names: list[str] = []
     any_tool_failed = False
-    tools = AGENT_TOOLS + get_mcp_tool_schemas()
+    tools = AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()
     tone_line = voice_tone.tone_context_line(tone) if tone else ""
     # Built once per command, not per round trip: the volatile block (clock minute) sits
     # before the messages in the cached prefix, so recomputing it mid-loop across a minute
@@ -7108,6 +7259,7 @@ def _handle_text_command_impl(
     shown = vibes.decorate(transcript, reply)  # text surfaces only; speech below uses `reply`
     dashboard.end_session(session_id, "done", shown)
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
+    autonomy.after_turn(transcript, reply, source)  # no-op unless autonomy is on; runs on a worker thread
     if reply:
         if reply_sink:
             reply_sink(shown)
@@ -7505,6 +7657,8 @@ def main() -> int:
                     get_llm=_llm_status,
                     set_llm=set_llm_provider,
                     face=face,
+                    autonomy=autonomy,
+                    dyn_tools=dyn_tools,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same
                     # handle_text_command pipeline (run_agent_loop, _execute_tool, and the
@@ -7528,6 +7682,11 @@ def main() -> int:
 
     _preload_mcp_async()
     start_prompt_cache_warmup()
+    try:
+        dyn_tools.init_dynamic_tools()
+        autonomy.start_autonomy_tick(_autonomy_callbacks())
+    except Exception as e:
+        log.warning("Autonomy failed to initialise; Jarvis continues without it: %s", e)
     _start_scheduler()
     if face.enabled():
         # The stranger prompt goes to Telegram only (a private bot chat), never the ntfy topic.

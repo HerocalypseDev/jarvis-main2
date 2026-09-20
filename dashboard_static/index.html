@@ -57,6 +57,7 @@
     <button class="tab-btn" data-tab="daily">Daily</button>
     <button class="tab-btn" data-tab="sleep">Sleep</button>
     <button class="tab-btn" data-tab="identity">Identity</button>
+    <button class="tab-btn" data-tab="autonomy">Autonomy</button>
     <button class="tab-btn" data-tab="usage">Usage</button>
     <button class="tab-btn" data-tab="audit">Audit Trail</button>
     <button class="tab-btn" data-tab="victory">Victory Log</button>
@@ -102,6 +103,9 @@
     <ul id="identity-events" class="list compact"></ul>
     <p id="identity-note" class="muted"></p>
   </div>
+  <div id="tab-autonomy" class="tab-panel">
+    <div id="autonomy-root"><p class="muted">Loading...</p></div>
+  </div>
   <div id="tab-usage" class="tab-panel">
     <div id="usage-cards" class="usage-cards"></div>
     <div class="usage-lower">
@@ -128,5 +132,6 @@
 </footer>
 
 <script src="app.js"></script>
+<script src="autonomy.js"></script>
 </body>
 </html>

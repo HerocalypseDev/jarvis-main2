@@ -506,3 +506,9 @@ p.consent-list { padding-left: 0; }
 .snap { margin: 0; }
 .snap img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
 .snap figcaption { font-size: 0.68em; color: var(--text-muted); max-width: 96px; }
+
+/* Autonomy tab */
+.auto-controls { margin: 8px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.auto-card { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.auto-form { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.auto-form input, .auto-form select { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }

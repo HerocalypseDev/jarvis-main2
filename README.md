@@ -237,6 +237,10 @@ Both are tracked in a `background_tasks` table in `jarvis_memory.db` and polled/
 
 The first press after starting the script may be slow while the Whisper model finishes loading in the background (it starts loading at startup, and downloads once on first-ever run). Similarly, the first TTS reply may pause briefly while the Piper voice model downloads (also one-time, also automatic).
 
+## Full Autonomy (optional, off by default)
+
+Commitment tracking, proactive suggestions with Approve/Dismiss, multi-day campaigns and runtime tool creation. See [AUTONOMY.md](AUTONOMY.md). Turn on by voice ("turn on autonomy") or in the dashboard's Autonomy tab; `JARVIS_AUTONOMY_DISABLED=1` is the hard kill switch.
+
 ## Tuning
 
 Edit the constants at the top of `jarvis.py`:

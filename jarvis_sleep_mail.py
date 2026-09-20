@@ -330,7 +330,7 @@ def _classify_critical(claude, others: list[dict]) -> set[int]:
 
 
 def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
-              sleep=time.sleep, test_address: str | None = None) -> dict:
+              sleep=time.sleep, test_address: str | None = None, on_inbound=None) -> dict:
     """mcp(tool, args) -> text ('search_emails' etc., un-prefixed); claude(system, user, max_tokens)
     -> text|None; record(text) files an item under the wake-up recap's important section.
     Returns counts, for logging/tests. Skips silently if another cycle is still running."""
@@ -372,6 +372,11 @@ def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
                 else:
                     others.append(msg)
                     stats["inbound"] += 1
+                    if on_inbound:
+                        try:
+                            on_inbound(msg)  # e.g. autonomy's event extraction; must never break the cycle
+                        except Exception as e:
+                            log.warning("Sleep-mail on_inbound hook failed: %s", e)
             if others:
                 for i in _classify_critical(claude, others):
                     if 0 <= i < len(others):

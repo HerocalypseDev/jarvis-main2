@@ -752,6 +752,7 @@ function connectWs() {
     if (event && event.type === "session_end") handleLiveEvent(event);
     if (isAuditTabActive()) fetchAuditResults();
     if (event && event.type === "face_event" && isIdentityTabActive()) fetchIdentity();
+    if (event && event.type === "autonomy_update" && window.refreshAutonomy) window.refreshAutonomy();
   };
 }
 

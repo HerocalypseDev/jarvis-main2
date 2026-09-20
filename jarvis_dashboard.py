@@ -479,6 +479,8 @@ def _build_app(
     get_llm: Callable[[], dict] | None = None,
     set_llm: Callable[[str], str] | None = None,
     face=None,
+    autonomy=None,
+    dyn_tools=None,
     port: int = DEFAULT_PORT,
 ):
     """Builds the FastAPI app (import-guarded, testable without binding a socket). Returns
@@ -791,6 +793,123 @@ def _build_app(
         message = face.set_paused(bool((payload or {}).get("paused")), "dashboard")
         return JSONResponse({"ok": True, "message": message, "paused": face.is_paused()}, headers=_NO_STORE)
 
+    # --- Autonomy tab (jarvis_autonomy.py / jarvis_dynamic_tools.py) --------------------------------
+    # Same trust level and the same Host/Origin guard as the Identity routes: approving a suggestion
+    # makes Jarvis act, so a cross-site request must never be able to do it. Approve/Dismiss/"Never"
+    # are the teach loop; none of these routes touch the catastrophic confirmation gate (an approved
+    # action runs through the normal agent loop, gate included).
+    def _auto_unavailable():
+        return autonomy is None
+
+    @app.get("/api/autonomy")
+    def api_autonomy(request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"available": False}, headers=_NO_STORE)
+        try:
+            data = autonomy.status()
+            data["available"] = True
+            if dyn_tools is not None:
+                data["dynamic_tools"] = dyn_tools.list_tools()
+                data["dynamic_tools_disabled"] = dyn_tools.disabled()
+            return JSONResponse(data, headers=_NO_STORE)
+        except Exception as e:
+            log.warning("autonomy status failed: %s", e)
+            return JSONResponse({"available": False, "error": "unavailable"}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/enabled")
+    def api_autonomy_enabled(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        msg = autonomy.set_enabled(bool((payload or {}).get("enabled")))
+        return JSONResponse({"ok": True, "message": msg, "enabled": autonomy.enabled()}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/dry_run")
+    def api_autonomy_dry_run(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        msg = autonomy.set_dry_run(bool((payload or {}).get("enabled")))
+        return JSONResponse({"ok": True, "message": msg, "dry_run": autonomy.dry_run()}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/suggestions/{sid}/{verb}")
+    def api_autonomy_suggestion(sid: int, verb: str, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        if verb == "approve":
+            msg = autonomy.approve_suggestion(sid)
+        elif verb in ("dismiss", "never"):
+            msg = autonomy.dismiss_suggestion(sid, never=verb == "never")
+        else:
+            return JSONResponse({"ok": False, "error": "unknown action"}, status_code=400)
+        return JSONResponse({"ok": True, "message": msg}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/policies")
+    def api_autonomy_policy(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        p = payload or {}
+        conf = p.get("min_confidence")
+        try:
+            conf = float(conf) if conf not in (None, "") else None
+        except (TypeError, ValueError):
+            conf = None
+        msg = autonomy.set_policy(str(p.get("category") or ""), str(p.get("verdict") or ""),
+                                  str(p.get("match_kind") or "category"), str(p.get("match_value") or ""), conf)
+        return JSONResponse({"ok": msg.startswith("Rule saved"), "message": msg}, headers=_NO_STORE)
+
+    @app.delete("/api/autonomy/policies/{pid}")
+    def api_autonomy_policy_delete(pid: int, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        return JSONResponse({"ok": True, "message": autonomy.delete_policy(pid)}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/commitments/{cid}/status")
+    def api_autonomy_commitment(cid: int, request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        msg = autonomy.set_commitment_status(cid, str((payload or {}).get("status") or ""))
+        return JSONResponse({"ok": msg.startswith("Commitment"), "message": msg}, headers=_NO_STORE)
+
+    @app.post("/api/dynamic_tools/{name}/{verb}")
+    def api_dynamic_tool(name: str, verb: str, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if dyn_tools is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        if verb not in ("enable", "disable"):
+            return JSONResponse({"ok": False, "error": "unknown action"}, status_code=400)
+        return JSONResponse({"ok": True, "message": dyn_tools.set_enabled(name, verb == "enable")}, headers=_NO_STORE)
+
+    @app.delete("/api/dynamic_tools/{name}")
+    def api_dynamic_tool_revoke(name: str, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if dyn_tools is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        return JSONResponse({"ok": True, "message": dyn_tools.revoke(name)}, headers=_NO_STORE)
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         # Cross-site WebSocket hijacking: any web page can open ws://127.0.0.1:port/ws, and this
@@ -834,6 +953,8 @@ def start(
     get_llm: Callable[[], dict] | None = None,
     set_llm: Callable[[str], str] | None = None,
     face=None,
+    autonomy=None,
+    dyn_tools=None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
     127.0.0.1 only, by design: this server is a second surface that can (in later phases)
@@ -855,6 +976,8 @@ def start(
         get_llm=get_llm,
         set_llm=set_llm,
         face=face,
+        autonomy=autonomy,
+        dyn_tools=dyn_tools,
         port=port,
     )
     if app is None:

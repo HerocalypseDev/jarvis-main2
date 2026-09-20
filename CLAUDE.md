@@ -696,6 +696,36 @@ Rules:
   deliberate turn, an actual stranger (group-safe/picture path is unit-tested only), greeting
   audio, covered-lens detection on the real webcam, the tab against real data.
 
+## Full Autonomy stack (2026-09-20)
+
+- Full write-up: `AUTONOMY.md`. Code: `jarvis_autonomy.py` (commitments/projects, policy engine, tick,
+  suggestions, campaigns, planner), `jarvis_dynamic_tools.py`, `jarvis_memory_consolidation.py`, the
+  dashboard "Autonomy" tab (`dashboard_static/autonomy.js`, `/api/autonomy*`, `/api/dynamic_tools*`).
+  Tests: `test_autonomy.py` (44; whole suite 389).
+- **Off by default, asks before acting.** `JARVIS_AUTONOMY_DISABLED=1` is a hard kill. The default policy
+  is *ask*; the only built-in auto rule is a nudge about an approaching deadline. Content from other people
+  (email/Telegram/Discord) can never auto-act via a category-wide rule. Learned rules may only auto-run
+  reminders/notifications. Enabling/loosening is refused from phone; disabling works anywhere.
+- **Deviations from the spec, on purpose:** (1) the tables are `autonomy_projects` /
+  `autonomy_project_actions`, because `jarvis.py` already owns a differently-shaped `projects` table
+  (`CREATE TABLE IF NOT EXISTS projects` would have silently kept the old one and broken inserts); (2) an
+  extra `autonomy_suggestions` table backs the dashboard cards; (3) dynamic tools are **pure computation
+  only** (stdlib allow-list, no file/network/shell/eval, `python -I` subprocess with timeout) instead of
+  "safe" subprocess/network access, which no AST scan can guarantee; (4) the tick is driven by the existing
+  scheduler loop (60 s floor, not 45 s) and the paid classifier call is rate-limited (15 min) and skipped
+  when nothing changed; (5) extraction after a command only runs when the exchange has a planning cue.
+- Approved calendar/email/file actions run through `run_agent_loop`, so the confirmation gate still applies;
+  `test_autonomy_code_cannot_reach_the_confirmation_gate` pins that the new modules never reference it or
+  import `jarvis`. `jarvis.py` may reference `face` only from allowlisted functions (see face section): do
+  not put `face.*` in the autonomy callbacks; `queue_or_deliver_notification` already holds speech for a stranger.
+- **Bug found by the tests:** `_db_lock` was a plain Lock while `_connect()` lazily runs table init under
+  the same lock (self-deadlock on first use); now an RLock.
+- **Verified:** unit tests with fake callbacks; a smoke run through the real `jarvis.py` tool dispatch
+  (tools registered, phone refusals, dynamic tool create/run, gated tick). **Not verified live:** a real
+  model extraction/classifier response, the dashboard tab in a real browser, an approved calendar event
+  through the Calendar MCP, a real inbound mail (sleep-mail hook passes subject only), the first real
+  campaign. Turn it on and watch the Autonomy tab's "Recent decisions" before trusting it.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -743,4 +773,5 @@ row there each phase rather than only stating the total in chat.
 | 23 (face recognition Phase 4: self-audit fixes, gate-isolation test, calibrate tool, Origin guard) | Sonnet 5 | ~30 min | ~$1.60–$2.30 |
 | 24 (face recognition code review: 11 defects fixed, 17 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
 | 25 (stranger -> Telegram reminders question with held+forwarded reminders, away mode auto-lock, dashboard toggle) | Sonnet 5 | ~60 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~698 min** | **~$29.85–$41.80** |
+| 26 (full autonomy: commitments/projects, policy engine + teach loop, tick, campaigns, dynamic tools, consolidation, dashboard tab) | Sonnet 5 | ~75 min | ~$3.60–$5.00 |
+| **Running total (final)** | | **~773 min** | **~$33.45–$46.80** |
