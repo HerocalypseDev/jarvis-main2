@@ -140,7 +140,7 @@ pure computation; skills are the way to compose real side effects.
 a worker thread. Free/deterministic steps: expire and prune, deadline scan, campaigns, planner, re-plan
 pending tasks, run the auto queue, file scan, mail poll. Model steps (only when the user is not busy):
 summarise idle conversation, memory consolidation, speak one recorded card, and the rate-limited classifier
-(every 15 min, skipped when nothing changed). At most 3 autonomy worker threads exist at once.
+(every 15 min, skipped when nothing changed). At most 6 autonomy worker threads exist at once.
 
 ## Dynamic tools
 
@@ -158,6 +158,46 @@ instructions, a runaway breaker, retention (decisions 90 days, closed commitment
 A prompt-injection surface remains wherever mail/web text reaches the model; under this model a confident
 injected instruction **can** cause a calendar event, a reminder, an email or a background task. The log and
 the off switch are the mitigations.
+
+## Audit-and-fix pass (2026-09-20, after the full-permission change)
+
+Behaviour that changed because a real bug was found:
+
+* **Dry-run no longer burns work.** Items extracted in dry-run were stored, so they became "duplicates" and were
+  never acted on once dry-run ended, and the deadline scan used up the real 24 h / 2 h / overdue nudges.
+  Now dry-run keeps separate bookkeeping (`dry_notified`, `dry_actioned`, commitment `dry_run` flag) and *leaving*
+  dry-run replays what it only logged.
+* **Old learned "ask" rules are migrated.** Rules learned before the permission change (`always_ask`/`ask_once`,
+  source `learned`) still forced an ask; they are converted to `auto_act` on startup. Rules you wrote are kept.
+  A user-written `ask_once` really is "once": the first approval turns it into `auto_act`.
+* **Teach loop is recoverable.** A learned `ignore` lapses after `JARVIS_AUTONOMY_LEARNED_IGNORE_DAYS` (30) and
+  is never learned for `deadline:*` categories. Dismissing a *card* only suppresses further cards for that
+  category; it no longer silences confident autonomous actions there.
+* **The tick is never held up.** Agent-loop actions decided on the tick thread go to the auto queue, and the
+  queue drain and the mail poll run on bounded workers (6 at most, one queue drain at a time), so a slow model
+  call cannot starve the deadline scan. Campaign steps and the classifier retry after failures (a failed
+  classifier call no longer makes the "unchanged context" shortcut skip its own retry).
+* **Capacity is a wait, not a failure.** "Too many background tasks" puts the action on the auto queue instead
+  of failing and notifying. The kill switch is also checked inside `_run_action`, so a worker that had already
+  decided cannot act after autonomy is turned off. An agent reply that admits failure ("Sorry, I couldn't ...")
+  or is empty counts as a failure, not a success.
+* **Campaigns.** Steps run **without an approval step** (`approve_campaign(project, false)` *pauses* a project,
+  `true` resumes it). A step whose task is stuck `running` for 6 h (Jarvis restarted mid-run) or whose queue row
+  disappeared is recovered like any other failure.
+* **Inbound.** A failed extraction releases the message so the next poll retries it (3 tries, then dropped); an
+  unreachable Gmail retries in ~2 min instead of a full interval; one bad item no longer loses the rest of a batch;
+  duplicate check + insert is one atomic step (two workers no longer double-insert). The sleep-mail hook reads a
+  message body only while autonomy is enabled.
+* **Housekeeping.** `autonomy_seen_messages` (60 days) and `autonomy_patterns` (60 days) are pruned.
+  Consolidation writes a "learned rule" memory fact only for 3 approvals / 2 dismissals in a row (it used to write
+  "repeatedly approved" after one) and retires facts for rules that no longer exist.
+* **Skills.** Patterns are never mined from tools that type/click, send messages, write files, call HTTP, or change
+  Jarvis (they can carry passwords/PINs/auth headers), nor from inputs over 1500 characters; the daily creation
+  budget is enforced atomically.
+
+Intentional and unchanged: high-risk projects are still *simulated* unless their metadata says `live`; a
+user-written `ask_once`/`always_ask`/`ignore` rule is honoured; the confidence floor records (not acts on)
+low-confidence items.
 
 ## How to verify (do this before trusting it)
 

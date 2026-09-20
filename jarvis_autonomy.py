@@ -169,6 +169,12 @@ VERDICTS = ("auto_act", "ask_once", "always_ask", "ignore")
 AGENT_RUN_TYPES = ("calendar", "email", "file_op")  # actions that may need an agent-loop run
 HARD_BUDGET_MULT = 5      # act budget is soft; this multiple of it is a runaway breaker
 MIN_AUTO_CONF_DEFAULT = 0.7
+LEARNED_IGNORE_DAYS = 30  # a learned 'ignore' lapses after this long without new feedback (recoverable)
+OFF_MSG = "autonomy is off"
+BG_BUSY = "too many background tasks already running; try again later"
+_AGENT_FAIL_RE = re.compile(
+    r"^\s*(sorry|i (couldn't|could not|can't|cannot|was unable|wasn't able|am unable)|unable to|failed|error|"
+    r"there was (an )?(error|problem))", re.I)
 FILE_SIGNAL_EXTS = (".pdf", ".docx", ".doc", ".xlsx", ".pptx", ".csv", ".zip", ".epub")
 INBOUND_SOURCES = ("email", "telegram", "discord", "message")  # content written by someone else
 MIN_EXTRACT_CONFIDENCE = 0.6
@@ -212,7 +218,10 @@ _last_tick_start: datetime | None = None
 _last_classifier: datetime | None = None
 _last_context_hash: str = ""
 _started = False
-_worker_slots = threading.BoundedSemaphore(3)  # at most 3 autonomy worker threads alive at once
+_worker_slots = threading.BoundedSemaphore(6)  # at most 6 autonomy worker threads alive at once
+_tick_ctx = threading.local()            # .active = True on the tick thread (agent-loop work is queued, not run inline)
+_queue_run_lock = threading.Lock()       # one auto-queue drain (agent-loop run) at a time
+_commit_lock = threading.RLock()         # find-duplicate + insert must be one step
 
 
 # ---------------------------------------------------------------------------------------- config
@@ -318,6 +327,9 @@ def init_autonomy_tables() -> None:
                 have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            # Rules learned BEFORE the full-permission change said 'always_ask'; they would still force an ask.
+            conn.execute("UPDATE autonomy_policies SET verdict='auto_act' WHERE source='learned' "
+                         "AND verdict IN ('always_ask','ask_once')")
             # campaign status machine: planned -> running -> blocked -> done / cancelled
             conn.execute("UPDATE autonomy_project_actions SET status='running' WHERE status='queued'")
             conn.execute("UPDATE autonomy_project_actions SET status='done' WHERE status='completed'")
@@ -461,9 +473,33 @@ def dry_run() -> bool:
 
 
 def set_dry_run(on: bool) -> str:
+    was = dry_run()
     set_setting("dry_run", "1" if on else "0")
     _publish()
-    return "Dry-run on: autonomy will log what it would do and change nothing." if on else "Dry-run off."
+    if on:
+        return "Dry-run on: autonomy will log what it would do and change nothing."
+    if was:
+        _spawn("autonomy-replay", _replay_dry_run_items)  # what dry-run only logged now actually happens
+    return "Dry-run off."
+
+
+def _replay_dry_run_items() -> int:
+    """Items extracted while in dry-run were stored (so the log has them) but never acted on, and a stored
+    commitment is a 'duplicate' forever after: without this, leaving dry-run would silently skip them."""
+    n = 0
+    for c in _rows("SELECT * FROM commitments WHERE status='open' AND quarantined=0"):
+        m = _meta(c)
+        if not m.get("dry_run") or m.get("actioned"):
+            continue
+        _set_commitment_meta(c["id"], dry_run=False)
+        action_type, details = _action_for_commitment(c)
+        if not action_type or not enabled() or dry_run():
+            continue
+        _route(f"{c['source_type']}:{action_type}", str(m.get("sender") or ""), c["description"],
+               c["source_quote"] or "", action_type, details, float(c["confidence"] or 0), c["source_type"],
+               c["id"], gated_ok=gate_reason() is None)
+        n += 1
+    return n
 
 
 # ------------------------------------------------------------------------------------- callbacks
@@ -665,6 +701,12 @@ def add_commitment(c: dict, source_type: str, sender: str = "") -> int | None:
     who = who if who in RESPONSIBLE else "user"
     deadline = _plausible_deadline(_norm_dt(c.get("deadline_iso")))
     quote = _clean(c.get("source_quote"), 400) or desc[:200]
+    with _commit_lock:  # two workers extracting the same thing must not both insert it
+        return _insert_commitment(c, ctype, desc, who, deadline, quote, conf, source_type, sender)
+
+
+def _insert_commitment(c: dict, ctype: str, desc: str, who: str, deadline: str | None, quote: str, conf: float,
+                       source_type: str, sender: str) -> int | None:
     dup = _find_duplicate(desc, deadline)
     if dup:
         _merge_into(dup, deadline, conf, quote)
@@ -772,6 +814,14 @@ def delete_policy(pid: int) -> str:
     return f"Rule #{pid} removed."
 
 
+def _learned_ignore_expired(rule: dict) -> bool:
+    try:
+        last = datetime.fromisoformat(rule.get("last_feedback_at") or rule.get("updated_at") or "")
+    except ValueError:
+        return True
+    return _now() - last > timedelta(days=_env_int("JARVIS_AUTONOMY_LEARNED_IGNORE_DAYS", LEARNED_IGNORE_DAYS))
+
+
 def _sender_address(sender: str) -> str:
     """'Name <a@b.com>' -> 'a@b.com', lower-cased. A display name can say anything, so only the address counts."""
     m = re.search(r"<([^<>\s]+)>", sender or "")
@@ -819,6 +869,8 @@ def evaluate_policy(category: str, sender: str, text: str, confidence: float,
     matched.sort(key=lambda r: (specificity[r["match_kind"]], r["id"]), reverse=True)
     rule = matched[0]
     verdict = rule["verdict"]
+    if verdict == "ignore" and rule["source"] == "learned" and _learned_ignore_expired(rule):
+        verdict = "auto_act"  # a learned 'ignore' lapses (recoverable); only a user-written one is permanent
     if verdict == "ignore":
         return "ignore", f"rule #{rule['id']} ({rule['match_kind']}) says ignore"
     if verdict in ("always_ask", "ask_once"):
@@ -843,10 +895,12 @@ def record_feedback(category: str, sender: str, action_type: str | None, approve
     a = r["approved_streak"] + 1 if approved else 0
     d = 0 if approved else r["dismissed_streak"] + 1
     verdict = r["verdict"]
-    if r["source"] == "learned" and not approved and d >= LEARN_DISMISSALS:
-        verdict = "ignore"
+    if r["source"] == "learned" and not approved and d >= LEARN_DISMISSALS and not category.startswith("deadline:"):
+        verdict = "ignore"  # (never for deadline nudges: silencing those by accident is not recoverable enough)
     elif r["source"] == "learned" and approved and verdict == "ignore":
         verdict = "auto_act"
+    elif r["source"] != "learned" and verdict == "ask_once" and approved:
+        verdict = "auto_act"  # 'ask once' means exactly that: the first approval settles it
     _exec("UPDATE autonomy_policies SET approved_streak=?, dismissed_streak=?, verdict=?, last_feedback_at=?, "
           "updated_at=? WHERE id=?", (a, d, verdict, now, now, r["id"]))
     if verdict != r["verdict"]:
@@ -1015,6 +1069,8 @@ def _direct_calendar(details: dict) -> tuple[bool, str] | None:
 
 def _run_action(action_type: str | None, details: dict, commitment_id: int | None = None) -> tuple[bool, str]:
     """Performs one approved/auto action through existing Jarvis paths only. Dry-run does nothing."""
+    if hard_disabled() or not enabled():  # kill switch, even for a worker that started before it was pulled
+        return False, OFF_MSG
     details = _sanitize_details(details)
     if dry_run():
         return True, f"(dry run) would {action_type}: {json.dumps(details)[:200]}"
@@ -1027,7 +1083,7 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
         return True, "notification delivered"
     if action_type == "background_task":
         if (_call("running_background_count", default=0) or 0) >= budgets()["max_bg_tasks"]:
-            return False, "too many background tasks already running; try again later"
+            return False, BG_BUSY
         desc = str(details.get("description") or details.get("title") or "autonomy task")
         res = _call("queue_task", desc, str(details.get("instructions") or desc),
                     str(details.get("priority") or "normal"), details.get("deadline_iso"), default=None)
@@ -1052,7 +1108,12 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
             instr = (f"Do exactly this file task and nothing more, using this data: {data}. "
                      "Reply in one short sentence." + guard)
         res = _call("run_agent", instr, default=None)
-        return res is not None, str(res or "no agent available")
+        text = str(res or "").strip()
+        if res is None:
+            return False, "no agent available"
+        if not text:
+            return False, "the agent finished without doing or saying anything"
+        return (not _AGENT_FAIL_RE.match(text)), text
     return False, f"unknown action type {action_type!r}"
 
 
@@ -1175,10 +1236,7 @@ def _route(category: str, sender: str, title: str, evidence: str, action_type: s
         _log_decision(title, {"category": category}, "silent", "", reason, outcome="skipped", **info)
         return "silent"
     if verdict == "auto_act":
-        if _recently_dismissed(category):
-            _log_decision(title, {"category": category}, "silent", "", "similar item was dismissed recently",
-                          outcome="skipped", **info)
-            return "silent"
+        # NB: a dismissed *card* only suppresses further cards (create_suggestion), never a confident action.
         b = budgets()
         if b["acts_today"] >= b["max_acts"] * HARD_BUDGET_MULT:
             _log_decision(title, None, "silent", "", "runaway breaker: far over the daily action budget",
@@ -1186,14 +1244,18 @@ def _route(category: str, sender: str, title: str, evidence: str, action_type: s
             return "silent"
         if b["acts_today"] >= b["max_acts"]:
             reason += " (over the soft daily budget; acting anyway)"
-        if not gated_ok and action_type in AGENT_RUN_TYPES:
-            # the user is mid-command / Focus / Sleep: an agent-loop run must not interleave, so it waits its
-            # turn on the auto queue (no ask, it runs as soon as the gate is clear)
+        on_tick = bool(getattr(_tick_ctx, "active", False))
+        if action_type in AGENT_RUN_TYPES and (not gated_ok or on_tick):
+            # An agent-loop run must not interleave with the user's command (and must never run inline on the
+            # tick thread, where a slow run would starve the deadline scan): it waits on the auto queue and runs
+            # as soon as it can. No ask.
             _queue_auto(category, sender, title, evidence, action_type, details, confidence, commitment_id)
-            _log_decision(title, {"category": category}, "queued", "", reason + "; waiting for the user to be idle",
+            _log_decision(title, {"category": category}, "queued", "",
+                          reason + ("; waiting for the user to be idle" if not gated_ok else "; queued off the tick"),
                           outcome="info", **info)
             return "queued"
-        _execute_auto(category, title, evidence, action_type, details, confidence, commitment_id, reason)
+        _execute_auto(category, title, evidence, action_type, details, confidence, commitment_id, reason,
+                      sender=sender)
         return "act"
     # 'record' (below the confidence floor) or 'ask' (a user-written ask rule): a card for visibility
     _log_decision(title, {"category": category}, "suggest", "", reason, outcome="info", **info)
@@ -1203,9 +1265,19 @@ def _route(category: str, sender: str, title: str, evidence: str, action_type: s
 
 
 def _execute_auto(category: str, title: str, evidence: str, action_type: str, details: dict, confidence: float,
-                  commitment_id: int | None, reason: str) -> tuple[bool, str]:
+                  commitment_id: int | None, reason: str, sender: str = "", from_queue: bool = False) -> tuple[bool, str]:
     """Do it now, log it, and tell the user only if it failed (success is visible in the log)."""
     ok, res = _run_action(action_type, details, commitment_id)
+    if res == OFF_MSG:  # switched off between the decision and the action: not a failure, just not done
+        _log_decision(title, {"category": category}, "silent", "", OFF_MSG, category=category, quote=evidence,
+                      outcome="skipped")
+        return False, res
+    if res == BG_BUSY:  # a real capacity limit: wait for a free worker instead of failing
+        if not from_queue:
+            _queue_auto(category, sender, title, evidence, action_type, details, confidence, commitment_id)
+            _log_decision(title, {"category": category}, "queued", "", "waiting for a free background worker",
+                          category=category, quote=evidence, outcome="info")
+        return False, res
     outcome = "dry_run" if res.startswith("(dry run)") else ("ok" if ok else "failed")
     _log_decision(title, {"category": category, "confidence": confidence}, "act", res, reason, category=category,
                   quote=evidence, payload={"type": action_type, "details": _sanitize_details(details)},
@@ -1213,7 +1285,7 @@ def _execute_auto(category: str, title: str, evidence: str, action_type: str, de
     _audit("action", {"category": category, "type": action_type, "ok": ok}, res)
     if not ok:
         _call("notify", f"I tried to do this on my own but it failed: {title[:80]}. {res[:120]}", False)
-    if commitment_id and ok and action_type != "notification":  # a nudge is not the work itself
+    if commitment_id and ok and outcome == "ok" and action_type != "notification":  # a nudge is not the work
         _set_commitment_meta(commitment_id, actioned=True)
     return ok, res
 
@@ -1221,7 +1293,8 @@ def _execute_auto(category: str, title: str, evidence: str, action_type: str, de
 def _queue_auto(category: str, sender: str, title: str, evidence: str, action_type: str, details: dict,
                 confidence: float, commitment_id: int | None) -> None:
     title = _clean(title, 200)
-    if _rows("SELECT 1 FROM autonomy_suggestions WHERE status='auto_queued' AND title=?", (title,)):
+    if _rows("SELECT 1 FROM autonomy_suggestions WHERE status IN ('auto_queued','running') AND title=? "
+             "AND category=?", (title, category)):
         return
     _exec("INSERT INTO autonomy_suggestions (created_at, category, sender, title, evidence, action_type, "
           "action_json, confidence, status, commitment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto_queued', ?)",
@@ -1230,22 +1303,32 @@ def _queue_auto(category: str, sender: str, title: str, evidence: str, action_ty
 
 
 def _run_queued_auto(now: datetime, gated_ok: bool) -> int:
-    """Tick step: run auto-queued agent-loop actions once the user is idle again."""
-    if not gated_ok:
+    """Drain the auto queue (agent-loop actions and background-worker-limited ones) when the user is idle.
+    One drain at a time; the tick starts this on a worker thread."""
+    if not gated_ok or not enabled():
+        return 0
+    if not _queue_run_lock.acquire(blocking=False):
         return 0
     ran = 0
-    for s in _rows("SELECT * FROM autonomy_suggestions WHERE status='auto_queued' ORDER BY id LIMIT 3"):
-        if not _exec_rc("UPDATE autonomy_suggestions SET status='running', decided_at=? WHERE id=? AND "
-                        "status='auto_queued'", (_iso(now), s["id"])):
-            continue
-        try:
-            details = json.loads(s["action_json"] or "{}")
-        except json.JSONDecodeError:
-            details = {}
-        ok, res = _execute_auto(s["category"], s["title"], s["evidence"] or "", s["action_type"], details,
-                                float(s["confidence"] or 0), s["commitment_id"], "ran after the user went idle")
-        _finish_suggestion(s["id"], "executed" if ok else "failed", res)
-        ran += 1
+    try:
+        for s in _rows("SELECT * FROM autonomy_suggestions WHERE status='auto_queued' ORDER BY id LIMIT 3"):
+            if not _exec_rc("UPDATE autonomy_suggestions SET status='running', decided_at=? WHERE id=? AND "
+                            "status='auto_queued'", (_iso(now), s["id"])):
+                continue
+            try:
+                details = json.loads(s["action_json"] or "{}")
+            except json.JSONDecodeError:
+                details = {}
+            ok, res = _execute_auto(s["category"], s["title"], s["evidence"] or "", s["action_type"], details,
+                                    float(s["confidence"] or 0), s["commitment_id"], "ran from the auto queue",
+                                    sender=s["sender"] or "", from_queue=True)
+            if res == BG_BUSY:  # still no free worker: back on the queue for the next tick
+                _exec("UPDATE autonomy_suggestions SET status='auto_queued' WHERE id=?", (s["id"],))
+                break
+            _finish_suggestion(s["id"], "executed" if ok else "failed", res)
+            ran += 1
+    finally:
+        _queue_run_lock.release()
     return ran
 
 
@@ -1299,19 +1382,28 @@ def extract_commitments_and_projects(turns_text: str, tool_actions_text: str = "
 def _ingest(items: list[dict], source_type: str, sender: str, gated_ok: bool = True) -> list[int]:
     created: list[int] = []
     for item in items:
-        cid = add_commitment(item, source_type, sender)
-        if not cid:
-            continue
-        created.append(cid)
-        c = _commitment(cid)
-        if not c:
-            continue
-        action_type, details = _action_for_commitment(c)
-        category = f"{source_type}:{action_type or 'track'}"
-        decision = _route(category, sender, c["description"], c["source_quote"] or "", action_type, details,
-                          float(c["confidence"] or 0), source_type, cid, gated_ok=gated_ok)
-        if decision in ("act", "queued"):
-            _set_commitment_meta(cid, actioned=True)
+        try:  # one bad item must not lose the rest of the batch
+            cid = add_commitment(item, source_type, sender)
+            if not cid:
+                continue
+            created.append(cid)
+            c = _commitment(cid)
+            if not c:
+                continue
+            action_type, details = _action_for_commitment(c)
+            category = f"{source_type}:{action_type or 'track'}"
+            decision = _route(category, sender, c["description"], c["source_quote"] or "", action_type, details,
+                              float(c["confidence"] or 0), source_type, cid, gated_ok=gated_ok)
+            if decision in ("act", "queued"):
+                # in dry-run nothing happened: remember it so leaving dry-run acts on it (see set_dry_run)
+                _set_commitment_meta(cid, **({"dry_run": True} if dry_run() else {"actioned": True}))
+        except Exception as e:
+            log.warning("Autonomy ingest of one item failed: %s", e)
+            try:
+                _log_decision(str(item.get("description") or "item")[:80], None, "error", "", f"ingest failed: {e}"[:250],
+                              category=source_type, outcome="failed")
+            except Exception:
+                pass
     if created:
         _publish()
     return created
@@ -1375,6 +1467,16 @@ def _mark_seen(source: str, msg_id: str) -> bool:
                          (source, str(msg_id)[:300], _iso())))
 
 
+def _release_seen(source: str, msg_id: str) -> None:
+    """Extraction failed (model hiccup): let the next poll try the message again, but only 3 times."""
+    fails = _rows("SELECT COUNT(*) n FROM autonomy_seen_messages WHERE source=? AND msg_id LIKE ?",
+                  (f"{source}!fail", f"{str(msg_id)[:280]}#%"))[0]["n"]
+    _exec("INSERT OR IGNORE INTO autonomy_seen_messages (source, msg_id, seen_at) VALUES (?, ?, ?)",
+          (f"{source}!fail", f"{str(msg_id)[:280]}#{fails + 1}", _iso()))
+    if fails + 1 < 3:
+        _exec("DELETE FROM autonomy_seen_messages WHERE source=? AND msg_id=?", (source, str(msg_id)[:300]))
+
+
 def unseen_message(source: str, msg_id: str) -> bool:
     """Read-only check (does not mark): True if (source, id) has not been processed yet."""
     return not _rows("SELECT 1 FROM autonomy_seen_messages WHERE source=? AND msg_id=?", (source, str(msg_id)[:300]))
@@ -1411,6 +1513,8 @@ def process_inbound_message_for_events(subject: str, body: str, sender: str = ""
     if not isinstance(parsed, dict):
         _log_decision(label, None, "inbound", "", "extraction failed", category=f"{source}:inbound",
                       quote=subject, outcome="failed")
+        if message_id:
+            _release_seen(source, message_id)
         return []
     scale = 1.0 if body else 0.85
     items: list[dict] = []
@@ -1454,8 +1558,11 @@ def _inbox_poll(now: datetime, gated_ok: bool) -> int:
                 return 0
         except ValueError:
             pass
-    set_setting("last_mail_poll_at", _iso(now))
-    msgs = _call("poll_mail", default=None) or []
+    set_setting("last_mail_poll_at", _iso(now))  # also stops a second worker polling at the same time
+    msgs = _call("poll_mail", default=None)
+    if msgs is None:  # Gmail not reachable yet (MCP still starting): try again in ~2 min, not a whole interval
+        set_setting("last_mail_poll_at", _iso(now - timedelta(minutes=max(0, every - 2))))
+        return 0
     n = 0
     for m in msgs[:5]:
         if not isinstance(m, dict) or not m.get("id"):
@@ -1598,6 +1705,7 @@ def _prune(now: datetime) -> None:
     _exec("DELETE FROM autonomy_suggestions WHERE status NOT IN ('pending','running') AND created_at<?", (cut,))
     _exec("DELETE FROM autonomy_project_actions WHERE status IN ('completed','failed','simulated','cancelled') "
           "AND created_at<?", (cut,))
+    _exec("DELETE FROM autonomy_seen_messages WHERE seen_at<?", (_iso(now - timedelta(days=60)),))
     _exec("DELETE FROM commitments WHERE status IN ('completed','cancelled','expired') AND updated_at<?",
           (_iso(now - timedelta(days=COMMITMENT_RETENTION_DAYS)),))
 
@@ -1618,21 +1726,24 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
         left = due - now
         bucket = "overdue" if left.total_seconds() < 0 else ("2h" if left <= timedelta(hours=2) else "24h")
         meta = _meta(c)
-        if bucket in (meta.get("notified") or []):
+        # In dry-run nothing really happens, so it keeps its own bookkeeping and never uses up a real nudge.
+        nkey, akey = ("dry_notified", "dry_actioned") if dry_run() else ("notified", "actioned")
+        if bucket in (meta.get(nkey) or []):
             continue
         when = "is overdue" if bucket == "overdue" else f"is due {due.strftime('%A %H:%M')}"
         text = f"Heads up: {_clean(c['description'], 200)} {when}."
         decision = _route("deadline:notification", "", c["description"], c["source_quote"] or "", "notification",
                           {"text": text}, 1.0, "deadline", c["id"], model_says="act", gated_ok=gated_ok)
         if decision in ("act", "queued", "suggest", "silent"):
-            _set_commitment_meta(c["id"], notified=(meta.get("notified") or []) + [bucket])
+            _set_commitment_meta(c["id"], **{nkey: (meta.get(nkey) or []) + [bucket]})
             fired += decision == "act"
-        if bucket == "24h" and not meta.get("actioned") and not meta.get("queued") and decision != "queued":
+        if bucket == "24h" and not meta.get(akey) and not meta.get("actioned") and not meta.get("queued") \
+                and decision != "queued":
             action_type, details = _action_for_commitment(c)
             if action_type in ("reminder", "calendar"):
                 _route(f"deadline:{action_type}", "", c["description"], c["source_quote"] or "", action_type,
                        details, 0.9, "deadline", c["id"], gated_ok=gated_ok)
-                _set_commitment_meta(c["id"], actioned=True)
+                _set_commitment_meta(c["id"], **{akey: True})
     return fired
 
 
@@ -1693,6 +1804,7 @@ def _classifier_step(now: datetime, force: bool = False) -> dict | None:
     parsed = _ask_model(_fill(AUTONOMY_TICK_CLASSIFIER_PROMPT, context_summary=context[:3000],
                               memory_context=(memory or "(none yet)")[:2500]), 700)
     if not isinstance(parsed, dict):
+        _last_context_hash = ""  # the call failed: the unchanged-context shortcut must not starve the retry
         return None
     if not parsed.get("has_need"):
         _log_decision(context, parsed, "silent", "", "classifier: no need")
@@ -1726,7 +1838,7 @@ def add_project_action(project: str, description: str, scheduled_for: str = "", 
           "created_at) VALUES (?, ?, ?, 'planned', ?, ?)",
           (pid, action_type, description.strip()[:400], _norm_dt(scheduled_for) or _iso(), _iso()))
     _publish()
-    return f"Added a planned step to project {project!r}. It runs only after you approve the campaign."
+    return f"Added a planned step to project {project!r}. It runs on its own (pause the campaign to stop it)."
 
 
 def approve_campaign(project: str, approved: bool = True) -> str:
@@ -1738,7 +1850,7 @@ def approve_campaign(project: str, approved: bool = True) -> str:
     _exec("UPDATE autonomy_projects SET metadata_json=?, updated_at=? WHERE id=?",
           (json.dumps(meta), _iso(), rows[0]["id"]))
     _publish()
-    return f"Campaign for {rows[0]['name']} {'approved' if approved else 'paused'}."
+    return f"Campaign for {rows[0]['name']} {'approved (running)' if approved else 'paused'}."
 
 
 MAX_STEP_ATTEMPTS = 3
@@ -1765,19 +1877,35 @@ def _recover_step(a: dict, why: str, now: datetime) -> None:
 
 
 def _campaign_step(now: datetime, gated_ok: bool) -> int:
-    """Drives approved projects' steps across days through the existing task queue. Step status machine:
-    planned -> running -> done | blocked | cancelled (plus 'simulated' for high-risk projects, which only
-    run for real when their metadata says live). Failures are retried before a step is 'blocked'."""
+    """Drives projects' steps across days through the existing task queue. Steps run WITHOUT an approval
+    step (full-permission model); `approve_campaign(project, approved=False)` pauses a project and
+    approved=True resumes it. Status machine: planned -> running -> done | blocked | cancelled (plus
+    'simulated' for high-risk projects, which only run for real when their metadata says live). Failures are
+    retried before a step is 'blocked'; a task stuck 'running' (Jarvis restarted mid-run) is recovered."""
     ran = 0
     for a in _rows("SELECT a.*, p.name pname FROM autonomy_project_actions a JOIN autonomy_projects p "
                    "ON p.id=a.project_id WHERE a.status='running' AND a.task_ref IS NOT NULL"):
-        t = _rows("SELECT status FROM task_queue WHERE id=?", (a["task_ref"],))
+        t = _rows("SELECT status, scheduled_end FROM task_queue WHERE id=?", (a["task_ref"],))
+        if not t:  # the queue row is gone (deleted): recover, but not in the first hour (queue not written yet)
+            try:
+                if now - datetime.fromisoformat(a["created_at"]) < timedelta(hours=1):
+                    continue
+            except ValueError:
+                pass
         st = t[0]["status"] if t else "cancelled"
         if st == "done":
             _exec("UPDATE autonomy_project_actions SET status='done', completed_at=?, result_summary=? WHERE id=?",
                   (_iso(now), "task done", a["id"]))
         elif st in ("failed", "cancelled"):
             _recover_step(a, f"task {st}", now)
+        elif st == "running":
+            try:
+                overdue = now - datetime.fromisoformat(t[0]["scheduled_end"]) > timedelta(hours=6)
+            except (TypeError, ValueError):
+                overdue = False
+            if overdue:  # orphaned by a restart: nothing will ever finish it
+                _exec("UPDATE task_queue SET status='failed' WHERE id=? AND status='running'", (a["task_ref"],))
+                _recover_step(a, "task was stuck running for over 6h", now)
         elif st == "pending":
             try:
                 age = now - datetime.fromisoformat(a["created_at"])
@@ -1793,7 +1921,7 @@ def _campaign_step(now: datetime, gated_ok: bool) -> int:
             pmeta = json.loads(a["pmeta"] or "{}")
         except json.JSONDecodeError:
             pmeta = {}
-        if not pmeta.get("campaign_approved"):
+        if pmeta.get("campaign_approved") is False:  # explicitly paused
             continue
         b = budgets()
         if b["acts_today"] >= b["max_acts"] * HARD_BUDGET_MULT:
@@ -1814,7 +1942,8 @@ def _campaign_step(now: datetime, gated_ok: bool) -> int:
                 _call("plan_queue", default=None)  # without this the task stayed 'pending' forever
                 _exec("UPDATE autonomy_project_actions SET status='running', task_ref=? WHERE id=?", (tid, a["id"]))
                 _log_decision(f"campaign {a['pname']}", None, "act", f"running: {a['description']}"[:300],
-                              "campaign approved", category="campaign", outcome="ok", result=str(ref)[:200])
+                              "campaign step (no approval needed)", category="campaign", outcome="ok",
+                              result=str(ref)[:200])
             else:
                 _recover_step(a, str(ref or "task queue unavailable")[:200], now)
             _audit("campaign_step", {"project": a["pname"], "action": a["description"][:120]}, str(ref))
@@ -1824,7 +1953,7 @@ def _campaign_step(now: datetime, gated_ok: bool) -> int:
             if ok:
                 _exec("UPDATE autonomy_project_actions SET status='done', completed_at=?, result_summary=? WHERE id=?",
                       (_iso(now), res[:300], a["id"]))
-                _log_decision(f"campaign {a['pname']}", None, "act", res[:300], "campaign approved",
+                _log_decision(f"campaign {a['pname']}", None, "act", res[:300], "campaign step (no approval needed)",
                               category="campaign", outcome="ok", result=res)
             else:
                 _recover_step(a, res, now)
@@ -1893,6 +2022,7 @@ def run_autonomy_tick_once(callbacks: dict | None = None, now: datetime | None =
     now = now or _now()
     out: dict[str, Any] = {}
     try:
+        _tick_ctx.active = True
         gate = gate_reason()
         out["gate"] = gate
         for name, fn in (
@@ -1901,9 +2031,11 @@ def run_autonomy_tick_once(callbacks: dict | None = None, now: datetime | None =
             ("campaign_steps", lambda: _campaign_step(now, gate is None)),
             ("planner", lambda: _planner_step(now, gate is None)),
             ("replan", _replan_pending),
-            ("queued_auto", lambda: _run_queued_auto(now, gate is None)),
+            # slow work (an agent-loop run, model calls per mail) goes to bounded workers so the tick - and
+            # with it the deadline scan - is never held up
+            ("queued_auto", lambda: _spawn("autonomy-queued", _run_queued_auto, now, gate is None)),
             ("files", lambda: _file_scan(now)),
-            ("mail", lambda: _inbox_poll(now, gate is None)),
+            ("mail", lambda: _spawn("autonomy-mail", _inbox_poll, now, gate is None)),
         ):
             try:
                 out[name] = fn()
@@ -1919,6 +2051,7 @@ def run_autonomy_tick_once(callbacks: dict | None = None, now: datetime | None =
                 except Exception as e:
                     log.warning("Autonomy step %s failed: %s", name, e)
     finally:
+        _tick_ctx.active = False
         _tick_running.clear()
         _tick_lock.release()
     return out

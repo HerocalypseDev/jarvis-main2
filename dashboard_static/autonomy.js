@@ -165,11 +165,11 @@
       try { meta = JSON.parse(p.metadata_json || "{}"); } catch (e) { /* ignore */ }
       return h("li", {},
         h("strong", {}, p.name),
-        ` (${p.status}, risk ${p.risk_level || "low"}${meta.campaign_approved ? ", campaign approved" : ""}) `,
+        ` (${p.status}, risk ${p.risk_level || "low"}${meta.campaign_approved === false ? ", campaign PAUSED" : ", running"}) `,
         h("button", {
           class: "btn btn-small btn-ghost",
-          onclick: () => call("POST", "/api/autonomy/campaigns/approve", { project: p.name, approved: !meta.campaign_approved }),
-        }, meta.campaign_approved ? "Pause campaign" : "Approve campaign"),
+          onclick: () => call("POST", "/api/autonomy/campaigns/approve", { project: p.name, approved: meta.campaign_approved === false }),
+        }, meta.campaign_approved === false ? "Resume campaign" : "Pause campaign"),
         (actionsByProject[p.id] || []).map((a) => h("div", { class: "muted" }, `· ${a.status}: ${a.description}`)),
         h("form", {
           class: "auto-form",

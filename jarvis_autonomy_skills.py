@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import jarvis_autonomy as core
 
@@ -34,7 +34,15 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,39}$")
 MAX_STEPS = 12
 MAX_MINED_STEPS = 6
 FORBIDDEN_TOOLS = frozenset({"autonomy_skill"})           # no recursion / self-management from inside a skill
-NEVER_MINED = frozenset({"run_shell", "run_python", "system_action", "set_plan"})
+# Never turned into a skill automatically: shell/python, anything that types or clicks (may carry a password or
+# PIN), sends messages, writes files, calls arbitrary HTTP (auth headers), or changes Jarvis itself.
+NEVER_MINED = frozenset({
+    "run_shell", "run_python", "system_action", "set_plan", "type_text", "click_at", "drag_and_drop", "scroll_screen",
+    "read_clipboard", "http_request", "send_whatsapp_message", "write_file", "set_llm_provider", "enroll_face",
+    "delete_face", "face_privacy", "restart_jarvis", "change_jarvis_code", "delegate_to_claude_code",
+    "delegate_research", "save_skill", "remember_fact", "create_tool", "manage_dynamic_tool",
+})
+MAX_MINED_INPUT_CHARS = 1500
 MAX_SKILLS_PER_DAY = 10
 _FAILED_RE = re.compile(r"^(tool failed|mcp tool|unknown mcp|error|failed|dynamic tool .* failed)", re.I)
 
@@ -122,12 +130,13 @@ def create_skill(name: str, description: str, steps: object, source: str = "mode
         core._log_decision(f"skill {name} rejected", None, "skill", "", err, category="skill", outcome="failed")
         return f"Skill not created: {err}"
     day = core._today_start()
-    if _q("SELECT COUNT(*) n FROM autonomy_skills WHERE created_at>=?", (day,))[0]["n"] >= MAX_SKILLS_PER_DAY:
-        return f"Daily limit of {MAX_SKILLS_PER_DAY} new skills reached."
-    if _q("SELECT 1 FROM autonomy_skills WHERE name=?", (name,)):
-        return f"A skill named {name!r} already exists; revoke it first to replace it."
-    _x("INSERT INTO autonomy_skills (name, description, steps_json, sig, source, created_at) VALUES (?,?,?,?,?,?)",
-       (name, core._clean(description, 300), json.dumps(clean), _sig(clean), source, core._iso()))
+    with core._db_lock:  # budget check + insert as one step (two threads cannot both slip under the limit)
+        if _q("SELECT COUNT(*) n FROM autonomy_skills WHERE created_at>=?", (day,))[0]["n"] >= MAX_SKILLS_PER_DAY:
+            return f"Daily limit of {MAX_SKILLS_PER_DAY} new skills reached."
+        if _q("SELECT 1 FROM autonomy_skills WHERE name=?", (name,)):
+            return f"A skill named {name!r} already exists; revoke it first to replace it."
+        _x("INSERT INTO autonomy_skills (name, description, steps_json, sig, source, created_at) VALUES (?,?,?,?,?,?)",
+           (name, core._clean(description, 300), json.dumps(clean), _sig(clean), source, core._iso()))
     core._log_decision(f"skill {name} created ({source})", None, "skill", f"{len(clean)} step(s): "
                        + ", ".join(s["tool"] for s in clean), "skill registered", category="skill",
                        payload={"steps": clean}, outcome="ok")
@@ -222,11 +231,12 @@ def note_turn(transcript: str) -> str | None:
             inp = json.loads(r["tool_input"] or "{}")
         except json.JSONDecodeError:
             return None
-        if not isinstance(inp, dict):
+        if not isinstance(inp, dict) or len(json.dumps(inp)) > MAX_MINED_INPUT_CHARS:
             return None
         steps.append({"tool": tool, "input": inp})
     if not (2 <= len(steps) <= MAX_MINED_STEPS):
         return None
+    _x("DELETE FROM autonomy_patterns WHERE last_seen<?", (core._iso(datetime.now() - timedelta(days=60)),))
     sig = _sig(steps)
     _x("INSERT INTO autonomy_patterns (sig, count, steps_json, last_seen) VALUES (?, 1, ?, ?) "
        "ON CONFLICT(sig) DO UPDATE SET count=count+1, last_seen=excluded.last_seen",

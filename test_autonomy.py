@@ -378,15 +378,19 @@ def test_after_turn_only_extracts_on_cues(A, monkeypatch):
 
 
 # ------------------------------------------------------------------------- campaigns & planner
-def test_campaign_requires_approval_then_queues(A):
+def test_campaign_steps_run_without_approval_and_a_paused_campaign_waits(A):
     f = Fake()
     _on(A, f)
     A.add_project_action("Migration", "Export the old data")
+    A.approve_campaign("Migration", approved=False)   # explicitly paused
     A._campaign_step(datetime.now(), True)
     assert f.tasks == []
-    A.approve_campaign("Migration")
+    A.approve_campaign("Migration", approved=True)    # resumed (approving is not required to run, only to un-pause)
     A._campaign_step(datetime.now(), True)
     assert len(f.tasks) == 1
+    A.add_project_action("Fresh", "Never approved, still runs")
+    A._campaign_step(datetime.now(), True)
+    assert len(f.tasks) == 2
     assert A._rows("SELECT status FROM autonomy_project_actions")[0]["status"] == "running"
 
 
@@ -1029,8 +1033,8 @@ def test_g02_worker_threads_are_bounded_and_extras_dropped(A):
         release.wait(5)
 
     try:
-        results = [A._spawn("w", slow) for _ in range(5)]
-        assert results == [True, True, True, False, False]
+        results = [A._spawn("w", slow) for _ in range(8)]
+        assert results == [True] * 6 + [False, False]
     finally:
         release.set()
     for _ in range(50):  # slots come back once the workers finish
@@ -1730,3 +1734,327 @@ def test_old_status_values_are_migrated(monkeypatch, tmp_path):
     assert [r["status"] for r in a._rows("SELECT status FROM autonomy_project_actions ORDER BY id")] == \
         ["running", "done", "blocked", "planned"]
     assert {"category", "outcome", "payload_json"} <= {r["name"] for r in a._rows("SELECT name FROM pragma_table_info('autonomy_decisions')")}
+
+
+# ======================================================================================
+# Audit-and-fix pass (2026-09-20, after the full-permission change). Each test names its finding.
+# ======================================================================================
+# ---- dry-run must not burn work
+def test_dryrun_extracted_items_are_acted_on_when_dry_run_is_left(A):
+    f = Fake({EXTRACT_MARK: [{"type": "task", "description": "Call the dentist", "deadline_iso": _future(30),
+                              "confidence": 0.95, "source_quote": "call dentist"}]})
+    _on(A, f)
+    A.set_dry_run(True)
+    ids = A.extract_commitments_and_projects("User: call the dentist tomorrow")
+    assert ids and f.reminders == []                       # dry-run: nothing happened...
+    assert A._meta(A._commitment(ids[0])).get("dry_run") is True and not A._meta(A._commitment(ids[0])).get("actioned")
+    assert A.extract_commitments_and_projects("User: call the dentist tomorrow") == []   # ...and it is now a duplicate
+    A._exec("UPDATE autonomy_settings SET value='0' WHERE key='dry_run'")
+    assert A._replay_dry_run_items() == 1                  # leaving dry-run replays it
+    assert len(f.reminders) == 1 and A._meta(A._commitment(ids[0])).get("actioned") is True
+    assert A._replay_dry_run_items() == 0                  # once
+
+
+def test_dryrun_does_not_use_up_real_deadline_nudges_or_the_implied_action(A):
+    f = Fake()
+    _on(A, f)
+    cid = A.add_commitment({"type": "task", "description": "File the report", "deadline_iso": _future(12),
+                            "confidence": 0.9}, "conversation")
+    A.set_dry_run(True)
+    A._deadline_scan(datetime.now(), True)
+    assert f.notified == [] and f.reminders == []
+    meta = A._meta(A._commitment(cid))
+    assert "notified" not in meta and "actioned" not in meta and meta.get("dry_notified") == ["24h"]
+    A._deadline_scan(datetime.now(), True)                # dry-run logs each bucket once, not every minute
+    assert A._rows("SELECT COUNT(*) n FROM autonomy_decisions WHERE outcome='dry_run'")[0]["n"] == 2
+    A.set_dry_run(False)
+    A._deadline_scan(datetime.now(), True)                # ...and the real nudge + reminder still happen
+    assert any("File the report" in n for n in f.notified) and len(f.reminders) == 1
+
+
+# ---- A: leftover ask-first
+def test_learned_ask_rules_from_before_the_permission_change_are_migrated(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "pre.db"))
+    import jarvis_autonomy as a
+
+    a._initialized_paths.clear()
+    a.init_autonomy_tables()
+    now = datetime.now().isoformat()
+    a._exec("INSERT INTO autonomy_policies (category, match_kind, match_value, verdict, source, created_at, updated_at) "
+            "VALUES ('email:calendar','category','','always_ask','learned',?,?)", (now, now))
+    a._exec("INSERT INTO autonomy_policies (category, match_kind, match_value, verdict, source, created_at, updated_at) "
+            "VALUES ('email:reminder','category','','always_ask','user',?,?)", (now, now))
+    a._initialized_paths.clear()
+    a.init_autonomy_tables()
+    assert a.evaluate_policy("email:calendar", "x@y.z", "t", 0.9, "calendar", "email")[0] == "auto_act"
+    assert a.evaluate_policy("email:reminder", "x@y.z", "t", 0.9, "reminder", "email")[0] == "ask"  # user's own rule kept
+
+
+def test_ask_once_means_the_first_approval_settles_it(A):
+    A.set_policy("conversation:email", "ask_once")
+    assert A.evaluate_policy("conversation:email", "", "x", 0.99, "email", "conversation")[0] == "ask"
+    A.record_feedback("conversation:email", "", "email", True)
+    assert A.evaluate_policy("conversation:email", "", "x", 0.99, "email", "conversation")[0] == "auto_act"
+
+
+# ---- D: learned ignore must be recoverable; dismissed cards never block confident actions
+def test_learned_ignore_never_applies_to_deadline_nudges_and_lapses_for_others(A):
+    for _ in range(3):
+        A.record_feedback("deadline:reminder", "", "reminder", False)
+    assert A.evaluate_policy("deadline:reminder", "", "x", 0.9, "reminder", "deadline")[0] == "auto_act"
+    A.record_feedback("conversation:reminder", "", "reminder", False)
+    A.record_feedback("conversation:reminder", "", "reminder", False)
+    assert A.evaluate_policy("conversation:reminder", "", "x", 0.9, "reminder", "conversation")[0] == "ignore"
+    old = (datetime.now() - timedelta(days=40)).isoformat(timespec="seconds")
+    A._exec("UPDATE autonomy_policies SET last_feedback_at=? WHERE category='conversation:reminder'", (old,))
+    assert A.evaluate_policy("conversation:reminder", "", "x", 0.9, "reminder", "conversation")[0] == "auto_act"
+    A.set_policy("conversation:email", "ignore")  # a user-written ignore is permanent
+    A._exec("UPDATE autonomy_policies SET updated_at=?, last_feedback_at=? WHERE category='conversation:email'", (old, old))
+    assert A.evaluate_policy("conversation:email", "", "x", 0.9, "email", "conversation")[0] == "ignore"
+
+
+def test_dismissing_a_card_does_not_silence_confident_actions_in_that_category(A):
+    f = Fake()
+    _on(A, f)
+    sid = A.create_suggestion("conversation:reminder", "", "low one", "e", "reminder", {"text": "a"}, 0.5)
+    A.dismiss_suggestion(sid)
+    assert A._route("conversation:reminder", "", "sure thing", "e", "reminder", {"text": "b", "due_iso": _future(2)},
+                    0.95, "conversation", None) == "act"
+    assert len(f.reminders) == 1
+
+
+# ---- B: the tick must never be held up by slow work
+def test_agent_loop_work_from_the_tick_is_queued_not_run_inline(A):
+    f = Fake()
+    _on(A, f)
+    A._tick_ctx.active = True
+    try:
+        assert A._route("deadline:calendar", "", "Kickoff", "e", "calendar", {"title": "Kickoff", "start_iso": _future(3)},
+                        0.9, "deadline", None) == "queued"
+    finally:
+        A._tick_ctx.active = False
+    assert f.agent_runs == []
+    assert A._run_queued_auto(datetime.now(), True) == 1 and len(f.agent_runs) == 1
+
+
+def test_tick_hands_slow_steps_to_bounded_workers_and_survives_a_failing_step(A, monkeypatch):
+    f = Fake()
+    _on(A, f)
+    ran = []
+    monkeypatch.setattr(A, "_spawn", lambda name, fn, *a: ran.append(name) or True)
+    monkeypatch.setattr(A, "_deadline_scan", lambda now, ok: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = A.run_autonomy_tick_once()
+    assert {"autonomy-queued", "autonomy-mail"} <= set(ran)
+    assert "campaign_steps" in out and "planner" in out          # later steps still ran
+    assert A._tick_running.is_set() is False and getattr(A._tick_ctx, "active", False) is False
+    assert A._tick_lock.acquire(blocking=False)                  # lock released
+    A._tick_lock.release()
+
+
+def test_only_one_auto_queue_drain_at_a_time(A):
+    f = Fake()
+    _on(A, f)
+    A._queue_auto("c:calendar", "", "K", "e", "calendar", {"title": "K", "start_iso": _future(3)}, 0.9, None)
+    assert A._queue_run_lock.acquire(blocking=False)
+    try:
+        assert A._run_queued_auto(datetime.now(), True) == 0 and f.agent_runs == []
+    finally:
+        A._queue_run_lock.release()
+    assert A._run_queued_auto(datetime.now(), True) == 1
+
+
+def test_classifier_retries_after_a_failed_model_call(A):
+    calls = []
+    f = Fake()
+    answers = iter([None, json.dumps({"has_need": False})])
+    f.claude = lambda s, u, m: calls.append(1) or next(answers)
+    A.configure(_cb(f, claude=f.claude, calendar_events=lambda h: "meeting A"))
+    A.set_enabled(True)
+    now = datetime.now()
+    A._classifier_step(now, force=False)                                 # fails
+    A._classifier_step(now + timedelta(minutes=20), force=False)         # same context, but must retry
+    assert len(calls) == 2
+
+
+# ---- C: extraction / inbound robustness
+def test_one_bad_item_does_not_lose_the_rest_of_the_batch(A, monkeypatch):
+    f = Fake()
+    _on(A, f)
+    real = A._route
+    monkeypatch.setattr(A, "_route", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+                        if "Bad" in a[3] or "Bad" in a[2] else real(*a, **k))
+    ids = A._ingest([{"type": "task", "description": "Bad one", "confidence": 0.9, "deadline_iso": _future(5)},
+                     {"type": "task", "description": "Good one", "confidence": 0.9, "deadline_iso": _future(5)}],
+                    "conversation", "")
+    assert len(ids) == 2 and len(f.reminders) == 1
+    assert A._rows("SELECT COUNT(*) n FROM autonomy_decisions WHERE decision='error'")[0]["n"] == 1
+
+
+def test_concurrent_extraction_of_the_same_item_inserts_it_once(A):
+    gate = threading.Barrier(4)
+
+    def go():
+        gate.wait()
+        A.add_commitment({"type": "task", "description": "Renew the passport", "deadline_iso": _future(50),
+                          "confidence": 0.9}, "conversation")
+
+    ts = [threading.Thread(target=go) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert A._rows("SELECT COUNT(*) n FROM commitments")[0]["n"] == 1
+
+
+def test_failed_inbound_extraction_is_retried_up_to_three_times_then_dropped(A):
+    f = Fake()   # the model returns nothing
+    _on(A, f)
+    for attempt in range(3):
+        assert A.unseen_message("email", "m9") is True, attempt      # still retryable
+        A.process_inbound_message_for_events("s", "b", "a@b.c", "email", message_id="m9")
+    assert A.unseen_message("email", "m9") is False                 # gave up after 3 failures
+    f.answers = {"Email subject:": {"meetings": [], "tasks": []}}
+    assert A.process_inbound_message_for_events("s", "b", "a@b.c", "email", message_id="m9") == []
+
+
+def test_mail_poll_that_cannot_reach_gmail_retries_in_two_minutes_not_a_full_interval(A):
+    f = Fake()
+    A.configure(_cb(f, poll_mail=lambda: None))
+    A.set_enabled(True)
+    now = datetime.now()
+    assert A._inbox_poll(now, True) == 0
+    calls = []
+    A.configure(_cb(f, poll_mail=lambda: calls.append(1) or []))
+    assert A._inbox_poll(now + timedelta(minutes=1), True) == 0 and calls == []      # not yet
+    assert A._inbox_poll(now + timedelta(minutes=3), True) == 0 and calls == [1]     # ~2 min later
+
+
+def test_agent_replies_that_admit_failure_are_failures(A):
+    f = Fake()
+    _on(A, f)
+    for reply in ("Sorry, I couldn't create that event.", "I was unable to send the email.", "Error: no calendar", "  "):
+        A.configure(_cb(f, run_agent=lambda instr, r=reply: r))
+        ok, _ = A._run_action("email", {"to": "a@b.c", "subject": "s", "body": "b"})
+        assert ok is False, reply
+    A.configure(_cb(f, run_agent=lambda instr: "Done, the email is sent."))
+    assert A._run_action("email", {"to": "a@b.c"})[0] is True
+
+
+def test_kill_switch_stops_an_action_that_was_already_decided(A):
+    f = Fake()
+    _on(A, f)
+    A.set_enabled(False)
+    assert A._run_action("reminder", {"text": "x", "due_iso": _future(1)}) == (False, A.OFF_MSG)
+    A._execute_auto("c:reminder", "t", "e", "reminder", {"text": "x"}, 0.9, None, "r")
+    assert f.reminders == [] and f.notified == []       # skipped quietly, not reported as a failure
+    assert A._rows("SELECT outcome FROM autonomy_decisions")[0]["outcome"] == "skipped"
+
+
+# ---- E/G: background capacity and campaigns
+def test_busy_background_workers_defer_the_action_instead_of_failing_it(A):
+    f = Fake()
+    _on(A, f)
+    f.bg = 5
+    d = A._route("c:background_task", "", "Long job", "e", "background_task", {"description": "Long job"}, 0.9,
+                 "conversation", None)
+    assert d == "act" and f.tasks == [] and f.notified == []
+    assert A._rows("SELECT status FROM autonomy_suggestions")[0]["status"] == "auto_queued"
+    assert A._run_queued_auto(datetime.now(), True) == 0 and f.tasks == []           # still busy: back on the queue
+    assert A._rows("SELECT status FROM autonomy_suggestions")[0]["status"] == "auto_queued"
+    f.bg = 0
+    assert A._run_queued_auto(datetime.now(), True) == 1 and f.tasks == ["Long job"]
+    assert A._rows("SELECT status FROM autonomy_suggestions")[0]["status"] == "executed"
+
+
+def test_campaign_step_orphaned_in_running_after_a_restart_is_recovered(A):
+    f = Fake()
+    cb, ts = _scheduler_callbacks(f)
+    A.configure(cb)
+    A.set_enabled(True)
+    A.add_project_action("Alpha", "Do it")
+    A._campaign_step(datetime.now(), True)
+    tid = A._rows("SELECT task_ref FROM autonomy_project_actions")[0]["task_ref"]
+    old = (datetime.now() - timedelta(hours=8)).isoformat(timespec="seconds")
+    A._exec("UPDATE task_queue SET status='running', scheduled_end=? WHERE id=?", (old, tid))
+    A._campaign_step(datetime.now(), True)
+    row = A._rows("SELECT status, attempts FROM autonomy_project_actions")[0]
+    assert row["status"] == "planned" and row["attempts"] == 1
+    assert A._rows("SELECT status FROM task_queue WHERE id=?", (tid,))[0]["status"] == "failed"
+
+
+# ---- J: retention
+def test_seen_message_table_is_pruned(A):
+    old = (datetime.now() - timedelta(days=90)).isoformat(timespec="seconds")
+    A._exec("INSERT INTO autonomy_seen_messages (source, msg_id, seen_at) VALUES ('email','old',?)", (old,))
+    A._mark_seen("email", "new")
+    A._prune(datetime.now())
+    assert [r["msg_id"] for r in A._rows("SELECT msg_id FROM autonomy_seen_messages")] == ["new"]
+
+
+# ---- F: skills
+def test_skills_never_mine_typing_http_or_secret_bearing_tools_or_huge_inputs(A, S):
+    ran, _ = _tools(A, known=("web_search", "type_text", "http_request", "open_url"))
+    conn = sqlite3.connect(A._db_path())
+    conn.execute("CREATE TABLE IF NOT EXISTS action_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_name TEXT, "
+                 "tool_input TEXT, result TEXT, transcript TEXT)")
+    rows = [("web_search", {"q": "x"}, "typed"), ("type_text", {"text": "hunter2"}, "typed"),
+            ("web_search", {"q": "x"}, "http"), ("http_request", {"url": "http://x", "headers": {"Authorization": "k"}}, "http"),
+            ("web_search", {"q": "y" * 3000}, "huge"), ("open_url", {"url": "http://x"}, "huge")]
+    for tool, inp, tr in rows:
+        conn.execute("INSERT INTO action_audit (tool_name, tool_input, result, transcript) VALUES (?,?,?,?)",
+                     (tool, json.dumps(inp), "ok", tr))
+    conn.commit()
+    conn.close()
+    for tr in ("typed", "http", "huge"):
+        for _ in range(5):
+            assert S.note_turn(tr) is None
+    assert S.list_skills() == []
+    assert A._rows("SELECT COUNT(*) n FROM sqlite_master WHERE name='autonomy_patterns'")[0]["n"] == 1
+    assert S._q("SELECT COUNT(*) n FROM autonomy_patterns")[0]["n"] == 0   # not even counted, so no secret is stored
+
+
+def test_skill_creation_budget_holds_under_concurrency(A, S, monkeypatch):
+    _tools(A)
+    monkeypatch.setattr(S, "MAX_SKILLS_PER_DAY", 2)
+    gate = threading.Barrier(5)
+    out = []
+
+    def go(i):
+        gate.wait()
+        out.append(S.create_skill(f"skill_{i}x", "d", STEPS))
+
+    ts = [threading.Thread(target=go, args=(i,)) for i in range(5)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(S.list_skills()) == 2 and sum("Daily limit" in o for o in out) == 3
+
+
+# ---- H: consolidation only writes rules that are real and current
+def test_consolidation_writes_only_qualifying_rules_and_retires_stale_ones(A):
+    import jarvis_memory_consolidation as c
+
+    conn = sqlite3.connect(A._db_path())
+    conn.execute("CREATE TABLE IF NOT EXISTS memory_facts (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT, key TEXT, "
+                 "content TEXT, created_at TEXT, superseded_at TEXT, superseded_by INTEGER)")
+    conn.commit()
+    conn.close()
+    A.record_feedback("c:one", "", "reminder", True)                  # 1 approval: not "repeatedly"
+    for _ in range(3):
+        A.record_feedback("c:three", "", "reminder", True)
+    c.consolidate(datetime.now(), None, force=True)
+    conn = sqlite3.connect(A._db_path())
+    keys = [r[0] for r in conn.execute("SELECT key FROM memory_facts WHERE superseded_at IS NULL")]
+    assert keys == ["rule:autonomy:c:three"]
+    conn.close()
+    A._exec("DELETE FROM autonomy_policies WHERE category='c:three'")   # rule gone -> the memory fact is retired
+    c.consolidate(datetime.now(), None, force=True)
+    conn = sqlite3.connect(A._db_path())
+    assert conn.execute("SELECT COUNT(*) FROM memory_facts WHERE superseded_at IS NULL").fetchone()[0] == 0
+
+
+# ---- wiring in jarvis.py
+def test_gmail_poll_reports_unreachable_as_none_and_sleep_mail_reads_bodies_only_when_enabled(monkeypatch):
+    import jarvis
+
+    monkeypatch.setattr(jarvis, "_mcp_tool_index", {})
+    assert jarvis._autonomy_poll_mail() is None
+    src = open("jarvis.py", encoding="utf-8").read()
+    assert "_autonomy_mail_hook.enabled = autonomy.enabled" in src   # no body is read for autonomy while it is off

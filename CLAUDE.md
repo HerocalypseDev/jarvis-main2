@@ -732,6 +732,13 @@ Rules:
   (5) composable skills (`autonomy_skill` tool, `autonomy_skills` table, auto-mined from 3 identical repeats, only
   existing tools, re-validated every run); (6) deadline intervention at 24 h/2 h/overdue + campaign state machine
   `planned -> running -> done | blocked | cancelled` with 3-attempt recovery.
+- **Audit-and-fix pass (2026-09-20, after the permission change)** — details in `AUTONOMY.md`. Rules to keep:
+  dry-run must never consume real work (own `dry_*` bookkeeping + replay on leaving dry-run); old learned ask
+  rules are migrated to auto_act; learned `ignore` lapses (30 d) and never applies to `deadline:*`; a dismissed card
+  never silences a confident action; slow work (agent-loop actions, mail poll) is never run inline on the tick
+  thread (auto queue + bounded workers, 6 max); capacity limits wait rather than fail; the kill switch is enforced
+  inside `_run_action`; campaign steps run without approval (approve_campaign = un-pause); skills never mine
+  secret-bearing tools. Suite: 507 tests green (test_autonomy.py 160).
 - **Data exposure:** the mail poll and inbound hook send message bodies to the active brain (Gemini free tier may use
   it for Google product improvement). Turn the poll off with `JARVIS_AUTONOMY_MAIL_POLL_MIN=0`.
 - **Deviations from the spec, on purpose:** tables are `autonomy_projects` / `autonomy_project_actions` (jarvis.py

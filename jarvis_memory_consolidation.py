@@ -60,8 +60,11 @@ def _state(conn: sqlite3.Connection, key: str) -> str | None:
 def abstract_rules(conn: sqlite3.Connection, now: datetime) -> int:
     """Learned policies -> memory_facts 'rule:' rows (superseding any earlier text for the same key)."""
     try:
+        # only what was really learned: 3 approvals in a row / 2 dismissals in a row (a fresh learned row starts
+        # as auto_act after ONE approval and must not be written into memory as "repeatedly approved")
         policies = conn.execute("SELECT category, verdict, approved_streak, dismissed_streak FROM autonomy_policies "
-                                "WHERE source='learned' AND verdict IN ('auto_act','ignore')").fetchall()
+                                "WHERE source='learned' AND ((verdict='auto_act' AND approved_streak>=3) "
+                                "OR (verdict='ignore' AND dismissed_streak>=2))").fetchall()
         conn.execute("SELECT 1 FROM memory_facts LIMIT 1")
     except sqlite3.OperationalError:
         return 0
@@ -81,6 +84,13 @@ def abstract_rules(conn: sqlite3.Connection, now: datetime) -> int:
             conn.execute("UPDATE memory_facts SET superseded_at=?, superseded_by=? WHERE id=?",
                          (_iso(now), cur.lastrowid, current["id"]))
         written += 1
+    # a rule that no longer qualifies (reverted, expired, deleted) must not linger in memory as if still true
+    live = {f"rule:autonomy:{p['category']}" for p in policies}
+    for row in conn.execute("SELECT id, key FROM memory_facts WHERE key LIKE 'rule:autonomy:%' "
+                            "AND superseded_at IS NULL").fetchall():
+        if row["key"] not in live:
+            conn.execute("UPDATE memory_facts SET superseded_at=? WHERE id=?", (_iso(now), row["id"]))
+            written += 1
     return written
 
 

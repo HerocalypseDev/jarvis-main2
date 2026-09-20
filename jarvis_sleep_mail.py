@@ -372,7 +372,7 @@ def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
                 else:
                     others.append(msg)
                     stats["inbound"] += 1
-                    if on_inbound:
+                    if on_inbound and getattr(on_inbound, "enabled", lambda: True)():
                         try:
                             read = mcp("read_email", {"messageId": msg["id"]})
                             msg["body"] = "" if looks_like_error(read) else _body_of(read)[1]  # full body, not just the subject

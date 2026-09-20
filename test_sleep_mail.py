@@ -362,3 +362,16 @@ def test_tick_speeds_up_to_2_minutes_after_a_message_then_relaxes(jarvis, monkey
     tick(23); assert len(runs) == 4
     tick(60); tick(61)                       # window over: back to 15-min cadence
     assert len(runs) == 4 or len(runs) == 5  # at most one check, not one per 2 min
+
+
+def test_inbound_hook_is_not_fed_and_no_body_is_read_when_it_says_it_is_disabled(db):
+    g = FakeGmail(_search(("p2", "Meeting Friday", "Promo <p@shop.com>")))
+    seen = []
+
+    def hook(m):
+        seen.append(m)
+
+    hook.enabled = lambda: False
+    sm.run_cycle(mcp=g, claude=lambda s, u, n: "", record=lambda t: None, since_iso=STARTED,
+                 sleep_started_at=STARTED, sleep=lambda s: None, on_inbound=hook)
+    assert seen == [] and "read_email" not in g.calls

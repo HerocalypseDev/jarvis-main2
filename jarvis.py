@@ -4030,7 +4030,7 @@ def _sleep_mail_tick(now: datetime) -> None:
             stats = sleep_mail.run_cycle(
                 mcp=_sleep_mail_mcp, claude=_sleep_mail_claude, record=_record_sleep_important,
                 since_iso=started, sleep_started_at=started,
-                on_inbound=lambda m: _autonomy_inbound(m["subject"], m.get("body", ""), m["from"], "email", m["id"]),
+                on_inbound=_autonomy_mail_hook,
             )
             if stats and stats.get("inbound"):
                 _sleep_mail_fast_until = datetime.now() + timedelta(minutes=sleep_mail.ACTIVE_WINDOW_MIN)
@@ -4129,6 +4129,14 @@ def _autonomy_inbound(subject: str, body: str, sender: str, source: str = "email
     autonomy.process_inbound_async(subject, body, sender, source, message_id)  # bounded worker pool
 
 
+def _autonomy_mail_hook(m: dict) -> None:
+    _autonomy_inbound(m["subject"], m.get("body", ""), m["from"], "email", m["id"])
+
+
+# sleep-mail asks this before it reads a message body for the hook: with autonomy off, no body is read for it
+_autonomy_mail_hook.enabled = autonomy.enabled
+
+
 def _autonomy_create_event(details: dict) -> str | None:
     """Direct Calendar MCP create-event (no agent loop). None = no usable calendar tool/schema, so the
     caller falls back to the agent loop. Args are mapped onto the tool's own input schema."""
@@ -4144,14 +4152,14 @@ def _autonomy_create_event(details: dict) -> str | None:
     return execute_mcp_tool(name, args)
 
 
-def _autonomy_poll_mail() -> list[dict]:
+def _autonomy_poll_mail() -> list[dict] | None:
     """New inbox messages (not the user's own, not yet seen by autonomy) with their bodies, via the Gmail
     MCP the sleep-mail feature already uses. Empty when Gmail is not connected."""
     if "mcp_gmail_search_emails" not in _mcp_tool_index:
-        return []
+        return None  # not connected (yet): the poller retries sooner than a full interval
     found = _sleep_mail_mcp("search_emails", {"query": "in:inbox newer_than:1d", "maxResults": 10})
     if sleep_mail.looks_like_error(found):
-        return []
+        return None
     own, out = sleep_mail.own_addresses(), []
     for m in sleep_mail.parse_search(found):
         if not m["sender"] or m["sender"] in own or not autonomy.unseen_message("email", m["id"]):
