@@ -2094,7 +2094,7 @@ AUTONOMY_TOOLS = [
         "name": "autonomy_organise",
         "description": (
             "Automatic file organising (ON by default whenever autonomy is on): new documents/images/spreadsheets "
-            "in Downloads and Desktop are moved into ~/Documents/Jarvis_Organised and ~/Pictures/Jarvis_Organised. "
+            "in Downloads and Desktop are moved into the Jarvis_Workspace folder under Organised/Documents, Spreadsheets and Images. "
             "It only moves or copies, never deletes or overwrites. actions: list_rules, add_rule (name, extensions "
             "e.g. ['.pdf'], dest_dir e.g. '~/Documents/Invoices', rule_action move|copy), remove_rule (name), "
             "list_roots, add_root (path), remove_root (path), recent. Use it for 'organise my downloads like X', "

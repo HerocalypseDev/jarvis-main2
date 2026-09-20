@@ -202,9 +202,12 @@ matching rule files it (`jarvis_autonomy_organise.py`).
   `~/OneDrive/Downloads`. Desktop is added to the file watcher at startup and baselined, so files already on it are
   not treated as new. Add more with the dashboard, the `autonomy_organise` tool (`add_root`) or
   `JARVIS_AUTONOMY_ORGANISE_ROOTS`; they must be inside your user profile.
-* **Built-in rules:** documents (`.pdf .doc .docx .pptx .rtf .odt .epub`) -> `~/Documents/Jarvis_Organised/Documents`;
-  spreadsheets (`.xls .xlsx .csv .ods`) -> `~/Documents/Jarvis_Organised/Spreadsheets`; images
-  (`.png .jpg .jpeg .webp .gif`) -> `~/Pictures/Jarvis_Organised`. Destination folders are created when missing.
+* **Built-in rules:** documents (`.pdf .doc .docx .pptx .rtf .odt .epub`) -> `<Jarvis_Workspace>/Organised/Documents`;
+  spreadsheets (`.xls .xlsx .csv .ods`) -> `<Jarvis_Workspace>/Organised/Spreadsheets`; images
+  (`.png .jpg .jpeg .webp .gif`) -> `<Jarvis_Workspace>/Organised/Images`. `<Jarvis_Workspace>` is your Jarvis workspace folder
+  (`jarvis_workspace.root()`, here `C:\Users\USER\OneDrive\Documents\01_Projects\Jarvis_Workspace`;
+  `JARVIS_WORKSPACE_DIR` overrides it). Rules may use `{workspace}/...` or `~/...` destinations. Destination
+  folders are created when missing.
 * **Your rules** (dashboard > Autonomy > File organising, or "organise my downloads: invoices go to ~/Documents/
   Invoices"): a rule of yours beats a default one for the same extension; `move` or `copy`; removing a default is
   remembered.
@@ -309,7 +312,7 @@ low-confidence items.
    `inbound` row saying injection-like phrases were neutralised; nothing runs at medium confidence, and the
    `suggest` row says why. A plain "Lunch Friday 1pm Room 4" from a stranger acts at high confidence or as a
    clear meeting. (b) *File organise:* drop a PDF into Downloads and a PNG on the Desktop; after ~20 s each is
-   moved to `Documents\\Jarvis_Organised\\Documents` / `Pictures\\Jarvis_Organised` and a `file:organise` row
+   moved to `Jarvis_Workspace\Organised\Documents` / `...\Images` and a `file:organise` row
    appears. In Dry run they stay put and the plan is logged once; leave Dry run and they are filed. Drop a `.zip`
    (no rule) and you get a "Review new file" notification. (c) *Calendar:* if the Calendar MCP is connected the
    result reads "Calendar event created directly"; if not, the log says the MCP was missing and why.
