@@ -851,7 +851,7 @@ def _reset_transient() -> None:
 # recognized for AWAY_GRACE seconds, the workstation is LOCKED (after a spoken warning). Face only
 # ever locks - nothing here can unlock anything - and a camera that can't see (covered, busy in a
 # call, unreachable, paused) never counts as "owner not shown", so those cases never lock.
-AWAY_GRACE_DEFAULT = 120.0
+AWAY_GRACE_DEFAULT = 50.0
 AWAY_WARN_DEFAULT = 15.0
 
 
@@ -933,8 +933,8 @@ def set_away(on: bool, source: str | None) -> str:
         log_event("away_on", detail=f"source={source}")
         note = " Face recognition is paused, so it won't lock until you resume it." if is_paused() else ""
         return (
-            f"Away mode is on. If I can't see you for {int(away_grace_s() // 60) or 1} "
-            f"minute{'s' if away_grace_s() >= 120 else ''}, I'll lock the computer, with a warning first." + note
+            f"Away mode is on. If I can't see you for {int(away_grace_s())} "
+            f"seconds, I'll lock the computer, with a warning first." + note
         )
     why = refuse_reason(source)
     if why:

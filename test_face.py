@@ -1441,34 +1441,34 @@ A0 = 5_000_000.0
 
 
 def test_away_mode_warns_once_then_locks_after_the_grace_period(away):
-    for t in (0, 30, 100):
+    for t in (0, 20, 30):
         face.poll_once(A0 + t)
-    assert away.calls == []  # 100s unseen: still inside the grace period, before the warning window
-    face.poll_once(A0 + 106)  # >= 120 - 15
+    assert away.calls == []  # 30s unseen: still inside the grace period, before the warning window
+    face.poll_once(A0 + 36)  # >= 50 - 15
     assert [c[0] for c in away.calls] == ["away_warn"] and "15 seconds" in away.calls[0][1]
-    face.poll_once(A0 + 112)
+    face.poll_once(A0 + 42)
     assert [c[0] for c in away.calls] == ["away_warn"]  # warned only once
-    face.poll_once(A0 + 121)
+    face.poll_once(A0 + 51)
     assert [c[0] for c in away.calls] == ["away_warn", "lock"]
     assert _kinds()[-2:] == ["away_warning", "away_lock"]
-    face.poll_once(A0 + 125)  # the clock restarts after a lock (no lock storm)
+    face.poll_once(A0 + 55)  # the clock restarts after a lock (no lock storm)
     assert [c[0] for c in away.calls].count("lock") == 1
 
 
 def test_owner_coming_back_before_the_lock_cancels_it(away, monkeypatch):
-    for t in (0, 60, 106):
+    for t in (0, 20, 36):
         face.poll_once(A0 + t)  # warned
     _look(monkeypatch, _obs(0.0, BASE))  # ...and the owner is recognized again
-    face.poll_once(A0 + 112)
+    face.poll_once(A0 + 42)
     _look(monkeypatch, [])
-    face.poll_once(A0 + 130)  # would have been past the old deadline
-    face.poll_once(A0 + 140)
+    face.poll_once(A0 + 60)  # would have been past the old deadline
+    face.poll_once(A0 + 70)
     assert "lock" not in [c[0] for c in away.calls]
-    # The new absence clock started at t=130. It warns again at 130+105, and only locks at 130+120.
-    for t in (150, 236, 244):
+    # The new absence clock started at t=60. It warns again at 60+35, and only locks at 60+50.
+    for t in (80, 96, 104):
         face.poll_once(A0 + t)
     assert [c[0] for c in away.calls] == ["away_warn", "away_warn"]
-    face.poll_once(A0 + 251)
+    face.poll_once(A0 + 111)
     assert [c[0] for c in away.calls] == ["away_warn", "away_warn", "lock"]
 
 
@@ -1487,7 +1487,7 @@ def test_a_blind_camera_never_locks_and_resets_the_clock(away, monkeypatch, blin
     """Decision: if the camera can't see (covered, unreachable, busy in a call) it can't tell the
     owner is gone, so it must never lock - and it must not let earlier absence keep counting."""
     face.poll_once(A0)
-    face.poll_once(A0 + 100)  # 100s of genuine absence so far
+    face.poll_once(A0 + 40)  # 40s of genuine absence so far
     if blind == "covered":
         _look(monkeypatch, [], mean=1.0, std=0.5)
     elif blind == "camera-error":
@@ -1495,14 +1495,14 @@ def test_a_blind_camera_never_locks_and_resets_the_clock(away, monkeypatch, blin
     if blind == "busy":
         assert face._camera_lock.acquire(blocking=False)
     try:
-        for t in (105, 400, 4000):
+        for t in (45, 400, 4000):
             face.poll_once(A0 + t)
     finally:
         if blind == "busy":
             face._camera_lock.release()
     _look(monkeypatch, [])
     face.poll_once(A0 + 4001)  # sight is back: a brand-new clock starts
-    face.poll_once(A0 + 4050)
+    face.poll_once(A0 + 4030)
     assert "lock" not in [c[0] for c in away.calls]
 
 
@@ -1528,10 +1528,10 @@ def test_no_lock_when_paused_asleep_locked_already_or_nobody_enrolled(away, monk
 
 def test_warning_can_be_disabled_and_grace_has_a_floor(away, monkeypatch):
     monkeypatch.setenv("JARVIS_FACE_AWAY_WARN_S", "0")
-    for t in (0, 106, 119):
+    for t in (0, 36, 49):
         face.poll_once(A0 + t)
     assert away.calls == []  # no warning configured
-    face.poll_once(A0 + 121)
+    face.poll_once(A0 + 51)
     assert [c[0] for c in away.calls] == ["lock"]
     monkeypatch.setenv("JARVIS_FACE_AWAY_GRACE_S", "1")
     assert face.away_grace_s() == 10.0  # can't be configured into locking on every missed frame
@@ -1543,8 +1543,8 @@ def test_a_failing_lock_hook_does_not_break_polling(away):
 
     face._hooks["lock"] = boom
     face.poll_once(A0)
-    face.poll_once(A0 + 121)
-    assert face.poll_once(A0 + 130) == "ok"
+    face.poll_once(A0 + 51)
+    assert face.poll_once(A0 + 60) == "ok"
 
 
 def test_set_away_rules(fx, monkeypatch):
@@ -1576,7 +1576,7 @@ def test_erasing_the_profile_turns_away_mode_off(away):
 
 def test_away_mode_persists_in_the_database(away):
     assert face.get_setting("away_mode") == "1"
-    assert "Away mode is on" in face.away_status() and "120" in face.away_status()
+    assert "Away mode is on" in face.away_status() and "50" in face.away_status()
 
 
 def test_polling_runs_at_the_fast_interval_while_the_away_clock_is_running(enrolled, monkeypatch):
@@ -1640,7 +1640,7 @@ def test_dashboard_away_toggle_and_state(dash):
     r = dash.post("/api/faces/away", json={"enabled": True}, headers={"origin": "http://127.0.0.1:8765"}).json()
     assert r["ok"] and r["away"] is True and "Away mode is on" in r["message"]
     st = dash.get("/api/faces").json()["away"]
-    assert st["enabled"] is True and st["grace_seconds"] == 120.0 and st["warn_seconds"] == 15.0
+    assert st["enabled"] is True and st["grace_seconds"] == 50.0 and st["warn_seconds"] == 15.0
     assert dash.post("/api/faces/away", json={"enabled": False}).json()["away"] is False
     assert dash.post("/api/faces/away", json={"enabled": True}, headers={"origin": "https://evil.example"}).status_code == 403
     assert dash.post("/api/faces/away", json={"enabled": True}, headers={"host": "evil.example"}).status_code == 403
