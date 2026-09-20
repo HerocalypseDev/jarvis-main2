@@ -76,6 +76,22 @@ def test_disable_calls_digest_handler_and_digest_is_saved(db):
     assert sm.stats_summary()["digests"][0]["digest"].startswith("Hero, while")
 
 
+def test_disable_logs_duration_to_memory_only_when_long_enough(db, monkeypatch):
+    logged = []
+    monkeypatch.setattr(sm, "_memory_logger", lambda c, t, k: logged.append((c, t, k)))
+    from datetime import datetime, timedelta
+
+    def run(minutes):
+        start = datetime.now() - timedelta(minutes=minutes)
+        sm._set_state(active=1, started_at=start.isoformat(timespec="seconds"), dark_mode_was_on=1)
+        sm.disable()
+
+    run(10)
+    assert logged == []
+    run(90)
+    assert len(logged) == 1 and "1h 30m" in logged[0][1] and logged[0][2].startswith("sleep_session_")
+
+
 # --- jarvis.py wiring ------------------------------------------------------------------------
 @pytest.fixture()
 def jarvis(monkeypatch, tmp_path, db):

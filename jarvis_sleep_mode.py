@@ -103,6 +103,32 @@ def set_system_action_handler(fn) -> None:
     _system_action = fn
 
 
+# jarvis.py registers its remember_fact here; disable() records each session of at least
+# MIN_SESSION_MINUTES as a memory fact. Called as fn(category, content, key).
+_memory_logger = None
+
+
+def set_memory_logger(fn) -> None:
+    global _memory_logger
+    _memory_logger = fn
+
+
+def _log_duration_to_memory(started: datetime, now: datetime, minutes: float, kind: str) -> None:
+    if not _memory_logger or minutes < MIN_SESSION_MINUTES:
+        return
+    hours, mins = divmod(int(minutes), 60)
+    label = "Napped" if kind == "nap" else "Slept (Sleep Mode)"
+    content = (
+        f"{label} for {hours}h {mins}m, from {started.strftime('%Y-%m-%d %H:%M')} "
+        f"to {now.strftime('%Y-%m-%d %H:%M')}."
+    )
+    try:
+        # Unique key per session so one night never supersedes another.
+        _memory_logger("fact", content, f"sleep_session_{started.isoformat(timespec='seconds')}")
+    except Exception as e:
+        log.warning("Sleep Mode could not log duration to memory: %s", e)
+
+
 def set_wake_digest_handler(fn) -> None:
     global _wake_digest_handler
     _wake_digest_handler = fn
@@ -466,6 +492,7 @@ def disable() -> str:
             started = datetime.fromisoformat(started_at)
             minutes = (now - started).total_seconds() / 60
             hours, mins = divmod(int(minutes), 60)
+            _log_duration_to_memory(started, now, minutes, state.get("kind") or "sleep")
             duration_line = (
                 f" Nap logged: {hours}h {mins}m. It doesn't count toward your sleep time."
                 if state.get("kind") == "nap"

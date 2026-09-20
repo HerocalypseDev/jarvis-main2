@@ -3322,6 +3322,7 @@ def _build_sleep_digest(items: list[dict], nap: bool = False) -> str:
 
 
 sleep_mode.set_wake_digest_handler(_sleep_wake_digest)
+sleep_mode.set_memory_logger(remember_fact)
 
 
 # --- Windows toast notifications: a real, visible Action Center banner for reminders, so one ---
