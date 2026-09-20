@@ -617,6 +617,18 @@ def test_urgent_email_reply_monitor_skill_drafts_then_sends():
     assert "NO spoken reply" in text
 
 
+def test_urgent_email_reply_monitor_gathers_context_and_defaults_to_no():
+    import json
+    from pathlib import Path
+    skill = json.loads((Path(__file__).parent / "skills" / "urgent_email_reply_monitor.json").read_text(encoding="utf-8"))
+    text = skill["instructions"]
+    assert "mcp_googlecalendar_" in text and "semantic_recall" in text
+    assert "list_commitments" in text and "search_emails" in text
+    assert "This message was drafted and sent by my AI assistant" in text
+    assert "DEFAULT ANSWER IS NO" in text
+    assert text.index("semantic_recall") < text.index("mcp_gmail_send_email")
+
+
 def _gate_env(jarvis, monkeypatch):
     spoken = []
     monkeypatch.setattr(jarvis, "_speak_shaped", lambda t: spoken.append(t))
