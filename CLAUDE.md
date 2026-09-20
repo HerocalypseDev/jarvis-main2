@@ -698,48 +698,51 @@ Rules:
 
 ## Full Autonomy stack (2026-09-20)
 
-- Full write-up: `AUTONOMY.md`. Code: `jarvis_autonomy.py` (commitments/projects, policy engine, tick,
-  suggestions, campaigns, planner), `jarvis_dynamic_tools.py`, `jarvis_memory_consolidation.py`, the
-  dashboard "Autonomy" tab (`dashboard_static/autonomy.js`, `/api/autonomy*`, `/api/dynamic_tools*`).
-  Tests: `test_autonomy.py` (98; whole suite 443).
-- **Off by default, asks before acting.** `JARVIS_AUTONOMY_DISABLED=1` is a hard kill. The default policy
-  is *ask*; the only built-in auto rule is a nudge about an approaching deadline. Content from other people
-  (email/Telegram/Discord) can never auto-act via a category-wide rule. Learned rules may only auto-run
-  reminders/notifications. Enabling/loosening is refused from phone; disabling works anywhere.
-- **Deviations from the spec, on purpose:** (1) the tables are `autonomy_projects` /
-  `autonomy_project_actions`, because `jarvis.py` already owns a differently-shaped `projects` table
-  (`CREATE TABLE IF NOT EXISTS projects` would have silently kept the old one and broken inserts); (2) an
-  extra `autonomy_suggestions` table backs the dashboard cards; (3) dynamic tools are **pure computation
-  only** (stdlib allow-list, no file/network/shell/eval, `python -I` subprocess with timeout) instead of
-  "safe" subprocess/network access, which no AST scan can guarantee; (4) the tick is driven by the existing
-  scheduler loop (60 s floor, not 45 s) and the paid classifier call is rate-limited (15 min) and skipped
-  when nothing changed; (5) extraction after a command only runs when the exchange has a planning cue.
-- Approved calendar/email/file actions run through `run_agent_loop`, so the confirmation gate still applies;
-  `test_autonomy_code_cannot_reach_the_confirmation_gate` pins that the new modules never reference it or
-  import `jarvis`. `jarvis.py` may reference `face` only from allowlisted functions (see face section): do
-  not put `face.*` in the autonomy callbacks; `queue_or_deliver_notification` already holds speech for a stranger.
-- **Bug found by the tests:** `_db_lock` was a plain Lock while `_connect()` lazily runs table init under
-  the same lock (self-deadlock on first use); now an RLock.
-- **Verified:** unit tests with fake callbacks; a smoke run through the real `jarvis.py` tool dispatch
-  (tools registered, phone refusals, dynamic tool create/run, gated tick). **Not verified live:** a real
-  model extraction/classifier response, the dashboard tab in a real browser, an approved calendar event
-  through the Calendar MCP, a real inbound mail (sleep-mail hook passes subject only), the first real
-  campaign. Turn it on and watch the Autonomy tab's "Recent decisions" before trusting it.
-- **Security audit fixes (2026-09-20)** — every finding of the audit (A-01…K-01) is fixed and pinned by a
-  test; details in `AUTONOMY.md` ("Human-only actions", "Untrusted text", "Reliability and housekeeping").
-  Rules to keep: (1) **enable / approve / accept / approve_campaign / add_action / set_policy and
-  approving a dynamic tool are human-only** — dashboard routes only, refused from the model's `autonomy`
-  tool from *every* source (`HUMAN_ONLY_ACTIONS`); never add them back to the tool. `create_tool` only
-  files a proposal (`propose_tool`), the user approves in the dashboard. (2) The dynamic-tool sandbox is
-  defence in depth, **not a security boundary** (allow-listed modules re-exported os/sys); runtime module
-  proxies + a Windows Job Object (256 MB, no child processes) sit under the scan. (3) Text from inbound
-  channels, or from a turn that read mail/web/files/screen, is stored **quarantined** and excluded from
-  prompts/nudges until accepted. (4) Autonomous agent runs use `record_history=False` and cannot stage a
-  catastrophic confirmation (`_command_ctx.autonomous`). (5) Sender rules match the exact address only;
-  keyword rules never auto-act on inbound content. Found while fixing: the classifier's unchanged-context
-  shortcut hashed the clock minute and never fired (now fixed). **Not verified live:** the dashboard's
-  new Review panel / proposals list in a real browser, and an approved background task running end to end
-  under the real scheduler loop (unit-tested against the real `jarvis_task_scheduler` only).
+- Full write-up: `AUTONOMY.md` (incl. a "How to verify" section). Code: `jarvis_autonomy.py` (commitments/projects,
+  policy engine, tick, campaigns, planner, inbound hook, file/mail bridges, log/why), `jarvis_autonomy_skills.py`
+  (composable skills), `jarvis_dynamic_tools.py`, `jarvis_memory_consolidation.py`, the dashboard "Autonomy" tab
+  (`dashboard_static/autonomy.js`, `/api/autonomy*`, `/api/dynamic_tools*`). Tests: `test_autonomy.py` (137; whole
+  suite 483).
+- **PERMISSION MODEL — explicit user decision (2026-09-20): FULL AUTO-ACT, except catastrophic actions.** The
+  user accepted the risks of full system access and autonomous decision-making. Once autonomy is ON it does not
+  ask: `evaluate_policy` returns `auto_act` by default for every non-catastrophic action type (calendar, reminder,
+  email, file_op, background_task, notification) from **any** source (own words, mail, Telegram, Discord, files),
+  gated only by a confidence floor (`JARVIS_AUTONOMY_AUTO_MIN_CONF`, 0.7; below it the item is only *recorded* as a
+  card). Learned rules may auto-act on any type; budgets are soft (5x runaway breaker only). **Do not re-introduce
+  ask/confirm steps for non-catastrophic actions.** Only the existing catastrophic gate (`_CATASTROPHIC_PATTERNS`/
+  `_pending_action`, restored to its original form in `_queue_pending_confirmation`) still needs a yes/Approve; an
+  autonomous run that reaches a catastrophic command STAGES it like any other (pinned by tests, and the AST test
+  still forbids the autonomy modules from referencing the gate or importing `jarvis`).
+- Still kept: `JARVIS_AUTONOMY_DISABLED=1` hard kill, dry-run, off-by-default (turning ON is a deliberate act), and
+  three settings that stay **dashboard-only** because they are configuration, not actions: turn autonomy ON, write/
+  loosen policy rules, leave dry-run (`HUMAN_ONLY_ACTIONS`). Also kept from the security audit: exact-sender rule
+  matching, text sanitising, the dynamic-tool sandbox hardening (defence in depth, **not a security boundary**),
+  CAS approve/dismiss, kill-switch cancelling queued work, retention pruning, bounded workers, `record_history=False`
+  for autonomous agent runs. Known consequence: a confident prompt-injected instruction in an email CAN now cause
+  a calendar event / reminder / email / background task; the Activity log and the off switch are the mitigation.
+  Another: a stray spoken "yes" could confirm a catastrophic action an autonomous run staged (the dashboard shows it).
+- **Work packages shipped** (details in `AUTONOMY.md`): (1) full inbound perception — one hook
+  `process_inbound_message_for_events(subject, body, sender, source, message_id)`; call sites: sleep-mail now passes
+  the **full body** (it reads each non-family message), a Gmail inbox poll (`_autonomy_poll_mail` -> `_inbox_poll`,
+  `JARVIS_AUTONOMY_MAIL_POLL_MIN`, default 10, 0=off), Telegram/ntfy messages from the user go through
+  `after_turn`, Discord has no inbound handler (hook is ready), file-watcher bridge (`_file_scan`); (2) smarter
+  extraction gate + fuzzy dedupe/merge + quality rules + semantic recall; (3) observability: `log`/`why`/`speak_log`
+  tool actions, `GET /api/autonomy/log`, filterable Activity log UI, richer `autonomy_decisions` columns; (4)
+  direct Calendar MCP create-event (`build_calendar_args` maps onto the tool's own schema) with agent-loop fallback;
+  (5) composable skills (`autonomy_skill` tool, `autonomy_skills` table, auto-mined from 3 identical repeats, only
+  existing tools, re-validated every run); (6) deadline intervention at 24 h/2 h/overdue + campaign state machine
+  `planned -> running -> done | blocked | cancelled` with 3-attempt recovery.
+- **Data exposure:** the mail poll and inbound hook send message bodies to the active brain (Gemini free tier may use
+  it for Google product improvement). Turn the poll off with `JARVIS_AUTONOMY_MAIL_POLL_MIN=0`.
+- **Deviations from the spec, on purpose:** tables are `autonomy_projects` / `autonomy_project_actions` (jarvis.py
+  already owns a `projects` table); extra `autonomy_suggestions` (cards + auto queue), `autonomy_seen_messages`,
+  `autonomy_skills`, `autonomy_patterns`; dynamic tools are pure computation only, real side effects go through
+  skills; the tick rides the existing 60 s scheduler loop.
+- **Not verified live:** a real model extraction, the Gmail poll against a real inbox, the Calendar MCP's actual
+  create-event schema (`build_calendar_args` is schema-driven and falls back to the agent loop), the new dashboard
+  sections in a real browser, and a real end-to-end auto-acted calendar event. Follow "How to verify" in
+  `AUTONOMY.md` (dry run first).
+
 
 ### Cost reporting
 
@@ -790,4 +793,5 @@ row there each phase rather than only stating the total in chat.
 | 25 (stranger -> Telegram reminders question with held+forwarded reminders, away mode auto-lock, dashboard toggle) | Sonnet 5 | ~60 min | ~$3.00–$4.20 |
 | 26 (full autonomy: commitments/projects, policy engine + teach loop, tick, campaigns, dynamic tools, consolidation, dashboard tab) | Sonnet 5 | ~75 min | ~$3.60–$5.00 |
 | 27 (autonomy security audit: 20 findings fixed, human-only approvals, quarantine, sandbox hardening, 54 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
-| **Running total (final)** | | **~813 min** | **~$35.65–$49.80** |
+| 28 (full-permission model + inbound perception, extraction, observability, direct calendar, skills, memory intervention; 40 new tests) | Sonnet 5 | ~75 min | ~$4.00–$5.50 |
+| **Running total (final)** | | **~888 min** | **~$39.65–$55.30** |

@@ -374,6 +374,8 @@ def run_cycle(*, mcp, claude, record, since_iso: str, sleep_started_at: str,
                     stats["inbound"] += 1
                     if on_inbound:
                         try:
+                            read = mcp("read_email", {"messageId": msg["id"]})
+                            msg["body"] = "" if looks_like_error(read) else _body_of(read)[1]  # full body, not just the subject
                             on_inbound(msg)  # e.g. autonomy's event extraction; must never break the cycle
                         except Exception as e:
                             log.warning("Sleep-mail on_inbound hook failed: %s", e)

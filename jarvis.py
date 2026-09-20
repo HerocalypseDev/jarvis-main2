@@ -63,6 +63,7 @@ import jarvis_sleep_mail as sleep_mail
 import jarvis_workspace
 import jarvis_cache as cache
 import jarvis_autonomy as autonomy
+import jarvis_autonomy_skills as autonomy_skills
 import jarvis_dynamic_tools as dyn_tools
 import jarvis_memory_consolidation as consolidation
 import jarvis_billing as billing
@@ -240,13 +241,8 @@ def _is_confirmation_yes(transcript: str) -> bool:
 
 def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -> bool:
     """Stores a catastrophic tool call awaiting a "yes" on the next push-to-talk press.
-    Returns False (and queues nothing) if something is already pending — or if this thread is
-    running an autonomous action: a later "yes" meant for something else must never be able to
-    confirm a step Jarvis staged on its own (audit F-01)."""
+    Returns False (and queues nothing) if something is already pending."""
     global _pending_action
-    if getattr(_command_ctx, "autonomous", False):
-        log.warning("Autonomous action tried to stage %r; refused.", tool_name)
-        return False
     with _pending_action_lock:
         if _pending_action is not None:
             log.warning("A confirmation is already pending; dropping %r.", tool_name)
@@ -2042,13 +2038,14 @@ AUTONOMY_TOOLS = [
         "name": "autonomy",
         "description": (
             "Control Jarvis's autonomy layer (durable commitments/projects, proactive suggestions, "
-            "campaigns). Off by default. actions: status, disable, dry_run_on, list_suggestions, "
-            "dismiss/never (id), list_commitments, complete_commitment/cancel_commitment (id), "
-            "add_project (project, goal, risk_level), list_policies, run_tick. Use it for 'turn off "
-            "autonomy', 'dismiss suggestion N', 'what are my open commitments', etc. You CANNOT enable "
-            "autonomy, approve a suggestion or campaign, accept a commitment, add campaign steps or set "
-            "rules: those are human-only and exist as buttons in the dashboard's Autonomy tab. When the "
-            "user asks for one of them, tell them to use the dashboard; never try to work around this."
+            "campaigns). Once on it acts by itself on anything non-catastrophic. actions: status, disable, "
+            "dry_run_on, log (hours) = what autonomy did, why (query) = why it did something, speak_log, "
+            "list_suggestions, approve/dismiss/never (id), list_commitments, complete_commitment/"
+            "cancel_commitment/accept_commitment (id), add_project (project, goal, risk_level), add_action "
+            "(project, description, scheduled_for), approve_campaign (project, approved), list_policies, "
+            "run_tick. Use it for 'what did autonomy do today', 'why did you do X', 'turn off autonomy'. "
+            "Turning autonomy ON, writing policy rules and leaving dry-run are settings changed from the "
+            "dashboard's Autonomy tab only; tell the user to use it."
         ),
         "input_schema": {
             "type": "object",
@@ -2072,14 +2069,13 @@ AUTONOMY_TOOLS = [
     {
         "name": "create_tool",
         "description": (
-            "PROPOSE a NEW reusable tool from a small pure-Python function (becomes dyn_<name> only after "
-            "the user approves it in the dashboard's Autonomy tab; tell them to). Use only "
+            "Create a NEW reusable tool from a small pure-Python function (becomes dyn_<name>). Use only "
             "when the user asks for a new capability that is plain computation (parsing, math, text/date "
             "handling). The code is safety-scanned and tested first: only pure stdlib modules (json, re, "
             "math, datetime, statistics, collections, ...), no file/network/shell/eval access, one "
             "top-level function named exactly `name` with typed parameters, JSON-serialisable return. "
             "Give tests as [{args:{...}, expect: <value>}]. Set dry_run=true to validate without saving. "
-            "Refused from phone/unattended runs. Max 3 new tools per day."
+            "Max 3 new tools per day."
         ),
         "input_schema": {
             "type": "object",
@@ -2091,6 +2087,28 @@ AUTONOMY_TOOLS = [
                 "dry_run": {"type": "boolean"},
             },
             "required": ["code_string", "name", "description"],
+        },
+    },
+    {
+        "name": "autonomy_skill",
+        "description": (
+            "Composable skills: a named ordered sequence of EXISTING tools with fixed parameters, run "
+            "step by step through the normal tool path (so every guard, the audit log and the "
+            "catastrophic confirmation gate still apply; a skill gains no new powers). actions: create "
+            "(name, description, steps=[{tool, input}]), run (name, params for {placeholders}), list, "
+            "enable, disable, revoke (name). A skill cannot name a tool that does not exist or another "
+            "skill. Repeated identical sequences are turned into skills automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["create", "run", "list", "enable", "disable", "revoke"]},
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "steps": {"type": "array", "items": {"type": "object"}},
+                "params": {"type": "object"},
+            },
+            "required": ["action"],
         },
     },
     {
@@ -4012,7 +4030,7 @@ def _sleep_mail_tick(now: datetime) -> None:
             stats = sleep_mail.run_cycle(
                 mcp=_sleep_mail_mcp, claude=_sleep_mail_claude, record=_record_sleep_important,
                 since_iso=started, sleep_started_at=started,
-                on_inbound=lambda m: _autonomy_inbound(m["subject"], "", m["from"], "email"),
+                on_inbound=lambda m: _autonomy_inbound(m["subject"], m.get("body", ""), m["from"], "email", m["id"]),
             )
             if stats and stats.get("inbound"):
                 _sleep_mail_fast_until = datetime.now() + timedelta(minutes=sleep_mail.ACTIVE_WINDOW_MIN)
@@ -4096,12 +4114,53 @@ def _autonomy_callbacks() -> dict:
         "system_status": lambda: json.dumps(get_system_status_report(), default=str)[:400],
         "consolidate": lambda now: consolidation.consolidate(now, _sleep_mail_claude),
         "publish": dashboard.notify,
+        "speak": lambda text: _speak_shaped(text),  # spoken log summary: shortened/path-collapsed like every reply
+        "file_events": lambda: filewatcher.watcher.recent_events(50),
+        "create_calendar_event": _autonomy_create_event,
+        "poll_mail": _autonomy_poll_mail,
+        "known_tools": lambda: [t["name"] for t in AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()],
+        "run_tool": lambda name, inp: _execute_tool(name, inp or {}, "(autonomy skill)"),
     }
 
 
-def _autonomy_inbound(subject: str, body: str, sender: str, source: str = "email") -> None:
-    """Hook for mail/Telegram/Discord content written by someone else. Worker thread, never blocks."""
-    autonomy.process_inbound_async(subject, body, sender, source)  # bounded worker pool (audit G-02)
+def _autonomy_inbound(subject: str, body: str, sender: str, source: str = "email", message_id: str = "") -> None:
+    """THE call site for mail/Telegram/Discord content written by someone else: real body when there is
+    one, message_id so the same message is never processed twice. Worker thread, never blocks."""
+    autonomy.process_inbound_async(subject, body, sender, source, message_id)  # bounded worker pool
+
+
+def _autonomy_create_event(details: dict) -> str | None:
+    """Direct Calendar MCP create-event (no agent loop). None = no usable calendar tool/schema, so the
+    caller falls back to the agent loop. Args are mapped onto the tool's own input schema."""
+    name = next((n for n in _mcp_tool_index
+                 if "calendar" in n and any(k in n for k in ("create_event", "create-event", "insert_event", "add_event"))),
+                None)
+    if not name:
+        return None
+    schema = next((t for t in _mcp_tool_schemas if t["name"] == name), None) or {}
+    args = autonomy.build_calendar_args(((schema.get("input_schema") or {}).get("properties")) or {}, details)
+    if not args:
+        return None
+    return execute_mcp_tool(name, args)
+
+
+def _autonomy_poll_mail() -> list[dict]:
+    """New inbox messages (not the user's own, not yet seen by autonomy) with their bodies, via the Gmail
+    MCP the sleep-mail feature already uses. Empty when Gmail is not connected."""
+    if "mcp_gmail_search_emails" not in _mcp_tool_index:
+        return []
+    found = _sleep_mail_mcp("search_emails", {"query": "in:inbox newer_than:1d", "maxResults": 10})
+    if sleep_mail.looks_like_error(found):
+        return []
+    own, out = sleep_mail.own_addresses(), []
+    for m in sleep_mail.parse_search(found):
+        if not m["sender"] or m["sender"] in own or not autonomy.unseen_message("email", m["id"]):
+            continue
+        read = _sleep_mail_mcp("read_email", {"messageId": m["id"]})
+        out.append({**m, "body": "" if sleep_mail.looks_like_error(read) else sleep_mail._body_of(read)[1]})
+        if len(out) >= 5:
+            break
+    return out
 
 
 def _start_scheduler() -> None:
@@ -7023,21 +7082,15 @@ def _execute_tool_impl(
             result = memory_enhance.semantic_recall(str(inp.get("query") or ""))
         elif tool_name == "autonomy":
             result = autonomy.handle_tool(inp, _current_command_source())
+        elif tool_name == "autonomy_skill":
+            result = autonomy_skills.handle_tool(inp, _current_command_source())
         elif tool_name == "create_tool":
-            if _current_command_source() not in ("voice", "text", "dashboard"):
-                result = "Creating tools is only accepted from the PC (voice, typed or dashboard), not the phone or unattended runs."
-            else:
-                # Never registers anything itself: it validates and files a proposal the user must
-                # approve in the dashboard (audit B-01 / A-01 - a tool runs with the user's privileges).
-                reserved = {t["name"] for t in AGENT_TOOLS}
-                if inp.get("dry_run"):
-                    result = dyn_tools.create_tool(
-                        str(inp.get("code_string") or ""), str(inp.get("name") or ""),
-                        str(inp.get("description") or ""), inp.get("tests") or None, True, reserved)
-                else:
-                    result = dyn_tools.propose_tool(
-                        str(inp.get("code_string") or ""), str(inp.get("name") or ""),
-                        str(inp.get("description") or ""), inp.get("tests") or None, reserved)
+            # Full-permission model: validated (scan + tests) and registered straight away.
+            result = dyn_tools.create_tool(
+                str(inp.get("code_string") or ""), str(inp.get("name") or ""),
+                str(inp.get("description") or ""), inp.get("tests") or None,
+                bool(inp.get("dry_run")), {t["name"] for t in AGENT_TOOLS},
+            )
         elif tool_name == "manage_dynamic_tool":
             result = dyn_tools.handle_manage(inp)
         elif dyn_tools.is_dynamic(tool_name):
@@ -7304,6 +7357,8 @@ def _handle_text_command_impl(
     dashboard.end_session(session_id, "done", shown)
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
     autonomy.after_turn(transcript, reply, source)  # no-op unless autonomy is on; runs on a worker thread
+    if autonomy.enabled():
+        autonomy._spawn("autonomy-patterns", autonomy_skills.note_turn, transcript)  # repeated sequence -> skill
     if reply:
         if reply_sink:
             reply_sink(shown)
@@ -7710,6 +7765,7 @@ def main() -> int:
                     set_llm=set_llm_provider,
                     face=face,
                     autonomy=autonomy,
+                    autonomy_skills=autonomy_skills,
                     dyn_tools=dyn_tools,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same

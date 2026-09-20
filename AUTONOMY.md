@@ -1,171 +1,181 @@
 # Full Autonomy Stack
 
-Jarvis can move from "answers when asked" to "notices what you have committed to and helps": it
-extracts commitments and projects from conversation and mail, keeps them across days, watches deadlines,
-proposes concrete actions, learns from what you approve or dismiss, runs multi-day campaigns, and can
-add small pure-computation tools to itself. **It is off by default, and it asks before it acts.**
+Jarvis can move from "answers when asked" to "notices what you have committed to and does something about
+it": it extracts commitments and projects from conversation, mail and file activity, keeps them across
+days, watches deadlines, creates the calendar events / reminders / background tasks they imply, retries
+what fails, learns from what you dismiss, runs multi-day campaigns, and composes repeated work into skills.
 
-Files: `jarvis_autonomy.py` (core), `jarvis_dynamic_tools.py`, `jarvis_memory_consolidation.py`,
-`dashboard_static/autonomy.js` (Autonomy tab), tests in `test_autonomy.py`.
+> **Permission model (explicit user decision, 2026-09-20): FULL AUTO-ACT, except catastrophic actions.**
+> Turning autonomy **on** is a deliberate act (dashboard toggle or `JARVIS_AUTONOMY_ENABLED=1`; it is
+> off out of the box). Once on, it does **not ask** before acting. The only things that still need a
+> spoken "yes" or a dashboard Approve are the catastrophic tier already enforced in `jarvis.py`
+> (`_CATASTROPHIC_PATTERNS` / `_pending_action`: shutdown, restart, sign-out, disk format/partition,
+> recursive wipe of a drive or profile). That gate is untouched, and no autonomy module references it
+> (an AST test pins this). Everything is logged, and you can switch autonomy off or into dry-run at any time.
+
+Files: `jarvis_autonomy.py` (core), `jarvis_autonomy_skills.py`, `jarvis_dynamic_tools.py`,
+`jarvis_memory_consolidation.py`, `dashboard_static/autonomy.js` (Autonomy tab), tests in `test_autonomy.py`.
 
 ## Turn it on / off (and the emergency stop)
 
 | How | Effect |
 |---|---|
-| Say "turn off autonomy" (the `autonomy` tool) | Persisted in the DB. Works from anywhere; it also cancels the queued tasks autonomy had started. |
-| Dashboard > Autonomy > *Turn autonomy on/off* | The same switch, and the **only** way to turn it *on* (see "Human-only actions"). |
-| `JARVIS_AUTONOMY_ENABLED=1` | Default when the DB has no stored choice. |
+| Dashboard > Autonomy > *Turn autonomy on* | The only way to turn it **on** at runtime (also `JARVIS_AUTONOMY_ENABLED=1`). Persisted in the DB. |
+| Say "turn off autonomy" (the `autonomy` tool) or the dashboard button | Off from anywhere; also cancels the task-queue items autonomy had started. |
 | **`JARVIS_AUTONOMY_DISABLED=1`** | Hard kill. Overrides everything; nothing autonomous runs, enabling is refused. |
-| Dashboard *Dry run* / "autonomy dry run on" | Everything is logged, nothing is executed. |
+| Dashboard *Dry run* / "autonomy dry run on" | Everything is decided and logged, nothing is executed (`outcome = dry_run`). |
 | `JARVIS_DYNAMIC_TOOLS_DISABLED=1` | No dynamic tools created, advertised or run. |
 
-## Human-only actions (security audit 2026-09-20, B-01)
+Turning autonomy **on**, writing/loosening policy rules and leaving dry-run are *settings*, not actions
+autonomy takes, so they are dashboard-only (`HUMAN_ONLY_ACTIONS`). Everything else, including approving
+a recorded card, accepting a commitment and approving a campaign, the model may do by voice.
 
-The model cannot tell your words from text that reached it through an email, web page or file, so
-anything that grants Jarvis more power exists **only as a dashboard route**, never as something the
-`autonomy`/`create_tool` tools can do: enabling autonomy, approving a suggestion, accepting a commitment,
-approving a campaign or adding campaign steps, setting rules, leaving dry run, and approving a proposed
-dynamic tool. Asking by voice gets "use the dashboard". Turning things *off* (disable, dry-run on,
-dismiss, never) still works everywhere. The suggestion card puts **Approve behind a Review panel** that
-shows the exact data the action will run with.
+## The policy engine (what "default auto_act" means in code)
 
-## Untrusted text (audit C-02 / C-04 / B-02)
+`evaluate_policy(category, sender, text, confidence, action_type, source_type)` in `jarvis_autonomy.py`:
 
-* Anything extracted from mail/Telegram/Discord, **or from a turn in which Jarvis read mail, the web,
-  files or the screen**, is stored *quarantined*: it is kept out of the model's context, the classifier
-  and the deadline auto-nudge until you accept it (dashboard *Accept*, or by approving a suggestion built
-  from it). It still produces a suggestion card, which is your review.
-* Model/other-person text is cleaned (control characters, newlines, length) before it is stored, shown,
-  spoken or put in a prompt, and action details are reduced to plain scalar fields; what the card shows
-  is exactly what runs, and the agent is told the values are data, never instructions.
-* Extraction prompts now include the current time (so "tomorrow" resolves) and deadlines in the past or
-  more than 3 years out are dropped.
+* **No matching rule -> `auto_act`** for every non-catastrophic action type (`calendar`, `reminder`, `email`,
+  `file_op`, `background_task`, `notification`), from **any** source: your own words, mail, Telegram,
+  Discord, files, the classifier. There is no source-based and no action-type-based guard any more.
+* The only gate is a confidence floor, `JARVIS_AUTONOMY_AUTO_MIN_CONF` (default **0.7**). Below it the item
+  is **recorded** as a dashboard card ("Recorded for review") instead of acted on. That card is visibility,
+  not a question: nothing blocks on it.
+* Rules (`autonomy_policies`, most specific wins: sender > keyword > category, newest first):
+  `auto_act` (optionally with its own `min_confidence`), `ignore` (silence a category), and `ask_once` /
+  `always_ask` (only a user can write these; they make a card and wait, as an explicit override).
+  A sender rule matches the **exact address** (or `@domain.com`), never a substring or display name.
+* **Teach loop** (`record_feedback`): dismissing a category's cards twice in a row turns a *learned* rule
+  into `ignore`; approvals reset the streak. A learned rule may auto-act on **any** action type. Nothing
+  learned can make Jarvis ask more. A recently dismissed category is skipped for
+  `JARVIS_AUTONOMY_DISMISS_COOLDOWN_MIN` (180).
+* **Budgets are soft**: `JARVIS_AUTONOMY_MAX_ACTS_PER_DAY` (10) is logged, and going over it never turns an
+  action into an ask; a 5x runaway breaker (50/day by default) is the only thing that stops. Concurrent
+  background tasks (`..._MAX_BG_TASKS`, 2) is a real capacity limit: an extra step waits, planned.
+* **The user is busy** (typing, speaking, mid-command, Focus/Sleep Mode): notifications and reminders
+  still happen (delivery/speech timing belongs to `queue_or_deliver_notification`); an action that needs
+  an agent-loop run (`calendar` without a direct path, `email`, `file_op`) goes on an *auto queue* and runs
+  the moment the user is idle again. It is never asked about.
+* A failed autonomous action is logged (`outcome = failed`) and you get a short notification.
+
+Approved/auto `calendar`/`email`/`file_op` actions that need the agent run through the **normal agent loop**
+(`run_agent_loop` -> `_execute_tool`), so if one of them ever reaches a catastrophic command, that command is
+*staged* for your yes exactly like a user-initiated one, and nothing runs until you confirm it.
+
+## Work package 1 - inbound perception
+
+`process_inbound_message_for_events(subject, body, sender, source, message_id="")` is the single inbound hook
+(`source` in `email` / `telegram` / `discord` / `message`). It always uses the real body when there is one;
+with only a subject it still extracts but scales confidence by 0.85. Meetings become `event` commitments,
+tasks become `task` commitments; confident ones act at once. Every attempt writes an `inbound` row to
+`autonomy_decisions` (+ `action_audit`). `message_id` de-duplicates across call sites (`autonomy_seen_messages`).
+
+Call sites:
+
+| Path | Where | What it passes |
+|---|---|---|
+| Sleep-mail (while Sleep Mode is on) | `jarvis_sleep_mail.run_cycle` reads each non-family message and calls `on_inbound` -> `jarvis._autonomy_inbound` | subject + **full body** + sender + id |
+| Normal Gmail inbox | `jarvis._autonomy_poll_mail` (the `poll_mail` callback) via the tick's `_inbox_poll`, every `JARVIS_AUTONOMY_MAIL_POLL_MIN` min (default 10, **0 = off**) | new inbox messages (not yours, not seen) with bodies, up to 5 per poll |
+| Telegram / ntfy | messages **you** send are commands: they go through `handle_text_command` -> `autonomy.after_turn` (extraction) | your own words |
+| Discord | there is no inbound Discord handler in Jarvis (only the optional MCP). Any code that gets a Discord message should call `jarvis._autonomy_inbound(subject, body, sender, "discord", id)` | n/a today |
+| File watcher | `_file_scan` reads `filewatcher.watcher.recent_events`; a NEW document file (`.pdf .docx .doc .xlsx .pptx .csv .zip .epub`) in a watched folder becomes a "Review new file ..." commitment + a notification, once. It never moves or deletes files by itself | path |
+
+**Data exposure:** mail bodies (and Gmail polling) go to the active brain. On Gemini's free tier that text may
+be used to improve Google products. Set `JARVIS_AUTONOMY_MAIL_POLL_MIN=0` to stop the polling.
+
+## Work package 2 - extraction
+
+`after_turn` extracts when `_should_extract` says so: the cheap cue regex (fast path), **or** the user's message
+is at least `JARVIS_AUTONOMY_EXTRACT_MIN_CHARS` (240) long, **or** it is >= 40 chars with future/obligation
+phrasing ("will", "at 9am", "on Friday", "before", "due" ...). `JARVIS_AUTONOMY_EXTRACT_ALWAYS=1` skips the gate.
+Extraction sees `semantic_recall` of the exchange ("Related memory: ..."). Quality rules in `add_commitment`:
+near-duplicates (same words, Jaccard >= 0.75, same day when both have one) **update** the existing item
+(higher confidence, missing deadline/quote filled) instead of inserting; confidence is clamped to 0..1; a
+past or >3-year deadline is dropped (item kept); a source quote is always stored (falls back to the text).
+A turn that read mail/web/files/screen is tagged `message`, and a **low-confidence** item from another
+person's words is stored *quarantined* (kept out of prompts and nudges until you accept it); a confident one acts.
+
+## Work package 3 - observability
+
+* Voice/text: "show autonomy log", "what did autonomy do today", "why did you do X", "read out the autonomy
+  log" (`autonomy` tool actions `log`, `why`, `speak_log`; the spoken copy goes through `_speak_shaped`).
+* Dashboard > Autonomy > **Activity log**: filter by time range, type (act / inbound / queued / recorded /
+  skipped / skill / error), outcome (ok / failed / dry run / skipped / info), category and free text; each row
+  expands to *why* (policy reason), the source quote, what was done, the payload and the result. The budget
+  usage line and the *Turn autonomy off* / *Dry run* buttons are on the same tab. API: `GET /api/autonomy/log`.
+* Storage: `autonomy_decisions` now has `category`, `source_quote`, `payload_json`, `result`, `outcome`
+  (auto-migrated), and every row is mirrored to `action_audit`.
+
+## Work package 4 - deterministic calendar and reminders
+
+`calendar` actions try `_direct_calendar` first: `jarvis._autonomy_create_event` finds the connected Calendar
+MCP create-event tool and `build_calendar_args` maps title/start/end/location onto **that tool's own input
+schema** (it never invites attendees). If there is no usable tool/schema, or the call reports an error, it
+falls back to the normal agent loop. Reminders always use `create_reminder` directly. Direct calendar creation
+is audited (`autonomy_direct_calendar`).
+
+## Work package 5 - composable skills (`jarvis_autonomy_skills.py`)
+
+A skill is a named, ordered list of `{tool, input}` steps that only names tools that **exist right now**
+(checked at creation and on every run), cannot call itself, and runs each step through `_execute_tool`, so all
+existing guards, the audit log and the catastrophic gate apply: it gains no new power. `{placeholder}` values in
+inputs are filled from `params`. The model creates/runs them with the `autonomy_skill` tool; a sequence of 2-6
+tools (shell/python steps excluded) that you run identically `JARVIS_AUTONOMY_PATTERN_MIN` (3) times becomes a
+skill automatically (`auto_<hash>`). Dashboard: list / enable / disable / revoke. Dynamic *tools* (below) stay
+pure computation; skills are the way to compose real side effects.
+
+## Work package 6 - memory intervention and campaigns
+
+* Deadline scan (no model): open commitments at **24 h / 2 h / overdue** get a nudge once per bucket; at the
+  24 h bucket, if nothing was already done for the item, the action it implies (reminder / calendar event) is
+  taken too, without asking.
+* The classifier's memory context uses `semantic_recall` over the nearest open commitments.
+* Campaign steps run a status machine: `planned -> running -> done | blocked | cancelled` (`simulated` for
+  high-risk projects unless their metadata says `live`). A failed step (task failed/cancelled, never got a
+  slot in 24 h, queue refused) is **retried up to 3 attempts, 10 minutes apart**, then `blocked` and you are
+  told. Ordinary steps are never turned into an ask. Approved background tasks are actually planned into a slot.
 
 ## How the tick works
 
-`jarvis.py`'s existing scheduler loop (`SCHEDULER_TICK_S`, 60 s) calls `autonomy.tick(now)`. There is no
-second background loop; when enabled, the pass runs on a short-lived worker thread so a slow model call
-never stalls reminders or skills. Each pass:
-
-1. **Free, deterministic steps** (always): expire stale suggestions/commitments, nudge as an open
-   commitment's deadline nears (24 h / 2 h / overdue, once each), advance approved campaigns, and every
-   few hours run the planner.
-2. **Gates.** If Focus/Sleep Mode is on, the user is typing/speaking, or Jarvis is speaking, the rest is
-   skipped (suggestions still appear as dashboard cards; they are spoken later). Anything that is spoken goes
-   through `queue_or_deliver_notification`, so face group-safe mode (a stranger in view) still holds it.
-3. **Model steps** (only when the gates are clear): summarise idle conversation into
-   `conversation_summaries`; daily memory consolidation; speak one waiting suggestion; and the
-   *classifier* ("is there a latent need?"), which is rate-limited (default every 15 min) and skipped when
-   nothing changed or there is nothing in memory to reason about, because it is the only per-tick cost.
-4. Every decision goes to `autonomy_decisions` **and** `action_audit` (as `autonomy_decision` /
-   `autonomy_action` rows).
-
-Extraction also runs after each command (`after_turn`) but only when the exchange contains a planning cue
-("tomorrow", "remind", "deadline", ...), so ordinary chat costs nothing. `JARVIS_AUTONOMY_EXTRACT_ALWAYS=1`
-removes that filter.
-
-## Commitments, projects, campaigns
-
-* `commitments` — task/event/promise/goal with deadline, who is responsible, confidence, source quote.
-  Duplicates (same text, same day) are dropped; items under 0.6 confidence are never stored.
-* `autonomy_projects` / `autonomy_project_actions` — named after `autonomy_` because `jarvis.py` already
-  has a different `projects` table. A commitment's `related_project` finds or creates a project.
-* **Campaigns**: `add_action` plans steps on a project; nothing runs until you `approve_campaign`. Steps
-  are queued through the existing task queue (max concurrent background tasks, daily action budget
-  apply) and reconciled from `task_queue`. A `high` risk project is *simulated* (logged only) unless its
-  metadata says `live`.
-* **Planner** (every `JARVIS_AUTONOMY_PLANNER_HOURS`, default 4): accepted (`accept_commitment`) tasks due
-  within 7 days go into the task queue, then the queue is re-planned into free slots.
-
-## Policies and the teach loop
-
-A rule is `(category, match_kind category|sender|keyword, match_value) -> auto_act | ask_once |
-always_ask | ignore`, optional `min_confidence`. Most specific wins (sender > keyword > category).
-Categories look like `conversation:reminder`, `email:calendar`, `deadline:notification`, `tick:deadline:reminder`.
-
-* **Default is ask.** The only built-in rule is an automatic heads-up about an approaching deadline.
-* Content someone else wrote (email/Telegram/Discord) can **never** auto-act through a category-wide or
-  keyword rule, only through a rule naming that **exact sender address** (or `@domain.com`). A `From`
-  header can be forged, so even a sender rule is only as strong as your mail system: prefer leaving it on
-  *ask*.
-* Learned rules only ever auto-run reminders/notifications: 3 approvals in a row promote a category, 2
-  dismissals demote it to `ignore`, one dismissal takes a learned auto rule back to asking. Rules you
-  write yourself are never rewritten. *Never for this category* writes a permanent `ignore`.
-* After a dismissal the same category is suppressed for `JARVIS_AUTONOMY_DISMISS_COOLDOWN_MIN` (180).
-* Learned rules are also written into memory as `rule:autonomy:<category>` facts by consolidation.
-
-Approved `calendar`/`email`/`file_op` actions run through the **normal agent loop**, so its tools, audit
-trail and the catastrophic confirmation gate all still apply. The autonomy modules never reference the gate
-(pinned by an AST test).
-
-## Budgets
-
-Per day: `JARVIS_AUTONOMY_MAX_ACTS_PER_DAY` (10), `..._MAX_SUGGESTIONS_PER_DAY` (8), concurrent
-background tasks `..._MAX_BG_TASKS` (2), dynamic tools `JARVIS_DYNAMIC_TOOLS_PER_DAY` (3).
+`jarvis.py`'s scheduler loop (`SCHEDULER_TICK_S`, 60 s) calls `autonomy.tick(now)`; when enabled the pass runs on
+a worker thread. Free/deterministic steps: expire and prune, deadline scan, campaigns, planner, re-plan
+pending tasks, run the auto queue, file scan, mail poll. Model steps (only when the user is not busy):
+summarise idle conversation, memory consolidation, speak one recorded card, and the rate-limited classifier
+(every 15 min, skipped when nothing changed). At most 3 autonomy worker threads exist at once.
 
 ## Dynamic tools
 
-`create_tool(code_string, name, description, tests=None, dry_run=False)` **proposes** a tool. It is
-validated (scan + your tests) and filed as a proposal; it becomes `dyn_<name>` only when **you** approve it
-in the dashboard (the code is shown there). Approval re-runs the scan and tests.
+`create_tool(code_string, name, description, tests)` validates (scan + your tests) and registers `dyn_<name>`
+straight away. It is **not a hard security boundary**: allow-listed modules can re-export `os`/`sys`, so the
+runner strips sub-modules and underscore names from every allowed module, runs in a `python -I` process with a
+10 s timeout, a Windows Job Object (256 MB, no child processes) and capped output. Treat every tool as if it could
+run with your privileges. An existing name is never overwritten; 3 new tools per day.
 
-* **This is not a hard security boundary.** An audit showed that allow-listed modules re-export `os`/`sys`
-  (`uuid.os`, `calendar.sys`, `json.codecs.open`) and that `operator.attrgetter` gives dynamic attribute
-  access, so an AST scan alone can be bypassed. Treat every approved tool as if it could run with your
-  privileges, and read the code before approving. What is layered on top, as defence in depth:
-  * a small allow-list of pure modules (no `operator`, `string`, `typing`, `dataclasses`, `uuid`,
-    `calendar`, `enum`, `urllib`), no `eval/exec/open/getattr/print/...`, no underscore attributes;
-  * inside the runner every allowed module is replaced by a proxy with **no sub-modules and no
-    underscore names**, so the re-export routes do not exist at runtime;
-  * the tool runs in a separate `python -I` process with a 10 s timeout, a Windows Job Object (256 MB
-    memory cap, no child processes), and output capped inside the child.
-* An existing tool name is never overwritten or re-enabled (revoke it first); the daily budget is
-  checked under the same lock as the insert.
-* Stored in `dynamic_tools` (hash + code); on every load the hash and scan are re-checked, so a tampered
-  row is not run. Dashboard: approve/reject proposals, enable / disable / revoke. Creation is refused
-  from the phone and unattended runs. Deleting a tool does not refund the daily budget.
+## Safety that stays
 
-## Wiring in `jarvis.py` (already applied)
+Hard kill, dry run, the catastrophic gate, exact-sender matching, text sanitising (control characters, newlines,
+lengths) before anything is stored/spoken/embedded in a prompt, the agent being told action data is data not
+instructions, a runaway breaker, retention (decisions 90 days, closed commitments 180), and full logging.
+A prompt-injection surface remains wherever mail/web text reaches the model; under this model a confident
+injected instruction **can** cause a calendar event, a reminder, an email or a background task. The log and
+the off switch are the mitigations.
 
-* imports (`autonomy`, `dyn_tools`, `consolidation`) next to the other modules;
-* `AUTONOMY_TOOLS` (`autonomy`, `create_tool`, `manage_dynamic_tool`) appended to `AGENT_TOOLS`, dispatch in
-  `_execute_tool_impl` (plus `dyn_*` routing); `dyn_tools.schemas()` added to the three tool lists;
-* `build_system_blocks`: `autonomy.agent_context_line()` in the *volatile* block (open commitments/projects);
-* `_scheduler_loop`: `autonomy.tick(now)`;
-* `main()`: `dyn_tools.init_dynamic_tools()` + `autonomy.start_autonomy_tick(_autonomy_callbacks())` before
-  `_start_scheduler()`;
-* `_handle_text_command_impl`: `autonomy.after_turn(transcript, reply, source)` after the reply is stored;
-* mail: `jarvis_sleep_mail.run_cycle(..., on_inbound=...)` calls `_autonomy_inbound(subject, body, sender)`.
-  Only the subject is available there today; for full-body extraction call
-  `_autonomy_inbound(subject, body, sender, "email" | "telegram" | "discord")` from any handler that has it.
+## How to verify (do this before trusting it)
 
-## Reliability and housekeeping (audit C-01, D-01, E-01, E-03, F-01/02, G-01/02, H-01/02)
+1. **Dry run first.** Dashboard > Autonomy > *Dry run (log only)*, then *Turn autonomy on*. Nothing executes.
+2. **Inbound mail.** Email yourself from another address: "Lunch with Sam next Thursday at 1pm in Room 4".
+   Within `JARVIS_AUTONOMY_MAIL_POLL_MIN` minutes the Activity log shows an `inbound email` row
+   ("N new item(s) from the body"), then an `act` row for the calendar event. Test the fallback: a subject-only
+   message is logged as "from the subject only" at lower confidence (may be *recorded* instead of acted on).
+3. **Calendar.** Leave dry run and repeat. In the log expand the `act` row: `Result` starts "Calendar event
+   created directly" (direct MCP path) or shows the agent-loop reply (fallback). Confirm the event in Google
+   Calendar. Say "why did you add that?" to hear the reasoning.
+4. **Reminders.** Say "I need to send the report by tomorrow 5pm": a reminder appears in `list_reminders`.
+5. **Files.** Drop a PDF into a watched folder (Downloads): a "New file ..." notification and a commitment.
+6. **Catastrophic still asks.** Say "shut down my computer": it is staged, the dashboard shows the pending
+   action, nothing runs until you say yes / Approve.
+7. **Off switch.** *Turn autonomy off*: queued tasks it started are cancelled; `JARVIS_AUTONOMY_DISABLED=1` blocks
+   it entirely.
 
-* **Approved background tasks and campaign steps are actually scheduled**: after queueing, the planner is
-  run and the result says when it will run (or that it is waiting for a slot, retried every tick). A
-  campaign step that never gets a slot within 24 h is marked failed, not left "queued" forever.
-* Approve/dismiss are compare-and-set, so two simultaneous approvals run the action once.
-* Turning autonomy off refuses new approvals, stops a worker that had not started yet, and cancels the
-  task-queue items autonomy created.
-* An approved action runs through the agent loop **without** writing the synthetic instruction into the
-  conversation history and **without** being able to stage a catastrophic confirmation (so a later "yes"
-  meant for something else cannot confirm it). The "a scheduled task is running" flag is a counter.
-* Autonomy stays quiet while a command is being transcribed or run, as well as when you type or Jarvis
-  speaks. At most 3 autonomy worker threads exist at once; extras are dropped and logged.
-* Retention: decisions and finished suggestions 90 days, closed commitments 180 days, dynamic-tool events
-  180 days (pruned at most hourly). Failed or malformed model calls are logged (`decision = error`).
-* The classifier's "nothing changed" check now ignores the clock (it hashed the minute, so it never
-  skipped) and includes the calendar.
-* The dashboard payload trims evidence/quotes to 300 characters.
-
-## Limits worth knowing
-
-* A prompt-injection surface remains wherever mail/web text reaches the model. Quarantine, human-only
-  approval and the review panel reduce it; a human who clicks *Approve* without reading the details still
-  executes the action through the full-tool agent loop (the catastrophic gate still applies there).
-
-* The classifier and extraction use the active brain (`CLAUDE_MODEL` or Gemini). On Gemini's free tier that
-  text (conversation, mail subjects, calendar) may be used to improve Google products.
-* Extraction of mail is subject-only via sleep-mail; other mail handlers must call the hook.
-* Calendar context is best-effort: it uses whatever Calendar MCP `list_events` tool is connected.
-* Approved calendar events depend on the agent picking the right Calendar tool; not verified live.
+Not verified live (unit-tested with fakes and the real task scheduler only): a real model extraction, the
+Gmail poll against a real inbox, the Calendar MCP's actual create-event schema, and the new dashboard sections
+in a real browser.

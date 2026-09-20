@@ -1,8 +1,8 @@
 """Full-autonomy layer for Jarvis: durable commitments/projects, a clocked decision tick, a policy
 engine that learns from Approve/Dismiss, proactive suggestions, and multi-day campaigns.
 
-OFF BY DEFAULT. Turn on with the `autonomy` tool ("turn on autonomy"), the dashboard Autonomy tab,
-or JARVIS_AUTONOMY_ENABLED=1. Turn off instantly with the same switches, or set
+OFF BY DEFAULT (turning it on is a deliberate act), but once ON it is FULLY AUTONOMOUS: everything that
+is not catastrophic runs without asking. Turn on from the dashboard Autonomy tab or JARVIS_AUTONOMY_ENABLED=1. Turn off instantly with the same switches, or set
 JARVIS_AUTONOMY_DISABLED=1 (hard kill: overrides everything, nothing here runs).
 
 Self-contained like the other jarvis_*.py modules: owns its tables in jarvis_memory.db, has its own
@@ -12,20 +12,18 @@ slow work runs on a short-lived worker thread), and calls after_turn()/process_i
 for_events() from the command/mail handlers. Every decision and every executed action is written
 to autonomy_decisions AND action_audit (through the audit callback).
 
-Safety model (the catastrophic confirmation gate in jarvis.py is untouched and still applies to
-anything an approved action asks the agent to do):
-  * Default verdict for anything is ASK (a dashboard card + a spoken suggestion). Auto-acting needs
-    an explicit auto_act policy; the only built-in one is a harmless nudge about an approaching
-    deadline. Learned rules may only auto-act on reminders/notifications; email / file / background
-    task actions auto-run only under a rule the user wrote themselves.
-  * Content that arrived from someone else (email, Telegram, Discord) can never auto-act through a
-    category-wide or keyword rule, only through a rule naming that exact sender address (a From header
-    can be forged, so even that is only as strong as the mail system), since anyone can write
-    "please add this to my calendar" in an email. It is also *quarantined*: stored, but kept out of
-    the model's context and the deadline auto-nudge until the user accepts it.
-  * Approving, enabling, loosening a rule and approving a campaign are HUMAN-ONLY: they exist as
-    dashboard routes, never as something the model's `autonomy` tool can do, so a prompt-injected
-    turn cannot approve its own suggestions.
+Permission model (explicit user decision, 2026-09-20: "full permission, only catastrophic asks"):
+  * The DEFAULT verdict is AUTO_ACT for every non-catastrophic action type (calendar, reminder, email,
+    file_op, background_task, notification) whatever the source, including mail/Telegram/Discord
+    content, provided extraction confidence >= JARVIS_AUTONOMY_AUTO_MIN_CONF (0.7). Below that the item
+    is only *recorded* as a dashboard card. Budgets are soft (logged); only a 5x runaway breaker stops.
+  * The ONLY things that still need a "yes" are the catastrophic tier (shutdown/format/wipe...), and
+    that gate lives in jarvis.py, untouched: an approved/auto action runs through the normal agent loop
+    and _execute_tool, so the gate applies there. This module never references it (AST-pinned).
+  * Still true: the hard kill JARVIS_AUTONOMY_DISABLED=1, dry-run mode, exact-sender rule matching, text
+    sanitising, and *every* decision + action is logged (autonomy_decisions and action_audit). Turning
+    autonomy ON and writing/loosening policy rules remain dashboard-only settings (not actions).
+  * A user-written rule can still say ask_once/always_ask/ignore for a category; that is honoured.
   * Suppressed while the user is talking/typing, in Focus/Sleep Mode, and for a cooldown after a
     similar suggestion was dismissed. Daily budgets cap autonomous acts, suggestions and concurrent
     background tasks. A global dry-run mode logs what would have happened and does nothing.
@@ -168,7 +166,10 @@ COMMITMENT_TYPES = ("task", "event", "promise", "goal")
 RESPONSIBLE = ("user", "other", "system")
 ACTION_TYPES = ("calendar", "reminder", "email", "file_op", "background_task", "notification")
 VERDICTS = ("auto_act", "ask_once", "always_ask", "ignore")
-LEARNABLE_AUTO = ("reminder", "notification")  # the only action types a *learned* rule may auto-run
+AGENT_RUN_TYPES = ("calendar", "email", "file_op")  # actions that may need an agent-loop run
+HARD_BUDGET_MULT = 5      # act budget is soft; this multiple of it is a runaway breaker
+MIN_AUTO_CONF_DEFAULT = 0.7
+FILE_SIGNAL_EXTS = (".pdf", ".docx", ".doc", ".xlsx", ".pptx", ".csv", ".zip", ".epub")
 INBOUND_SOURCES = ("email", "telegram", "discord", "message")  # content written by someone else
 MIN_EXTRACT_CONFIDENCE = 0.6
 LEARN_APPROVALS = 3   # consecutive approvals before a learned rule may auto-act
@@ -182,8 +183,12 @@ MAX_DEADLINE_AHEAD_DAYS = 3 * 366
 _UNTRUSTED_TOOL_RE = re.compile(
     r"^(mcp_|web_search|http_request|read_file|read_screen|read_clipboard|download_image|"
     r"delegate_research|scan_large|analyze_|get_recent_file_events)")
-HUMAN_ONLY_ACTIONS = ("enable", "dry_run_off", "set_policy", "approve_campaign", "add_action", "approve",
-                      "accept_commitment")
+# Settings changes (not actions autonomy takes): only from the dashboard.
+HUMAN_ONLY_ACTIONS = ("enable", "dry_run_off", "set_policy")
+_FUTURE_RE = re.compile(
+    r"\b(will|shall|i'll|we'll|let's|upcoming|later|soon|before|after|until|deadline|due|"
+    r"on (?:mon|tue|wed|thu|fri|sat|sun)\w*|at \d{1,2}(?::\d\d)?\s?(?:am|pm)?|\d{1,2}(?::\d\d)?\s?(?:am|pm)|"
+    r"next \w+|this \w+day|end of (?:the )?(?:day|week|month))\b", re.I)
 
 # Words that make a command worth an extraction call at all (a cheap gate on the extra model
 # call every command would otherwise cost). Deliberately broad: a miss only costs one item.
@@ -282,6 +287,17 @@ _SCHEMA = [
     "sender TEXT, title TEXT NOT NULL, evidence TEXT, action_type TEXT, action_json TEXT, "
     "confidence REAL, status TEXT NOT NULL DEFAULT 'pending', commitment_id INTEGER, "
     "announced_at TEXT, decided_at TEXT, result TEXT)",
+    # Which mail/file items were already turned into commitments (source + id), so polling never repeats.
+    "CREATE TABLE IF NOT EXISTS autonomy_seen_messages ("
+    "source TEXT NOT NULL, msg_id TEXT NOT NULL, seen_at TEXT NOT NULL, PRIMARY KEY (source, msg_id))",
+]
+
+# Columns added after the first release: (table, column, ddl).
+_MIGRATIONS = [
+    ("autonomy_decisions", "category", "TEXT"), ("autonomy_decisions", "source_quote", "TEXT"),
+    ("autonomy_decisions", "payload_json", "TEXT"), ("autonomy_decisions", "result", "TEXT"),
+    ("autonomy_decisions", "outcome", "TEXT"),
+    ("autonomy_project_actions", "attempts", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -298,6 +314,14 @@ def init_autonomy_tables() -> None:
                 marks = ",".join("?" * len(INBOUND_SOURCES))
                 conn.execute(f"UPDATE commitments SET quarantined=1 WHERE status='open' AND source_type IN ({marks})",
                              INBOUND_SOURCES)
+            for table, col, ddl in _MIGRATIONS:
+                have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if col not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            # campaign status machine: planned -> running -> blocked -> done / cancelled
+            conn.execute("UPDATE autonomy_project_actions SET status='running' WHERE status='queued'")
+            conn.execute("UPDATE autonomy_project_actions SET status='done' WHERE status='completed'")
+            conn.execute("UPDATE autonomy_project_actions SET status='blocked' WHERE status='failed'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_commit_status ON commitments(status, deadline_iso)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sugg_status ON autonomy_suggestions(status)")
             seeded = conn.execute(
@@ -428,7 +452,7 @@ def _halt_pending_work() -> int:
         _call("cancel_task", i)
     set_setting("queued_task_ids", "[]")
     _exec("UPDATE autonomy_project_actions SET status='cancelled', completed_at=?, "
-          "result_summary='autonomy was turned off' WHERE status='queued'", (_iso(),))
+          "result_summary='autonomy was turned off' WHERE status='running'", (_iso(),))
     return len(ids)
 
 
@@ -580,12 +604,34 @@ def get_or_create_project(name: str, goal: str = "", risk_level: str = "low") ->
         "VALUES (?, ?, 'active', ?, ?, ?, '{}')", (name, goal, risk_level, now, now))
 
 
+def _tokens(s: str) -> set[str]:
+    return {w for w in _norm_text(s).split() if len(w) > 2}
+
+
 def _find_duplicate(description: str, deadline: str | None) -> int | None:
-    key = _norm_text(description)
+    """An open commitment this one is (nearly) the same as: same normalised text, or word overlap >= 0.75
+    (Jaccard), on the same day when both have a deadline."""
+    key, toks = _norm_text(description), _tokens(description)
     for r in _rows("SELECT id, description, deadline_iso FROM commitments WHERE status='open'"):
-        if _norm_text(r["description"]) == key and (r["deadline_iso"] or "")[:10] == (deadline or "")[:10]:
+        if deadline and r["deadline_iso"] and r["deadline_iso"][:10] != deadline[:10]:
+            continue
+        if _norm_text(r["description"]) == key:
+            return r["id"]
+        other = _tokens(r["description"])
+        if toks and other and len(toks & other) / len(toks | other) >= 0.75:
             return r["id"]
     return None
+
+
+def _merge_into(cid: int, deadline: str | None, conf: float, quote: str) -> None:
+    """Prefer updating the existing item over a near-duplicate: keep the higher confidence, fill in a
+    missing deadline or source quote."""
+    row = _commitment(cid)
+    if not row:
+        return
+    _exec("UPDATE commitments SET confidence=?, deadline_iso=COALESCE(deadline_iso, ?), "
+          "source_quote=CASE WHEN COALESCE(source_quote,'')='' THEN ? ELSE source_quote END, updated_at=? WHERE id=?",
+          (max(float(row["confidence"] or 0), conf), deadline, quote, _iso(), cid))
 
 
 def _plausible_deadline(deadline: str | None) -> str | None:
@@ -603,13 +649,14 @@ def _plausible_deadline(deadline: str | None) -> str | None:
 
 
 def add_commitment(c: dict, source_type: str, sender: str = "") -> int | None:
-    """Validates and stores one extracted item; returns its id, or None if it was invalid, below
-    the confidence floor, or a duplicate of an open commitment. Anything derived from someone else's
-    words (INBOUND_SOURCES) is stored *quarantined* until the user accepts it (audit C-02)."""
+    """Validates and stores one extracted item; returns its new id, or None if it was invalid, below
+    the confidence floor, or merged into an existing near-duplicate. Confidence is clamped to 0..1,
+    a past/absurd deadline is dropped (item kept), and a source quote is always stored. Low-confidence
+    items from other people's words are stored *quarantined* (out of prompts/nudges until accepted)."""
     ctype = str(c.get("type") or "task").lower()
     desc = _clean(c.get("description"), 500)
     try:
-        conf = float(c.get("confidence") or 0)
+        conf = max(0.0, min(1.0, float(c.get("confidence") or 0)))
     except (TypeError, ValueError):
         conf = 0.0
     if ctype not in COMMITMENT_TYPES or not desc or conf < MIN_EXTRACT_CONFIDENCE:
@@ -617,9 +664,13 @@ def add_commitment(c: dict, source_type: str, sender: str = "") -> int | None:
     who = str(c.get("who_is_responsible") or "user").lower()
     who = who if who in RESPONSIBLE else "user"
     deadline = _plausible_deadline(_norm_dt(c.get("deadline_iso")))
-    if _find_duplicate(desc, deadline):
+    quote = _clean(c.get("source_quote"), 400) or desc[:200]
+    dup = _find_duplicate(desc, deadline)
+    if dup:
+        _merge_into(dup, deadline, conf, quote)
         return None
-    quarantined = 1 if source_type in INBOUND_SOURCES else 0
+    floor = _env_float("JARVIS_AUTONOMY_AUTO_MIN_CONF", MIN_AUTO_CONF_DEFAULT)
+    quarantined = 1 if (source_type in INBOUND_SOURCES and conf < floor) else 0
     pid = get_or_create_project(_clean(c.get("related_project"), 80))
     meta: dict[str, Any] = {}
     for k in ("end_iso", "location"):
@@ -634,8 +685,7 @@ def add_commitment(c: dict, source_type: str, sender: str = "") -> int | None:
         "INSERT INTO commitments (type, description, who_is_responsible, deadline_iso, related_project_id, "
         "source_type, source_quote, confidence, status, created_at, updated_at, metadata_json, quarantined) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)",
-        (ctype, desc, who, deadline, pid, source_type, _clean(c.get("source_quote"), 400),
-         conf, now, now, json.dumps(meta), quarantined))
+        (ctype, desc, who, deadline, pid, source_type, quote, conf, now, now, json.dumps(meta), quarantined))
 
 
 def _commitment(cid: int) -> dict | None:
@@ -741,9 +791,14 @@ def _sender_matches(rule_value: str, sender: str) -> bool:
 
 def evaluate_policy(category: str, sender: str, text: str, confidence: float,
                     action_type: str | None, source_type: str) -> tuple[str, str]:
-    """(category, sender, keywords, confidence) -> ('auto_act'|'ask'|'ignore', reason). Most
-    specific match wins: sender > keyword > category; newest rule breaks ties. No match -> ask."""
-    sender_l, text_l = (sender or "").lower(), (text or "").lower()
+    """-> ('auto_act' | 'record' | 'ask' | 'ignore', reason).
+
+    FULL-PERMISSION MODEL: with no rule the verdict is auto_act for every non-catastrophic action type
+    from any source, once confidence reaches the floor; below the floor the item is only 'record'ed
+    as a dashboard card. Most specific user/learned rule wins (sender > keyword > category, newest
+    first): 'ignore' silences a category, 'ask_once'/'always_ask' (only a user can write those now)
+    make a card and wait. There is no source-based or action-type-based guard any more."""
+    text_l = (text or "").lower()
     rules = _rows("SELECT * FROM autonomy_policies WHERE category=? OR match_kind IN ('sender','keyword') "
                   "ORDER BY id DESC", (category,))
     specificity = {"sender": 3, "keyword": 2, "category": 1}
@@ -756,8 +811,11 @@ def evaluate_policy(category: str, sender: str, text: str, confidence: float,
             matched.append(r)
         elif kind == "keyword" and mv and mv in text_l and (not r["category"] or r["category"] == category):
             matched.append(r)
+    default_floor = _env_float("JARVIS_AUTONOMY_AUTO_MIN_CONF", MIN_AUTO_CONF_DEFAULT)
     if not matched:
-        return "ask", "no rule; default is to ask"
+        if confidence < default_floor:
+            return "record", f"no rule; confidence {confidence:.2f} < {default_floor:.2f}, recorded only"
+        return "auto_act", "no rule; default is to act"
     matched.sort(key=lambda r: (specificity[r["match_kind"]], r["id"]), reverse=True)
     rule = matched[0]
     verdict = rule["verdict"]
@@ -765,41 +823,29 @@ def evaluate_policy(category: str, sender: str, text: str, confidence: float,
         return "ignore", f"rule #{rule['id']} ({rule['match_kind']}) says ignore"
     if verdict in ("always_ask", "ask_once"):
         return "ask", f"rule #{rule['id']} says {verdict}"
-    # auto_act: apply the hard guards on top of the rule.
-    floor = rule["min_confidence"] if rule["min_confidence"] is not None else _env_float(
-        "JARVIS_AUTONOMY_AUTO_MIN_CONF", 0.85)
+    floor = rule["min_confidence"] if rule["min_confidence"] is not None else default_floor
     if confidence < floor:
-        return "ask", f"rule #{rule['id']} auto-acts only at confidence >= {floor:.2f} (got {confidence:.2f})"
-    if source_type in INBOUND_SOURCES and rule["match_kind"] in ("category", "keyword"):
-        kind_word = "category-wide" if rule["match_kind"] == "category" else "keyword"
-        return "ask", f"content from another person never auto-acts through a {kind_word} rule"
-    if rule["source"] == "learned" and action_type not in LEARNABLE_AUTO:
-        return "ask", f"learned rules may not auto-run {action_type} actions"
+        return "record", f"rule #{rule['id']} acts only at confidence >= {floor:.2f} (got {confidence:.2f}); recorded only"
     return "auto_act", f"rule #{rule['id']} ({rule['match_kind']}, {rule['source']}) says auto_act"
 
 
 def record_feedback(category: str, sender: str, action_type: str | None, approved: bool) -> None:
-    """The teach loop. Approve/Dismiss updates the category's counters; enough approvals of a
-    harmless action type promote it to auto_act, enough dismissals demote it to ignore. Rules the
-    user wrote themselves are never changed here, only counted."""
+    """The teach loop. Dismissing a category's cards twice in a row turns it to 'ignore' (learned
+    rules only; a rule the user wrote is never rewritten, only counted). Approvals reset the
+    dismissal streak. Nothing here can make Jarvis ask more: the default is already to act."""
     rows = _rows("SELECT * FROM autonomy_policies WHERE category=? AND match_kind='category'", (category,))
     now = _iso()
     if not rows:
         _exec("INSERT INTO autonomy_policies (category, match_kind, match_value, verdict, source, created_at, "
-              "updated_at) VALUES (?, 'category', '', 'always_ask', 'learned', ?, ?)", (category, now, now))
+              "updated_at) VALUES (?, 'category', '', 'auto_act', 'learned', ?, ?)", (category, now, now))
         rows = _rows("SELECT * FROM autonomy_policies WHERE category=? AND match_kind='category'", (category,))
     r = rows[0]
     a = r["approved_streak"] + 1 if approved else 0
     d = 0 if approved else r["dismissed_streak"] + 1
     verdict = r["verdict"]
-    if r["source"] == "learned":
-        if approved and a >= LEARN_APPROVALS and action_type in LEARNABLE_AUTO:
-            verdict = "auto_act"
-        elif not approved and d >= LEARN_DISMISSALS:
-            verdict = "ignore"
-        elif not approved and verdict == "auto_act":
-            verdict = "always_ask"  # one dismissal takes a learned auto rule back to asking
-    elif r["verdict"] == "ask_once" and approved and action_type in LEARNABLE_AUTO:
+    if r["source"] == "learned" and not approved and d >= LEARN_DISMISSALS:
+        verdict = "ignore"
+    elif r["source"] == "learned" and approved and verdict == "ignore":
         verdict = "auto_act"
     _exec("UPDATE autonomy_policies SET approved_streak=?, dismissed_streak=?, verdict=?, last_feedback_at=?, "
           "updated_at=? WHERE id=?", (a, d, verdict, now, now, r["id"]))
@@ -839,13 +885,20 @@ def budgets() -> dict:
     }
 
 
-def _log_decision(context: str, need: Any, decision: str, action: str = "", reason: str = "") -> None:
+def _log_decision(context: str, need: Any, decision: str, action: str = "", reason: str = "", *,
+                  category: str = "", quote: str = "", payload: Any = None, result: str = "",
+                  outcome: str = "") -> None:
+    """Every decision, with enough detail to answer 'why did you do that?' later: the policy reason, the
+    source quote, the action payload, the result and an outcome (ok | failed | dry_run | skipped | info)."""
     _exec("INSERT INTO autonomy_decisions (tick_time_iso, context_summary, detected_need_json, decision, "
-          "action_taken, policy_reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "action_taken, policy_reason, created_at, category, source_quote, payload_json, result, outcome) "
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           (_iso(), (context or "")[:600], json.dumps(need)[:1500] if need is not None else None,
-           decision, action[:600], reason[:300], _iso()))
-    _audit("decision", {"decision": decision, "action": action[:200], "reason": reason[:200]},
-           (context or "")[:300])
+           decision, (action or "")[:600], (reason or "")[:300], _iso(), (category or "")[:120],
+           _clean(quote, 400), json.dumps(payload, default=str)[:1500] if payload is not None else None,
+           (result or "")[:600], outcome or ""))
+    _audit("decision", {"decision": decision, "action": (action or "")[:200], "reason": (reason or "")[:200],
+                        "category": category, "outcome": outcome}, (context or "")[:300])
 
 
 # ---------------------------------------------------------------------------- actions & suggestions
@@ -902,6 +955,64 @@ def create_suggestion(category: str, sender: str, title: str, evidence: str, act
     return sid
 
 
+def build_calendar_args(props: dict, details: dict) -> dict:
+    """Maps an event payload onto a Calendar MCP create-event tool's own input schema (`props` = its
+    input_schema.properties): whatever the tool calls its title/start/end/location fields. {} when the
+    schema has no recognisable title+start (then the caller falls back to the agent loop). Never
+    invites attendees."""
+    title, start = details.get("title"), details.get("start_iso")
+    if not (title and start and isinstance(props, dict)):
+        return {}
+    try:
+        s_dt = datetime.fromisoformat(str(start))
+    except ValueError:
+        return {}
+    try:
+        e_dt = datetime.fromisoformat(str(details.get("end_iso"))) if details.get("end_iso") else s_dt + timedelta(hours=1)
+    except ValueError:
+        e_dt = s_dt + timedelta(hours=1)
+    if e_dt <= s_dt:
+        e_dt = s_dt + timedelta(hours=1)
+
+    def pick(*names: str) -> str | None:
+        low = {k.lower(): k for k in props}
+        return next((low[n.lower()] for n in names if n.lower() in low), None)
+
+    def when(key: str, dt: datetime) -> Any:
+        iso = (dt.astimezone() if dt.tzinfo is None else dt).isoformat(timespec="seconds")
+        return {"dateTime": iso} if str((props.get(key) or {}).get("type")) == "object" else iso
+
+    t_key = pick("summary", "title", "name", "subject", "eventName")
+    s_key = pick("start", "startTime", "start_time", "startDateTime", "start_datetime")
+    e_key = pick("end", "endTime", "end_time", "endDateTime", "end_datetime")
+    if not (t_key and s_key):
+        return {}
+    args: dict[str, Any] = {t_key: str(title), s_key: when(s_key, s_dt)}
+    if e_key:
+        args[e_key] = when(e_key, e_dt)
+    loc_key = pick("location")
+    if loc_key and details.get("location"):
+        args[loc_key] = str(details["location"])
+    cal_key = pick("calendarId", "calendar_id")
+    if cal_key:
+        args[cal_key] = "primary"
+    return args
+
+
+def _direct_calendar(details: dict) -> tuple[bool, str] | None:
+    """Known Calendar MCP create-event path (WP4). None = unavailable or it failed: use the agent loop."""
+    if not (details.get("title") and details.get("start_iso")) or "create_calendar_event" not in _cb:
+        return None
+    res = _call("create_calendar_event", details, default=None)
+    if res is None:
+        return None
+    if re.match(r"^(mcp tool (call )?(failed|reported an error)|unknown mcp|error|failed)", str(res).strip(), re.I):
+        log.warning("Direct calendar create failed (%s); falling back to the agent loop.", str(res)[:120])
+        return None
+    _audit("direct_calendar", {"title": details.get("title"), "start": details.get("start_iso")}, str(res)[:200])
+    return True, f"Calendar event created directly: {details['title']} at {str(details['start_iso'])[:16]}."
+
+
 def _run_action(action_type: str | None, details: dict, commitment_id: int | None = None) -> tuple[bool, str]:
     """Performs one approved/auto action through existing Jarvis paths only. Dry-run does nothing."""
     details = _sanitize_details(details)
@@ -921,6 +1032,10 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
         res = _call("queue_task", desc, str(details.get("instructions") or desc),
                     str(details.get("priority") or "normal"), details.get("deadline_iso"), default=None)
         return _schedule_queued(res, commitment_id)
+    if action_type == "calendar":
+        direct = _direct_calendar(details)
+        if direct is not None:
+            return direct
     if action_type in ("calendar", "email", "file_op"):
         # Handed to the normal agent loop, so its tools, audit and the catastrophic gate all apply.
         # The details are sanitized data the user reviewed on the card; the agent is told to treat
@@ -1007,7 +1122,10 @@ def approve_suggestion(sid: int, background: bool = True) -> str:
             return
         ok, res = _run_action(s["action_type"], details, s["commitment_id"])
         _finish_suggestion(sid, "executed" if ok else "failed", res)
-        _log_decision(s["title"], None, "act", f"approved #{sid}: {res}"[:500], "user approved")
+        _log_decision(s["title"], None, "act", f"approved #{sid}: {res}"[:500], "user approved",
+                      category=s["category"], quote=s["evidence"] or "",
+                      payload={"type": s["action_type"], "details": details}, result=res,
+                      outcome="dry_run" if res.startswith("(dry run)") else ("ok" if ok else "failed"))
         _audit("action", {"suggestion": sid, "type": s["action_type"], "ok": ok}, res)
         if not ok:
             _call("notify", f"That approved suggestion failed: {res[:160]}", False)
@@ -1041,33 +1159,94 @@ def list_suggestions(status: str = "pending", limit: int = 30) -> list[dict]:
 
 
 def _route(category: str, sender: str, title: str, evidence: str, action_type: str | None, details: dict,
-           confidence: float, source_type: str, commitment_id: int | None, model_says: str = "suggest",
+           confidence: float, source_type: str, commitment_id: int | None, model_says: str = "act",
            gated_ok: bool = True) -> str:
-    """One item -> policy -> act | suggest | silent, logged. Returns the decision."""
+    """One item -> policy -> act | queued | suggest (record) | silent, always logged. Returns the decision."""
     text = f"{title} {evidence}"
+    info = {"category": category, "quote": evidence,
+            "payload": {"type": action_type, "details": _sanitize_details(details), "confidence": confidence,
+                        "source": source_type}}
     if not action_type:
-        _log_decision(title, {"category": category}, "silent", "", "tracking only, no action implied")
+        _log_decision(title, {"category": category}, "silent", "", "tracking only, no action implied",
+                      outcome="skipped", **info)
         return "silent"
     verdict, reason = evaluate_policy(category, sender, text, confidence, action_type, source_type)
     if verdict == "ignore":
-        _log_decision(title, {"category": category}, "silent", "", reason)
+        _log_decision(title, {"category": category}, "silent", "", reason, outcome="skipped", **info)
         return "silent"
-    if verdict == "auto_act" and model_says != "suggest" and _recently_dismissed(category):
-        verdict, reason = "ask", "similar item dismissed recently"
-    if verdict == "auto_act" and model_says != "suggest":
-        b = budgets()
-        if b["acts_today"] >= b["max_acts"]:
-            _log_decision(title, None, "silent", "", "daily autonomous-action budget reached")
+    if verdict == "auto_act":
+        if _recently_dismissed(category):
+            _log_decision(title, {"category": category}, "silent", "", "similar item was dismissed recently",
+                          outcome="skipped", **info)
             return "silent"
-        if not gated_ok:
-            return "deferred"  # user busy/asleep: try again on a later tick, no decision logged
-        ok, res = _run_action(action_type, details, commitment_id)
-        _log_decision(title, {"category": category, "confidence": confidence}, "act", res, reason)
-        _audit("action", {"category": category, "type": action_type, "ok": ok}, res)
+        b = budgets()
+        if b["acts_today"] >= b["max_acts"] * HARD_BUDGET_MULT:
+            _log_decision(title, None, "silent", "", "runaway breaker: far over the daily action budget",
+                          outcome="skipped", **info)
+            return "silent"
+        if b["acts_today"] >= b["max_acts"]:
+            reason += " (over the soft daily budget; acting anyway)"
+        if not gated_ok and action_type in AGENT_RUN_TYPES:
+            # the user is mid-command / Focus / Sleep: an agent-loop run must not interleave, so it waits its
+            # turn on the auto queue (no ask, it runs as soon as the gate is clear)
+            _queue_auto(category, sender, title, evidence, action_type, details, confidence, commitment_id)
+            _log_decision(title, {"category": category}, "queued", "", reason + "; waiting for the user to be idle",
+                          outcome="info", **info)
+            return "queued"
+        _execute_auto(category, title, evidence, action_type, details, confidence, commitment_id, reason)
         return "act"
+    # 'record' (below the confidence floor) or 'ask' (a user-written ask rule): a card for visibility
+    _log_decision(title, {"category": category}, "suggest", "", reason, outcome="info", **info)
     create_suggestion(category, sender, _title(action_type, details, title), evidence, action_type, details,
                       confidence, commitment_id)
     return "suggest"
+
+
+def _execute_auto(category: str, title: str, evidence: str, action_type: str, details: dict, confidence: float,
+                  commitment_id: int | None, reason: str) -> tuple[bool, str]:
+    """Do it now, log it, and tell the user only if it failed (success is visible in the log)."""
+    ok, res = _run_action(action_type, details, commitment_id)
+    outcome = "dry_run" if res.startswith("(dry run)") else ("ok" if ok else "failed")
+    _log_decision(title, {"category": category, "confidence": confidence}, "act", res, reason, category=category,
+                  quote=evidence, payload={"type": action_type, "details": _sanitize_details(details)},
+                  result=res, outcome=outcome)
+    _audit("action", {"category": category, "type": action_type, "ok": ok}, res)
+    if not ok:
+        _call("notify", f"I tried to do this on my own but it failed: {title[:80]}. {res[:120]}", False)
+    if commitment_id and ok and action_type != "notification":  # a nudge is not the work itself
+        _set_commitment_meta(commitment_id, actioned=True)
+    return ok, res
+
+
+def _queue_auto(category: str, sender: str, title: str, evidence: str, action_type: str, details: dict,
+                confidence: float, commitment_id: int | None) -> None:
+    title = _clean(title, 200)
+    if _rows("SELECT 1 FROM autonomy_suggestions WHERE status='auto_queued' AND title=?", (title,)):
+        return
+    _exec("INSERT INTO autonomy_suggestions (created_at, category, sender, title, evidence, action_type, "
+          "action_json, confidence, status, commitment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto_queued', ?)",
+          (_iso(), category, _clean(sender, 200), title, _clean(evidence, 500), action_type,
+           json.dumps(_sanitize_details(details)), confidence, commitment_id))
+
+
+def _run_queued_auto(now: datetime, gated_ok: bool) -> int:
+    """Tick step: run auto-queued agent-loop actions once the user is idle again."""
+    if not gated_ok:
+        return 0
+    ran = 0
+    for s in _rows("SELECT * FROM autonomy_suggestions WHERE status='auto_queued' ORDER BY id LIMIT 3"):
+        if not _exec_rc("UPDATE autonomy_suggestions SET status='running', decided_at=? WHERE id=? AND "
+                        "status='auto_queued'", (_iso(now), s["id"])):
+            continue
+        try:
+            details = json.loads(s["action_json"] or "{}")
+        except json.JSONDecodeError:
+            details = {}
+        ok, res = _execute_auto(s["category"], s["title"], s["evidence"] or "", s["action_type"], details,
+                                float(s["confidence"] or 0), s["commitment_id"], "ran after the user went idle")
+        _finish_suggestion(s["id"], "executed" if ok else "failed", res)
+        ran += 1
+    return ran
 
 
 # -------------------------------------------------------------------------------------- extraction
@@ -1096,14 +1275,22 @@ def test_commitment_extraction(turns_text: str, tool_actions_text: str = "(none)
             if isinstance(c, dict) and float(c.get("confidence") or 0) >= MIN_EXTRACT_CONFIDENCE]
 
 
+def _related_memory(turns_text: str) -> str:
+    """Semantic recall over the exchange, so extraction sees what Jarvis already knows about it (WP6.2)."""
+    rec = _call("semantic_recall", (turns_text or "")[:300], default="")
+    rec = str(rec or "").strip()
+    return f"\nRelated memory: {rec[:500]}" if rec and not rec.lower().startswith(("no ", "give me")) else ""
+
+
 def extract_commitments_and_projects(turns_text: str, tool_actions_text: str = "(none)",
                                      source_type: str = "conversation", sender: str = "",
                                      gated_ok: bool = True) -> list[int]:
     """conversation text -> commitments (+ projects) -> policy routing. Returns new commitment ids."""
     if not enabled() or not (turns_text or "").strip():
         return []
+    tool_ctx = tool_actions_text[:1500] + _related_memory(turns_text)
     parsed = _ask_model(_fill(COMMITMENT_EXTRACTION_PROMPT, conversation_turns_text=turns_text[:6000],
-                              recent_tool_actions_text=tool_actions_text[:1500], current_time_iso=_iso()), 900)
+                              recent_tool_actions_text=tool_ctx, current_time_iso=_iso()), 900)
     if not isinstance(parsed, list):
         return []
     return _ingest([c for c in parsed if isinstance(c, dict)], source_type, sender, gated_ok)
@@ -1121,25 +1308,40 @@ def _ingest(items: list[dict], source_type: str, sender: str, gated_ok: bool = T
             continue
         action_type, details = _action_for_commitment(c)
         category = f"{source_type}:{action_type or 'track'}"
-        _route(category, sender, c["description"], c["source_quote"] or "", action_type, details,
-               float(c["confidence"] or 0), source_type, cid, gated_ok=gated_ok)
+        decision = _route(category, sender, c["description"], c["source_quote"] or "", action_type, details,
+                          float(c["confidence"] or 0), source_type, cid, gated_ok=gated_ok)
+        if decision in ("act", "queued"):
+            _set_commitment_meta(cid, actioned=True)
     if created:
         _publish()
     return created
 
 
+def _should_extract(transcript: str) -> bool:
+    """Cheap fast path first (planning-cue regex), then anything long enough to hold a plan, then clear
+    future/obligation phrasing the cue list misses. JARVIS_AUTONOMY_EXTRACT_ALWAYS=1 skips the gate;
+    JARVIS_AUTONOMY_EXTRACT_MIN_CHARS (default 240) sets the length trigger."""
+    t = transcript or ""
+    if _truthy(os.environ.get("JARVIS_AUTONOMY_EXTRACT_ALWAYS")) or _CUE_RE.search(t):
+        return True
+    if len(t) >= _env_int("JARVIS_AUTONOMY_EXTRACT_MIN_CHARS", 240):
+        return True
+    return len(t) >= 40 and bool(_FUTURE_RE.search(t))
+
+
 def after_turn(transcript: str, reply: str, source: str = "text") -> None:
-    """Called by jarvis.py after every command. Cheap unless the exchange contains a cue that
-    something is planned; then one model call on a worker thread (never delays the reply)."""
+    """Called by jarvis.py after every command. Cheap unless the exchange looks like it holds a plan;
+    then one model call on a worker thread (never delays the reply)."""
     if not enabled() or source == "autonomy" or len((transcript or "").strip()) < 12:
         return
-    if not _truthy(os.environ.get("JARVIS_AUTONOMY_EXTRACT_ALWAYS")) and not _CUE_RE.search(transcript or ""):
+    if not _should_extract(transcript):
         return
     turns = f"User: {transcript}\nJarvis: {(reply or '')[:600]}"
 
     def _work() -> None:
-        # A turn that read mail/web/files is not the user's own words: treat it as inbound (quarantine,
-        # no category-wide auto rules).
+        # A turn that read mail/web/files is not the user's own words: it is tagged 'message'
+        # (so a low-confidence item from it is quarantined), but under the full-permission model a
+        # confident one still acts.
         src = "message" if _used_untrusted_tool(transcript) else "conversation"
         extract_commitments_and_projects(turns, _recent_tool_actions(transcript), src,
                                          gated_ok=gate_reason() is None)
@@ -1166,38 +1368,129 @@ def _spawn(name: str, fn: Callable, *args: Any) -> bool:
     return True
 
 
-def process_inbound_async(subject: str, body: str, sender: str = "", source: str = "email") -> bool:
+def _mark_seen(source: str, msg_id: str) -> bool:
+    """True the first time (source, id) is seen, False afterwards - so polling and the sleep-mail path
+    can both offer the same message without it being processed twice."""
+    return bool(_exec_rc("INSERT OR IGNORE INTO autonomy_seen_messages (source, msg_id, seen_at) VALUES (?, ?, ?)",
+                         (source, str(msg_id)[:300], _iso())))
+
+
+def unseen_message(source: str, msg_id: str) -> bool:
+    """Read-only check (does not mark): True if (source, id) has not been processed yet."""
+    return not _rows("SELECT 1 FROM autonomy_seen_messages WHERE source=? AND msg_id=?", (source, str(msg_id)[:300]))
+
+
+def process_inbound_async(subject: str, body: str, sender: str = "", source: str = "email",
+                          message_id: str = "") -> bool:
     """Bounded, non-blocking entry point for the mail/Telegram/Discord hooks in jarvis.py."""
     if not enabled():
         return False
-    return _spawn("autonomy-inbound", process_inbound_message_for_events, subject, body, sender, source)
+    return _spawn("autonomy-inbound", process_inbound_message_for_events, subject, body, sender, source,
+                  message_id)
 
 
-def process_inbound_message_for_events(subject: str, body: str, sender: str = "", source: str = "email") -> list[int]:
-    """Mail / Telegram / Discord hook. Meetings become event commitments, tasks become task
-    commitments; both go through the policy engine, and since someone else wrote the text nothing
-    auto-acts unless a rule names that sender or keyword. Returns new commitment ids."""
-    if not enabled() or not ((subject or "").strip() or (body or "").strip()):
+def process_inbound_message_for_events(subject: str, body: str, sender: str = "", source: str = "email",
+                                       message_id: str = "", gated_ok: bool = True) -> list[int]:
+    """THE inbound hook for mail / Telegram / Discord / any message. Meetings become event
+    commitments and tasks become task commitments; under the full-permission model a confident one is
+    acted on (calendar event, reminder, task) straight away. The real body is used whenever there is
+    one; a subject-only message is still extracted but at lower confidence (x0.85). Every attempt is
+    logged (autonomy_decisions + action_audit). message_id de-duplicates across call sites."""
+    if not enabled():
+        return []
+    subject, body = (subject or "").strip(), (body or "").strip()
+    if not (subject or body):
         return []
     source = source if source in INBOUND_SOURCES else "message"
-    parsed = _ask_model(_fill(EMAIL_EVENT_EXTRACTION_PROMPT, current_time_iso=_iso(),
-                              email_subject=(subject or "")[:300], email_body=(body or "")[:5000]), 900)
-    if not isinstance(parsed, dict):
+    if message_id and not _mark_seen(source, message_id):
         return []
+    label = f"inbound {source} from {_clean(sender, 80) or 'unknown'}: {_clean(subject, 100)}"
+    parsed = _ask_model(_fill(EMAIL_EVENT_EXTRACTION_PROMPT, current_time_iso=_iso(),
+                              email_subject=subject[:300],
+                              email_body=body[:5000] if body else "(body not available; only the subject line)"), 900)
+    if not isinstance(parsed, dict):
+        _log_decision(label, None, "inbound", "", "extraction failed", category=f"{source}:inbound",
+                      quote=subject, outcome="failed")
+        return []
+    scale = 1.0 if body else 0.85
     items: list[dict] = []
+
+    def _conf(v: Any) -> float:
+        try:
+            return max(0.0, min(1.0, float(v or 0))) * scale
+        except (TypeError, ValueError):
+            return 0.0
+
     for m in parsed.get("meetings") or []:
         if isinstance(m, dict) and (m.get("title") or m.get("start_iso")):
             items.append({"type": "event", "description": m.get("title") or f"Meeting from {sender or 'message'}",
                           "who_is_responsible": "user", "deadline_iso": m.get("start_iso"),
                           "end_iso": m.get("end_iso"), "location": m.get("location"),
-                          "participants": m.get("participants"), "confidence": m.get("confidence"),
+                          "participants": m.get("participants"), "confidence": _conf(m.get("confidence")),
                           "source_quote": m.get("source_quote")})
     for t in parsed.get("tasks") or []:
         if isinstance(t, dict) and t.get("description"):
             items.append({"type": "task", "description": t["description"], "who_is_responsible": "user",
-                          "deadline_iso": t.get("deadline_iso"), "confidence": t.get("confidence"),
+                          "deadline_iso": t.get("deadline_iso"), "confidence": _conf(t.get("confidence")),
                           "source_quote": t.get("source_quote")})
-    return _ingest(items, source, sender or "")
+    ids = _ingest(items, source, sender or "", gated_ok)
+    _log_decision(label, {"items_found": len(items)}, "inbound", f"{len(ids)} new item(s) from "
+                  f"{'the body' if body else 'the subject only'}", "inbound extraction",
+                  category=f"{source}:inbound", quote=subject, result=f"{len(ids)} stored", outcome="ok")
+    return ids
+
+
+def _inbox_poll(now: datetime, gated_ok: bool) -> int:
+    """Tick step: every JARVIS_AUTONOMY_MAIL_POLL_MIN minutes (default 10, 0 = off) fetch new inbox
+    messages through the poll_mail callback (which returns id/subject/from/body dicts) and feed each
+    one to the inbound hook once."""
+    every = _env_int("JARVIS_AUTONOMY_MAIL_POLL_MIN", 10)
+    if every <= 0 or "poll_mail" not in _cb:
+        return 0
+    last = get_setting("last_mail_poll_at")
+    if last:
+        try:
+            if now - datetime.fromisoformat(last) < timedelta(minutes=every):
+                return 0
+        except ValueError:
+            pass
+    set_setting("last_mail_poll_at", _iso(now))
+    msgs = _call("poll_mail", default=None) or []
+    n = 0
+    for m in msgs[:5]:
+        if not isinstance(m, dict) or not m.get("id"):
+            continue
+        if process_inbound_message_for_events(m.get("subject", ""), m.get("body", ""), m.get("from", ""), "email",
+                                              str(m["id"]), gated_ok):
+            n += 1
+    return n
+
+
+def _file_scan(now: datetime) -> int:
+    """File-watcher bridge: a NEW document-type file (pdf, docx, xlsx, ...) in a watched folder becomes a
+    'review this' commitment plus a notification, once. It never moves or deletes anything by itself."""
+    events = _call("file_events", default=None)
+    if not isinstance(events, list):
+        return 0
+    n = 0
+    for e in events[-30:]:
+        if not isinstance(e, dict) or e.get("kind") != "new":
+            continue
+        path = str(e.get("path") or "")
+        if os.path.splitext(path)[1].lower() not in FILE_SIGNAL_EXTS:
+            continue
+        if n >= 5 or not _mark_seen("file", f"{e.get('at')}|{path}"):
+            continue
+        name = os.path.basename(path)
+        folder = os.path.basename(os.path.dirname(path)) or "a watched folder"
+        desc = f"Review new file {name} in {folder}"
+        cid = add_commitment({"type": "task", "description": desc, "who_is_responsible": "user",
+                              "confidence": 0.75, "source_quote": path}, "file")
+        if cid:
+            _route("file:notification", "", desc, path, "notification",
+                   {"text": f"New file {name} arrived in {folder}."}, 0.75, "file", cid)
+            n += 1
+    return n
 
 
 # ------------------------------------------------------------------------------------ memory reads
@@ -1310,14 +1603,12 @@ def _prune(now: datetime) -> None:
 
 
 def _deadline_scan(now: datetime, gated_ok: bool) -> int:
-    """Deterministic (no model): a nudge as an open commitment's deadline nears. Buckets are
-    remembered per commitment so each fires once. If the user is busy/asleep the bucket stays
-    unmarked and it is retried on a later tick."""
+    """Deterministic (no model) memory intervention: as an open commitment's deadline nears (24 h / 2 h /
+    overdue) it is nudged once per bucket; at the 24 h bucket, if nothing was already done for it, the
+    action it implies (a reminder, a calendar event) is taken too. Quarantined items are skipped."""
     fired = 0
     horizon = _iso(now + timedelta(hours=24))
     floor = _iso(now - timedelta(days=1))
-    # quarantined = came from someone else's words and the user has not accepted it: never spoken by
-    # the built-in auto rule (audit C-02).
     for c in _rows("SELECT * FROM commitments WHERE status='open' AND quarantined=0 AND deadline_iso IS NOT NULL AND "
                    "deadline_iso<=? AND deadline_iso>=? AND who_is_responsible!='other'", (horizon, floor)):
         try:
@@ -1333,9 +1624,15 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
         text = f"Heads up: {_clean(c['description'], 200)} {when}."
         decision = _route("deadline:notification", "", c["description"], c["source_quote"] or "", "notification",
                           {"text": text}, 1.0, "deadline", c["id"], model_says="act", gated_ok=gated_ok)
-        if decision in ("act", "suggest", "silent"):
+        if decision in ("act", "queued", "suggest", "silent"):
             _set_commitment_meta(c["id"], notified=(meta.get("notified") or []) + [bucket])
             fired += decision == "act"
+        if bucket == "24h" and not meta.get("actioned") and not meta.get("queued") and decision != "queued":
+            action_type, details = _action_for_commitment(c)
+            if action_type in ("reminder", "calendar"):
+                _route(f"deadline:{action_type}", "", c["description"], c["source_quote"] or "", action_type,
+                       details, 0.9, "deadline", c["id"], gated_ok=gated_ok)
+                _set_commitment_meta(c["id"], actioned=True)
     return fired
 
 
@@ -1367,6 +1664,13 @@ def _context_summary(now: datetime) -> str:
     return "\n".join(parts)
 
 
+def _memory_query() -> str:
+    """What to semantically recall for the classifier: the nearest open commitments' own words."""
+    rows = _rows("SELECT description FROM commitments WHERE status='open' AND quarantined=0 "
+                 "ORDER BY COALESCE(deadline_iso,'9999') LIMIT 3")
+    return " ".join(r["description"] for r in rows)[:300]
+
+
 def _classifier_step(now: datetime, force: bool = False) -> dict | None:
     """The model check: 'is there a latent need right now?' Rate-limited and skipped when the
     context is unchanged, because it is the only per-tick step that costs money."""
@@ -1374,7 +1678,7 @@ def _classifier_step(now: datetime, force: bool = False) -> dict | None:
     interval = timedelta(minutes=_env_int("JARVIS_AUTONOMY_CLASSIFIER_MIN", 15))
     if not force and _last_classifier and now - _last_classifier < interval:
         return None
-    memory = memory_context()
+    memory = memory_context(_memory_query())
     calendar = _call("calendar_events", 48, default="")
     if not force and not memory and not calendar:
         return None  # nothing to reason about yet
@@ -1437,28 +1741,51 @@ def approve_campaign(project: str, approved: bool = True) -> str:
     return f"Campaign for {rows[0]['name']} {'approved' if approved else 'paused'}."
 
 
+MAX_STEP_ATTEMPTS = 3
+
+
+def _recover_step(a: dict, why: str, now: datetime) -> None:
+    """A campaign step failed: retry it (later, up to MAX_STEP_ATTEMPTS) instead of just reporting it;
+    only after the last attempt is it 'blocked' and the user told."""
+    attempts = int(a.get("attempts") or 0) + 1
+    if attempts < MAX_STEP_ATTEMPTS:
+        _exec("UPDATE autonomy_project_actions SET status='planned', attempts=?, task_ref=NULL, scheduled_for_iso=?, "
+              "result_summary=? WHERE id=?", (attempts, _iso(now + timedelta(minutes=10)),
+                                              f"retry {attempts}: {why}"[:300], a["id"]))
+        _log_decision(f"campaign {a['pname']}", None, "act", f"recovering: {a['description'][:150]} ({why})",
+                      "step failed; retrying automatically", category="campaign", outcome="info",
+                      result=f"attempt {attempts} of {MAX_STEP_ATTEMPTS - 1} retries")
+        return
+    _exec("UPDATE autonomy_project_actions SET status='blocked', attempts=?, completed_at=?, result_summary=? WHERE id=?",
+          (attempts, _iso(now), why[:300], a["id"]))
+    _log_decision(f"campaign {a['pname']}", None, "act", f"blocked: {a['description'][:150]} ({why})",
+                  "retries exhausted", category="campaign", outcome="failed", result=why)
+    _call("notify", f"A step of the {a['pname']} project is blocked after several tries: "
+                    f"{a['description'][:80]}. {why[:100]}", False)
+
+
 def _campaign_step(now: datetime, gated_ok: bool) -> int:
-    """Drives approved projects' planned steps across days via the existing task queue, and
-    reconciles queued steps against task_queue's status. High-risk projects simulate first."""
+    """Drives approved projects' steps across days through the existing task queue. Step status machine:
+    planned -> running -> done | blocked | cancelled (plus 'simulated' for high-risk projects, which only
+    run for real when their metadata says live). Failures are retried before a step is 'blocked'."""
     ran = 0
-    for a in _rows("SELECT a.*, p.name pname, p.risk_level, p.metadata_json pmeta FROM autonomy_project_actions a "
-                   "JOIN autonomy_projects p ON p.id=a.project_id WHERE a.status='queued' AND a.task_ref IS NOT NULL"):
+    for a in _rows("SELECT a.*, p.name pname FROM autonomy_project_actions a JOIN autonomy_projects p "
+                   "ON p.id=a.project_id WHERE a.status='running' AND a.task_ref IS NOT NULL"):
         t = _rows("SELECT status FROM task_queue WHERE id=?", (a["task_ref"],))
-        if t and t[0]["status"] in ("done", "failed", "cancelled"):
-            _exec("UPDATE autonomy_project_actions SET status=?, completed_at=?, result_summary=? WHERE id=?",
-                  ("completed" if t[0]["status"] == "done" else "failed", _iso(now), f"task {t[0]['status']}", a["id"]))
-        elif t and t[0]["status"] == "pending":
-            # Still without a slot after a day: stop waiting silently (audit C-01) and say so.
+        st = t[0]["status"] if t else "cancelled"
+        if st == "done":
+            _exec("UPDATE autonomy_project_actions SET status='done', completed_at=?, result_summary=? WHERE id=?",
+                  (_iso(now), "task done", a["id"]))
+        elif st in ("failed", "cancelled"):
+            _recover_step(a, f"task {st}", now)
+        elif st == "pending":
             try:
                 age = now - datetime.fromisoformat(a["created_at"])
             except ValueError:
                 age = timedelta(0)
-            if age > timedelta(hours=24):
+            if age > timedelta(hours=24):  # never got a free slot: stop waiting silently
                 _call("cancel_task", a["task_ref"])
-                _exec("UPDATE autonomy_project_actions SET status='failed', completed_at=?, result_summary=? WHERE id=?",
-                      (_iso(now), "never got a free slot within 24h", a["id"]))
-    if not gated_ok:
-        return 0
+                _recover_step(a, "never got a free slot within 24h", now)
     for a in _rows("SELECT a.*, p.name pname, p.risk_level, p.metadata_json pmeta FROM autonomy_project_actions a "
                    "JOIN autonomy_projects p ON p.id=a.project_id WHERE a.status='planned' AND p.status='active' "
                    "AND a.scheduled_for_iso<=? ORDER BY a.scheduled_for_iso LIMIT 3", (_iso(now),)):
@@ -1469,35 +1796,38 @@ def _campaign_step(now: datetime, gated_ok: bool) -> int:
         if not pmeta.get("campaign_approved"):
             continue
         b = budgets()
-        if b["acts_today"] >= b["max_acts"]:
-            break
-        simulate = dry_run() or (a["risk_level"] == "high" and not pmeta.get("live"))
-        if simulate:
+        if b["acts_today"] >= b["max_acts"] * HARD_BUDGET_MULT:
+            break  # runaway breaker only; the ordinary budget is soft
+        if dry_run() or (a["risk_level"] == "high" and not pmeta.get("live")):
             _exec("UPDATE autonomy_project_actions SET status='simulated', completed_at=?, result_summary=? WHERE id=?",
                   (_iso(now), "(simulated) would run: " + a["description"][:200], a["id"]))
             _log_decision(f"campaign {a['pname']}", None, "act", f"(simulated) {a['description']}"[:300],
-                          "dry run / high-risk project")
+                          "dry run / high-risk project", category="campaign", outcome="dry_run")
             continue
         if a["action_type"] == "background_task":
             if (_call("running_background_count", default=0) or 0) >= b["max_bg_tasks"]:
-                break
+                continue  # wait for a free worker; it stays planned
             ref = _call("queue_task", f"[{a['pname']}] {a['description']}", a["description"], "normal", None, default=None)
             tid = _task_id_from(ref)
             if tid is not None:
                 _remember_task(tid)
-                _call("plan_queue", default=None)  # without this the task stayed 'pending' forever (C-01)
-                _exec("UPDATE autonomy_project_actions SET status='queued', task_ref=? WHERE id=?", (tid, a["id"]))
-            else:  # queue refused it: say so instead of pretending it was handed off
-                _exec("UPDATE autonomy_project_actions SET status='failed', completed_at=?, result_summary=? WHERE id=?",
-                      (_iso(now), str(ref or "task queue unavailable")[:200], a["id"]))
-            _log_decision(f"campaign {a['pname']}", None, "act", f"queued: {a['description']}"[:300], "campaign approved")
+                _call("plan_queue", default=None)  # without this the task stayed 'pending' forever
+                _exec("UPDATE autonomy_project_actions SET status='running', task_ref=? WHERE id=?", (tid, a["id"]))
+                _log_decision(f"campaign {a['pname']}", None, "act", f"running: {a['description']}"[:300],
+                              "campaign approved", category="campaign", outcome="ok", result=str(ref)[:200])
+            else:
+                _recover_step(a, str(ref or "task queue unavailable")[:200], now)
             _audit("campaign_step", {"project": a["pname"], "action": a["description"][:120]}, str(ref))
         else:
             ok, res = _run_action(a["action_type"], {"text": a["description"], "description": a["description"],
                                                      "due_iso": _iso(now + timedelta(minutes=1))})
-            _exec("UPDATE autonomy_project_actions SET status=?, completed_at=?, result_summary=? WHERE id=?",
-                  ("completed" if ok else "failed", _iso(now), res[:300], a["id"]))
-            _log_decision(f"campaign {a['pname']}", None, "act", res[:300], "campaign approved")
+            if ok:
+                _exec("UPDATE autonomy_project_actions SET status='done', completed_at=?, result_summary=? WHERE id=?",
+                      (_iso(now), res[:300], a["id"]))
+                _log_decision(f"campaign {a['pname']}", None, "act", res[:300], "campaign approved",
+                              category="campaign", outcome="ok", result=res)
+            else:
+                _recover_step(a, res, now)
         ran += 1
     return ran
 
@@ -1571,6 +1901,9 @@ def run_autonomy_tick_once(callbacks: dict | None = None, now: datetime | None =
             ("campaign_steps", lambda: _campaign_step(now, gate is None)),
             ("planner", lambda: _planner_step(now, gate is None)),
             ("replan", _replan_pending),
+            ("queued_auto", lambda: _run_queued_auto(now, gate is None)),
+            ("files", lambda: _file_scan(now)),
+            ("mail", lambda: _inbox_poll(now, gate is None)),
         ):
             try:
                 out[name] = fn()
@@ -1610,12 +1943,71 @@ def stop_autonomy_tick() -> None:
 
 # ------------------------------------------------------------------------------- status & tool API
 def _trim(rows: list[dict], **limits: int) -> list[dict]:
-    """Cap free-text fields (audit I-01): the dashboard needs enough to review an item, not whole emails."""
+    """Cap free-text fields: the dashboard needs enough to review an item, not whole emails."""
     for r in rows:
         for k, n in limits.items():
             if isinstance(r.get(k), str):
                 r[k] = r[k][:n]
     return rows
+
+
+def log_entries(hours: float = 24, decision: str = "", category: str = "", outcome: str = "", q: str = "",
+                limit: int = 100) -> list[dict]:
+    """Filterable view of autonomy_decisions (time range, type, category, outcome, free text)."""
+    where, params = ["created_at>=?"], [_iso(_now() - timedelta(hours=max(0.1, float(hours or 24))))]
+    for col, val in (("decision", decision), ("outcome", outcome)):
+        if val:
+            where.append(f"{col}=?")
+            params.append(val)
+    if category:
+        where.append("category LIKE ?")
+        params.append(f"%{category}%")
+    if q:
+        where.append("(context_summary LIKE ? OR action_taken LIKE ? OR source_quote LIKE ? OR result LIKE ?)")
+        params += [f"%{q}%"] * 4
+    rows = _rows(f"SELECT * FROM autonomy_decisions WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?",
+                 tuple(params) + (max(1, min(int(limit), 500)),))
+    return _trim(rows, context_summary=300, action_taken=400, result=400, source_quote=300, payload_json=800)
+
+
+def log_summary(hours: float = 24) -> str:
+    """Human-readable 'what did autonomy do' (acts first, with counts)."""
+    rows = log_entries(hours, limit=500)
+    acts = [r for r in rows if r["decision"] == "act"]
+    if not rows:
+        return f"Autonomy has logged nothing in the last {hours:g} hours."
+    by = lambda d: sum(1 for r in rows if r["decision"] == d)  # noqa: E731
+    failed = sum(1 for r in acts if r["outcome"] == "failed")
+    head = (f"In the last {hours:g} hours autonomy took {len(acts)} action(s)"
+            f"{f' ({failed} failed)' if failed else ''}, read {by('inbound')} incoming message(s), "
+            f"left {by('suggest')} item(s) for review and skipped {by('silent')}.")
+    lines = [f"{r['created_at'][11:16]} {(r['context_summary'] or '')[:70]}: {(r['action_taken'] or '')[:90]}"
+             for r in acts[:8]]
+    b = budgets()
+    return head + ("\n" + "\n".join(lines) if lines else "") + \
+        f"\nBudget today: {b['acts_today']}/{b['max_acts']} actions (soft limit)."
+
+
+def explain(query: str) -> str:
+    """'Why did you do X?': the matching decisions with their policy reason, source quote and result."""
+    q = (query or "").strip()
+    rows = log_entries(24 * 14, q=q, limit=3) if q else log_entries(24, decision="act", limit=3)
+    if not rows:
+        return f"I have no autonomy record matching {q!r}." if q else "I have no recent autonomy actions."
+    out = []
+    for r in rows:
+        out.append(f"At {r['created_at'][:16].replace('T', ' ')} ({r['decision']}) on \"{(r['context_summary'] or '')[:100]}\": "
+                   f"{(r['action_taken'] or 'no action')[:150]}. Why: {r['policy_reason'] or 'n/a'}."
+                   + (f" Because it said: \"{r['source_quote'][:120]}\"." if r["source_quote"] else "")
+                   + (f" Result: {r['outcome']}." if r["outcome"] else ""))
+    return "\n".join(out)
+
+
+def speak_log(hours: float = 24) -> str:
+    """Speaks the summary (shortened for speech by jarvis.py's _speak_shaped) and returns it."""
+    text = log_summary(hours)
+    _call("speak", text)
+    return text
 
 
 def status() -> dict:
@@ -1627,7 +2019,8 @@ def status() -> dict:
         "projects": _rows("SELECT * FROM autonomy_projects WHERE status!='archived' ORDER BY id DESC LIMIT 20"),
         "project_actions": _rows("SELECT * FROM autonomy_project_actions ORDER BY id DESC LIMIT 40"),
         "policies": list_policies(),
-        "decisions": _rows("SELECT * FROM autonomy_decisions ORDER BY id DESC LIMIT 40"),
+        "decisions": _trim(_rows("SELECT * FROM autonomy_decisions ORDER BY id DESC LIMIT 40"),
+                           context_summary=300, action_taken=400, result=400, source_quote=300, payload_json=800),
         "summaries": _rows("SELECT id, summary_text, end_time_iso FROM conversation_summaries ORDER BY id DESC LIMIT 5"),
     }
 
@@ -1636,32 +2029,40 @@ def _brief() -> str:
     s = status()
     b = s["budgets"]
     return (f"Autonomy is {'on' if s['enabled'] else 'off'}{' (dry run)' if s['dry_run'] else ''}. "
-            f"{len(s['pending_suggestions'])} suggestion(s) waiting, {len(s['commitments'])} open commitment(s), "
-            f"{len(s['projects'])} project(s). Today: {b['acts_today']}/{b['max_acts']} autonomous actions, "
-            f"{b['suggestions_today']}/{b['max_suggestions']} suggestions.")
+            f"{len(s['pending_suggestions'])} item(s) recorded for review, {len(s['commitments'])} open commitment(s), "
+            f"{len(s['projects'])} project(s). Today: {b['acts_today']}/{b['max_acts']} autonomous actions (soft limit), "
+            f"{b['suggestions_today']}/{b['max_suggestions']} cards.")
 
 
 def handle_tool(inp: dict, source: str | None) -> str:
-    """The model-facing `autonomy` tool. Anything that turns autonomy ON, approves something or loosens a
-    rule is HUMAN-ONLY (audit B-01): the model cannot tell the user's words from text injected through an
-    email or web page, so those actions exist only as dashboard routes. Turning things OFF, dismissing and
-    reading work anywhere."""
+    """The model-facing `autonomy` tool. Under the full-permission model it can do everything except the
+    settings changes in HUMAN_ONLY_ACTIONS (turn autonomy on, write/loosen policy rules, leave dry-run),
+    which stay dashboard-only. Catastrophic actions are never decided here: they go through the normal
+    tools, whose own gate applies."""
     action = str(inp.get("action") or "status").lower()
     attended = source in ("voice", "text", "dashboard")
     if action in HUMAN_ONLY_ACTIONS:
-        return ("That changes what Jarvis may do on its own, so only you can do it: open the dashboard's "
-                "Autonomy tab and use the button there. I can't approve, enable or loosen rules myself.")
+        return ("That is a setting that decides how much Jarvis may do on its own, so it is changed from the "
+                "dashboard's Autonomy tab, not by me.")
     if action == "run_tick" and not attended:
         return "Running a decision pass is only accepted from the PC, not the phone or unattended runs."
     if action == "status":
         return _brief()
+    if action in ("log", "show_log"):
+        return log_summary(float(inp.get("hours") or 24))
+    if action == "why":
+        return explain(str(inp.get("query") or inp.get("description") or ""))
+    if action == "speak_log":
+        return speak_log(float(inp.get("hours") or 24))
     if action == "disable":
         return set_enabled(False)
     if action == "dry_run_on":
         return set_dry_run(True)
     if action == "list_suggestions":
         rows = list_suggestions("pending")
-        return "\n".join(f"#{r['id']} [{int(float(r['confidence'] or 0) * 100)}%] {r['title']}" for r in rows) or "No suggestions waiting."
+        return "\n".join(f"#{r['id']} [{int(float(r['confidence'] or 0) * 100)}%] {r['title']}" for r in rows) or "Nothing recorded for review."
+    if action == "approve":
+        return approve_suggestion(int(inp.get("id") or 0))
     if action in ("dismiss", "never"):
         return dismiss_suggestion(int(inp.get("id") or 0), never=action == "never")
     if action == "list_commitments":
@@ -1671,10 +2072,17 @@ def handle_tool(inp: dict, source: str | None) -> str:
                          for r in rows) or "No open commitments."
     if action in ("complete_commitment", "cancel_commitment"):
         return set_commitment_status(int(inp.get("id") or 0), "completed" if action == "complete_commitment" else "cancelled")
+    if action == "accept_commitment":
+        return accept_commitment(int(inp.get("id") or 0))
     if action == "add_project":
         pid = get_or_create_project(str(inp.get("project") or ""), str(inp.get("goal") or ""),
                                     str(inp.get("risk_level") or "low"))
         return f"Project ready (#{pid})." if pid else "Give the project a name."
+    if action == "add_action":
+        return add_project_action(str(inp.get("project") or ""), str(inp.get("description") or ""),
+                                  str(inp.get("scheduled_for") or ""), str(inp.get("action_type") or "background_task"))
+    if action == "approve_campaign":
+        return approve_campaign(str(inp.get("project") or ""), inp.get("approved", True) is not False)
     if action == "list_policies":
         return "\n".join(f"#{p['id']} {p['match_kind']} {p['match_value'] or p['category']} -> {p['verdict']} ({p['source']})"
                          for p in list_policies()) or "No rules."

@@ -38,6 +38,49 @@
     }
   }
 
+  // Activity log: built ONCE so the filter inputs keep focus across the 10s refresh.
+  const logFilters = { hours: "24", decision: "", outcome: "", category: "", q: "" };
+  function selectOf(key, options) {
+    return h("select", { onchange: (e) => { logFilters[key] = e.target.value; loadLog(); } },
+      ...options.map(([v, label]) => h("option", { value: v }, label)));
+  }
+  const logList = h("ul", { class: "list compact", id: "auto-log-list" });
+  const logMeta = h("div", { class: "muted" });
+  const logSection = h("div", {},
+    h("div", { class: "auto-form" },
+      selectOf("hours", [["1", "last hour"], ["24", "last 24 h"], ["168", "last 7 days"], ["720", "last 30 days"]]),
+      selectOf("decision", [["", "any type"], ["act", "actions"], ["inbound", "inbound"], ["queued", "queued"],
+        ["suggest", "recorded"], ["silent", "skipped"], ["skill", "skills"], ["error", "errors"]]),
+      selectOf("outcome", [["", "any outcome"], ["ok", "ok"], ["failed", "failed"], ["dry_run", "dry run"],
+        ["skipped", "skipped"], ["info", "info"]]),
+      h("input", { placeholder: "category", size: "14", oninput: (e) => { logFilters.category = e.target.value.trim(); loadLog(); } }),
+      h("input", { placeholder: "search text", size: "18", oninput: (e) => { logFilters.q = e.target.value.trim(); loadLog(); } })),
+    logMeta, logList);
+
+  function logRow(x) {
+    let payload = null;
+    try { payload = JSON.parse(x.payload_json || "null"); } catch (e) { /* ignore */ }
+    return h("li", {}, h("details", {},
+      h("summary", {}, `${when(x.created_at)} · ${x.decision}${x.outcome ? " [" + x.outcome + "]" : ""} · ${(x.context_summary || "").slice(0, 90)}`),
+      h("div", { class: "muted" }, "Why: " + (x.policy_reason || "n/a")),
+      x.source_quote ? h("div", { class: "muted" }, "Source: \u201c" + x.source_quote + "\u201d") : null,
+      h("div", { class: "muted" }, "Did: " + (x.action_taken || "nothing")),
+      payload ? h("pre", {}, JSON.stringify(payload, null, 2)) : null,
+      x.result ? h("div", { class: "muted" }, "Result: " + x.result) : null));
+  }
+
+  async function loadLog() {
+    const qs = new URLSearchParams(Object.entries(logFilters).filter(([, v]) => v !== "")).toString();
+    try {
+      const d = await (await fetch("/api/autonomy/log?" + qs)).json();
+      const b = d.budgets || {};
+      logMeta.textContent = d.available
+        ? `Budget today: ${b.acts_today}/${b.max_acts} actions (soft), ${b.suggestions_today}/${b.max_suggestions} cards. ${d.entries.length} entries.`
+        : "Log unavailable.";
+      logList.replaceChildren(...(d.entries && d.entries.length ? d.entries.map(logRow) : [h("li", { class: "muted" }, "Nothing matches.")]));
+    } catch (e) { /* keep last */ }
+  }
+
   const openReviews = new Set(); // suggestion ids whose review panel is open (survives the 10s refresh)
   const pct = (c) => Math.round((Number(c) || 0) * 100) + "%";
   const when = (iso) => (iso ? iso.replace("T", " ").slice(0, 16) : "");
@@ -74,7 +117,7 @@
         d.dry_run ? "Leave dry run" : "Dry run (log only)"),
       d.hard_disabled ? h("span", { class: "muted" }, "Hard-disabled by JARVIS_AUTONOMY_DISABLED.") : null);
 
-    const sugg = d.pending_suggestions || [];
+    const sugg = d.pending_suggestions || []; // recorded for review: below the confidence floor, or under a user "ask" rule
     // Approve lives inside the review panel on purpose: the user must see exactly what will run
     // (the same sanitized details the agent will be given) before the button is even reachable.
     const detailPane = (s) => {
@@ -180,6 +223,16 @@
         onclick: () => { if (confirm(`Delete dynamic tool ${t.name}?`)) call("DELETE", `/api/dynamic_tools/${encodeURIComponent(t.name)}`); },
       }, "Revoke")));
 
+    const skills = (d.skills || []).map((s) => {
+      let steps = [];
+      try { steps = JSON.parse(s.steps_json || "[]").map((x) => x.tool); } catch (e) { /* ignore */ }
+      return h("li", {},
+        h("strong", {}, s.name), ` ${s.is_enabled ? "" : "(disabled) "}[${s.source}, used ${s.use_count}x] ${steps.join(" \u2192 ")} `,
+        h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", `/api/autonomy/skills/${encodeURIComponent(s.name)}/${s.is_enabled ? "disable" : "enable"}`) }, s.is_enabled ? "Disable" : "Enable"),
+        " ",
+        h("button", { class: "btn btn-small btn-danger", onclick: () => { if (confirm(`Delete skill ${s.name}?`)) call("POST", `/api/autonomy/skills/${encodeURIComponent(s.name)}/revoke`); } }, "Revoke"));
+    });
+
     const proposals = (d.dynamic_tool_proposals || []).map((t) => h("li", { class: "auto-card" },
       h("strong", {}, "dyn_" + t.name), ` - ${t.description}`,
       h("div", { class: "muted" }, "Proposed by Jarvis. It has NOT run. Read the code; approving lets it run with your privileges."),
@@ -189,11 +242,12 @@
       h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", `/api/dynamic_tools/proposals/${t.id}/reject`) }, "Reject")));
 
     root.replaceChildren(top, controls,
-      section("Suggestions waiting"), h("ul", { class: "list" }, suggList),
+      section("Recorded for review (low confidence or an ask rule)"), h("ul", { class: "list" }, suggList),
       section("Open commitments"), h("ul", { class: "list compact" }, commits.length ? commits : none("None tracked yet.")),
       section("Projects & campaigns"), h("ul", { class: "list compact" }, projects.length ? projects : none("None.")),
       section("Rules (auto-approve / ask / ignore)"), h("ul", { class: "list compact" }, policies), form,
-      section("Recent decisions"), h("ul", { class: "list compact" }, decisions.length ? decisions : none("None yet.")),
+      section("Activity log - what autonomy did and why"), logSection,
+      section("Skills (composed sequences of existing tools)"), h("ul", { class: "list compact" }, skills.length ? skills : none("None yet.")),
       section("Tool proposals waiting for you"), h("ul", { class: "list" }, proposals.length ? proposals : none("None.")),
       section("Dynamic tools" + (d.dynamic_tools_disabled ? " (disabled by env)" : "")),
       h("ul", { class: "list compact" }, tools.length ? tools : none("None created.")));
@@ -203,6 +257,7 @@
     try {
       const res = await fetch("/api/autonomy");
       render(await res.json());
+      loadLog();
     } catch (e) { /* keep last render */ }
   }
 

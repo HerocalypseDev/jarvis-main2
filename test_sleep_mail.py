@@ -227,6 +227,15 @@ def test_test_mode_answers_only_the_test_address_even_if_it_is_own(db):
     conn.close()
 
 
+def test_inbound_hook_receives_the_full_body_not_just_the_subject(db):
+    g = FakeGmail(_search(("p1", "Meeting Friday", "Promo <p@shop.com>")))
+    seen = []
+    sm.run_cycle(mcp=g, claude=lambda s, u, n: "", record=lambda t: None, since_iso=STARTED,
+                 sleep_started_at=STARTED, sleep=lambda s: None, on_inbound=seen.append)
+    assert seen and seen[0]["subject"] == "Meeting Friday" and seen[0]["id"] == "p1"
+    assert "Are you coming to dinner Sunday?" in seen[0]["body"]
+
+
 def test_own_signature_is_skipped_but_quoted_signature_is_not(db):
     sig = sm._sig_line()
     assert sm._is_our_own_message(f"Hi\n\n{sig}")

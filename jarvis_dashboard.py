@@ -480,6 +480,7 @@ def _build_app(
     set_llm: Callable[[str], str] | None = None,
     face=None,
     autonomy=None,
+    autonomy_skills=None,
     dyn_tools=None,
     port: int = DEFAULT_PORT,
 ):
@@ -811,6 +812,8 @@ def _build_app(
         try:
             data = autonomy.status()
             data["available"] = True
+            if autonomy_skills is not None:
+                data["skills"] = autonomy_skills.list_skills()
             if dyn_tools is not None:
                 data["dynamic_tools"] = dyn_tools.list_tools()
                 data["dynamic_tool_proposals"] = dyn_tools.list_proposals()
@@ -893,6 +896,34 @@ def _build_app(
 
     # Human-only decisions (audit B-01): the model's `autonomy`/`create_tool` tools cannot approve,
     # accept or enable anything - these routes, behind the Host/Origin guard, are the only way.
+    @app.get("/api/autonomy/log")
+    def api_autonomy_log(request: Request, hours: float = 24, decision: str = "", category: str = "",
+                         outcome: str = "", q: str = "", limit: int = 100):
+        """Filterable decision/action log: time range, type, category, outcome, free text."""
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"available": False}, headers=_NO_STORE)
+        return JSONResponse({
+            "available": True, "enabled": autonomy.enabled(), "dry_run": autonomy.dry_run(),
+            "budgets": autonomy.budgets(),
+            "entries": autonomy.log_entries(hours, decision, category, outcome, q, limit),
+        }, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/skills/{name}/{verb}")
+    def api_autonomy_skill(name: str, verb: str, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if autonomy_skills is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        if verb not in ("enable", "disable", "revoke"):
+            return JSONResponse({"ok": False, "error": "unknown action"}, status_code=400)
+        msg = (autonomy_skills.set_enabled(name, verb == "enable") if verb != "revoke"
+               else autonomy_skills.revoke(name))
+        return JSONResponse({"ok": not msg.startswith("No skill"), "message": msg}, headers=_NO_STORE)
+
     @app.post("/api/autonomy/commitments/{cid}/accept")
     def api_autonomy_commitment_accept(cid: int, request: Request):
         bad = _face_guard(request)
@@ -1003,6 +1034,7 @@ def start(
     set_llm: Callable[[str], str] | None = None,
     face=None,
     autonomy=None,
+    autonomy_skills=None,
     dyn_tools=None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
@@ -1026,6 +1058,7 @@ def start(
         set_llm=set_llm,
         face=face,
         autonomy=autonomy,
+        autonomy_skills=autonomy_skills,
         dyn_tools=dyn_tools,
         port=port,
     )
