@@ -600,6 +600,22 @@ def test_gmail_watch_skill_requires_spoken_alert_for_important_mail():
     assert "NO spoken reply" in text
 
 
+def test_urgent_email_reply_monitor_skill_drafts_but_never_sends():
+    import json
+    from pathlib import Path
+    skills = Path(__file__).parent / "skills"
+    skill = json.loads((skills / "urgent_email_reply_monitor.json").read_text(encoding="utf-8"))
+    watch = json.loads((skills / "gmail_watch.json").read_text(encoding="utf-8"))
+    assert skill["name"] == "urgent_email_reply_monitor"
+    assert skill["schedule"] == {"every_minutes": 1}
+    assert watch["schedule"] == {"every_minutes": 60}  # stays distinct from the hourly watch
+    text = skill["instructions"]
+    assert "draft_email" in text and "NEVER call send_email" in text
+    assert "Temu" in text and "Reddit" in text
+    assert "handled" in text  # dedupe so a message is not drafted every minute
+    assert "NO spoken reply" in text
+
+
 def _gate_env(jarvis, monkeypatch):
     spoken = []
     monkeypatch.setattr(jarvis, "_speak_shaped", lambda t: spoken.append(t))
