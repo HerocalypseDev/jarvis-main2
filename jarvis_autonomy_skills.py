@@ -179,19 +179,26 @@ def run_skill(name: str, params: dict | None = None) -> str:
     params = params if isinstance(params, dict) else {}
     results: list[str] = []
     ok = True
+    failed_step: dict | None = None
     for i, s in enumerate(steps, 1):
         res = core._call("run_tool", s["tool"], _substitute(s["input"], params), default=None)
         text = str(res if res is not None else "no tool runner available")
         results.append(f"{i}. {s['tool']}: {text[:200]}")
         if res is None or _FAILED_RE.match(text.strip()):
             ok = False
+            failed_step = {"step": i, "tool": s["tool"], "error": text[:200]}
             break
     summary = "\n".join(results)
     _x("UPDATE autonomy_skills SET use_count=use_count+1, last_used_at=?, last_result=? WHERE id=?",
        (core._iso(), summary[:600], row["id"]))
-    core._log_decision(f"skill {name}", None, "act", summary[:500], "skill run", category="skill",
-                       payload={"steps": [s["tool"] for s in steps], "params": params}, result=summary[:600],
-                       outcome="ok" if ok else "failed")
+    core._log_decision(f"skill {name}", None, "act", summary[:500],
+                       "skill run" if ok else f"skill stopped at step {failed_step['step']} ({failed_step['tool']})",
+                       category="skill", payload={"steps": [s["tool"] for s in steps], "params": params,
+                                                  "failed_step": failed_step},
+                       result=summary[:600], outcome="ok" if ok else "failed")
+    if not ok:  # exactly one notification per failed run
+        core._call("notify", f"Skill {name} stopped at step {failed_step['step']} ({failed_step['tool']}): "
+                             f"{failed_step['error'][:100]}", False)
     core._audit("skill_run", {"skill": name, "ok": ok, "steps": len(results)}, summary[:300])
     return ("Ran skill " if ok else "Skill stopped early: ") + f"{name}.\n{summary}"
 

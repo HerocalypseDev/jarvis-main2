@@ -233,6 +233,34 @@
         h("button", { class: "btn btn-small btn-danger", onclick: () => { if (confirm(`Delete skill ${s.name}?`)) call("POST", `/api/autonomy/skills/${encodeURIComponent(s.name)}/revoke`); } }, "Revoke"));
     });
 
+    // File organising: ON by default; nothing to enable. Rules and folders can be edited here.
+    const org = d.organise || { roots: [], rules: [], recent: [] };
+    const orgRules = org.rules.map((r) => h("li", {},
+      h("strong", {}, r.name), ` (${r.source}) ${(r.extensions || []).join(" ")} \u2192 ${r.dest_dir} [${r.action}] `,
+      h("button", { class: "btn btn-small btn-ghost", onclick: () => call("DELETE", `/api/autonomy/organise/rules/${encodeURIComponent(r.name)}`) }, "Remove")));
+    const orgRoots = org.roots.map((p) => h("li", {}, p, " ",
+      h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", "/api/autonomy/organise/roots/remove", { path: p }) }, "Stop")));
+    const orgRecent = org.recent.slice(0, 8).map((x) => h("li", { class: "muted" },
+      `${when(x.created_at)} ${(x.action_taken || "").slice(0, 120)} [${x.outcome}]`));
+    const orgRuleForm = h("form", {
+      class: "auto-form",
+      onsubmit: (e) => {
+        e.preventDefault();
+        const f = e.target;
+        call("POST", "/api/autonomy/organise/rules", { name: f.name.value.trim(), extensions: f.extensions.value, dest_dir: f.dest_dir.value.trim(), action: f.action.value });
+        f.reset();
+      },
+    }, h("input", { name: "name", placeholder: "rule name", size: "12" }),
+      h("input", { name: "extensions", placeholder: ".pdf, .docx", size: "14" }),
+      h("input", { name: "dest_dir", placeholder: "~/Documents/Invoices", size: "24" }),
+      h("select", { name: "action" }, h("option", { value: "move" }, "move"), h("option", { value: "copy" }, "copy")),
+      h("button", { class: "btn btn-small", type: "submit" }, "Add rule"));
+    const orgRootForm = h("form", {
+      class: "auto-form",
+      onsubmit: (e) => { e.preventDefault(); call("POST", "/api/autonomy/organise/roots", { path: e.target.path.value.trim() }); e.target.reset(); },
+    }, h("input", { name: "path", placeholder: "another folder to organise", size: "30" }),
+      h("button", { class: "btn btn-small btn-ghost", type: "submit" }, "Add folder"));
+
     const proposals = (d.dynamic_tool_proposals || []).map((t) => h("li", { class: "auto-card" },
       h("strong", {}, "dyn_" + t.name), ` - ${t.description}`,
       h("div", { class: "muted" }, "Proposed by Jarvis. It has NOT run. Read the code; approving lets it run with your privileges."),
@@ -247,6 +275,10 @@
       section("Projects & campaigns"), h("ul", { class: "list compact" }, projects.length ? projects : none("None.")),
       section("Rules (auto-approve / ask / ignore)"), h("ul", { class: "list compact" }, policies), form,
       section("Activity log - what autonomy did and why"), logSection,
+      section("File organising (on by default; moves or copies only, never deletes)"),
+      h("ul", { class: "list compact" }, orgRoots.length ? orgRoots : none("No organised folders exist on this machine.")), orgRootForm,
+      h("ul", { class: "list compact" }, orgRules), orgRuleForm,
+      h("ul", { class: "list compact" }, orgRecent.length ? orgRecent : none("Nothing organised yet.")),
       section("Skills (composed sequences of existing tools)"), h("ul", { class: "list compact" }, skills.length ? skills : none("None yet.")),
       section("Tool proposals waiting for you"), h("ul", { class: "list" }, proposals.length ? proposals : none("None.")),
       section("Dynamic tools" + (d.dynamic_tools_disabled ? " (disabled by env)" : "")),

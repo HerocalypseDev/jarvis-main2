@@ -64,6 +64,7 @@ import jarvis_workspace
 import jarvis_cache as cache
 import jarvis_autonomy as autonomy
 import jarvis_autonomy_skills as autonomy_skills
+import jarvis_autonomy_organise as autonomy_organise
 import jarvis_dynamic_tools as dyn_tools
 import jarvis_memory_consolidation as consolidation
 import jarvis_billing as billing
@@ -2087,6 +2088,30 @@ AUTONOMY_TOOLS = [
                 "dry_run": {"type": "boolean"},
             },
             "required": ["code_string", "name", "description"],
+        },
+    },
+    {
+        "name": "autonomy_organise",
+        "description": (
+            "Automatic file organising (ON by default whenever autonomy is on): new documents/images/spreadsheets "
+            "in Downloads and Desktop are moved into ~/Documents/Jarvis_Organised and ~/Pictures/Jarvis_Organised. "
+            "It only moves or copies, never deletes or overwrites. actions: list_rules, add_rule (name, extensions "
+            "e.g. ['.pdf'], dest_dir e.g. '~/Documents/Invoices', rule_action move|copy), remove_rule (name), "
+            "list_roots, add_root (path), remove_root (path), recent. Use it for 'organise my downloads like X', "
+            "'where did you put that file', 'stop organising my desktop'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["list_rules", "add_rule", "remove_rule", "list_roots",
+                                                      "add_root", "remove_root", "recent"]},
+                "name": {"type": "string"},
+                "extensions": {"type": "array", "items": {"type": "string"}},
+                "dest_dir": {"type": "string"},
+                "rule_action": {"type": "string", "enum": ["move", "copy"]},
+                "path": {"type": "string"},
+            },
+            "required": ["action"],
         },
     },
     {
@@ -4120,6 +4145,8 @@ def _autonomy_callbacks() -> dict:
         "poll_mail": _autonomy_poll_mail,
         "known_tools": lambda: [t["name"] for t in AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()],
         "run_tool": lambda name, inp: _execute_tool(name, inp or {}, "(autonomy skill)"),
+        "organise": autonomy_organise.handle_new_file,   # file organising: on whenever autonomy is on
+        "watch_path": lambda p: filewatcher.watcher.add_path(p, baseline=True),
     }
 
 
@@ -7092,6 +7119,8 @@ def _execute_tool_impl(
             result = autonomy.handle_tool(inp, _current_command_source())
         elif tool_name == "autonomy_skill":
             result = autonomy_skills.handle_tool(inp, _current_command_source())
+        elif tool_name == "autonomy_organise":
+            result = autonomy_organise.handle_tool(inp, _current_command_source())
         elif tool_name == "create_tool":
             # Full-permission model: validated (scan + tests) and registered straight away.
             result = dyn_tools.create_tool(
@@ -7774,6 +7803,7 @@ def main() -> int:
                     face=face,
                     autonomy=autonomy,
                     autonomy_skills=autonomy_skills,
+                    autonomy_organise=autonomy_organise,
                     dyn_tools=dyn_tools,
                     # Phase 4: a dashboard-typed command is just a 4th input surface alongside
                     # voice/text-hotkey/phone — it goes through the exact same
@@ -7802,6 +7832,7 @@ def main() -> int:
         dyn_tools.configure({t["name"] for t in AGENT_TOOLS})
         dyn_tools.init_dynamic_tools()
         autonomy.start_autonomy_tick(_autonomy_callbacks())
+        autonomy_organise.start()  # the file watcher must cover every organised folder (Desktop is added, baselined)
     except Exception as e:
         log.warning("Autonomy failed to initialise; Jarvis continues without it: %s", e)
     _start_scheduler()

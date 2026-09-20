@@ -79,14 +79,36 @@ class FileWatcher:
         self._thread: threading.Thread | None = None
 
     # --- folder management ---------------------------------------------------------
-    def add_path(self, path: str) -> str:
+    def add_path(self, path: str, baseline: bool = False) -> str:
+        """baseline=True: files already in the folder are recorded silently first (unless it was watched
+        before), so adding e.g. Desktop does not report everything already on it as a 'new' file."""
         p = str(Path(path).expanduser().resolve())
         if not os.path.isdir(p):
             return f"{path!r} is not a folder that exists."
         if p in self.paths:
             return f"Already watching {p}."
+        if baseline:
+            self._baseline_folder(p)
         self.paths.append(p)
         return f"Now watching {p}."
+
+    def _baseline_folder(self, root: str) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with _db_lock:
+            conn = _connect()
+            try:
+                prefix = root.rstrip("\\/") + os.sep
+                if conn.execute("SELECT 1 FROM watched_files WHERE substr(path, 1, ?) = ? LIMIT 1",
+                                (len(prefix), prefix)).fetchone():
+                    return  # watched before: keep reporting real changes
+                for path, size, mtime in self._iter_files(root):
+                    conn.execute("INSERT OR IGNORE INTO watched_files (path, size, mtime, first_seen_at, last_seen_at) "
+                                 "VALUES (?,?,?,?,?)", (path, size, mtime, now, now))
+                conn.commit()
+            except sqlite3.Error as e:
+                log.warning("watched_files baseline for %s failed: %s", root, e)
+            finally:
+                conn.close()
 
     def remove_path(self, path: str) -> str:
         p = str(Path(path).expanduser().resolve())

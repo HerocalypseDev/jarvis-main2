@@ -481,6 +481,7 @@ def _build_app(
     face=None,
     autonomy=None,
     autonomy_skills=None,
+    autonomy_organise=None,
     dyn_tools=None,
     port: int = DEFAULT_PORT,
 ):
@@ -814,6 +815,8 @@ def _build_app(
             data["available"] = True
             if autonomy_skills is not None:
                 data["skills"] = autonomy_skills.list_skills()
+            if autonomy_organise is not None:
+                data["organise"] = autonomy_organise.overview()
             if dyn_tools is not None:
                 data["dynamic_tools"] = dyn_tools.list_tools()
                 data["dynamic_tool_proposals"] = dyn_tools.list_proposals()
@@ -910,6 +913,48 @@ def _build_app(
             "budgets": autonomy.budgets(),
             "entries": autonomy.log_entries(hours, decision, category, outcome, q, limit),
         }, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/organise/rules")
+    def api_organise_add_rule(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if autonomy_organise is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        p = payload or {}
+        msg = autonomy_organise.add_rule(str(p.get("name") or ""), p.get("extensions"), str(p.get("dest_dir") or ""),
+                                         str(p.get("action") or "move"))
+        return JSONResponse({"ok": msg.startswith("Rule ") and "not saved" not in msg, "message": msg},
+                            headers=_NO_STORE)
+
+    @app.delete("/api/autonomy/organise/rules/{name}")
+    def api_organise_remove_rule(name: str, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if autonomy_organise is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        return JSONResponse({"ok": True, "message": autonomy_organise.remove_rule(name)}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/organise/roots")
+    def api_organise_add_root(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if autonomy_organise is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        msg = autonomy_organise.add_root(str((payload or {}).get("path") or ""))
+        return JSONResponse({"ok": msg.startswith("Now"), "message": msg}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/organise/roots/remove")
+    def api_organise_remove_root(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if autonomy_organise is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        return JSONResponse({"ok": True, "message": autonomy_organise.remove_root(str((payload or {}).get("path") or ""))},
+                            headers=_NO_STORE)
 
     @app.post("/api/autonomy/skills/{name}/{verb}")
     def api_autonomy_skill(name: str, verb: str, request: Request):
@@ -1035,6 +1080,7 @@ def start(
     face=None,
     autonomy=None,
     autonomy_skills=None,
+    autonomy_organise=None,
     dyn_tools=None,
 ) -> None:
     """Blocking call — run this in its own daemon thread from jarvis.py's main(). Binds
@@ -1059,6 +1105,7 @@ def start(
         face=face,
         autonomy=autonomy,
         autonomy_skills=autonomy_skills,
+        autonomy_organise=autonomy_organise,
         dyn_tools=dyn_tools,
         port=port,
     )

@@ -732,6 +732,15 @@ Rules:
   (5) composable skills (`autonomy_skill` tool, `autonomy_skills` table, auto-mined from 3 identical repeats, only
   existing tools, re-validated every run); (6) deadline intervention at 24 h/2 h/overdue + campaign state machine
   `planned -> running -> done | blocked | cancelled` with 3-attempt recovery.
+- **Injection hardening + file organising (2026-09-20, ALWAYS ON with autonomy — no feature flags, by user
+  request)**: untrusted text is framed (`<<<UNTRUSTED_INBOUND ...>>>`), sanitised (`neutralize_injection`) and
+  length-capped; third-party (`email`/`message`) calendar/email/file_op/background_task need confidence >= 0.85
+  (`JARVIS_AUTONOMY_INBOUND_AUTO_MIN_CONF`) unless a clear datetime+title meeting, and *every* action from a
+  message with injection-like text does; optional `JARVIS_AUTONOMY_EMAIL_AUTO_ALLOW` (empty = unrestricted).
+  `jarvis_autonomy_organise.py` files new files from Downloads/Desktop by built-in rules (move/copy only, never
+  delete/overwrite, realpath + top-level + settle checks, logged, dry-run-safe); the watcher baselines a newly
+  added folder (`add_path(..., baseline=True)`). Do not add enable flags for these. Residual injection risk is
+  real and documented in `AUTONOMY.md`. Suite: 538 tests (1 skipped: symlinks need privileges on Windows).
 - **Audit-and-fix pass (2026-09-20, after the permission change)** — details in `AUTONOMY.md`. Rules to keep:
   dry-run must never consume real work (own `dry_*` bookkeeping + replay on leaving dry-run); old learned ask
   rules are migrated to auto_act; learned `ignore` lapses (30 d) and never applies to `deadline:*`; a dismissed card
