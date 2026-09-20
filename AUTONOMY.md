@@ -12,12 +12,34 @@ Files: `jarvis_autonomy.py` (core), `jarvis_dynamic_tools.py`, `jarvis_memory_co
 
 | How | Effect |
 |---|---|
-| Say "turn on autonomy" / "turn off autonomy" (the `autonomy` tool) | Persisted in the DB. Enabling is refused from the phone; disabling works anywhere. |
-| Dashboard > Autonomy > *Turn autonomy on/off* | Same switch. |
+| Say "turn off autonomy" (the `autonomy` tool) | Persisted in the DB. Works from anywhere; it also cancels the queued tasks autonomy had started. |
+| Dashboard > Autonomy > *Turn autonomy on/off* | The same switch, and the **only** way to turn it *on* (see "Human-only actions"). |
 | `JARVIS_AUTONOMY_ENABLED=1` | Default when the DB has no stored choice. |
 | **`JARVIS_AUTONOMY_DISABLED=1`** | Hard kill. Overrides everything; nothing autonomous runs, enabling is refused. |
 | Dashboard *Dry run* / "autonomy dry run on" | Everything is logged, nothing is executed. |
 | `JARVIS_DYNAMIC_TOOLS_DISABLED=1` | No dynamic tools created, advertised or run. |
+
+## Human-only actions (security audit 2026-09-20, B-01)
+
+The model cannot tell your words from text that reached it through an email, web page or file, so
+anything that grants Jarvis more power exists **only as a dashboard route**, never as something the
+`autonomy`/`create_tool` tools can do: enabling autonomy, approving a suggestion, accepting a commitment,
+approving a campaign or adding campaign steps, setting rules, leaving dry run, and approving a proposed
+dynamic tool. Asking by voice gets "use the dashboard". Turning things *off* (disable, dry-run on,
+dismiss, never) still works everywhere. The suggestion card puts **Approve behind a Review panel** that
+shows the exact data the action will run with.
+
+## Untrusted text (audit C-02 / C-04 / B-02)
+
+* Anything extracted from mail/Telegram/Discord, **or from a turn in which Jarvis read mail, the web,
+  files or the screen**, is stored *quarantined*: it is kept out of the model's context, the classifier
+  and the deadline auto-nudge until you accept it (dashboard *Accept*, or by approving a suggestion built
+  from it). It still produces a suggestion card, which is your review.
+* Model/other-person text is cleaned (control characters, newlines, length) before it is stored, shown,
+  spoken or put in a prompt, and action details are reduced to plain scalar fields; what the card shows
+  is exactly what runs, and the agent is told the values are data, never instructions.
+* Extraction prompts now include the current time (so "tomorrow" resolves) and deadlines in the past or
+  more than 3 years out are dropped.
 
 ## How the tick works
 
@@ -62,8 +84,10 @@ always_ask | ignore`, optional `min_confidence`. Most specific wins (sender > ke
 Categories look like `conversation:reminder`, `email:calendar`, `deadline:notification`, `tick:deadline:reminder`.
 
 * **Default is ask.** The only built-in rule is an automatic heads-up about an approaching deadline.
-* Content someone else wrote (email/Telegram/Discord) can **never** auto-act through a category-wide rule,
-  only through a rule naming that sender or keyword.
+* Content someone else wrote (email/Telegram/Discord) can **never** auto-act through a category-wide or
+  keyword rule, only through a rule naming that **exact sender address** (or `@domain.com`). A `From`
+  header can be forged, so even a sender rule is only as strong as your mail system: prefer leaving it on
+  *ask*.
 * Learned rules only ever auto-run reminders/notifications: 3 approvals in a row promote a category, 2
   dismissals demote it to `ignore`, one dismissal takes a learned auto rule back to asking. Rules you
   write yourself are never rewritten. *Never for this category* writes a permanent `ignore`.
@@ -81,16 +105,25 @@ background tasks `..._MAX_BG_TASKS` (2), dynamic tools `JARVIS_DYNAMIC_TOOLS_PER
 
 ## Dynamic tools
 
-`create_tool(code_string, name, description, tests=None, dry_run=False)` — becomes `dyn_<name>`.
+`create_tool(code_string, name, description, tests=None, dry_run=False)` **proposes** a tool. It is
+validated (scan + your tests) and filed as a proposal; it becomes `dyn_<name>` only when **you** approve it
+in the dashboard (the code is shown there). Approval re-runs the scan and tests.
 
-* Deliberately **pure computation only**: imports limited to a stdlib allow-list (json, re, math,
-  datetime, statistics, collections, ...); no `eval/exec/open/getattr/...`, no underscore attributes, no
-  file/network/shell/subprocess access. Needs shell/files/network? The model uses the existing tools.
-* One entry function named `name`, tests are run first, then the tool runs in a separate `python -I`
-  process (10 s timeout, restricted builtins/imports).
+* **This is not a hard security boundary.** An audit showed that allow-listed modules re-export `os`/`sys`
+  (`uuid.os`, `calendar.sys`, `json.codecs.open`) and that `operator.attrgetter` gives dynamic attribute
+  access, so an AST scan alone can be bypassed. Treat every approved tool as if it could run with your
+  privileges, and read the code before approving. What is layered on top, as defence in depth:
+  * a small allow-list of pure modules (no `operator`, `string`, `typing`, `dataclasses`, `uuid`,
+    `calendar`, `enum`, `urllib`), no `eval/exec/open/getattr/print/...`, no underscore attributes;
+  * inside the runner every allowed module is replaced by a proxy with **no sub-modules and no
+    underscore names**, so the re-export routes do not exist at runtime;
+  * the tool runs in a separate `python -I` process with a 10 s timeout, a Windows Job Object (256 MB
+    memory cap, no child processes), and output capped inside the child.
+* An existing tool name is never overwritten or re-enabled (revoke it first); the daily budget is
+  checked under the same lock as the insert.
 * Stored in `dynamic_tools` (hash + code); on every load the hash and scan are re-checked, so a tampered
-  row is not run. Dashboard: enable / disable / revoke. Creation is refused from the phone and unattended
-  runs. Deleting a tool does not refund the daily budget.
+  row is not run. Dashboard: approve/reject proposals, enable / disable / revoke. Creation is refused
+  from the phone and unattended runs. Deleting a tool does not refund the daily budget.
 
 ## Wiring in `jarvis.py` (already applied)
 
@@ -106,7 +139,30 @@ background tasks `..._MAX_BG_TASKS` (2), dynamic tools `JARVIS_DYNAMIC_TOOLS_PER
   Only the subject is available there today; for full-body extraction call
   `_autonomy_inbound(subject, body, sender, "email" | "telegram" | "discord")` from any handler that has it.
 
+## Reliability and housekeeping (audit C-01, D-01, E-01, E-03, F-01/02, G-01/02, H-01/02)
+
+* **Approved background tasks and campaign steps are actually scheduled**: after queueing, the planner is
+  run and the result says when it will run (or that it is waiting for a slot, retried every tick). A
+  campaign step that never gets a slot within 24 h is marked failed, not left "queued" forever.
+* Approve/dismiss are compare-and-set, so two simultaneous approvals run the action once.
+* Turning autonomy off refuses new approvals, stops a worker that had not started yet, and cancels the
+  task-queue items autonomy created.
+* An approved action runs through the agent loop **without** writing the synthetic instruction into the
+  conversation history and **without** being able to stage a catastrophic confirmation (so a later "yes"
+  meant for something else cannot confirm it). The "a scheduled task is running" flag is a counter.
+* Autonomy stays quiet while a command is being transcribed or run, as well as when you type or Jarvis
+  speaks. At most 3 autonomy worker threads exist at once; extras are dropped and logged.
+* Retention: decisions and finished suggestions 90 days, closed commitments 180 days, dynamic-tool events
+  180 days (pruned at most hourly). Failed or malformed model calls are logged (`decision = error`).
+* The classifier's "nothing changed" check now ignores the clock (it hashed the minute, so it never
+  skipped) and includes the calendar.
+* The dashboard payload trims evidence/quotes to 300 characters.
+
 ## Limits worth knowing
+
+* A prompt-injection surface remains wherever mail/web text reaches the model. Quarantine, human-only
+  approval and the review panel reduce it; a human who clicks *Approve* without reading the details still
+  executes the action through the full-tool agent loop (the catastrophic gate still applies there).
 
 * The classifier and extraction use the active brain (`CLAUDE_MODEL` or Gemini). On Gemini's free tier that
   text (conversation, mail subjects, calendar) may be used to improve Google products.

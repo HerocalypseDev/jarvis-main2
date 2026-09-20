@@ -38,6 +38,7 @@
     }
   }
 
+  const openReviews = new Set(); // suggestion ids whose review panel is open (survives the 10s refresh)
   const pct = (c) => Math.round((Number(c) || 0) * 100) + "%";
   const when = (iso) => (iso ? iso.replace("T", " ").slice(0, 16) : "");
   const section = (title) => h("h4", { class: "sleep-sub" }, title);
@@ -74,12 +75,27 @@
       d.hard_disabled ? h("span", { class: "muted" }, "Hard-disabled by JARVIS_AUTONOMY_DISABLED.") : null);
 
     const sugg = d.pending_suggestions || [];
+    // Approve lives inside the review panel on purpose: the user must see exactly what will run
+    // (the same sanitized details the agent will be given) before the button is even reachable.
+    const detailPane = (s) => {
+      let details = {};
+      try { details = JSON.parse(s.action_json || "{}"); } catch (e) { /* ignore */ }
+      return h("div", { class: "auto-review" },
+        h("div", { class: "muted" }, "This will run (" + (s.action_type || "?") + ") with exactly this data:"),
+        h("pre", {}, JSON.stringify(details, null, 2)),
+        s.sender ? h("div", { class: "muted" }, "Triggered by content from " + s.sender + " - check it is really them.") : null,
+        h("button", { class: "btn btn-small", onclick: () => { openReviews.delete(s.id); call("POST", `/api/autonomy/suggestions/${s.id}/approve`); } }, "Approve and run"));
+    };
     const suggList = sugg.length ? sugg.map((s) => h("li", { class: "auto-card" },
       h("div", {}, h("strong", {}, s.title), h("span", { class: "muted" }, `  ${pct(s.confidence)} · ${s.category}`)),
       s.evidence ? h("div", { class: "muted" }, "“" + s.evidence + "”") : null,
       s.sender ? h("div", { class: "muted" }, "from " + s.sender) : null,
+      openReviews.has(s.id) ? detailPane(s) : null,
       h("div", {},
-        h("button", { class: "btn btn-small", onclick: () => call("POST", `/api/autonomy/suggestions/${s.id}/approve`) }, "Approve"),
+        h("button", {
+          class: "btn btn-small",
+          onclick: () => { if (openReviews.has(s.id)) openReviews.delete(s.id); else openReviews.add(s.id); refresh(); },
+        }, openReviews.has(s.id) ? "Hide details" : "Review"),
         " ",
         h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", `/api/autonomy/suggestions/${s.id}/dismiss`) }, "Dismiss"),
         " ",
@@ -92,6 +108,9 @@
       `#${c.id} [${c.type}] ${c.description}`,
       c.deadline_iso ? ` — due ${when(c.deadline_iso)}` : "",
       c.who_is_responsible !== "user" ? ` (${c.who_is_responsible})` : "", " ",
+      c.quarantined ? h("span", { class: "muted" }, "[unverified - from someone else; not used until you accept] ") : null,
+      c.quarantined ? h("button", { class: "btn btn-small", onclick: () => call("POST", `/api/autonomy/commitments/${c.id}/accept`) }, "Accept") : null,
+      c.quarantined ? " " : null,
       h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", `/api/autonomy/commitments/${c.id}/status`, { status: "completed" }) }, "Done"),
       " ",
       h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", `/api/autonomy/commitments/${c.id}/status`, { status: "cancelled" }) }, "Cancel")));
@@ -103,8 +122,22 @@
       try { meta = JSON.parse(p.metadata_json || "{}"); } catch (e) { /* ignore */ }
       return h("li", {},
         h("strong", {}, p.name),
-        ` (${p.status}, risk ${p.risk_level || "low"}${meta.campaign_approved ? ", campaign approved" : ""})`,
-        (actionsByProject[p.id] || []).map((a) => h("div", { class: "muted" }, `· ${a.status}: ${a.description}`)));
+        ` (${p.status}, risk ${p.risk_level || "low"}${meta.campaign_approved ? ", campaign approved" : ""}) `,
+        h("button", {
+          class: "btn btn-small btn-ghost",
+          onclick: () => call("POST", "/api/autonomy/campaigns/approve", { project: p.name, approved: !meta.campaign_approved }),
+        }, meta.campaign_approved ? "Pause campaign" : "Approve campaign"),
+        (actionsByProject[p.id] || []).map((a) => h("div", { class: "muted" }, `· ${a.status}: ${a.description}`)),
+        h("form", {
+          class: "auto-form",
+          onsubmit: (e) => {
+            e.preventDefault();
+            const f = e.target;
+            call("POST", "/api/autonomy/campaigns/action", { project: p.name, description: f.description.value.trim() });
+            f.reset();
+          },
+        }, h("input", { name: "description", placeholder: "add a step (background task)", size: "30" }),
+          h("button", { class: "btn btn-small btn-ghost", type: "submit" }, "Add step")));
     });
 
     const policies = (d.policies || []).map((p) => h("li", {},
@@ -147,12 +180,21 @@
         onclick: () => { if (confirm(`Delete dynamic tool ${t.name}?`)) call("DELETE", `/api/dynamic_tools/${encodeURIComponent(t.name)}`); },
       }, "Revoke")));
 
+    const proposals = (d.dynamic_tool_proposals || []).map((t) => h("li", { class: "auto-card" },
+      h("strong", {}, "dyn_" + t.name), ` - ${t.description}`,
+      h("div", { class: "muted" }, "Proposed by Jarvis. It has NOT run. Read the code; approving lets it run with your privileges."),
+      h("pre", {}, t.code_text),
+      h("button", { class: "btn btn-small", onclick: () => { if (confirm(`Approve tool ${t.name}?`)) call("POST", `/api/dynamic_tools/proposals/${t.id}/approve`); } }, "Approve"),
+      " ",
+      h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", `/api/dynamic_tools/proposals/${t.id}/reject`) }, "Reject")));
+
     root.replaceChildren(top, controls,
       section("Suggestions waiting"), h("ul", { class: "list" }, suggList),
       section("Open commitments"), h("ul", { class: "list compact" }, commits.length ? commits : none("None tracked yet.")),
       section("Projects & campaigns"), h("ul", { class: "list compact" }, projects.length ? projects : none("None.")),
       section("Rules (auto-approve / ask / ignore)"), h("ul", { class: "list compact" }, policies), form,
       section("Recent decisions"), h("ul", { class: "list compact" }, decisions.length ? decisions : none("None yet.")),
+      section("Tool proposals waiting for you"), h("ul", { class: "list" }, proposals.length ? proposals : none("None.")),
       section("Dynamic tools" + (d.dynamic_tools_disabled ? " (disabled by env)" : "")),
       h("ul", { class: "list compact" }, tools.length ? tools : none("None created.")));
   }

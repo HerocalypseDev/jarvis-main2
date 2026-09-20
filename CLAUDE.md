@@ -701,7 +701,7 @@ Rules:
 - Full write-up: `AUTONOMY.md`. Code: `jarvis_autonomy.py` (commitments/projects, policy engine, tick,
   suggestions, campaigns, planner), `jarvis_dynamic_tools.py`, `jarvis_memory_consolidation.py`, the
   dashboard "Autonomy" tab (`dashboard_static/autonomy.js`, `/api/autonomy*`, `/api/dynamic_tools*`).
-  Tests: `test_autonomy.py` (44; whole suite 389).
+  Tests: `test_autonomy.py` (98; whole suite 443).
 - **Off by default, asks before acting.** `JARVIS_AUTONOMY_DISABLED=1` is a hard kill. The default policy
   is *ask*; the only built-in auto rule is a nudge about an approaching deadline. Content from other people
   (email/Telegram/Discord) can never auto-act via a category-wide rule. Learned rules may only auto-run
@@ -725,6 +725,21 @@ Rules:
   model extraction/classifier response, the dashboard tab in a real browser, an approved calendar event
   through the Calendar MCP, a real inbound mail (sleep-mail hook passes subject only), the first real
   campaign. Turn it on and watch the Autonomy tab's "Recent decisions" before trusting it.
+- **Security audit fixes (2026-09-20)** — every finding of the audit (A-01…K-01) is fixed and pinned by a
+  test; details in `AUTONOMY.md` ("Human-only actions", "Untrusted text", "Reliability and housekeeping").
+  Rules to keep: (1) **enable / approve / accept / approve_campaign / add_action / set_policy and
+  approving a dynamic tool are human-only** — dashboard routes only, refused from the model's `autonomy`
+  tool from *every* source (`HUMAN_ONLY_ACTIONS`); never add them back to the tool. `create_tool` only
+  files a proposal (`propose_tool`), the user approves in the dashboard. (2) The dynamic-tool sandbox is
+  defence in depth, **not a security boundary** (allow-listed modules re-exported os/sys); runtime module
+  proxies + a Windows Job Object (256 MB, no child processes) sit under the scan. (3) Text from inbound
+  channels, or from a turn that read mail/web/files/screen, is stored **quarantined** and excluded from
+  prompts/nudges until accepted. (4) Autonomous agent runs use `record_history=False` and cannot stage a
+  catastrophic confirmation (`_command_ctx.autonomous`). (5) Sender rules match the exact address only;
+  keyword rules never auto-act on inbound content. Found while fixing: the classifier's unchanged-context
+  shortcut hashed the clock minute and never fired (now fixed). **Not verified live:** the dashboard's
+  new Review panel / proposals list in a real browser, and an approved background task running end to end
+  under the real scheduler loop (unit-tested against the real `jarvis_task_scheduler` only).
 
 ### Cost reporting
 
@@ -774,4 +789,5 @@ row there each phase rather than only stating the total in chat.
 | 24 (face recognition code review: 11 defects fixed, 17 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
 | 25 (stranger -> Telegram reminders question with held+forwarded reminders, away mode auto-lock, dashboard toggle) | Sonnet 5 | ~60 min | ~$3.00–$4.20 |
 | 26 (full autonomy: commitments/projects, policy engine + teach loop, tick, campaigns, dynamic tools, consolidation, dashboard tab) | Sonnet 5 | ~75 min | ~$3.60–$5.00 |
-| **Running total (final)** | | **~773 min** | **~$33.45–$46.80** |
+| 27 (autonomy security audit: 20 findings fixed, human-only approvals, quarantine, sandbox hardening, 54 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
+| **Running total (final)** | | **~813 min** | **~$35.65–$49.80** |

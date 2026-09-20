@@ -813,6 +813,7 @@ def _build_app(
             data["available"] = True
             if dyn_tools is not None:
                 data["dynamic_tools"] = dyn_tools.list_tools()
+                data["dynamic_tool_proposals"] = dyn_tools.list_proposals()
                 data["dynamic_tools_disabled"] = dyn_tools.disabled()
             return JSONResponse(data, headers=_NO_STORE)
         except Exception as e:
@@ -889,6 +890,54 @@ def _build_app(
             return JSONResponse({"ok": False}, status_code=501)
         msg = autonomy.set_commitment_status(cid, str((payload or {}).get("status") or ""))
         return JSONResponse({"ok": msg.startswith("Commitment"), "message": msg}, headers=_NO_STORE)
+
+    # Human-only decisions (audit B-01): the model's `autonomy`/`create_tool` tools cannot approve,
+    # accept or enable anything - these routes, behind the Host/Origin guard, are the only way.
+    @app.post("/api/autonomy/commitments/{cid}/accept")
+    def api_autonomy_commitment_accept(cid: int, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        msg = autonomy.accept_commitment(cid)
+        return JSONResponse({"ok": msg.startswith("Commitment"), "message": msg}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/campaigns/approve")
+    def api_autonomy_campaign_approve(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        p = payload or {}
+        msg = autonomy.approve_campaign(str(p.get("project") or ""), p.get("approved", True) is not False)
+        return JSONResponse({"ok": msg.startswith("Campaign"), "message": msg}, headers=_NO_STORE)
+
+    @app.post("/api/autonomy/campaigns/action")
+    def api_autonomy_campaign_action(request: Request, payload: dict = Body(...)):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if _auto_unavailable():
+            return JSONResponse({"ok": False}, status_code=501)
+        p = payload or {}
+        msg = autonomy.add_project_action(str(p.get("project") or ""), str(p.get("description") or ""),
+                                          str(p.get("scheduled_for") or ""),
+                                          str(p.get("action_type") or "background_task"))
+        return JSONResponse({"ok": msg.startswith("Added"), "message": msg}, headers=_NO_STORE)
+
+    @app.post("/api/dynamic_tools/proposals/{pid}/{verb}")
+    def api_dynamic_tool_proposal(pid: int, verb: str, request: Request):
+        bad = _face_guard(request)
+        if bad:
+            return bad
+        if dyn_tools is None:
+            return JSONResponse({"ok": False}, status_code=501)
+        if verb not in ("approve", "reject"):
+            return JSONResponse({"ok": False, "error": "unknown action"}, status_code=400)
+        msg = dyn_tools.decide_proposal(pid, verb == "approve")
+        return JSONResponse({"ok": msg.startswith(("Created", "Rejected")), "message": msg}, headers=_NO_STORE)
 
     @app.post("/api/dynamic_tools/{name}/{verb}")
     def api_dynamic_tool(name: str, verb: str, request: Request):

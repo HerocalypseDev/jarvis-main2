@@ -240,8 +240,13 @@ def _is_confirmation_yes(transcript: str) -> bool:
 
 def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -> bool:
     """Stores a catastrophic tool call awaiting a "yes" on the next push-to-talk press.
-    Returns False (and queues nothing) if something is already pending."""
+    Returns False (and queues nothing) if something is already pending — or if this thread is
+    running an autonomous action: a later "yes" meant for something else must never be able to
+    confirm a step Jarvis staged on its own (audit F-01)."""
     global _pending_action
+    if getattr(_command_ctx, "autonomous", False):
+        log.warning("Autonomous action tried to stage %r; refused.", tool_name)
+        return False
     with _pending_action_lock:
         if _pending_action is not None:
             log.warning("A confirmation is already pending; dropping %r.", tool_name)
@@ -2037,14 +2042,13 @@ AUTONOMY_TOOLS = [
         "name": "autonomy",
         "description": (
             "Control Jarvis's autonomy layer (durable commitments/projects, proactive suggestions, "
-            "campaigns). Off by default. actions: status, enable, disable, dry_run_on, dry_run_off, "
-            "list_suggestions, approve/dismiss/never (id), list_commitments, complete_commitment/"
-            "cancel_commitment/accept_commitment (id), add_project (project, goal, risk_level), "
-            "add_action (project, description, scheduled_for), approve_campaign (project, approved), "
-            "set_policy (category, verdict auto_act|ask_once|always_ask|ignore, match_kind, match_value), "
-            "list_policies, run_tick. Use it when the user says 'turn on/off autonomy', 'approve/dismiss "
-            "suggestion N', 'what are my open commitments', etc. Turning things on or loosening rules is "
-            "refused from the phone; do not enable anything the user did not ask for."
+            "campaigns). Off by default. actions: status, disable, dry_run_on, list_suggestions, "
+            "dismiss/never (id), list_commitments, complete_commitment/cancel_commitment (id), "
+            "add_project (project, goal, risk_level), list_policies, run_tick. Use it for 'turn off "
+            "autonomy', 'dismiss suggestion N', 'what are my open commitments', etc. You CANNOT enable "
+            "autonomy, approve a suggestion or campaign, accept a commitment, add campaign steps or set "
+            "rules: those are human-only and exist as buttons in the dashboard's Autonomy tab. When the "
+            "user asks for one of them, tell them to use the dashboard; never try to work around this."
         ),
         "input_schema": {
             "type": "object",
@@ -2068,7 +2072,8 @@ AUTONOMY_TOOLS = [
     {
         "name": "create_tool",
         "description": (
-            "Create a NEW reusable tool from a small pure-Python function (becomes dyn_<name>). Use only "
+            "PROPOSE a NEW reusable tool from a small pure-Python function (becomes dyn_<name> only after "
+            "the user approves it in the dashboard's Autonomy tab; tell them to). Use only "
             "when the user asks for a new capability that is plain computation (parsing, math, text/date "
             "handling). The code is safety-scanned and tested first: only pure stdlib modules (json, re, "
             "math, datetime, statistics, collections, ...), no file/network/shell/eval access, one "
@@ -2985,9 +2990,16 @@ def record_recent_task(task: str) -> None:
         _save_session_context_locked()
 
 
+_scheduled_running_count = 0
+
+
 def _set_scheduled_task_running(running: bool) -> None:
+    """Counted, not boolean: an approved autonomy action overlapping a scheduled skill used to clear
+    the flag when the first of them finished (audit E-03). True/False calls must stay paired."""
+    global _scheduled_running_count
     with _session_context_lock:
-        _session_context["scheduled_task_running"] = running
+        _scheduled_running_count = max(0, _scheduled_running_count + (1 if running else -1))
+        _session_context["scheduled_task_running"] = _scheduled_running_count > 0
         _save_session_context_locked()
 
 
@@ -4037,11 +4049,17 @@ def _autonomy_run_agent(instruction: str) -> str:
     """Runs one approved autonomous action through the normal agent loop (so its tools, audit trail and
     the catastrophic confirmation gate all apply) and returns the reply."""
     _set_scheduled_task_running(True)
+    prev = getattr(_command_ctx, "autonomous", False)
+    _command_ctx.autonomous = True
     try:
+        # record_history=False: the synthetic instruction must not land in the conversation history
+        # that later turns and summaries are built from (audit F-01).
         return run_agent_loop(
-            f"(This is an autonomous action the user approved from an Autonomy suggestion; do it now.) {instruction}"
+            f"(This is an autonomous action the user approved from an Autonomy suggestion; do it now.) {instruction}",
+            record_history=False,
         )
     finally:
+        _command_ctx.autonomous = prev
         _set_scheduled_task_running(False)
 
 
@@ -4059,7 +4077,7 @@ def _autonomy_callbacks() -> dict:
     return {
         "claude": _sleep_mail_claude,
         "notify": lambda text, urgent=False: queue_or_deliver_notification(text, urgent=urgent),
-        "user_busy": lambda: user_is_actively_working() or jarvis_speaking.is_set(),
+        "user_busy": lambda: user_is_actively_working() or jarvis_speaking.is_set() or _commands_in_flight() > 0,
         "quiet": lambda: sleep_mode.should_suppress(False) or focus_mode.should_suppress(False),
         "audit": _log_action_audit,
         "create_reminder": lambda text, due_iso: create_reminder(text, due_at=due_iso),
@@ -4069,6 +4087,7 @@ def _autonomy_callbacks() -> dict:
             instructions=instructions, deadline=deadline,
         ),
         "plan_queue": task_scheduler.plan_task_queue,
+        "cancel_task": task_scheduler.cancel_task,
         "running_background_count": lambda: len(_RUNNING_BACKGROUND_PROCS),
         "semantic_recall": memory_enhance.semantic_recall,
         "calendar_events": _autonomy_calendar_events,
@@ -4082,12 +4101,7 @@ def _autonomy_callbacks() -> dict:
 
 def _autonomy_inbound(subject: str, body: str, sender: str, source: str = "email") -> None:
     """Hook for mail/Telegram/Discord content written by someone else. Worker thread, never blocks."""
-    if not autonomy.enabled():
-        return
-    threading.Thread(
-        target=autonomy.process_inbound_message_for_events, args=(subject, body, sender, source),
-        daemon=True, name="autonomy-inbound",
-    ).start()
+    autonomy.process_inbound_async(subject, body, sender, source)  # bounded worker pool (audit G-02)
 
 
 def _start_scheduler() -> None:
@@ -7013,11 +7027,17 @@ def _execute_tool_impl(
             if _current_command_source() not in ("voice", "text", "dashboard"):
                 result = "Creating tools is only accepted from the PC (voice, typed or dashboard), not the phone or unattended runs."
             else:
-                result = dyn_tools.create_tool(
-                    str(inp.get("code_string") or ""), str(inp.get("name") or ""),
-                    str(inp.get("description") or ""), inp.get("tests") or None,
-                    bool(inp.get("dry_run")), {t["name"] for t in AGENT_TOOLS},
-                )
+                # Never registers anything itself: it validates and files a proposal the user must
+                # approve in the dashboard (audit B-01 / A-01 - a tool runs with the user's privileges).
+                reserved = {t["name"] for t in AGENT_TOOLS}
+                if inp.get("dry_run"):
+                    result = dyn_tools.create_tool(
+                        str(inp.get("code_string") or ""), str(inp.get("name") or ""),
+                        str(inp.get("description") or ""), inp.get("tests") or None, True, reserved)
+                else:
+                    result = dyn_tools.propose_tool(
+                        str(inp.get("code_string") or ""), str(inp.get("name") or ""),
+                        str(inp.get("description") or ""), inp.get("tests") or None, reserved)
         elif tool_name == "manage_dynamic_tool":
             result = dyn_tools.handle_manage(inp)
         elif dyn_tools.is_dynamic(tool_name):
@@ -7034,7 +7054,8 @@ def _execute_tool_impl(
 MAX_NARRATED_LINES = 3  # spoken "on it" lines per command, so a long task isn't chatty
 
 
-def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = False) -> str:
+def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = False,
+                   record_history: bool = True) -> str:
     """Real observe-act-observe loop: Claude picks tools, sees each result, and decides
     what (if anything) to do next, up to MAX_AGENT_ITERATIONS round trips, before giving a
     final spoken reply. Replaces the old single forced perform_actions tool call.
@@ -7054,7 +7075,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     # Reply cache: only ever populated by turns that used read-only tools exclusively (see the
     # store below), so a hit can only replay an informational answer, never skip an action.
     reply_key = None
-    if cache.enabled("reply") and cache.is_self_contained(transcript):
+    if record_history and cache.enabled("reply") and cache.is_self_contained(transcript):
         reply_key = cache.stable_hash(
             cache.normalize_text(transcript),
             sleep_mode.system_prompt_context_line() + face.system_prompt_context_line(),
@@ -7092,7 +7113,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         )
         if data is None:
             reply = " ".join(reply_parts).strip() or _llm_unavailable_reply()
-            _append_history(transcript, reply)
+            if record_history:
+                _append_history(transcript, reply)
             return reply
         _log_cache_usage(data, "agent loop")
 
@@ -7152,11 +7174,31 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         # to always give a short spoken reply, but that's not 100% reliable model behavior —
         # silence is worse than just surfacing the last tool's own result text instead.
         reply = last_tool_result_text
-    _append_history(transcript, reply)
+    if record_history:
+        _append_history(transcript, reply)
     return reply
 
 
 _command_ctx = threading.local()
+_inflight_lock = threading.Lock()
+_inflight_count = 0
+
+
+def _inflight_enter() -> None:
+    global _inflight_count
+    with _inflight_lock:
+        _inflight_count += 1
+
+
+def _inflight_exit() -> None:
+    global _inflight_count
+    with _inflight_lock:
+        _inflight_count = max(0, _inflight_count - 1)
+
+
+def _commands_in_flight() -> int:
+    """User commands currently being transcribed or run; autonomy stays quiet while this is > 0."""
+    return _inflight_count
 
 
 def _current_command_source() -> str | None:
@@ -7171,9 +7213,11 @@ def handle_text_command(
 ) -> None:
     prev = getattr(_command_ctx, "source", None)
     _command_ctx.source = source
+    _inflight_enter()
     try:
         _handle_text_command_impl(transcript, reply_sink, tone, source)
     finally:
+        _inflight_exit()
         _command_ctx.source = prev
 
 
@@ -7276,6 +7320,14 @@ def _handle_text_command_impl(
 
 
 def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
+    _inflight_enter()  # covers transcription, which happens before handle_text_command
+    try:
+        _handle_voice_command_impl(audio, sample_rate)
+    finally:
+        _inflight_exit()
+
+
+def _handle_voice_command_impl(audio: np.ndarray, sample_rate: int) -> None:
     if audio.size == 0:
         return
     try:
@@ -7683,6 +7735,7 @@ def main() -> int:
     _preload_mcp_async()
     start_prompt_cache_warmup()
     try:
+        dyn_tools.configure({t["name"] for t in AGENT_TOOLS})
         dyn_tools.init_dynamic_tools()
         autonomy.start_autonomy_tick(_autonomy_callbacks())
     except Exception as e:
