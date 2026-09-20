@@ -713,7 +713,7 @@ Rules:
   `_pending_action`, restored to its original form in `_queue_pending_confirmation`) still needs a yes/Approve; an
   autonomous run that reaches a catastrophic command STAGES it like any other (pinned by tests, and the AST test
   still forbids the autonomy modules from referencing the gate or importing `jarvis`).
-- Still kept: `JARVIS_AUTONOMY_DISABLED=1` hard kill, dry-run, off-by-default (turning ON is a deliberate act), and
+- Still kept: `JARVIS_AUTONOMY_DISABLED=1` hard kill, dry-run, and **ON by default** (user decision 2026-09-20: `enabled()` defaults to on, `JARVIS_AUTONOMY_ENABLED=0` starts it off; the first start therefore acts for real on mail/files/commitments, so use dry-run first if unsure), and
   three settings that stay **dashboard-only** because they are configuration, not actions: turn autonomy ON, write/
   loosen policy rules, leave dry-run (`HUMAN_ONLY_ACTIONS`). Also kept from the security audit: exact-sender rule
   matching, text sanitising, the dynamic-tool sandbox hardening (defence in depth, **not a security boundary**),

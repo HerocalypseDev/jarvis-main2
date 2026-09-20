@@ -1,7 +1,7 @@
 """Full-autonomy layer for Jarvis: durable commitments/projects, a clocked decision tick, a policy
 engine that learns from Approve/Dismiss, proactive suggestions, and multi-day campaigns.
 
-OFF BY DEFAULT (turning it on is a deliberate act), but once ON it is FULLY AUTONOMOUS: everything that
+ON BY DEFAULT (JARVIS_AUTONOMY_ENABLED=0 or the dashboard toggle turns it off) and FULLY AUTONOMOUS: everything that
 is not catastrophic runs without asking. Turn on from the dashboard Autonomy tab or JARVIS_AUTONOMY_ENABLED=1. Turn off instantly with the same switches, or set
 JARVIS_AUTONOMY_DISABLED=1 (hard kill: overrides everything, nothing here runs).
 
@@ -29,7 +29,7 @@ Permission model (explicit user decision, 2026-09-20: "full permission, only cat
     background tasks. A global dry-run mode logs what would have happened and does nothing.
 
 Configuration (env; the DB `autonomy_settings` table overrides where noted):
-  JARVIS_AUTONOMY_ENABLED            default 0   (DB 'enabled' overrides)
+  JARVIS_AUTONOMY_ENABLED            default 1   (DB 'enabled' overrides; set 0 to start off)
   JARVIS_AUTONOMY_DISABLED           hard off
   JARVIS_AUTONOMY_TICK_S             45 (effective floor = the scheduler's own tick, 60s)
   JARVIS_AUTONOMY_CLASSIFIER_MIN     15   minutes between model "is there a need?" checks
@@ -422,7 +422,7 @@ def enabled() -> bool:
     stored = get_setting("enabled")
     if stored is not None:
         return _truthy(stored)
-    return _truthy(os.environ.get("JARVIS_AUTONOMY_ENABLED"))
+    return _truthy(os.environ.get("JARVIS_AUTONOMY_ENABLED", "1"))  # ON by default (user decision 2026-09-20)
 
 
 def set_enabled(on: bool) -> str:
@@ -2064,7 +2064,7 @@ def start_autonomy_tick(callbacks: dict[str, Callable]) -> None:
     init_autonomy_tables()
     configure(callbacks)
     _started = True
-    log.info("Autonomy armed (%s). Off by default; `autonomy` tool or dashboard toggles it.",
+    log.info("Autonomy armed (%s). On by default; `autonomy` tool or dashboard toggles it.",
              "ON" if enabled() else "off")
 
 

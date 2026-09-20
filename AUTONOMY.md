@@ -6,8 +6,8 @@ days, watches deadlines, creates the calendar events / reminders / background ta
 what fails, learns from what you dismiss, runs multi-day campaigns, and composes repeated work into skills.
 
 > **Permission model (explicit user decision, 2026-09-20): FULL AUTO-ACT, except catastrophic actions.**
-> Turning autonomy **on** is a deliberate act (dashboard toggle or `JARVIS_AUTONOMY_ENABLED=1`; it is
-> off out of the box). Once on, it does **not ask** before acting. The only things that still need a
+> Autonomy is **ON by default** (user decision 2026-09-20; set `JARVIS_AUTONOMY_ENABLED=0` or use the
+> dashboard toggle to start/keep it off). While on, it does **not ask** before acting. The only things that still need a
 > spoken "yes" or a dashboard Approve are the catastrophic tier already enforced in `jarvis.py`
 > (`_CATASTROPHIC_PATTERNS` / `_pending_action`: shutdown, restart, sign-out, disk format/partition,
 > recursive wipe of a drive or profile). That gate is untouched, and no autonomy module references it
@@ -20,7 +20,8 @@ Files: `jarvis_autonomy.py` (core), `jarvis_autonomy_skills.py`, `jarvis_dynamic
 
 | How | Effect |
 |---|---|
-| Dashboard > Autonomy > *Turn autonomy on* | The only way to turn it **on** at runtime (also `JARVIS_AUTONOMY_ENABLED=1`). Persisted in the DB. |
+| Default | **On** from the first start (mail polling every 10 min, file bridge, tick, skills all active; dry-run is off, so it acts for real). A choice saved in the DB beats the default. |
+| Dashboard > Autonomy > *Turn autonomy on/off* | The only way to turn it back **on** at runtime after switching it off (`JARVIS_AUTONOMY_ENABLED=0` starts it off). Persisted in the DB. |
 | Say "turn off autonomy" (the `autonomy` tool) or the dashboard button | Off from anywhere; also cancels the task-queue items autonomy had started. |
 | **`JARVIS_AUTONOMY_DISABLED=1`** | Hard kill. Overrides everything; nothing autonomous runs, enabling is refused. |
 | Dashboard *Dry run* / "autonomy dry run on" | Everything is decided and logged, nothing is executed (`outcome = dry_run`). |

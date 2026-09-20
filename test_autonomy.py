@@ -18,7 +18,8 @@ import pytest
 def A(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "t.db"))
     monkeypatch.delenv("JARVIS_AUTONOMY_DISABLED", raising=False)
-    monkeypatch.delenv("JARVIS_AUTONOMY_ENABLED", raising=False)
+    # The product default is ON; most tests exercise the off -> on transition, so they start from explicit off.
+    monkeypatch.setenv("JARVIS_AUTONOMY_ENABLED", "0")
     import jarvis_autonomy as a
 
     a._initialized_paths.clear()
@@ -2058,3 +2059,22 @@ def test_gmail_poll_reports_unreachable_as_none_and_sleep_mail_reads_bodies_only
     assert jarvis._autonomy_poll_mail() is None
     src = open("jarvis.py", encoding="utf-8").read()
     assert "_autonomy_mail_hook.enabled = autonomy.enabled" in src   # no body is read for autonomy while it is off
+
+
+def test_autonomy_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "def.db"))
+    monkeypatch.delenv("JARVIS_AUTONOMY_ENABLED", raising=False)
+    monkeypatch.delenv("JARVIS_AUTONOMY_DISABLED", raising=False)
+    import jarvis_autonomy as a
+
+    a._initialized_paths.clear()
+    assert a.enabled() is True and a.dry_run() is False           # on, and live (not dry-run)
+    a.set_enabled(False)
+    assert a.enabled() is False                                   # a stored choice beats the default
+    a.set_enabled(True)
+    monkeypatch.setenv("JARVIS_AUTONOMY_DISABLED", "1")
+    assert a.enabled() is False                                   # hard kill still wins
+    monkeypatch.delenv("JARVIS_AUTONOMY_DISABLED")
+    monkeypatch.setenv("JARVIS_AUTONOMY_ENABLED", "0")
+    a._exec("DELETE FROM autonomy_settings WHERE key='enabled'")
+    assert a.enabled() is False                                   # env can still start it off
