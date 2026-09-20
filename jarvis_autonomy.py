@@ -33,7 +33,7 @@ Configuration (env; the DB `autonomy_settings` table overrides where noted):
   JARVIS_AUTONOMY_DISABLED           hard off
   JARVIS_AUTONOMY_TICK_S             45 (effective floor = the scheduler's own tick, 60s)
   JARVIS_AUTONOMY_CLASSIFIER_MIN     15   minutes between model "is there a need?" checks
-  JARVIS_AUTONOMY_MAX_ACTS_PER_DAY   10
+  JARVIS_AUTONOMY_MAX_ACTS_PER_DAY   50   (soft; the runaway breaker is 5x this = 250)
   JARVIS_AUTONOMY_MAX_SUGGESTIONS_PER_DAY 8
   JARVIS_AUTONOMY_MAX_BG_TASKS       2
   JARVIS_AUTONOMY_AUTO_MIN_CONF      0.85
@@ -994,7 +994,7 @@ def budgets() -> dict:
     acts = _rows("SELECT COUNT(*) n FROM autonomy_decisions WHERE decision='act' AND created_at>=?", (day,))
     sugg = _rows("SELECT COUNT(*) n FROM autonomy_suggestions WHERE created_at>=?", (day,))
     return {
-        "acts_today": acts[0]["n"], "max_acts": _env_int("JARVIS_AUTONOMY_MAX_ACTS_PER_DAY", 10),
+        "acts_today": acts[0]["n"], "max_acts": _env_int("JARVIS_AUTONOMY_MAX_ACTS_PER_DAY", 50),
         "suggestions_today": sugg[0]["n"], "max_suggestions": _env_int("JARVIS_AUTONOMY_MAX_SUGGESTIONS_PER_DAY", 8),
         "max_bg_tasks": _env_int("JARVIS_AUTONOMY_MAX_BG_TASKS", 2),
     }

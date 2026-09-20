@@ -49,8 +49,8 @@ a recorded card, accepting a commitment and approving a campaign, the model may 
   into `ignore`; approvals reset the streak. A learned rule may auto-act on **any** action type. Nothing
   learned can make Jarvis ask more. A recently dismissed category is skipped for
   `JARVIS_AUTONOMY_DISMISS_COOLDOWN_MIN` (180).
-* **Budgets are soft**: `JARVIS_AUTONOMY_MAX_ACTS_PER_DAY` (10) is logged, and going over it never turns an
-  action into an ask; a 5x runaway breaker (50/day by default) is the only thing that stops. Concurrent
+* **Budgets are soft**: `JARVIS_AUTONOMY_MAX_ACTS_PER_DAY` (50) is logged, and going over it never turns an
+  action into an ask; a 5x runaway breaker (250/day by default) is the only thing that stops. Concurrent
   background tasks (`..._MAX_BG_TASKS`, 2) is a real capacity limit: an extra step waits, planned.
 * **The user is busy** (typing, speaking, mid-command, Focus/Sleep Mode): notifications and reminders
   still happen (delivery/speech timing belongs to `queue_or_deliver_notification`); an action that needs
