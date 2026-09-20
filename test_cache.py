@@ -607,13 +607,13 @@ def test_urgent_email_reply_monitor_skill_drafts_then_sends():
     skill = json.loads((skills / "urgent_email_reply_monitor.json").read_text(encoding="utf-8"))
     watch = json.loads((skills / "gmail_watch.json").read_text(encoding="utf-8"))
     assert skill["name"] == "urgent_email_reply_monitor"
-    assert skill["schedule"] == {"every_minutes": 1}
+    assert skill["schedule"] == {"every_minutes": 5}
     assert watch["schedule"] == {"every_minutes": 60}  # stays distinct from the hourly watch
     text = skill["instructions"]
     assert "draft_email" in text and "mcp_gmail_send_email" in text
     assert "NEVER call send_email" not in text and "do NOT retry" in text
     assert "Temu" in text and "Reddit" in text
-    assert "handled" in text  # dedupe so a message is not drafted every minute
+    assert "handled" in text  # dedupe so a message is not drafted every run
     assert "NO spoken reply" in text
 
 
