@@ -2158,13 +2158,18 @@ FACE_TOOLS = [
         "description": (
             "Enroll the user's own face so Jarvis can recognize them, using the local webcam "
             "(the user is asked to look at the camera and turn their head; nothing is stored "
-            "except an encrypted embedding, no images). Only ever enrolls ONE person, the owner, "
-            "and only when no one is enrolled yet. Refused automatically from phone or scheduled "
-            "tasks. Face is a personalization signal only and never approves or unlocks anything."
+            "except an encrypted embedding, no images). Several people can be enrolled: the first is "
+            "always the Admin (the owner); later ones are role 'user' (default) or 'guest'. A second "
+            "Admin is never created. Refused automatically from phone or scheduled tasks. Face is a "
+            "personalization signal only and never approves or unlocks anything."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"name": {"type": "string", "description": "The name to enroll, e.g. Hero"}},
+            "properties": {
+                "name": {"type": "string", "description": "The name to enroll, e.g. Hero"},
+                "role": {"type": "string", "enum": ["user", "guest"],
+                         "description": "Role for anyone after the first person; leave out for the first."},
+            },
             "required": ["name"],
         },
     },
@@ -6793,7 +6798,7 @@ def _execute_tool_impl(
             else:
                 result = f"{act!r} is not a known dev_tools action."
         elif tool_name == "enroll_face":
-            result = face.enroll(str(inp.get("name") or ""), _current_command_source(), speak_text)
+            result = face.enroll(str(inp.get("name") or ""), _current_command_source(), speak_text, str(inp.get("role") or "") or None)
         elif tool_name == "list_faces":
             result = face.describe_profiles()
         elif tool_name == "who_is_here":

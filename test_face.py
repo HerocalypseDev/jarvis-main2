@@ -67,6 +67,12 @@ def _install(monkeypatch, frames):
     return cap
 
 
+OTHER_FACE = np.random.RandomState(99).randn(512).astype("float32")
+OTHER_FACE /= np.linalg.norm(OTHER_FACE)
+OTHER_FACE2 = np.random.RandomState(123).randn(512).astype("float32")
+OTHER_FACE2 /= np.linalg.norm(OTHER_FACE2)
+
+
 def _turning_frames():
     noisy = lambda: (BASE + np.random.RandomState(1).randn(512).astype("float32") * 0.01)
     return [_obs(0.0, noisy()) for _ in range(8)] + [_obs(-0.25), _obs(0.25)] + [_obs(0.0, noisy())]
@@ -158,12 +164,58 @@ def test_enroll_refused_from_phone_and_scheduled_and_does_not_touch_camera(fx, m
     assert opened == []
 
 
-def test_only_one_person_can_ever_be_enrolled(fx, monkeypatch):
+def _person_frames(emb):
+    e = lambda: (emb + np.random.RandomState(2).randn(512).astype("float32") * 0.01)
+    return [_obs(0.0, e()) for _ in range(8)] + [_obs(-0.25, emb), _obs(0.25, emb)] + [_obs(0.0, e())]
+
+
+def test_multiple_people_can_be_enrolled_with_roles(fx, monkeypatch):
     _install(monkeypatch, _turning_frames())
-    assert face.enroll("Hero", "voice").startswith("Done")
+    assert "as admin" in face.enroll("Hero", "voice")
+    _install(monkeypatch, _person_frames(OTHER_FACE))
+    assert "as user" in face.enroll("Deborah", "voice")
+    _install(monkeypatch, _person_frames(OTHER_FACE2))
+    assert "as guest" in face.enroll("Sam", "voice", role="guest")
+    assert [(p["name"], p["role"]) for p in face.list_profiles()] == [("Hero", "admin"), ("Deborah", "user"), ("Sam", "guest")]
+    assert face.identify(OTHER_FACE)[0]["name"] == "Deborah"  # profiles are told apart
+    assert face.identify(OTHER_FACE2)[0]["name"] == "Sam"
+    assert face.identify(BASE)[0]["name"] == "Hero"
+    assert "Deborah is enrolled as user" in face.describe_profiles() and "Sam" in face.describe_profiles()
+
+
+def test_second_admin_is_refused_and_bad_role_too(fx, monkeypatch):
     _install(monkeypatch, _turning_frames())
-    assert "already enrolled" in face.enroll("Deborah", "voice")
+    face.enroll("Hero", "voice")
+    _install(monkeypatch, _person_frames(OTHER_FACE))
+    assert "already an Admin" in face.enroll("Deborah", "voice", role="admin")
+    assert "user or guest" in face.enroll("Deborah", "voice", role="root")
+    assert len(face.list_profiles()) == 1
+
+
+def test_first_person_is_admin_whatever_role_was_asked(fx, monkeypatch):
+    _install(monkeypatch, _turning_frames())
+    assert "as admin" in face.enroll("Hero", "voice", role="guest")
+
+
+def test_same_face_or_name_cannot_be_enrolled_twice(fx, monkeypatch):
+    _install(monkeypatch, _turning_frames())
+    face.enroll("Hero", "voice")
+    _install(monkeypatch, _turning_frames())
+    assert "already enrolled as Hero" in face.enroll("Deborah", "voice")  # same face, new name
+    assert "already enrolled" in face.enroll("hero", "voice")  # same name (case-insensitive)
     assert [p["name"] for p in face.list_profiles()] == ["Hero"]
+
+
+def test_admin_cannot_be_deleted_while_others_remain(fx, monkeypatch):
+    _install(monkeypatch, _turning_frames())
+    face.enroll("Hero", "voice")
+    _install(monkeypatch, _person_frames(OTHER_FACE))
+    face.enroll("Deborah", "voice")
+    assert "is the Admin" in face.delete("Hero", True, "dashboard", ui_confirmed=True)
+    assert len(face.list_profiles()) == 2
+    assert "Deleted Deborah" in face.delete("Deborah", True, "dashboard", ui_confirmed=True)
+    assert "Deleted Hero" in face.delete("Hero", True, "dashboard", ui_confirmed=True)
+    assert face.list_profiles() == []
 
 
 def test_enroll_validates_name_and_pause_and_camera_errors(fx, monkeypatch):
@@ -1139,16 +1191,16 @@ def test_model_download_success_extracts_atomically_and_cleans_up(fx, monkeypatc
 
 
 # --- one-person rule under a race ------------------------------------------------------------------
-def test_second_profile_cannot_be_inserted_even_if_two_enrollments_race(fx, monkeypatch):
-    frames = _turning_frames()
-    assert face._run_enrollment("Hero", _Engine(frames), _Cap()).startswith("Done")
-    msg = face._run_enrollment("Deborah", _Engine(frames), _Cap())  # bypasses enroll()'s pre-checks
-    assert "didn't add a second profile" in msg
+def test_admin_cannot_be_inserted_twice_even_if_enrollments_race(fx, monkeypatch):
+    frames = _person_frames(OTHER_FACE)
+    assert face._run_enrollment("Hero", _Engine(_turning_frames()), _Cap()).startswith("Done")
+    msg = face._run_enrollment("Deborah", _Engine(frames), _Cap(), role="admin")  # bypasses enroll()'s pre-checks
+    assert "didn't save this one" in msg
     assert [p["name"] for p in face.list_profiles()] == ["Hero"]
     assert "enroll_failed" in _kinds()
 
 
-def test_concurrent_enroll_calls_leave_exactly_one_profile(fx, monkeypatch):
+def test_concurrent_enroll_calls_of_the_same_person_leave_one_profile(fx, monkeypatch):
     _install(monkeypatch, _turning_frames())
     results = {}
 
@@ -1158,9 +1210,8 @@ def test_concurrent_enroll_calls_leave_exactly_one_profile(fx, monkeypatch):
     threads = [threading.Thread(target=go, args=(n,)) for n in ("Hero", "Deborah")]
     [t.start() for t in threads]
     [t.join() for t in threads]
-    assert len(face.list_profiles()) == 1
+    assert len(face.list_profiles()) == 1  # the same face can only be enrolled once
     assert sorted(r.startswith("Done") for r in results.values()) == [False, True]
-    assert any("already enrolled" in r for r in results.values())
 
 
 # --- delete must be confirmed in a separate user message -------------------------------------------
@@ -1612,3 +1663,57 @@ def test_away_mode_tool_respects_the_source(jarvis, monkeypatch, enrolled):
     assert "phone" in turn("phone", "off") and face.away_enabled()  # can't be switched off remotely
     assert "on:" in turn("voice", "status")
     assert "Away mode is off" in turn("voice", "off") and not face.away_enabled()
+
+
+# --- roles in presence ---------------------------------------------------------------------------
+def _add_profile(name, role, emb):
+    with face._db_lock, face._db() as conn:
+        conn.execute(
+            "INSERT INTO face_profiles (name, role, created_at, consent_at, n_samples, embeddings) VALUES (?,?,?,?,?,?)",
+            (name, role, "2026-09-20T10:00:00", "2026-09-20T10:00:00", 5, face._pack_embeddings(np.vstack([emb, emb]))),
+        )
+    face.invalidate_profile_cache()
+
+
+def test_user_is_recognized_but_is_not_the_owner_and_not_a_stranger(enrolled, monkeypatch):
+    _add_profile("Deborah", "user", OTHER)
+    _look(monkeypatch, _obs(0.0, OTHER))
+    t = time.time()
+    face.poll_once(t)
+    face.poll_once(t + 5)
+    snap = face.state_snapshot()
+    assert not snap["owner_present"] and not snap["unknown_present"] and not face.group_safe()
+    assert snap["others_present"] == [{"name": "Deborah", "role": "user"}]
+    assert "Deborah (user) is in view" in face.system_prompt_context_line()
+    assert "unknown_seen" not in _kinds()
+
+
+def test_user_in_view_does_not_stop_away_mode_counting_the_owner_as_gone(enrolled, monkeypatch):
+    _add_profile("Deborah", "user", OTHER)
+    face.set_setting("away_mode", "1")
+    _look(monkeypatch, _obs(0.0, OTHER))
+    t = time.time()
+    face.poll_once(t)
+    assert face._st.absent_since > 0  # the Admin is still unseen
+
+
+def test_guest_holds_proactive_speech_like_a_stranger_but_takes_no_picture(enrolled, monkeypatch):
+    _add_profile("Sam", "guest", OTHER)
+    _look(monkeypatch, _obs(0.0, OTHER))
+    t = time.time()
+    face.poll_once(t)
+    assert face.group_safe(t + 1) and face.group_safe_suppress(urgent=False) and not face.group_safe_suppress(urgent=True)
+    assert face.snapshot_count() == 0 and "unknown_seen" not in _kinds()
+    assert face.state_snapshot()["unknown_present"] is False
+    _look(monkeypatch, [])
+    face.poll_once(t + 5 + face.UNKNOWN_CLEAR_S + 1)
+    assert not face.state_snapshot()["guest_present"]
+
+
+def test_owner_still_greeted_when_a_user_is_also_present(enrolled, monkeypatch):
+    _add_profile("Deborah", "user", OTHER)
+    _look(monkeypatch, _obs(0.0, BASE) + _obs(0.0, OTHER))
+    face.poll_once(time.time())
+    snap = face.state_snapshot()
+    assert snap["owner_present"] and snap["owner_name"] == "Hero"
+    assert snap["others_present"] == [{"name": "Deborah", "role": "user"}]

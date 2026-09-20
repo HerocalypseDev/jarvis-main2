@@ -11,9 +11,14 @@ biometric database would leave the machine). Embeddings are AES-GCM encrypted wi
 key that is itself wrapped by Windows DPAPI, so the database is unreadable from another
 Windows account or another machine. No camera frame is ever written to disk.
 
-Policy (user decisions, 2026-09-19): exactly one enrolled person (the owner, Admin) — nobody
-else is ever enrolled; enroll/delete are refused unless the command came from voice, the typed
-hotkey or the dashboard (never phone, never a scheduled task).
+Policy: several people can be enrolled (multi-user, 2026-09-20, user request), each with a role.
+The first person is always the one Admin (the owner); later people are User (recognized, no
+special treatment) or Guest (recognized by name, but presence still keeps replies discreet and
+holds non-urgent speech like an unknown face). Nobody can be enrolled as a second Admin, the
+Admin cannot be deleted while others remain, and a face already enrolled under another name is
+refused. Roles are personalization only; they never gate anything. enroll/delete are refused
+unless the command came from voice, the typed hotkey or the dashboard (never phone, never a
+scheduled task).
 
 Liveness is a head-turn challenge from the detector's 5 landmarks. It stops a held-still photo,
 not a determined replay attack: a plain RGB webcam cannot, which is exactly why a face match is
@@ -66,6 +71,7 @@ CAMERA_WAIT_S = 6.0  # how long enroll waits for an in-flight poll to release th
 EVENT_KEEP_DAYS_DEFAULT = 180.0
 HOUSEKEEPING_EVERY_S = 3600.0
 ALLOWED_SOURCES = frozenset({"voice", "text", "dashboard"})  # never "phone", never scheduled
+ROLES = ("admin", "user", "guest")
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,39}$")
 
 
@@ -491,26 +497,39 @@ def _clean_name(name: str) -> str | None:
 
 
 # --- enrollment / deletion -------------------------------------------------------------------
-def enroll(name: str, source: str | None, speak_fn=None) -> str:
-    """Enroll the (single) owner. Refused unless no one is enrolled yet, so a second person can
-    never be added; to re-enroll, delete the existing profile first."""
+def _resolve_role(role: str | None, existing: list[dict]) -> tuple[str | None, str | None]:
+    """(role, None) to enroll with, or (None, reason). The first person is always the Admin."""
+    if not existing:
+        return "admin", None
+    want = (role or "user").strip().lower()
+    if want == "admin":
+        return None, "There is already an Admin. I only keep one, so enroll this person as a user or a guest."
+    if want not in ROLES:
+        return None, "The role has to be user or guest."
+    return want, None
+
+
+def enroll(name: str, source: str | None, speak_fn=None, role: str | None = None) -> str:
+    """Enroll a person. The first one becomes the Admin; later ones are `user` (default) or
+    `guest`. A second Admin is never created; to replace the Admin, delete the other profiles
+    first, then the Admin."""
     why = refuse_reason(source)
     if why:
         return why
     clean = _clean_name(name)
     if not clean:
         return "I need a name of letters only, up to forty characters, to enroll a face."
-    existing = list_profiles()
-    if existing:
-        return _already_enrolled(existing[0]["name"])
     if is_paused():
         return "Face recognition is paused, so I won't turn the camera on. Say resume first."
     if not _camera_lock.acquire(timeout=CAMERA_WAIT_S):  # a poll may be mid-look (~1.5s)
         return "The camera is busy right now. Try again in a moment."
     try:
-        existing = list_profiles()  # another enroll may have finished while we waited for the lock
-        if existing:
-            return _already_enrolled(existing[0]["name"])
+        existing = list_profiles()  # checked under the lock: another enroll may just have finished
+        if any(p["name"].lower() == clean.lower() for p in existing):
+            return _already_enrolled(clean)
+        use_role, bad = _resolve_role(role, existing)
+        if bad:
+            return bad
         try:
             download_models(speak_fn)
         except Exception as e:
@@ -530,7 +549,7 @@ def enroll(name: str, source: str | None, speak_fn=None) -> str:
         try:
             if speak_fn:
                 speak_fn("Look at the camera, then slowly turn your head left and right.")
-            return _run_enrollment(clean, engine, cap)
+            return _run_enrollment(clean, engine, cap, use_role)
         finally:
             cap.release()
     finally:
@@ -538,13 +557,10 @@ def enroll(name: str, source: str | None, speak_fn=None) -> str:
 
 
 def _already_enrolled(name: str) -> str:
-    return (
-        f"{name} is already enrolled, and I only keep one profile. "
-        "Say 'delete my face' first if you want to enroll again."
-    )
+    return f"{name} is already enrolled. Delete that profile first if you want to enroll them again."
 
 
-def _run_enrollment(name: str, engine, cap) -> str:
+def _run_enrollment(name: str, engine, cap, role: str = "admin") -> str:
     samples: list[np.ndarray] = []
     yaws: list[float] = []
     last_sample_t = -1e9
@@ -557,7 +573,7 @@ def _run_enrollment(name: str, engine, cap) -> str:
         seen = [o for o in engine.analyze(frame) if o.det_score >= MIN_DET_SCORE]
         if len(seen) > 1:
             log_event("enroll_failed", name=name, detail="more than one face in frame")
-            return "I can see more than one face. Enrollment has to be just you, so I stopped."
+            return "I can see more than one face. Enrollment has to be one person at a time, so I stopped."
         if seen:
             obs = seen[0]
             y = yaw_ratio(obs.kps)
@@ -590,22 +606,39 @@ def _run_enrollment(name: str, engine, cap) -> str:
         log_event("enroll_failed", name=name, detail=f"inconsistent samples min pair={lowest_pair:.2f}")
         return "The frames didn't look like the same face, so I stopped. Please try again on your own."
 
+    invalidate_profile_cache()
+    dup, _dscore = identify(centroid)
+    if dup is not None:  # the same person under a second name would make roles meaningless
+        log_event("enroll_failed", name=name, detail=f"face already enrolled as {dup['name']}")
+        return f"That face is already enrolled as {dup['name']}, so I didn't add it again."
+
     stored = np.vstack([centroid[None, :], arr])  # row 0 = centroid, then the raw samples
     ts = _now()
-    with _db_lock, _db() as conn:
-        # Atomic "only if nobody is enrolled": the one-person rule must hold even if two enrolls race.
-        cur = conn.execute(
-            "INSERT INTO face_profiles (name, role, created_at, consent_at, n_samples, embeddings) "
-            "SELECT ?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM face_profiles)",
-            (name, "admin", ts, ts, len(samples), _pack_embeddings(stored)),
-        )
-        pid = cur.lastrowid if cur.rowcount == 1 else None
+    # Atomic role rules, so racing enrollments cannot break them: the Admin goes in only if there
+    # is none yet, and anyone else only once an Admin exists.
+    guard = (
+        "WHERE NOT EXISTS (SELECT 1 FROM face_profiles WHERE role='admin')" if role == "admin"
+        else "WHERE EXISTS (SELECT 1 FROM face_profiles WHERE role='admin')"
+    )
+    try:
+        with _db_lock, _db() as conn:
+            cur = conn.execute(
+                "INSERT INTO face_profiles (name, role, created_at, consent_at, n_samples, embeddings) "
+                f"SELECT ?,?,?,?,?,? {guard}",
+                (name, role, ts, ts, len(samples), _pack_embeddings(stored)),
+            )
+            pid = cur.lastrowid if cur.rowcount == 1 else None
+    except sqlite3.IntegrityError:  # same name enrolled by a racing call
+        pid = None
     if pid is None:
-        log_event("enroll_failed", name=name, detail="someone was enrolled while this was in progress")
-        return "Someone was enrolled while I was working, so I didn't add a second profile."
+        log_event("enroll_failed", name=name, detail="profiles changed while this was in progress")
+        return "The enrolled profiles changed while I was working, so I didn't save this one. Please try again."
     invalidate_profile_cache()
-    log_event("enroll", profile_id=pid, name=name, detail=f"consent given by explicit enroll command; head-turn swing {swing:.2f}")
-    return f"Done, {name}. I've enrolled your face. It's stored only on this computer, encrypted, and you can delete it any time."
+    log_event("enroll", profile_id=pid, name=name, detail=f"role {role}; consent given by explicit enroll command; head-turn swing {swing:.2f}")
+    return (
+        f"Done, {name}. I've enrolled your face as {role}. It's stored only on this computer, "
+        "encrypted, and you can delete it any time."
+    )
 
 
 STAGE_TTL_S = 120.0
@@ -631,9 +664,12 @@ def delete(name: str, confirm: bool, source: str | None, turn_id: str | None = N
     if not clean:
         return "Which enrolled name should I delete?"
     with _db_lock, _db() as conn:
-        row = conn.execute("SELECT id, name FROM face_profiles WHERE name=?", (clean,)).fetchone()
+        row = conn.execute("SELECT id, name, role FROM face_profiles WHERE name=?", (clean,)).fetchone()
+        others = conn.execute("SELECT COUNT(*) FROM face_profiles WHERE id<>?", (row[0] if row else -1,)).fetchone()[0]
     if not row:
         return f"I don't have a face enrolled as {clean}."
+    if row[2] == "admin" and others:  # never leave people enrolled with no Admin (or re-open enrollment)
+        return f"{row[1]} is the Admin. Delete the other enrolled profiles first, then the Admin."
     if not ui_confirmed:
         key, now = row[1].lower(), time.time()
         with _stage_lock:
@@ -657,7 +693,8 @@ def delete(name: str, confirm: bool, source: str | None, turn_id: str | None = N
         conn.execute("DELETE FROM face_profiles WHERE id=?", (row[0],))
     invalidate_profile_cache()
     _reset_presence_serialized()  # otherwise "Hero is at the computer" lingers in the prompt for ~90s
-    set_setting("away_mode", "0")  # with no face enrolled, away mode could only misfire
+    if row[2] == "admin":  # away mode is about the Admin, who is only deletable when alone
+        set_setting("away_mode", "0")
     log_event("delete", profile_id=row[0], name=row[1], detail="profile and embeddings erased")
     return f"Deleted {row[1]}'s face profile. Nothing biometric is left on this computer."
 
@@ -668,8 +705,10 @@ def describe_profiles() -> str:
     profiles = list_profiles()
     if not profiles:
         return "No faces are enrolled."
-    p = profiles[0]
-    return f"{p['name']} is enrolled as {p['role']}, since {p['created_at'][:10]}, with {p['n_samples']} samples."
+    return " ".join(
+        f"{p['name']} is enrolled as {p['role']}, since {p['created_at'][:10]}, with {p['n_samples']} samples."
+        for p in profiles
+    )
 
 
 # ===============================================================================================
@@ -764,6 +803,9 @@ class _Presence:
     unknown_present: bool = False
     unknown_streak: int = 0
     unknown_last_seen: float = 0.0
+    guest_present: bool = False  # a recognized Guest is in view: quiet mode like a stranger, but named
+    guest_last_seen: float = 0.0
+    others: tuple = ()  # (name, role) of recognized non-Admin people in the latest look
     covered: bool = False
     camera_fails: int = 0
     camera_alert_sent: bool = False
@@ -795,6 +837,8 @@ def _reset_transient() -> None:
         _st.owner_present = False
         _st.unknown_present = False
         _st.unknown_streak = 0
+        _st.guest_present = False
+        _st.others = ()
         _st.covered = False
         _st.updated_at = 0.0
         _st.absent_since = 0.0
@@ -916,6 +960,8 @@ def state_snapshot() -> dict:
             "owner_name": _st.owner_name,
             "owner_confidence": _st.owner_conf,
             "unknown_present": _st.unknown_present,
+            "guest_present": _st.guest_present,
+            "others_present": [{"name": n, "role": r} for n, r in _st.others],
             "camera_covered": _st.covered,
             "camera_unreachable": _st.camera_alert_sent,
             "updated_at": _st.updated_at,
@@ -933,7 +979,7 @@ def group_safe(now: float | None = None) -> bool:
         return False
     now = time.time() if now is None else now
     with _st_lock:
-        return _st.unknown_present and _fresh(now)
+        return (_st.unknown_present or _st.guest_present) and _fresh(now)
 
 
 def group_safe_suppress(urgent: bool) -> bool:
@@ -949,7 +995,8 @@ def system_prompt_context_line() -> str:
         if not _fresh(time.time()):
             return ""
         owner = _st.owner_name if _st.owner_present else None
-        unknown, covered = _st.unknown_present, _st.covered
+        unknown, covered = _st.unknown_present or _st.guest_present, _st.covered
+        others = list(_st.others)
     if covered:
         return " Presence: the camera is covered, so it is unknown who is at the computer."
     bits = []
@@ -957,9 +1004,11 @@ def system_prompt_context_line() -> str:
         bits.append(f"{owner} is at the computer (recognized by face)")
     elif not unknown:
         bits.append("nobody is in view of the camera")
+    for n, r in others:
+        bits.append(f"{n} ({r}) is in view")
     if unknown:
         bits.append(
-            "an unrecognized person is in view, so keep spoken replies discreet: don't read out private "
+            "an unrecognized person or a guest is in view, so keep spoken replies discreet: don't read out private "
             "details such as email or message contents unless asked, and don't volunteer personal information"
         )
     return (
@@ -1185,7 +1234,7 @@ def _poll_once_locked(now: float | None, out: list) -> str:
 
     with _st_lock:
         _st.updated_at = now
-    owner = profiles[0]
+    owner = next((p for p in profiles if p["role"] == "admin"), profiles[0])
 
     covered_now = mean < COVER_MEAN and std < COVER_STD
     with _st_lock:
@@ -1199,12 +1248,20 @@ def _poll_once_locked(now: float | None, out: list) -> str:
     if was_covered:
         log_event("camera_uncovered")
 
-    known, unknown = [], []
+    known, unknown, others = [], [], []
     for o in obs:
         if o.det_score < MIN_DET_SCORE:
             continue
         prof, score = identify(o.embedding)
-        (known if prof else unknown).append((o, prof, score))
+        if prof is None:
+            unknown.append((o, prof, score))
+        elif prof["role"] == "admin":
+            known.append((o, prof, score))  # only the Admin counts as "the owner is here"
+        else:
+            others.append((o, prof, score))
+    guests = [k for k in others if k[1]["role"] == "guest"]
+    with _st_lock:
+        _st.others = tuple((k[1]["name"], k[1]["role"]) for k in others)
 
     # --- owner
     arrived = left = False
@@ -1224,6 +1281,16 @@ def _poll_once_locked(now: float | None, out: list) -> str:
             log_event("owner_left", owner["id"], owner["name"])
 
     _away_step(now, bool(known), out)
+
+    # --- guests: named, but they keep replies discreet and hold non-urgent speech like a stranger
+    guest_released = False
+    with _st_lock:
+        if guests:
+            _st.guest_present, _st.guest_last_seen = True, now
+        elif _st.guest_present and now - _st.guest_last_seen > UNKNOWN_CLEAR_S:
+            _st.guest_present, guest_released = False, True
+    if guest_released and not unknown:
+        out.append(("release",))
 
     # --- unknown people
     released = False

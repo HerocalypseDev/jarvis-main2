@@ -817,3 +817,11 @@ row there each phase rather than only stating the total in chat.
 | 27 (autonomy security audit: 20 findings fixed, human-only approvals, quarantine, sandbox hardening, 54 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
 | 28 (full-permission model + inbound perception, extraction, observability, direct calendar, skills, memory intervention; 40 new tests) | Sonnet 5 | ~75 min | ~$4.00–$5.50 |
 | **Running total (final)** | | **~888 min** | **~$39.65–$55.30** |
+
+- **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
+  Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
+  `user` (default) or `guest` via `enroll_face(name, role)`; a second Admin is refused (atomic INSERT guards), a face
+  already enrolled under another name is refused, and the Admin cannot be deleted while others remain. Only the Admin
+  counts as "owner present" (greeting, away-mode lock clock); users are named in the prompt line but never a stranger;
+  guests are named but hold non-urgent speech/keep replies discreet like a stranger (no picture, no Telegram question).
+  Roles are personalization only, never gate anything. Same source limits (no phone/scheduled). Tests in `test_face.py`.
