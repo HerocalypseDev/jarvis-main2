@@ -2251,6 +2251,7 @@ def O(A, monkeypatch, tmp_path):
     for d in ("Downloads", "Desktop", "Documents", "Pictures"):
         (home / d).mkdir(parents=True)
     monkeypatch.setenv("JARVIS_AUTONOMY_HOME", str(home))
+    monkeypatch.setenv("JARVIS_WORKSPACE_DIR", str(home / "Workspace"))   # the Jarvis_Workspace folder
     monkeypatch.setenv("JARVIS_AUTONOMY_ORGANISE_SETTLE_S", "0")
     monkeypatch.delenv("JARVIS_AUTONOMY_ORGANISE_ROOTS", raising=False)
     import jarvis_autonomy_organise as o
@@ -2279,9 +2280,9 @@ def test_b_defaults_exist_without_any_enable_flag(O):
 
 
 def test_b_default_rules_file_documents_images_and_spreadsheets(A, O):
-    for rel, dest in (("Downloads/report.pdf", "Documents/Jarvis_Organised/Documents/report.pdf"),
-                      ("Desktop/photo.PNG", "Pictures/Jarvis_Organised/photo.PNG"),
-                      ("Downloads/budget.xlsx", "Documents/Jarvis_Organised/Spreadsheets/budget.xlsx")):
+    for rel, dest in (("Downloads/report.pdf", "Workspace/Organised/Documents/report.pdf"),
+                      ("Desktop/photo.PNG", "Workspace/Organised/Images/photo.PNG"),
+                      ("Downloads/budget.xlsx", "Workspace/Organised/Spreadsheets/budget.xlsx")):
         src = _file(O, rel, "content")
         res = O.handle_new_file(str(src))
         assert res["status"] == "moved", res
@@ -2292,7 +2293,7 @@ def test_b_default_rules_file_documents_images_and_spreadsheets(A, O):
 
 
 def test_b_never_overwrites_a_name_clash_gets_a_unique_name(O):
-    dest = O.home_dir / "Documents/Jarvis_Organised/Documents"
+    dest = O.home_dir / "Workspace/Organised/Documents"
     dest.mkdir(parents=True)
     (dest / "a.pdf").write_text("OLD")
     src = _file(O, "Downloads/a.pdf", "NEW")
@@ -2363,13 +2364,13 @@ def test_b_dry_run_changes_nothing_logs_once_and_organises_after_dry_run(A, O):
     A.set_dry_run(True)
     A._file_scan(datetime.now())
     A._file_scan(datetime.now())
-    assert (O.home_dir / "Downloads/later.pdf").exists() and not (O.home_dir / "Documents/Jarvis_Organised").exists()
+    assert (O.home_dir / "Downloads/later.pdf").exists() and not (O.home_dir / "Workspace/Organised").exists()
     rows = A._rows("SELECT outcome FROM autonomy_decisions WHERE category='file:organise'")
     assert [r["outcome"] for r in rows] == ["dry_run"]           # logged once, not every tick
     A._exec("UPDATE autonomy_settings SET value='0' WHERE key='dry_run'")
     A._file_scan(datetime.now())
     assert not (O.home_dir / "Downloads/later.pdf").exists()
-    assert (O.home_dir / "Documents/Jarvis_Organised/Documents/later.pdf").exists()
+    assert (O.home_dir / "Workspace/Organised/Documents/later.pdf").exists()
 
 
 def test_b_file_scan_organises_new_files_and_falls_back_to_review_when_no_rule(A, O):
@@ -2725,3 +2726,20 @@ def test_f_defaults_are_on_with_no_flags_needed(A, monkeypatch, tmp_path):
     assert {r["name"] for r in o.list_rules()} == {"default_documents", "default_spreadsheets", "default_images"}
     assert [os.path.basename(r) for r in o.roots()] == ["Downloads"]
     assert o.SETTLE_S_DEFAULT == 20 and A._env_int("JARVIS_AUTONOMY_ORGANISE_SETTLE_S", o.SETTLE_S_DEFAULT) == 20
+
+
+def test_default_rules_file_into_the_jarvis_workspace_and_old_defaults_are_migrated(A, O):
+    ws = O.workspace_dir()
+    assert os.path.normcase(str(ws)) == os.path.normcase(str(O.home_dir / "Workspace"))
+    dest, err = O.resolve_dest("{workspace}/Organised/Documents")
+    assert err is None and os.path.normcase(dest) == os.path.normcase(str(ws / "Organised" / "Documents"))
+    O.list_rules()                                       # creates and seeds the table
+    # a database seeded by the earlier version (destinations under ~/Documents) is moved onto the workspace...
+    A._exec("UPDATE autonomy_organise_rules SET dest_dir='~/Documents/Jarvis_Organised/Documents' WHERE name='default_documents'")
+    # ...but a rule you wrote is never touched
+    O.add_rule("mine", [".pdf"], "~/Documents/Mine")
+    O._ready.clear()
+    rules = {r["name"]: r for r in O.list_rules()}
+    assert rules["default_documents"]["dest_dir"] == "{workspace}/Organised/Documents"
+    assert rules["mine"]["dest_dir"] == "~/Documents/Mine" and rules["mine"]["source"] == "user"
+    assert O.resolve_dest("{workspace}/../../outside")[0] is None        # cannot climb out of the profile

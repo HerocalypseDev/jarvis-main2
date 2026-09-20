@@ -4,9 +4,10 @@ What it does: when the file watcher reports a NEW file directly inside an allowl
 rule files it into a tidy folder under the user profile. Built-in defaults work immediately:
 
   allowlisted folders (those that exist): ~/Downloads, ~/Desktop, ~/OneDrive/Desktop, ~/OneDrive/Downloads
-  rules:  PDF/DOC/DOCX/PPTX/RTF/ODT/EPUB -> ~/Documents/Jarvis_Organised/Documents
-          XLS/XLSX/CSV/ODS               -> ~/Documents/Jarvis_Organised/Spreadsheets
-          PNG/JPG/JPEG/WEBP/GIF          -> ~/Pictures/Jarvis_Organised
+  rules:  PDF/DOC/DOCX/PPTX/RTF/ODT/EPUB -> <Jarvis_Workspace>/Organised/Documents
+          XLS/XLSX/CSV/ODS               -> <Jarvis_Workspace>/Organised/Spreadsheets
+          PNG/JPG/JPEG/WEBP/GIF          -> <Jarvis_Workspace>/Organised/Images
+          (<Jarvis_Workspace> = C:\\Users\\<you>\\OneDrive\\Documents\\01_Projects\\Jarvis_Workspace here)
           (destination folders are created when missing)
 
 You can add or override rules, add or remove folders, and see what was filed, by voice (`autonomy_organise`
@@ -54,10 +55,10 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 EXT_RE = re.compile(r"^\.[a-z0-9]{1,10}$")
 DEFAULT_ROOT_NAMES = ("Downloads", "Desktop", "OneDrive/Desktop", "OneDrive/Downloads")
 DEFAULT_RULES = (
-    ("default_documents", (".pdf", ".doc", ".docx", ".pptx", ".rtf", ".odt", ".epub"), "~/Documents/Jarvis_Organised/Documents"),
-    ("default_spreadsheets", (".xls", ".xlsx", ".csv", ".ods"), "~/Documents/Jarvis_Organised/Spreadsheets"),
-    ("default_images", (".png", ".jpg", ".jpeg", ".webp", ".gif"), "~/Pictures/Jarvis_Organised"),
-)
+    ("default_documents", (".pdf", ".doc", ".docx", ".pptx", ".rtf", ".odt", ".epub"), "{workspace}/Organised/Documents"),
+    ("default_spreadsheets", (".xls", ".xlsx", ".csv", ".ods"), "{workspace}/Organised/Spreadsheets"),
+    ("default_images", (".png", ".jpg", ".jpeg", ".webp", ".gif"), "{workspace}/Organised/Images"),
+)  # {workspace} = the Jarvis_Workspace folder (jarvis_workspace.root(); JARVIS_WORKSPACE_DIR overrides it)
 
 _DDL = ("CREATE TABLE IF NOT EXISTS autonomy_organise_rules ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, extensions TEXT NOT NULL, "
@@ -174,6 +175,9 @@ def _seed() -> None:
             continue
         core._exec_rc("INSERT OR IGNORE INTO autonomy_organise_rules (name, extensions, dest_dir, action, source, "
                       "created_at) VALUES (?, ?, ?, 'move', 'default', ?)", (name, json.dumps(list(exts)), dest, now))
+        # keep built-in rules on the current definition (a rule you wrote has source 'user' and is never touched)
+        core._exec_rc("UPDATE autonomy_organise_rules SET extensions=?, dest_dir=? WHERE name=? AND source='default'",
+                      (json.dumps(list(exts)), dest, name))
 
 
 def list_rules() -> list[dict]:
@@ -187,12 +191,28 @@ def list_rules() -> list[dict]:
     return rows
 
 
+def workspace_dir() -> Path:
+    """The Jarvis_Workspace folder (where Jarvis keeps the files it makes for you)."""
+    try:
+        import jarvis_workspace
+
+        return Path(jarvis_workspace.root())
+    except Exception:
+        return home() / "Documents" / "01_Projects" / "Jarvis_Workspace"
+
+
 def resolve_dest(dest: str) -> tuple[str | None, str | None]:
-    """(absolute folder, None) or (None, reason). The folder must resolve inside the user profile."""
+    """(absolute folder, None) or (None, reason). The folder must resolve inside the user profile.
+    Understands `~/...` (your profile) and `{workspace}/...` (the Jarvis_Workspace folder)."""
     raw = str(dest or "").strip()
     if not raw:
         return None, "no destination folder"
-    p = home() / raw[2:] if raw.startswith(("~/", "~\\")) else Path(raw).expanduser()
+    if raw.startswith(("{workspace}/", "{workspace}\\")):
+        p = workspace_dir() / raw[len("{workspace}/"):]
+    elif raw.startswith(("~/", "~\\")):
+        p = home() / raw[2:]
+    else:
+        p = Path(raw).expanduser()
     if not p.is_absolute():
         return None, "destination must be an absolute path (or start with ~/)"
     real = os.path.realpath(str(p))
