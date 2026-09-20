@@ -617,6 +617,18 @@ def test_urgent_email_reply_monitor_skill_drafts_then_sends():
     assert "NO spoken reply" in text
 
 
+def test_urgent_email_reply_monitor_v2_signoff_context_no_default_no():
+    import json
+    from pathlib import Path
+    skill = json.loads((Path(__file__).parent / "skills" / "urgent_email_reply_monitor_v2.json").read_text(encoding="utf-8"))
+    text = skill["instructions"]
+    assert "Best, Hero's assistant" in text
+    assert "drafted and sent by my AI assistant" not in text
+    assert "DEFAULT ANSWER IS NO" not in text
+    assert "list-events" in text and "recall_facts" in text and "search_emails" in text
+    assert text.index("recall_facts") < text.index("mcp_gmail_send_email")
+
+
 def test_urgent_email_reply_monitor_gathers_context_and_defaults_to_no():
     import json
     from pathlib import Path
