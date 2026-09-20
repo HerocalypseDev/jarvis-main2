@@ -618,7 +618,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     if (btn.dataset.tab === "audit") fetchAuditResults();
     if (btn.dataset.tab === "daily") fetchDailyItems();
     if (btn.dataset.tab === "usage") fetchUsage();
-    document.querySelector("footer.bottom").classList.toggle("tall", btn.dataset.tab === "sleep" || btn.dataset.tab === "identity");
+    document.querySelector("footer.bottom").classList.toggle("tall", ["sleep", "identity", "autonomy"].includes(btn.dataset.tab));
   });
 });
 
