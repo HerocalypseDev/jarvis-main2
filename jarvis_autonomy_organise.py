@@ -40,7 +40,7 @@ import os
 import re
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import jarvis_autonomy as core
@@ -246,6 +246,17 @@ def _match_rule(ext: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------------------- filing
+def _made_by_jarvis(name: str) -> bool:
+    """A file Jarvis itself wrote or downloaded into a watched folder in the last 15 minutes ("save this to my
+    Desktop") is where the user asked for it: do not whisk it away."""
+    cut = (datetime.now() - timedelta(minutes=15)).isoformat(timespec="seconds")
+    try:
+        return bool(core._rows("SELECT 1 FROM action_audit WHERE tool_name IN ('write_file','download_image') "
+                               "AND timestamp>=? AND instr(tool_input, ?)>0 LIMIT 1", (cut, name)))
+    except Exception:
+        return False
+
+
 def _unique(dest_dir: str, name: str) -> str:
     cand = os.path.join(dest_dir, name)
     if not os.path.lexists(cand):
@@ -305,6 +316,8 @@ def handle_new_file(path: str) -> dict:
     rule = _match_rule(ext)
     if rule is None:
         return {"status": "no_rule"}
+    if _made_by_jarvis(name):
+        return {"status": "skipped", "reason": "Jarvis just saved this file on request"}
     dest, err = resolve_dest(rule["dest_dir"])
     if err:
         _record(rule, real, "", "failed", f"rule destination rejected: {err}")
@@ -355,11 +368,11 @@ def handle_new_file(path: str) -> dict:
         if _retries[real] < MAX_RETRIES:  # in use by another program: try again on a later tick
             return {"status": "unsettled"}
         _record(rule, real, "", "failed", "the file stayed locked by another program", action)
-        core._call("notify", f"I couldn't file {name}: it stayed in use by another program.", False)
+        core._notify_throttled("organise-fail", f"I couldn't file {name}: it stayed in use by another program.")
         return {"status": "failed", "reason": "locked"}
     except Exception as e:
         _record(rule, real, "", "failed", f"{type(e).__name__}: {e}"[:300], action)
-        core._call("notify", f"I couldn't file {name}: {e}"[:160], False)
+        core._notify_throttled("organise-fail", f"I couldn't file {name}: {e}"[:160])
         return {"status": "failed", "reason": str(e)}
 
 

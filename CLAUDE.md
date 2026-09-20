@@ -741,6 +741,12 @@ Rules:
   delete/overwrite, realpath + top-level + settle checks, logged, dry-run-safe); the watcher baselines a newly
   added folder (`add_path(..., baseline=True)`). Do not add enable flags for these. Residual injection risk is
   real and documented in `AUTONOMY.md`. Suite: 538 tests (1 skipped: symlinks need privileges on Windows).
+- **Audit pass 2 (injection + organise)** — details in `AUTONOMY.md`. Rules to keep: the sanitiser lives in
+  `jarvis_untrusted.py` (NFKC + invisible-char strip + mixed-script look-alike folding) and is used by the core and
+  sleep-mail; anything third parties control (mail, file names, project names) is neutralised at creation AND at
+  render into any prompt; recorded inbound items are quarantined so the deadline path cannot act on them; the file
+  scan covers every event on a worker (25/tick, single-flight); failure notices are throttled
+  (`_notify_throttled`); organise skips files Jarvis just saved. Suite: 554 tests.
 - **Audit-and-fix pass (2026-09-20, after the permission change)** — details in `AUTONOMY.md`. Rules to keep:
   dry-run must never consume real work (own `dry_*` bookkeeping + replay on leaving dry-run); old learned ask
   rules are migrated to auto_act; learned `ignore` lapses (30 d) and never applies to `deadline:*`; a dismissed card

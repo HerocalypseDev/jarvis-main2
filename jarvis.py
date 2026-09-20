@@ -4134,13 +4134,12 @@ def _autonomy_callbacks() -> dict:
         "running_background_count": lambda: len(_RUNNING_BACKGROUND_PROCS),
         "semantic_recall": memory_enhance.semantic_recall,
         "calendar_events": _autonomy_calendar_events,
-        "file_events": lambda: filewatcher.get_recent_file_events(5),
         "workspace": workflow.get_context_summary,
         "system_status": lambda: json.dumps(get_system_status_report(), default=str)[:400],
         "consolidate": lambda now: consolidation.consolidate(now, _sleep_mail_claude),
         "publish": dashboard.notify,
         "speak": lambda text: _speak_shaped(text),  # spoken log summary: shortened/path-collapsed like every reply
-        "file_events": lambda: filewatcher.watcher.recent_events(50),
+        "file_events": lambda: filewatcher.watcher.recent_events(200),   # the watcher keeps 200; all of them are scanned
         "create_calendar_event": _autonomy_create_event,
         "poll_mail": _autonomy_poll_mail,
         "known_tools": lambda: [t["name"] for t in AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()],
@@ -4184,7 +4183,7 @@ def _autonomy_poll_mail() -> list[dict] | None:
     MCP the sleep-mail feature already uses. Empty when Gmail is not connected."""
     if "mcp_gmail_search_emails" not in _mcp_tool_index:
         return None  # not connected (yet): the poller retries sooner than a full interval
-    found = _sleep_mail_mcp("search_emails", {"query": "in:inbox newer_than:1d", "maxResults": 10})
+    found = _sleep_mail_mcp("search_emails", {"query": "in:inbox newer_than:1d", "maxResults": 25})
     if sleep_mail.looks_like_error(found):
         return None
     own, out = sleep_mail.own_addresses(), []

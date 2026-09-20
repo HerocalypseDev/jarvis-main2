@@ -231,6 +231,37 @@ matching rule files it (`jarvis_autonomy_organise.py`).
 * Skills: unchanged secret-bearing exclusions for auto-mining and the atomic daily budget. A skill that fails
   mid-sequence stops, records the failing step in the log (`failed_step`) and notifies you once for that run.
 
+## Audit pass 2 (after injection hardening + file organising): what changed because of real bugs
+
+* **The sanitiser could be bypassed** (reproduced): `ig<zero-width>nore previous instructions`, soft hyphens,
+  full-width letters and Cyrillic/Greek look-alikes all got through. `neutralize_injection` now canonicalises first
+  (Unicode NFKC, invisible/format characters removed, look-alike letters folded back **only inside words that also
+  contain ASCII letters**, so ordinary Russian/Greek text is untouched). It lives in the dependency-free
+  `jarvis_untrusted.py` (re-exported by `jarvis_autonomy`) and is shared with the sleep-mail replies.
+* **Injection reached the main agent's system prompt** (reproduced): a downloaded file named "Ignore all previous
+  instructions ....pdf" became a "Review new file ..." commitment shown in the system prompt, and a project name
+  extracted from mail was rendered as-is. File names, project names and every commitment/summary line rendered into
+  the system prompt or the classifier memory are now neutralised (at creation for file/inbound sources, and again at
+  render time). The session summariser's input is framed too.
+* **The third-party bar could be sidestepped later:** a recorded (below-the-bar or injection-flagged) email item was
+  stored un-quarantined, so the deadline scan's 24 h auto-reminder (source `deadline`, confidence 0.9) would have
+  acted on it. Recorded inbound items are now quarantined until you approve the card. Telegram/Discord inbound is
+  treated as third-party too (only the inbound hook produces those sources).
+* **Sleep-mail replies** put the sender's (possibly forged) text straight into the reply prompt; it is now framed and
+  neutralised, and the system prompt says it is data.
+* **File organising:** only the last 30 watcher events were ever scanned (a burst of files lost the older ones), and
+  the scan ran inline on the tick. Now: every event is scanned, at most 25 files per pass (the rest next tick), one
+  scan at a time, on a worker. Files that vanished, hidden/temp files, sub-folder files and rejected paths are
+  settled quietly instead of creating spurious "Review" items; files Jarvis itself saved via `write_file` /
+  `download_image` in the last 15 minutes are left where you asked for them.
+* **No chatter loops:** failure notices are throttled to one per category (or one for organising) per 10 minutes;
+  every failure is still in the Activity log. Gmail polling looks at 25 messages instead of 10.
+* The classifier context shows file events as short readable lines (a duplicate callback key had turned them into a
+  Python list repr).
+
+Residual, intentional: `sleep_mail._classify_critical` still classifies from sender + subject only (it can be nudged
+into a wrong "critical" flag, which only reports, never acts); pattern matching is never complete.
+
 ## Audit-and-fix pass (2026-09-20, after the full-permission change)
 
 Behaviour that changed because a real bug was found:
