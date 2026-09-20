@@ -3844,6 +3844,8 @@ def _read_skills_from_disk() -> list[dict]:
                 skill: dict = {"name": name, "description": description, "instructions": instructions}
                 if isinstance(schedule, dict):
                     skill["schedule"] = schedule
+                if data.get("silent_when_empty") is True:
+                    skill["silent_when_empty"] = True
                 skills.append(skill)
             else:
                 log.warning("Skipping skill file %s: missing name/instructions.", path)
@@ -3982,7 +3984,12 @@ def _run_scheduled_skill(skill: dict) -> None:
         f"didn't just ask for this out loud, act on the schedule instead.) {skill['instructions']}"
     )
     try:
-        reply = run_agent_loop(synthetic_transcript)
+        # A skill that opts in with "silent_when_empty" must stay quiet when the model gives no
+        # text; otherwise the last tool's result (e.g. a memory ack) would be spoken instead.
+        reply = run_agent_loop(
+            synthetic_transcript,
+            tool_result_fallback=not skill.get("silent_when_empty"),
+        )
         if reply:
             # Route through the interrupt gate instead of speaking immediately — a scheduled
             # skill is exactly the kind of unprompted interrupt session context exists for.
@@ -7150,7 +7157,7 @@ MAX_NARRATED_LINES = 3  # spoken "on it" lines per command, so a long task isn't
 
 
 def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = False,
-                   record_history: bool = True) -> str:
+                   record_history: bool = True, tool_result_fallback: bool = True) -> str:
     """Real observe-act-observe loop: Claude picks tools, sees each result, and decides
     what (if anything) to do next, up to MAX_AGENT_ITERATIONS round trips, before giving a
     final spoken reply. Replaces the old single forced perform_actions tool call.
@@ -7261,7 +7268,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         and all(n in READONLY_TOOL_TTLS for n in used_tool_names)
     ):
         _reply_cache.put(reply_key, reply, min(READONLY_TOOL_TTLS[n] for n in used_tool_names))
-    if not reply and last_tool_result_text:
+    if not reply and last_tool_result_text and tool_result_fallback:
         # Observed live: Claude sometimes ends a turn with only a tool call and no spoken text
         # at all — most consequentially for a staged catastrophic confirmation (run_shell/
         # run_python's "staged, not run, say yes" result) and a multi-tool task that exhausts

@@ -685,6 +685,48 @@ def test_narrate_off_keeps_old_behaviour(jarvis, monkeypatch):
     assert spoken == [] and reply == "Sure, let me track that down. All done."
 
 
+def _tool_only_claude(monkeypatch, j):
+    def fake(body, timeout):
+        return {
+            "stop_reason": "tool_use",
+            "content": [{"type": "tool_use", "id": "t1", "name": "system_status", "input": {}}],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(j, "_claude_request", fake)
+
+
+def test_tool_only_turn_falls_back_to_tool_result_by_default(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "noted: no reply needed")
+    _tool_only_claude(monkeypatch, jarvis)
+    assert jarvis.run_agent_loop("x") == "noted: no reply needed"
+
+
+def test_tool_result_fallback_can_be_disabled(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "noted: no reply needed")
+    _tool_only_claude(monkeypatch, jarvis)
+    assert jarvis.run_agent_loop("x", tool_result_fallback=False) == ""
+
+
+def test_urgent_email_monitor_skill_is_silent_when_empty(jarvis):
+    skill = next(s for s in jarvis._load_skills() if s["name"] == "urgent_email_reply_monitor")
+    assert skill.get("silent_when_empty") is True
+
+
+def test_scheduled_skill_with_silent_flag_speaks_nothing_on_empty_reply(jarvis, monkeypatch):
+    seen = {}
+
+    def fake_loop(transcript, **kw):
+        seen.update(kw)
+        return ""
+
+    delivered = []
+    monkeypatch.setattr(jarvis, "run_agent_loop", fake_loop)
+    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", delivered.append)
+    jarvis._run_scheduled_skill({"name": "s", "instructions": "i", "silent_when_empty": True})
+    assert seen["tool_result_fallback"] is False and delivered == []
+
+
 def test_prompt_asks_for_plain_english_progress_lines(jarvis):
     text = " ".join(b.get("text", "") for b in jarvis.build_system_blocks(""))
     assert "never name tools" in text
