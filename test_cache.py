@@ -492,6 +492,8 @@ def delegation(jarvis, monkeypatch, tmp_path):
     monkeypatch.setattr(jarvis, "record_recent_task", lambda t: None)
     monkeypatch.setattr(jarvis, "_RUNNING_BACKGROUND_PROCS", {})
     monkeypatch.setattr(jarvis, "_SELF_EDIT_TASK_IDS", set())
+    # These model a request from the user; an unattended run (source None) is refused (audit H2).
+    monkeypatch.setattr(jarvis, "_current_command_source", lambda: "voice")
     return launched
 
 

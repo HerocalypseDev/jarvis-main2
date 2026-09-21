@@ -459,8 +459,22 @@ _LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
 def _origin_is_loopback(origin: str) -> bool:
     """True if an Origin header names this machine. "null" (sandboxed iframes, file://) and any
     other site are not loopback."""
-    host = origin.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]").lower()
+    from urllib.parse import urlsplit
+
+    try:
+        host = (urlsplit(origin or "").hostname or "").lower()
+    except ValueError:
+        return False
     return host in _LOOPBACK_NAMES
+
+
+def _host_is_loopback(host_header: str) -> bool:
+    from urllib.parse import urlsplit
+
+    try:
+        return (urlsplit("//" + (host_header or "")).hostname or "").lower() in _LOOPBACK_NAMES
+    except ValueError:
+        return False
 
 
 # --- web server (heavy imports live here, not at module load) ------------------------------
@@ -520,6 +534,21 @@ def _build_app(
         yield
 
     app = FastAPI(title="Jarvis Dashboard", docs_url=None, redoc_url=None, lifespan=_lifespan)
+
+    # Every /api/* route (not just Identity/Autonomy) refuses a non-loopback Host header (DNS
+    # rebinding: an attacker's domain re-pointed at 127.0.0.1 sends its own Host) and a state-changing
+    # call whose Origin is not this machine (cross-site form/fetch). /api/command and
+    # /api/pending/approve reach run_shell and the catastrophic-action approval, so they matter most.
+    @app.middleware("http")
+    async def _loopback_only(request, call_next):
+        if request.url.path.startswith("/api/"):
+            if not _host_is_loopback(request.headers.get("host") or ""):
+                return JSONResponse({"error": "forbidden host"}, status_code=403)
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                origin = request.headers.get("origin")
+                if origin and not _origin_is_loopback(origin):
+                    return JSONResponse({"error": "forbidden origin"}, status_code=403)
+        return await call_next(request)
 
     @app.get("/api/state")
     def api_state() -> dict:
@@ -672,8 +701,7 @@ def _build_app(
     _NO_STORE = {"Cache-Control": "no-store"}
 
     def _face_guard(request):
-        host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
-        if host not in ("127.0.0.1", "localhost", "::1"):
+        if not _host_is_loopback(request.headers.get("host") or ""):
             return JSONResponse({"error": "forbidden host"}, status_code=403)
         # A page on another site can still fire a "simple" cross-origin request at 127.0.0.1 with a
         # perfectly valid Host, so a state-changing call must also come from this dashboard's own

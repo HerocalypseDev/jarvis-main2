@@ -197,6 +197,8 @@ _UNTRUSTED_TOOL_RE = re.compile(
     r"delegate_research|scan_large|analyze_|get_recent_file_events)")
 # Settings changes (not actions autonomy takes): only from the dashboard.
 HUMAN_ONLY_ACTIONS = ("enable", "dry_run_off", "set_policy")
+ATTENDED_ONLY_ACTIONS = ("approve", "dismiss", "never", "add_action", "approve_campaign", "add_project",
+                         "accept_commitment", "complete_commitment", "cancel_commitment")
 _FUTURE_RE = re.compile(
     r"\b(will|shall|i'll|we'll|let's|upcoming|later|soon|before|after|until|deadline|due|"
     r"on (?:mon|tue|wed|thu|fri|sat|sun)\w*|at \d{1,2}(?::\d\d)?\s?(?:am|pm)?|\d{1,2}(?::\d\d)?\s?(?:am|pm)|"
@@ -2341,6 +2343,12 @@ def handle_tool(inp: dict, source: str | None) -> str:
                 "dashboard's Autonomy tab, not by me.")
     if action == "run_tick" and not attended:
         return "Running a decision pass is only accepted from the PC, not the phone or unattended runs."
+    # Audit H3: an agent run (e.g. one triggered by inbound mail) must not promote its own review
+    # cards, dismiss/teach the policy loop, or schedule/approve campaign work. Those need a person at
+    # the PC (voice/typed/dashboard). Disabling and dry-run-ON only make things safer, so stay open.
+    if action in ATTENDED_ONLY_ACTIONS and not attended:
+        return (f"'{action}' changes what Jarvis will do on its own, so it is only accepted when you ask "
+                "from the PC (voice, typed or the dashboard), not from an unattended run or the phone.")
     if action == "status":
         return _brief()
     if action in ("log", "show_log"):

@@ -18,3 +18,6 @@ jarvis_python.txt
 # face recognition data lives outside the repo; this is a belt-and-braces guard
 face.db*
 face.key
+
+# run logs (contain transcripts and third-party addresses)
+*.log

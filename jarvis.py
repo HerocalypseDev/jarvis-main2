@@ -93,8 +93,6 @@ FOCUS_EXISTING_CURSOR_WINDOW = True
 OPEN_NEW_CURSOR_WINDOW = False
 CURSOR_OPEN_FULLSCREEN = False
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
-
 # Push-to-talk voice commands: hold JARVIS_PTT_KEY, speak, release. Local Whisper
 # transcribes, Claude decides zero or more actions from a fixed safe set, Piper speaks the reply.
 JARVIS_PTT_ENABLED = True
@@ -226,18 +224,93 @@ _CATASTROPHIC_PATTERNS: tuple[tuple["re.Pattern[str]", str], ...] = (
 )
 
 
+# Extra shutdown/disk/system-damage variants the first tier missed (shutdown /p /h /l -r, WMI, suspend,
+# Format-Volume, boot config, secure wipe, registry hive delete).
+_CATASTROPHIC_PATTERNS = _CATASTROPHIC_PATTERNS + (
+    (
+        re.compile(
+            r"\bshutdown(?:\.exe)?\b[^\n]{0,40}?[/-](?:s|r|p|h|l|g|hybrid)\b|win32shutdown|"
+            r"wmic[^\n]*\bshutdown\b|setsuspendstate|\bpoweroff\b|"
+            r"rundll32[^\n]*(?:exitwindows|powrprof)|\bsystemctl\s+(?:poweroff|reboot|halt)\b",
+            re.I,
+        ),
+        "shut down, restart, sleep, or sign out of the machine",
+    ),
+    (
+        re.compile(
+            r"format-volume|\bbcdedit\b|\bcipher\s+/w|\breg(?:\.exe)?\s+delete\s+hk(?:lm|cr|u)|"
+            r"\bdd\s+if=[^\n]*of=/dev/|\bmanage-bde\b[^\n]*-(?:off|delete)",
+            re.I,
+        ),
+        "reformat a disk, wipe free space, or damage boot/system configuration",
+    ),
+)
+
+# A recursive-delete verb anywhere in the text, together with a whole-drive / user-profile /
+# top-level personal-folder target anywhere in it. Order- and flag-position-independent, so
+# `Remove-Item C:\ -Recurse`, `rd /s /q C:\ && echo x` and `rm -rf ~/*` are all caught.
+_RECURSIVE_DELETE_RE = re.compile(
+    r"\brm\s+-[a-z]*r|\bremove-item\b[^\n]*-recurse|-recurse[^\n]*\bremove-item\b|\bri\s[^\n]*-r\b|"
+    r"\b(?:rd|rmdir)\s+(?:[^\n]*\s)?/s\b|\bdel(?:ete)?\s+(?:[^\n]*\s)?/s\b|"
+    r"\brmtree\b|directory\]::delete|\bos\.removedirs\b",
+    re.I,
+)
+_END = r"""(?=[\s"'*;&|)]|$)"""
+_WIPE_TARGET_RE = re.compile(
+    r"(?<![\w])[a-z]:[\\/]*" + _END + r"|"                                    # C:  C:\  C:/
+    r"%userprofile%|\$env:userprofile|\$home\b|(?<![\w.])~[\\/]*\*?" + _END + r"|"
+    r"(?<![\w])[a-z]:[\\/]+users[\\/]+[^\\/\s\"']+[\\/]*\*?" + _END + r"|"     # C:\Users\<name>
+    r"(?<![\w])[a-z]:[\\/]+users[\\/]+[^\\/\s\"']+[\\/]+(?:onedrive|documents|desktop|pictures|downloads)"
+    r"[\\/]*\*?" + _END + r"|"
+    r"(?<![\w])/\*?" + _END + r"|expanduser|(?:%|\$env:)(?:onedrive|homepath)\b",
+    re.I,
+)
+
+
+def _normalize_for_gate(text: str) -> str:
+    """Undo trivial obfuscation before matching: PowerShell backticks, cmd carets, empty quote
+    pairs inside a word (shu""tdown), and repeated whitespace."""
+    t = (text or "").replace("`", "").replace("^", "")
+    t = re.sub(r"(?<=\w)(?:\"\"|'')(?=\w)", "", t)
+    return re.sub(r"[ \t]+", " ", t)
+
+
 def _catastrophic_reason(text: str) -> str | None:
     """Short human description if `text` (a shell command or Python snippet) matches the one
     tier of action that still requires spoken confirmation, else None."""
+    t = _normalize_for_gate(text)
     for pattern, reason in _CATASTROPHIC_PATTERNS:
-        if pattern.search(text or ""):
+        if pattern.search(t):
             return reason
+    if _RECURSIVE_DELETE_RE.search(t) and _WIPE_TARGET_RE.search(t):
+        return "recursively delete an entire drive or your whole user profile"
     return None
 
 
+_CONFIRM_YES_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in _CONFIRM_YES_WORDS) + r")\b"
+)
+# Any of these anywhere in the utterance means it is NOT a clear yes ("no, don't do it",
+# "I'm not sure", "cancel that", "wait, stop").
+_CONFIRM_NEGATION_RE = re.compile(
+    r"\b(?:no|nope|nah|not|never|cancel|stop|abort|wait|hold|do not|dont|negative|incorrect|"
+    r"wrong|instead|rather)\b|n't\b"
+)
+CONFIRM_MAX_WORDS = 8          # a real confirmation is short; a long sentence is a new command
+PENDING_ACTION_TTL_S = 120     # a staged action goes stale; a later stray "yes" must not fire it
+
+
 def _is_confirmation_yes(transcript: str) -> bool:
-    t = transcript.lower()
-    return any(word in t for word in _CONFIRM_YES_WORDS)
+    """A clear, short, non-negated affirmative. Whole-word matching (so 'yesterday' and
+    'incorrect' never count) and any negation anywhere vetoes it."""
+    t = (transcript or "").lower().replace("’", "'")
+    t = re.sub(r"[^\w\s']", " ", t)
+    words = t.split()
+    if not words or len(words) > CONFIRM_MAX_WORDS:
+        return False
+    if _CONFIRM_NEGATION_RE.search(t):
+        return False
+    return bool(_CONFIRM_YES_RE.search(t))
 
 
 def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -> bool:
@@ -248,7 +321,10 @@ def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -
         if _pending_action is not None:
             log.warning("A confirmation is already pending; dropping %r.", tool_name)
             return False
-        _pending_action = {"tool_name": tool_name, "tool_input": tool_input, "reason": reason}
+        _pending_action = {
+            "tool_name": tool_name, "tool_input": tool_input, "reason": reason,
+            "queued_at": time.monotonic(), "source": _current_command_source() or "unattended",
+        }
     dashboard.notify({"type": "pending_action", "data": dict(_pending_action)})
     return True
 
@@ -5949,6 +6025,9 @@ def _run_python_code(code: str) -> str:
 def _read_file_tool(path: str) -> str:
     if not path:
         return "No path given."
+    bad = jarvis_workspace.sensitive_reason(path, write=False)
+    if bad:
+        return f"Refused to read {path}: {bad}."
     try:
         data = jarvis_workspace.resolve_read_path(path).read_text(encoding="utf-8", errors="replace")
     except Exception as e:
@@ -5973,15 +6052,34 @@ def _write_file_tool(path: str, content: str, append: bool) -> str:
         return f"Failed to write {path}: {e}"
 
 
+_SECRET_ENV_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PIN")
+
+
+def _contains_secret(text: str) -> bool:
+    """True if `text` contains the value of any secret-looking environment variable (audit H4:
+    stops a prompt-injected agent from POSTing .env contents out through http_request)."""
+    for k, v in os.environ.items():
+        if len(v or "") >= 8 and any(m in k.upper() for m in _SECRET_ENV_MARKERS) and v in text:
+            return True
+    return False
+
+
 def _http_request_tool(url: str, method: str, headers: dict | None, body: str | None) -> str:
     if not url:
         return "No URL given."
+    err = image_download._check_host(url)
+    if err:
+        return f"Request refused: {err}"
+    leak = _contains_secret(json.dumps(headers or {}) + (body or "") + url)
+    if leak:
+        return "Request refused: it would send one of Jarvis's own API keys or tokens to an outside server."
     try:
         data = body.encode() if body else None
         req = urllib.request.Request(
             url, data=data, method=(method or "GET").upper(), headers=headers or {}
         )
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        opener = urllib.request.build_opener(image_download._CheckedRedirects())
+        with opener.open(req, timeout=20) as resp:
             text = resp.read().decode(errors="replace")
             status = resp.status
     except urllib.error.HTTPError as e:
@@ -6271,10 +6369,34 @@ _SELF_EDIT_PREAMBLE = (
 _SELF_EDIT_TASK_IDS: set[int] = set()
 
 
+# Environment the delegated `claude -p --dangerously-skip-permissions` child may see (audit H2). An
+# allowlist, not a denylist: Jarvis's own GEMINI/Fish/Telegram/ntfy/admin secrets never reach an agent
+# that runs with permissions skipped. It logs in with its own `claude login` session.
+_DELEGATE_ENV_ALLOW = {
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "USERNAME", "USERDOMAIN",
+    "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "COMMONPROGRAMFILES", "TEMP", "TMP",
+    "COMPUTERNAME", "OS", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "LANG", "LC_ALL",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "TERM",
+    "GIT_EXEC_PATH", "GIT_SSH_COMMAND",
+}
+
+
+def _delegate_child_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k.upper() in _DELEGATE_ENV_ALLOW}
+
+
 def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     task = (task or "").strip()
     if not task:
         return "No task given."
+    # An unattended run (autonomy, a scheduled skill, a background thread) has no command source; it
+    # must never be able to launch a permissions-skipped agent by itself (audit H2).
+    if _current_command_source() is None:
+        return (
+            "Refused: delegating to the coding agent needs a request from you (voice, typed, "
+            "dashboard or phone), not an unattended run."
+        )
     reason = _catastrophic_reason(task)
     if reason:
         return (
@@ -6319,11 +6441,7 @@ def _delegate_to_claude_code(task: str, repo_path: str) -> str:
     # this child's environment would silently bill the delegated task per-token against that
     # key instead of using a Pro/Max subscription login — even though Jarvis's own brain
     # legitimately needs that same env var for its own direct API calls.
-    child_env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-    }
+    child_env = _delegate_child_env()
     try:
         # Opening the file only for the Popen call (not kept open in this process) is
         # deliberate: the child gets its own duplicated handle at spawn time, so closing our
@@ -7369,6 +7487,11 @@ def _handle_text_command_impl(
 
     with _pending_action_lock:
         pending = _pending_action
+    if pending is not None and time.monotonic() - float(pending.get("queued_at", time.monotonic())) > PENDING_ACTION_TTL_S:
+        _take_pending_action()
+        dashboard.notify({"type": "pending_action", "data": None})
+        log.info("Dropped stale pending confirmation (%r).", pending.get("tool_name"))
+        pending = None
     if pending is not None:
         if _is_confirmation_yes(transcript):
             step = _take_pending_action()

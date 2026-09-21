@@ -816,7 +816,8 @@ row there each phase rather than only stating the total in chat.
 | 26 (full autonomy: commitments/projects, policy engine + teach loop, tick, campaigns, dynamic tools, consolidation, dashboard tab) | Sonnet 5 | ~75 min | ~$3.60–$5.00 |
 | 27 (autonomy security audit: 20 findings fixed, human-only approvals, quarantine, sandbox hardening, 54 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
 | 28 (full-permission model + inbound perception, extraction, observability, direct calendar, skills, memory intervention; 40 new tests) | Sonnet 5 | ~75 min | ~$4.00–$5.50 |
-| **Running total (final)** | | **~888 min** | **~$39.65–$55.30** |
+| 29 (audit fixes: confirmation semantics + TTL, wider gate, dashboard-wide Host/Origin guard, sensitive-path/http policy, delegation env allowlist, attended-only autonomy approvals; 70 new tests) | Sonnet 5 | ~45 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~933 min** | **~$42.65–$59.50** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -825,3 +826,40 @@ row there each phase rather than only stating the total in chat.
   counts as "owner present" (greeting, away-mode lock clock); users are named in the prompt line but never a stranger;
   guests are named but hold non-urgent speech/keep replies discreet like a stranger (no picture, no Telegram question).
   Roles are personalization only, never gate anything. Same source limits (no phone/scheduled). Tests in `test_face.py`.
+
+## Audit hardening (2026-09-21)
+
+Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rules to keep:
+- **Confirmation** (`_is_confirmation_yes`): whole-word, <= 8 words, and any negation ("no", "don't",
+  "not sure", "cancel", "stop"...) vetoes it. It used to be a substring match, so "no, don't do it"
+  approved a staged shutdown. A staged action expires after `PENDING_ACTION_TTL_S` (120 s) for the
+  spoken-yes path and records its `source`/`queued_at`. Never go back to substring matching.
+- **Gate coverage** (`_catastrophic_reason`): text is normalised (backticks, carets, `sh""utdown`),
+  then the original patterns, extra shutdown/disk/boot patterns (`shutdown /p /h /l -r`, WMI,
+  `Format-Volume`, `bcdedit`, `cipher /w`, `reg delete HKLM`), and a *combination* check: any
+  recursive-delete verb + any drive-root / user-profile / top-level personal folder target, in any
+  order. Still a tripwire over text, not a sandbox; extend the matrix in `test_hardening.py` when adding.
+- **Dashboard**: a middleware rejects a non-loopback `Host` on EVERY `/api/*` route and a non-loopback
+  `Origin` on every state-changing one (before this only `/api/faces*` and `/api/autonomy*` did, so DNS
+  rebinding could reach `/api/command` and `/api/pending/approve`). New routes are covered automatically.
+  Tests must build their client with `base_url="http://127.0.0.1:8765"`.
+- **File/network tools** (`jarvis_workspace.sensitive_reason`): reads refuse `.env*`, keys, Jarvis's own
+  DBs and credential folders; writes additionally refuse Jarvis's code folder, `.git`, `.claude` and the
+  Startup folder. `http_request` refuses private/loopback hosts (also on redirects) and any request
+  carrying the value of a secret-looking env var. Absolute paths elsewhere are still honoured.
+- **Delegation** (`delegate_to_claude_code`/`change_jarvis_code`): refused when there is no command
+  source (autonomy, scheduled skills, background threads), and the permissions-skipped child gets an
+  allowlisted environment (`_DELEGATE_ENV_ALLOW`) - none of Jarvis's API keys or tokens.
+- **Autonomy tool**: `ATTENDED_ONLY_ACTIONS` (approve, dismiss, never, add_action, approve_campaign,
+  add_project, accept/complete/cancel_commitment) need voice/typed/dashboard; an unattended agent run
+  can no longer promote its own review cards. Organise `add/remove_root|rule` likewise.
+- Logs are untracked and ignored (`*.log`), `requirements.txt` is pinned to the tested versions, the
+  workspace default root derives from the home directory.
+- **Deliberately NOT changed** (standing user decisions): autonomy stays on by default with no default
+  email-recipient allowlist (`JARVIS_AUTONOMY_EMAIL_AUTO_ALLOW` remains opt-in) - full auto-act was an
+  explicit 2026-09-20 decision; `graphify-out/` stays tracked; git history was not rewritten (old logs
+  remain in past commits). The urgent-email auto-reply skills are still deleted in the working tree
+  (4 tests in `test_cache.py` fail until they are restored or those tests are removed); if restored,
+  add a deterministic handled-ID table and per-sender cap first (memory-search dedupe is fuzzy).
+- MCP servers still run through `npx ...@latest` in the local `mcp_servers.json` (gitignored); pin
+  versions there yourself.

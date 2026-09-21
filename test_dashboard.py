@@ -36,7 +36,7 @@ def client(dashboard):
     from fastapi.testclient import TestClient
 
     app = dashboard._build_app()
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         yield c
 
 
@@ -99,7 +99,7 @@ def test_pending_action_approve_reject_wired(dashboard):
         approve_pending=lambda: (calls.__setitem__("approved", calls["approved"] + 1), "ok")[1],
         reject_pending=lambda: (calls.__setitem__("rejected", calls["rejected"] + 1), True)[1],
     )
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/state")
         assert r.json()["pending_action"]["tool_name"] == "run_shell"
 
@@ -121,7 +121,7 @@ def test_stop_task_id_parsing(dashboard):
 
     killed = []
     app = dashboard._build_app(kill_background_task=lambda tid: killed.append(tid) or f"stopped {tid}")
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.post("/api/tasks/bg-42/stop")
         assert r.status_code == 200
         assert killed == [42]
@@ -145,7 +145,7 @@ def test_command_endpoint_rejects_empty_text(dashboard):
     from fastapi.testclient import TestClient
 
     app = dashboard._build_app(run_command=lambda text, sink: None)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.post("/api/command", json={"text": "   "})
         assert r.status_code == 400
         r = c.post("/api/command", json={})
@@ -165,7 +165,7 @@ def test_command_endpoint_invokes_run_command(dashboard):
         done.set()
 
     app = dashboard._build_app(run_command=fake_run_command)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.post("/api/command", json={"text": "turn on the lights"})
         assert r.status_code == 200 and r.json() == {"ok": True}
         assert done.wait(timeout=5)
@@ -195,7 +195,7 @@ def test_audit_filters(dashboard, db_path):
     from fastapi.testclient import TestClient
 
     app = dashboard._build_app()
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/audit")
         assert len(r.json()["rows"]) == 2
 
@@ -224,7 +224,7 @@ def test_metrics_passthrough(dashboard):
 
     fake_metrics = {"cpu": {"overall_percent": 12.0}}
     app = dashboard._build_app(get_system_status=lambda: fake_metrics)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/state")
         assert r.json()["metrics"] == fake_metrics
 
@@ -236,7 +236,7 @@ def test_metrics_callback_exception_does_not_break_state(dashboard):
         raise RuntimeError("psutil exploded")
 
     app = dashboard._build_app(get_system_status=boom)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/state")
         assert r.status_code == 200
         assert r.json()["metrics"] is None
@@ -249,7 +249,7 @@ def test_get_pending_exception_does_not_break_state(dashboard):
         raise RuntimeError("lock exploded")
 
     app = dashboard._build_app(get_pending=boom)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/state")
         assert r.status_code == 200
         assert r.json()["pending_action"] is None
@@ -259,7 +259,7 @@ def test_websocket_broadcast(dashboard):
     from fastapi.testclient import TestClient
 
     app = dashboard._build_app()
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         with c.websocket_connect("/ws") as ws:
             dashboard.notify({"type": "ping", "data": {"x": 1}})
             msg = ws.receive_json()
@@ -285,7 +285,7 @@ def test_services_endpoint_wired(dashboard):
         {"name": "calendar", "status": "failed", "detail": "retrying every 2 min"},
     ]
     app = dashboard._build_app(get_services=lambda: fake_services)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/services")
         assert r.status_code == 200
         assert r.json()["services"] == fake_services
@@ -298,7 +298,7 @@ def test_services_endpoint_exception_does_not_break(dashboard):
         raise RuntimeError("mcp lock exploded")
 
     app = dashboard._build_app(get_services=boom)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/services")
         assert r.status_code == 200
         assert r.json() == {"services": []}
@@ -359,7 +359,7 @@ def test_daily_endpoint_wired(dashboard):
         {"kind": "reminder", "name": "drink water", "description": "", "schedule": "every 60 min", "last_run_at": None, "next_due": "2026-09-18T09:00:00"},
     ]
     app = dashboard._build_app(get_daily=lambda: fake_items)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/daily")
         assert r.status_code == 200
         assert r.json()["items"] == fake_items
@@ -372,7 +372,7 @@ def test_daily_endpoint_exception_does_not_break(dashboard):
         raise RuntimeError("skills dir exploded")
 
     app = dashboard._build_app(get_daily=boom)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/daily")
         assert r.status_code == 200
         assert r.json() == {"items": []}
@@ -388,13 +388,13 @@ def test_usage_endpoint_wired_and_exception_safe(dashboard):
     from fastapi.testclient import TestClient
 
     fake = {"periods": {"today": {"cost_usd": 0.42}}, "daily": [], "by_model": []}
-    with TestClient(dashboard._build_app(get_usage=lambda: fake)) as c:
+    with TestClient(dashboard._build_app(get_usage=lambda: fake), base_url="http://127.0.0.1:8765") as c:
         assert c.get("/api/usage").json() == {"usage": fake}
 
     def boom():
         raise RuntimeError("db locked")
 
-    with TestClient(dashboard._build_app(get_usage=boom)) as c:
+    with TestClient(dashboard._build_app(get_usage=boom), base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/usage")
         assert r.status_code == 200 and r.json() == {"usage": None}
 
@@ -404,12 +404,12 @@ def test_sleep_endpoint_empty_wired_and_exception_safe(client, dashboard):
 
     assert client.get("/api/sleep").json() == {"sleep": None}
     fake = {"goal_hours": 8, "daily": []}
-    with TestClient(dashboard._build_app(get_sleep=lambda: fake)) as c:
+    with TestClient(dashboard._build_app(get_sleep=lambda: fake), base_url="http://127.0.0.1:8765") as c:
         assert c.get("/api/sleep").json() == {"sleep": fake}
 
     def boom():
         raise RuntimeError("db locked")
 
-    with TestClient(dashboard._build_app(get_sleep=boom)) as c:
+    with TestClient(dashboard._build_app(get_sleep=boom), base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/sleep")
         assert r.status_code == 200 and r.json() == {"sleep": None}

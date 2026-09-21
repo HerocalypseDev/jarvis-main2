@@ -11,7 +11,53 @@ import os
 import re
 from pathlib import Path
 
-DEFAULT_ROOT = r"C:\Users\USER\OneDrive\Documents\01_Projects\Jarvis_Workspace"
+DEFAULT_ROOT = str(Path.home() / "OneDrive" / "Documents" / "01_Projects" / "Jarvis_Workspace")
+
+# --- sensitive-path policy (audit H4): even a user-spelled absolute path may not read credentials or ---
+# --- write over Jarvis's own code / persistence points, because a prompt-injected agent run can ask ---
+# --- for exactly that (read .env, then http_request it out; or plant a Startup entry). -----------------
+_CODE_DIR = Path(__file__).resolve().parent
+_SENSITIVE_NAMES = {
+    "face.key", "credentials.json", "gcp-oauth.keys.json", "mcp_servers.json", "id_rsa", "id_ed25519",
+    "id_ecdsa", "known_hosts", "jarvis_memory.db", "session_state.json", "llm_provider.json", "ntuser.dat",
+}
+_SENSITIVE_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".kdbx", ".ppk")
+_SENSITIVE_DIRS = {".ssh", ".gnupg", ".aws", ".gmail-mcp", "google-calendar-mcp", "jarvis"}  # last = %LOCALAPPDATA%\Jarvis
+_WRITE_ONLY_DIRS = {".claude", ".git", "startup"}
+
+
+def _sensitive_parts(p: Path) -> tuple[str, list[str]]:
+    try:
+        rp = p.expanduser().resolve()
+    except (OSError, RuntimeError):
+        rp = p.expanduser()
+    return rp.name.lower(), [x.lower() for x in rp.parts[:-1]]
+
+
+def sensitive_reason(path: str, write: bool = False) -> str | None:
+    """Why Jarvis's file tools must not touch this path (None = fine). Reads are refused for
+    credentials/keys/its own databases; writes are additionally refused inside its own code
+    folder, .git/.claude and the Windows Startup folder."""
+    raw = (path or "").strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    name, parents = _sensitive_parts(p)
+    if name.startswith(".env") or name in _SENSITIVE_NAMES or name.endswith(_SENSITIVE_SUFFIXES) \
+            or name.startswith(("face.db", "jarvis_memory.db")):
+        return "that looks like a credential or one of Jarvis's private data files"
+    if any(part in _SENSITIVE_DIRS for part in parents if part != "jarvis" or "appdata" in parents):
+        return "that folder holds credentials or Jarvis's private data"
+    if write:
+        if any(part in _WRITE_ONLY_DIRS for part in parents):
+            return "writing there could plant code that runs later (.git, .claude or the Startup folder)"
+        try:
+            rp = p.expanduser().resolve()
+            if rp == _CODE_DIR or _CODE_DIR in rp.parents:
+                return "that is Jarvis's own code folder; use change_jarvis_code for source changes"
+        except (OSError, RuntimeError):
+            pass
+    return None
 SUBFOLDERS = ("Bugs", "Code_Projects", "Learning_Resources", "Notes", "Assets", "Roblox_Projects", "Temp")
 
 _ASSET_EXT = {
@@ -80,6 +126,10 @@ def resolve_write_path(path: str, content: str = "") -> tuple[Path | None, str]:
     if not raw:
         return None, "No path given."
     p = Path(raw).expanduser()
+    if p.is_absolute() or raw.lower().startswith(".env"):
+        bad = sensitive_reason(raw, write=True)
+        if bad:
+            return None, f"Refused: {bad}."
     if p.is_absolute():
         if strict() and not _inside(p.resolve(), base):
             return None, f"Refused: writes must stay inside {base} (JARVIS_WORKSPACE_STRICT is on)."
@@ -93,6 +143,9 @@ def resolve_write_path(path: str, content: str = "") -> tuple[Path | None, str]:
     target = (base / rel).resolve()
     if not _inside(target, base):
         return None, f"Refused: {raw!r} would land outside {base}."
+    bad = sensitive_reason(str(target), write=True)
+    if bad:
+        return None, f"Refused: {bad}."
     return target, ""
 
 

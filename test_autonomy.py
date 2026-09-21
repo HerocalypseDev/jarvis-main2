@@ -2429,7 +2429,7 @@ def test_b_folders_can_be_added_removed_and_must_be_inside_the_profile(A, O, mon
 def test_b_tool_and_dashboard_routes(client, A, O):
     f = O.fake
     assert "default_documents" in O.handle_tool({"action": "list_rules"})
-    assert "saved" in O.handle_tool({"action": "add_rule", "name": "photos", "extensions": [".heic"], "dest_dir": "~/Pictures/Phone"})
+    assert "saved" in O.handle_tool({"action": "add_rule", "name": "photos", "extensions": [".heic"], "dest_dir": "~/Pictures/Phone"}, "voice")
     O.handle_new_file(str(_file(O, "Downloads/z.pdf")))
     assert "z.pdf" in O.handle_tool({"action": "recent"})
     import importlib

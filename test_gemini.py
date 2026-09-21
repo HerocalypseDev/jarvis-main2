@@ -318,14 +318,14 @@ def test_dashboard_llm_endpoints(monkeypatch, tmp_path):
             return "Switched to Gemini (gm)."
         return "Gemini isn't set up."
 
-    with TestClient(dash._build_app()) as c:  # not wired: harmless defaults
+    with TestClient(dash._build_app(), base_url="http://127.0.0.1:8765") as c:  # not wired: harmless defaults
         assert c.get("/api/llm").json() == {"llm": None}
         assert c.post("/api/llm", json={"provider": "gemini"}).status_code == 501
-    with TestClient(dash._build_app(get_llm=get_llm, set_llm=set_llm)) as c:
+    with TestClient(dash._build_app(get_llm=get_llm, set_llm=set_llm), base_url="http://127.0.0.1:8765") as c:
         assert c.get("/api/llm").json()["llm"]["provider"] == "claude"
         r = c.post("/api/llm", json={"provider": "gemini"})
         assert r.status_code == 200 and r.json()["ok"] and r.json()["llm"]["provider"] == "gemini"
         bad = c.post("/api/llm", json={"provider": "nope"})
         assert bad.status_code == 400 and not bad.json()["ok"]
-    with TestClient(dash._build_app(get_llm=lambda: 1 / 0, set_llm=set_llm)) as c:
+    with TestClient(dash._build_app(get_llm=lambda: 1 / 0, set_llm=set_llm), base_url="http://127.0.0.1:8765") as c:
         assert c.get("/api/llm").json() == {"llm": None}  # a failing provider lookup never breaks the page

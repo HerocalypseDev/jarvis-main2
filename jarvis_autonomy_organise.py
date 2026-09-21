@@ -407,6 +407,9 @@ def overview() -> dict:
 
 def handle_tool(inp: dict, source: str | None = None) -> str:
     action = str(inp.get("action") or "list_rules").lower()
+    # Audit M3: changing which folders/rules Jarvis organises is configuration; only a person at the PC.
+    if action in ("add_rule", "remove_rule", "add_root", "remove_root") and source not in ("voice", "text", "dashboard"):
+        return "Changing organise folders or rules is only accepted when you ask from the PC, not from an unattended run or the phone."
     if action == "add_rule":
         return add_rule(str(inp.get("name") or ""), inp.get("extensions"), str(inp.get("dest_dir") or ""),
                         str(inp.get("rule_action") or "move"))
