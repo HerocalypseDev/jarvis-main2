@@ -87,6 +87,15 @@ def test_voice_latency_context_start_current_end():
         ("open notepad", "open_app"),
         ("set a timer for five minutes", "timer_reminder"),
         ("summarize my last three emails", "complex"),
+        ("Hi", "greeting"),
+        ("hey jarvis", "greeting"),
+        ("Hello!", "greeting"),
+        ("thanks", "thanks"),
+        ("thank you jarvis", "thanks"),
+        # a real command that only happens to start with a greeting/thanks word must not be
+        # swallowed by the whole-transcript greeting/thanks patterns
+        ("hi, what's the weather today", "complex"),
+        ("thanks, what time is it", "time"),
     ],
 )
 def test_classify_intent(text, expected):
@@ -791,6 +800,46 @@ def test_play_pcm_stream_asks_portaudio_for_high_latency_buffering(jarvis, monke
     assert seen_kwargs.get("latency") == "high"
 
 
+def test_play_pcm_stream_jitter_buffer_merges_leading_small_chunks_then_streams(jarvis, monkeypatch):
+    """Voice-bug follow-up (2026-09-22): the first few chunks off a live WebSocket are the most
+    uneven, so buffer JARVIS_TTS_JITTER_BUFFER_MS worth of audio before the very first device
+    write, then pass every later chunk straight through — PortAudio's own latency="high" buffer
+    absorbs ordinary jitter from there, so buffering every chunk would only add latency."""
+    monkeypatch.setattr(jarvis, "TTS_JITTER_BUFFER_MS", 10.0)  # target = 1000*2*0.01 = 20 bytes
+    out_ref = []
+
+    class _CapturingOutputStream(_FakeOutputStream):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            out_ref.append(self)
+
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _CapturingOutputStream)
+    chunks = [b"\x00\x00" * 5, b"\x00\x00" * 5, b"\x00\x00" * 5]  # 10, 10, 10 bytes
+    calls = []
+    played = jarvis._play_pcm_stream(iter(chunks), 1000, on_first_chunk=lambda: calls.append(1))
+    assert played is True
+    assert calls == [1]  # still fires exactly once, at the merged first write
+    written = out_ref[0].written
+    assert len(written) == 2  # first two chunks merged (reaches the 20-byte target), third is its own write
+    assert written[0].shape[0] == 10  # 20 bytes / 2 bytes-per-sample
+    assert written[1].shape[0] == 5
+
+
+def test_play_pcm_stream_jitter_buffer_disabled_writes_each_chunk_immediately(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "TTS_JITTER_BUFFER_MS", 0)
+    out_ref = []
+
+    class _CapturingOutputStream(_FakeOutputStream):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            out_ref.append(self)
+
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _CapturingOutputStream)
+    chunks = [b"\x00\x00" * 5, b"\x00\x00" * 5, b"\x00\x00" * 5]
+    jarvis._play_pcm_stream(iter(chunks), 1000)
+    assert len(out_ref[0].written) == 3  # no merging — the pre-fix, unbuffered behavior
+
+
 def test_speak_streamed_happy_path(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
     monkeypatch.setattr(
@@ -877,7 +926,9 @@ def test_speak_text_streams_current_sentence_but_prefetch_never_streams(jarvis, 
 def test_speak_text_skips_streaming_on_cache_hit(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "k")
     monkeypatch.setattr(jarvis.tts_deepgram, "STREAM_ENABLED", True)
-    key = jarvis.cache.stable_hash("deepgram", jarvis.tts_deepgram.DEEPGRAM_TTS_MODEL, "Cached phrase.")
+    key = jarvis.cache.stable_hash(
+        jarvis._TTS_DEEPGRAM_CACHE_TAG, jarvis.tts_deepgram.DEEPGRAM_TTS_MODEL, "Cached phrase."
+    )
     jarvis._tts_disk_cache.put(key, b"\x01\x00" * 10, 24000)
 
     def boom(text, **k):
@@ -949,6 +1000,28 @@ def test_filler_phrase_speaks_when_slow(jarvis, monkeypatch):
     done = __import__("threading").Event()
     jarvis._speak_filler_if_slow(done)
     assert spoken == [jarvis._FILLER_PHRASE]
+
+
+def test_tts_cache_tag_bump_invalidates_pre_fix_stale_entries(jarvis, monkeypatch):
+    """Voice-bug follow-up (2026-09-22): TTSDiskCache.get() has no integrity check on what it
+    reads back — a clip cached under the old bare "deepgram" hash tag (e.g. a truncated stream
+    from before TTS_LIVE_STREAM_MIN_CHARS existed to guard short phrases like the filler from
+    ever streaming) would otherwise be replayed forever with no way to detect it's bad. The tag
+    was bumped to _TTS_DEEPGRAM_CACHE_TAG specifically so any such stale entry is a guaranteed
+    miss and gets resynthesized fresh instead."""
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    stale_key = jarvis.cache.stable_hash("deepgram", jarvis.tts_deepgram.DEEPGRAM_TTS_MODEL, "One moment.")
+    jarvis._tts_disk_cache.put(stale_key, b"\x01\x00" * 3, 24000)  # stand-in for a corrupted clip
+    fresh_calls = []
+    monkeypatch.setattr(
+        jarvis.tts_deepgram, "synthesize",
+        lambda t, timeout_s=None: fresh_calls.append(t) or (b"\x02\x00" * 400, 24000),
+    )
+    played = []
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: played.append(raw))
+    jarvis.speak_text("One moment.")
+    assert fresh_calls == ["One moment."]  # the stale entry was ignored, not served
+    assert played == [b"\x02\x00" * 400]
 
 
 # --- audit-and-fix pass (2026-09-22) ---------------------------------------------------------
@@ -1162,6 +1235,15 @@ def test_deterministic_intent_reply_time_and_date(jarvis):
     assert jarvis._deterministic_intent_reply("open_app") is None
 
 
+def test_deterministic_intent_reply_greeting_and_thanks(jarvis):
+    """Voice-bug follow-up (2026-09-22): "Hi" and "thanks" answer with no Claude call at all —
+    the fix for the reported "One momen-" cutoff is that the filler-phrase timer never starts in
+    the first place for these, since jarvis.py only spawns it on the branch that needs a real
+    LLM round trip."""
+    assert jarvis._deterministic_intent_reply("greeting") == "Hi, how can I help?"
+    assert jarvis._deterministic_intent_reply("thanks") == "You're welcome."
+
+
 def test_reduced_tools_for_volume_intent(jarvis):
     tools = jarvis._reduced_tools_for_intent("volume", "turn the volume up")
     assert tools is not None
@@ -1194,6 +1276,28 @@ def test_deterministic_reply_skips_run_agent_loop_entirely(jarvis, monkeypatch):
     out = []
     jarvis.handle_text_command("what time is it", source="text", reply_sink=out.append)
     assert out and out[0].startswith("It's ")
+
+
+def test_greeting_command_skips_run_agent_loop_and_never_spawns_filler(jarvis, monkeypatch):
+    """The exact reported bug: saying "Hi" must produce a clean full reply, never the filler
+    phrase and never a cut-off. Since the deterministic-reply branch is taken, jarvis.py never
+    reaches the line that starts the filler-phrase watcher thread at all — asserted here by
+    monkeypatching _speak_filler_if_slow to fail loudly if it's ever invoked."""
+
+    def boom(*a, **k):
+        raise AssertionError("run_agent_loop must not be called for a greeting")
+
+    def filler_boom(*a, **k):
+        raise AssertionError("filler must never start for a deterministic-reply command")
+
+    monkeypatch.setattr(jarvis, "run_agent_loop", boom)
+    monkeypatch.setattr(jarvis, "_speak_filler_if_slow", filler_boom)
+    spoken = []
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+    jarvis.handle_text_command("Hi", source="voice")
+    assert spoken  # the real reply was spoken in full, not a filler
+    assert spoken[0] != jarvis._FILLER_PHRASE
 
 
 def test_volume_command_gets_reduced_tools(jarvis, monkeypatch):

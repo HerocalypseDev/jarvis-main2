@@ -83,7 +83,15 @@ def recent(n: int = 20) -> list[dict]:
 # --- cheap deterministic intent classifier (Phase 2.3 — logged only; jarvis.py's default model
 # is already Haiku, so there is no cheaper model left to route simple intents to. Logging the
 # intent still gives real signal for future routing/metrics decisions.) -----------------------
+# "greeting"/"thanks" are whole-transcript matches (\A...\Z, not a bare \b search) on purpose:
+# "hi" alone is trivial social noise, but "hi, what's the weather" is a real command that only
+# happens to start with "hi" and must fall through to "complex" like anything else — see
+# jarvis.py's _deterministic_intent_reply, which answers these two with no LLM call at all
+# (voice-bug follow-up, 2026-09-22: this also means the filler-phrase timer for these transcripts
+# never starts in the first place, since jarvis.py only spawns it once a Claude call is needed).
 _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("greeting", re.compile(r"\A\s*(?:hi|hey|hello|hiya|yo)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
+    ("thanks", re.compile(r"\A\s*(?:thanks|thank you|thx|ty)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
     ("time", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?time\b|\bcurrent time\b", re.I)),
     ("date", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?date\b|\bwhat day is it\b", re.I)),
     ("volume", re.compile(r"\bvolume\b|\b(?:mute|unmute)\b|\bturn (?:it |the sound )?(?:up|down)\b", re.I)),

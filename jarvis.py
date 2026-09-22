@@ -775,6 +775,17 @@ def _play_pcm_bytes(raw: bytes, sample_rate: int) -> None:
             jarvis_speaking.clear()
 
 
+# Jitter buffer (voice-bug follow-up, 2026-09-22): accumulate this many ms of real audio before
+# the *first* write to the output device, on top of latency="high" — the first few chunks off a
+# live WebSocket are the most uneven (TLS handshake/first-generation jitter hasn't settled yet),
+# and starting playback on a skinny first chunk is exactly when a starve-induced crackle is most
+# audible. 0 disables it (every chunk is written to the device as soon as it's decoded, the
+# pre-fix behavior). Chunks after the first write are never re-buffered — PortAudio's own
+# latency="high" internal buffer already absorbs ordinary jitter from there on, so buffering twice
+# would only add latency for no extra smoothness.
+TTS_JITTER_BUFFER_MS = float(os.environ.get("JARVIS_TTS_JITTER_BUFFER_MS") or 120)
+
+
 def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
     """Plays int16 PCM chunks as they're produced by an iterable (a live WebSocket generator),
     via sd.OutputStream instead of sd.play, so playback of the first chunk can start before later
@@ -782,8 +793,9 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
     the output device — the caller uses this to decide whether it's safe to fall back to a
     different engine (never once real audio has started playing; that would double-speak) even
     if a later chunk in the same stream then fails. on_first_chunk, if given, is called exactly
-    once, the instant the *first* chunk is written — so the caller can mark a true
-    time-to-first-audio instead of one measured after the whole stream finished."""
+    once, the instant the *first* chunk is written (which, with the jitter buffer on, is a little
+    later than the first raw network chunk — see TTS_JITTER_BUFFER_MS) — so the caller can mark a
+    true time-to-first-audio instead of one measured after the whole stream finished."""
     any_played = False
     # A WebSocket frame boundary from Deepgram has no reason to land on a 2-byte int16 sample
     # boundary — it's an arbitrary chunking of a raw PCM byte stream. An odd-length chunk used to
@@ -792,6 +804,18 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
     # mid-word even on a perfectly healthy connection). Carry any trailing odd byte over to be
     # prepended to the next chunk instead of parsing it prematurely.
     leftover = b""
+    jitter_target = int(sample_rate * 2 * (TTS_JITTER_BUFFER_MS / 1000.0))
+    prebuffer = bytearray()
+    primed = jitter_target <= 0  # disabled -> every chunk goes straight to the device
+
+    def _write(out, data: bytes) -> None:
+        nonlocal any_played
+        pcm_i16 = np.frombuffer(data, dtype=np.int16)
+        out.write((pcm_i16.astype(np.float32) / 32768.0).reshape(-1, 1))
+        if not any_played and on_first_chunk is not None:
+            on_first_chunk()
+        any_played = True
+
     with _playback_lock:
         jarvis_speaking.set()
         try:
@@ -809,11 +833,18 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
                         leftover = b""
                     if not buf:
                         continue
-                    pcm_i16 = np.frombuffer(buf, dtype=np.int16)
-                    out.write((pcm_i16.astype(np.float32) / 32768.0).reshape(-1, 1))
-                    if not any_played and on_first_chunk is not None:
-                        on_first_chunk()
-                    any_played = True
+                    if not primed:
+                        prebuffer += buf
+                        if len(prebuffer) < jitter_target:
+                            continue
+                        buf, prebuffer = bytes(prebuffer), bytearray()
+                        primed = True
+                    _write(out, buf)
+                if not primed and prebuffer:
+                    # The stream ended before the jitter target was ever reached (a short
+                    # utterance, or a filler-length phrase) — play what we have instead of
+                    # silently dropping it.
+                    _write(out, bytes(prebuffer))
         except Exception as e:
             log.warning(
                 "Deepgram streaming TTS playback failed%s: %s",
@@ -910,10 +941,20 @@ def _use_deepgram_tts_stream() -> bool:
     return _use_deepgram_tts() and tts_deepgram.STREAM_ENABLED
 
 
+# Voice-bug follow-up (2026-09-22): bumped from the bare "deepgram" tag used since the
+# cloud-latency pass. TTSDiskCache.get() has no integrity check on what it reads back — a clip
+# cached under the old tag (e.g. a stream that closed before finishing, back before
+# TTS_LIVE_STREAM_MIN_CHARS existed to guard short phrases like the filler from ever streaming)
+# would be indistinguishable from a good one and served forever. Bumping the tag makes every
+# pre-existing "deepgram" entry a guaranteed miss, so it's resynthesized fresh once instead of
+# being replayed as a cut-off clip. Bump again if this class of bug resurfaces.
+_TTS_DEEPGRAM_CACHE_TAG = "deepgram2"
+
+
 def _tts_cache_keys(text: str) -> dict[str, str]:
     keys: dict[str, str] = {}
     if _use_deepgram_tts():
-        keys["deepgram"] = cache.stable_hash("deepgram", tts_deepgram.DEEPGRAM_TTS_MODEL, text)
+        keys["deepgram"] = cache.stable_hash(_TTS_DEEPGRAM_CACHE_TAG, tts_deepgram.DEEPGRAM_TTS_MODEL, text)
     if FISH_AUDIO_API_KEY:
         keys["fish"] = cache.stable_hash(
             "fish", FISH_AUDIO_MODEL, FISH_AUDIO_VOICE_ID, text, sleep_mode.fish_audio_prosody_overrides()
@@ -1087,7 +1128,7 @@ def speak_text(text: str) -> None:
                         already_played = True
                         raw, sr, backend = s_raw, s_sr, s_backend
                         if complete and raw and cache.enabled("tts") and len(sentence) <= TTS_CACHE_MAX_CHARS:
-                            key = cache.stable_hash("deepgram", tts_deepgram.DEEPGRAM_TTS_MODEL, sentence)
+                            key = cache.stable_hash(_TTS_DEEPGRAM_CACHE_TAG, tts_deepgram.DEEPGRAM_TTS_MODEL, sentence)
                             _tts_disk_cache.put(key, raw, sr)
                 if not already_played:
                     raw, sr, backend = _synthesize_and_cache(sentence)
@@ -8103,6 +8144,13 @@ def _deterministic_intent_reply(intent: str) -> str | None:
         return f"It's {now.strftime('%I:%M %p').lstrip('0')}."
     if intent == "date":
         return f"Today is {now.strftime('%A, %B %d, %Y')}."
+    # Voice-bug follow-up (2026-09-22): a pure greeting/thanks never needs Claude at all, so it
+    # never starts the filler-phrase timer either (that only spawns below, once a real LLM call
+    # is about to happen) — the exact case the reported "One momen-" cutoff was heard on.
+    if intent == "greeting":
+        return "Hi, how can I help?"
+    if intent == "thanks":
+        return "You're welcome."
     return None
 
 

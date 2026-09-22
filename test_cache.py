@@ -212,7 +212,9 @@ def test_phone_command_gets_no_spoken_ack(jarvis, monkeypatch):
         jarvis, "run_agent_loop",
         lambda transcript, tone=None, narrate=False, tools_override=None: "done",
     )
-    jarvis.handle_text_command("hello", source="telegram", reply_sink=sunk.append)
+    # Not "hello" — that's now a deterministic-intent greeting (voice-bug follow-up, 2026-09-22)
+    # and would skip the mocked run_agent_loop entirely, which isn't what this test is about.
+    jarvis.handle_text_command("what's on my calendar today", source="telegram", reply_sink=sunk.append)
     assert "Message received." not in spoken
     assert sunk == ["done"]
 

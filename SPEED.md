@@ -79,6 +79,7 @@ pass; see the sections below.
 | `JARVIS_DEEPGRAM_TTS_STREAM` | `1` (on) | Use Deepgram's streaming speak WebSocket (Phase B) instead of the plain REST call. |
 | `JARVIS_DEEPGRAM_TTS_STREAM_TIMEOUT_S` | `15.0` | Socket timeout for the TTS WebSocket. |
 | `JARVIS_LLM_TTS_STREAM` | `1` (on) | Stream Claude's own response token-by-token and speak complete sentences as they arrive (Phase C), for the agent loop's first round trip only. Claude-only; no-ops on Gemini. |
+| `JARVIS_TTS_JITTER_BUFFER_MS` | `120` | `_play_pcm_stream` buffers this many ms of decoded PCM before the *first* write to the output device (see "Playback jitter buffer" below). `0` disables it — every chunk is written the instant it's decoded, the pre-fix behavior. |
 
 ## Backend order
 
@@ -134,6 +135,17 @@ command on the same thread that runs `run_agent_loop`/narration); the filler's o
 holds a direct reference to the same `Event`, so no cross-thread lookup is needed on that side.
 Without this, a command that narrated at ~1s and kept working past 2.5s would get a stale "One
 moment." spoken after real content had already answered part of the question.
+
+**Voice-bug follow-up (2026-09-22): pure greetings/thanks never start the filler timer at all.**
+Reported symptom: after saying something short like "Hi", Jarvis would often say "One momen-"
+and cut off instead of a clean greeting. `_deterministic_intent_reply` (see the cloud-latency
+pass's Phase D below) now answers a whole-transcript greeting ("hi", "hey jarvis", "hello!") or
+thanks ("thanks", "thank you jarvis") with a fixed reply and zero LLM calls — the same branch
+`_handle_text_command_impl` already uses for "what time is it". Since the filler-phrase watcher
+thread is only ever spawned on the branch that calls `run_agent_loop`, a greeting/thanks command
+can no longer race the filler at all: there's nothing left to be slow. A command that only
+*starts* with a greeting ("hi, what's the weather") still falls through to the normal pipeline —
+the patterns require the whole trimmed transcript to be the greeting, not just a prefix.
 
 ## Lazy Whisper preload
 
@@ -198,6 +210,47 @@ caller never falls back to Fish/Piper and double-speaks what already played) but
 it's never cached as if it were the full utterance) — `latency.tts_backend` is `deepgram_stream`
 either way. Verified live: real audio played through actual speakers via `_speak_streamed`
 end-to-end.
+
+### Playback jitter buffer (voice-bug follow-up, 2026-09-22)
+
+Reported symptom: the voice still breaks/stutters/cuts on some longer replies. `_play_pcm_stream`
+now buffers `JARVIS_TTS_JITTER_BUFFER_MS` (default 120ms) of decoded PCM before its *first*
+`out.write()`, on top of the existing `latency="high"` OutputStream setting — the first chunks off
+a live WebSocket are the most uneven (TLS handshake / first-generation jitter hasn't settled yet),
+and starting playback on a skinny first chunk is exactly when a starve-induced crackle is most
+audible. Every chunk *after* that first buffered write is passed straight through — PortAudio's
+own `latency="high"` internal buffer already absorbs ordinary jitter from there, so buffering
+every chunk would only add latency for no extra smoothness. A stream that ends before ever
+reaching the target (a short utterance) still plays in full — the leftover buffer is flushed once
+the generator ends, never silently dropped. `0` disables buffering entirely (each chunk written
+immediately, the pre-fix behavior) if this machine's network is smooth enough that the extra
+~120ms of time-to-first-audio isn't worth it. Odd-byte-boundary handling is unaffected — it still
+runs before a chunk is added to either buffer.
+
+A mid-stream failure *after* audio has started still plays whatever was already buffered/written
+and stops there (never restarts from the top, which would double-speak) — this was already the
+design and is unchanged; see Phase B above. This machine's actual break/stutter reports could not
+be reproduced or root-caused further without live audio hardware in this environment — the jitter
+buffer is a real, defensible hardening of a known-uneven-timing failure mode, not a confirmed fix
+for one specific incident.
+
+### TTS disk cache: corrupted-clip hardening (voice-bug follow-up, 2026-09-22)
+
+`jarvis_cache.TTSDiskCache.get()` has no integrity check on what it reads back from disk — any
+syntactically valid (but short/truncated) WAV file would be served as a cache hit forever, with
+no way to tell it apart from a good one. Investigating the "One momen-" cutoff report turned up
+that the filler phrase and short replies were already guarded against ever *starting* a live
+stream (`TTS_LIVE_STREAM_MIN_CHARS`, existing), but nothing would have caught a clip that was
+already cached truncated from *before* that guard existed (or from any other future synthesis
+hiccup) — it would simply be replayed, identically truncated, on every later use of that exact
+phrase forever, since a cache hit is checked before any synthesis is attempted at all. The shared
+Deepgram cache-key tag was bumped (`jarvis._TTS_DEEPGRAM_CACHE_TAG`, was the bare `"deepgram"`) so
+every pre-existing entry under the old tag is a guaranteed miss on next use — one silent
+resynthesis per previously-cached phrase, then cached clean under the new tag. Bump the tag again
+if a corrupted-cache-entry report resurfaces; a real content-integrity check (e.g. a minimum
+plausible duration for the text) was considered and left out for now — it's not reliably able to
+catch a *modest* tail-truncation (a phrase cut a syllable short is still well over any duration
+floor that wouldn't also false-positive on legitimately fast, cached-good speech).
 
 **Voice-bug audit pass (2026-09-22)** found a real bug in `_play_pcm_stream`: a WebSocket frame
 boundary from Deepgram has no reason to land on a 2-byte int16 sample boundary — it's an arbitrary
@@ -393,3 +446,46 @@ thread was joined without a timeout (now bounded, degrades to synchronous re-syn
 than hanging); and STT circuit-breaker tripping/recovery and a real `TimeoutError` path weren't
 covered by tests (now are). No catastrophic-gate, autonomy-permission, or fallback-removal
 changes were made. Full suite green afterward.
+
+## Voice-bug follow-up pass (2026-09-22, second report)
+
+User report: (1) short things like "Hi" often got a cut-off "One momen-" instead of a clean
+greeting or a clean full filler phrase; (2) longer replies still sometimes break/stutter.
+
+Root-cause tracing (see the sections above for the mechanics): under the existing code, playback
+is fully serialized through `_playback_lock` — every `_play_pcm_bytes`/`_play_pcm_stream` call
+holds it for its entire `sd.play()+sd.wait()` (or `OutputStream` loop) duration, and the filler
+phrase was already guarded (`TTS_LIVE_STREAM_MIN_CHARS`) against ever opening a live stream in
+the first place — so a genuine *mid-phrase* cutoff from two threads fighting over the audio
+device could not be reproduced from the code as it stood. The most concrete, code-level
+explanations found and fixed:
+
+1. **The filler could still fire and race a real reply for the exact reported trigger case** — a
+   short conversational transcript still went through a full `run_agent_loop` call (and its
+   2.5s filler timer) even though the answer is always the same. Fixed with a deterministic
+   greeting/thanks fast path (see "Filler phrase" above) — for "Hi" specifically, the filler
+   timer is now never started at all.
+2. **A previously-cached truncated clip would be replayed forever with no way to detect it**,
+   since `TTSDiskCache.get()` has no integrity check. Fixed by bumping the shared Deepgram
+   cache-key tag (see "TTS disk cache" above), which forces a fresh resynthesis of anything
+   cached under the old tag.
+3. **Longer replies' network-driven stutter** is hardened with a jitter buffer in
+   `_play_pcm_stream` (see "Playback jitter buffer" above) on top of the existing
+   `latency="high"` setting.
+
+**Residual, accepted:** none of this environment's testing can drive real audio hardware, so
+none of the above was confirmed against an actual live cutoff — these are defensible, real gaps
+that were found and closed, not a confirmed root cause of one specific recording. If the cutoff
+recurs after this pass, the next thing to check on the live machine is whether more than one
+Jarvis process is running at once (`stop_jarvis.ps1` / Task Manager) — two processes each hold
+their *own* `_playback_lock` and would genuinely fight over the shared audio device in exactly
+the way this pass's tracing ruled out for a single process.
+
+Tests: `test_deepgram_voice.py` grew from 105 to 116 (greeting/thanks intent classification and
+deterministic-reply tests, an end-to-end "Hi never starts the filler thread" test, jitter-buffer
+merge/disable tests, and a stale-cache-tag-invalidation test); one pre-existing test in
+`test_cache.py` (`test_phone_command_gets_no_spoken_ack`) was updated to use a non-greeting
+transcript, since "hello" is now itself a deterministic intent. Full suite: 743 passed (the same
+4 pre-existing, unrelated urgent-email-monitor failures untouched — see CLAUDE.md's "Audit
+hardening" section). No catastrophic-gate, autonomy-permission, or fallback-removal changes were
+made.
