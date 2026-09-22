@@ -14,7 +14,11 @@ If fso.FileExists(pyFile) Then
 End If
 logPath = dir & "\jarvis_standalone.log"
 If fso.FileExists(logPath) Then
-    If fso.GetFile(logPath).Size > 5242880 Then fso.DeleteFile logPath   ' keep the log from growing forever
+    If fso.GetFile(logPath).Size > 5242880 Then   ' keep the log from growing forever, but keep one old copy
+        oldPath = dir & "\jarvis_standalone.old.log"
+        If fso.FileExists(oldPath) Then fso.DeleteFile oldPath
+        fso.MoveFile logPath, oldPath
+    End If
 End If
 cmd = "cmd /c cd /d """ & dir & """ && """ & py & """ -u jarvis.py >> """ & logPath & """ 2>&1"
 sh.Run cmd, 0, False   ' 0 = hidden window, False = don't wait

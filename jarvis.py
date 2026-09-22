@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1448,6 +1449,15 @@ AGENT_TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "self_check",
+        "description": (
+            "Check Jarvis's own health: whether Claude and Gemini actually answer (credit, key, "
+            "outage), each tool server (Gmail, Calendar, browser...), microphone, speakers, voice "
+            "engines, camera, disk. Use when something seems broken or the user asks if you're OK."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "api_spend",
         "description": (
             "Report how much the user has spent on the Anthropic (Claude) API. Uses Anthropic's "
@@ -2835,6 +2845,53 @@ def _record_api_usage(body: dict, result: dict) -> None:
     ).start()
 
 
+# Automatic failover: when the Claude brain is selected but a request fails for good (credit
+# balance, bad key, outage after retries, network), the same request is answered by Gemini if a
+# Gemini key is set. After an account-level failure (billing/auth) Claude is skipped entirely for
+# LLM_FAILOVER_COOLDOWN_S so every command doesn't first wait on a doomed call.
+# JARVIS_LLM_FAILOVER=0 disables it.
+LLM_FAILOVER_COOLDOWN_S = 600
+_llm_failover = {"skip_claude_until": 0.0, "last_reason": "", "announced": False}
+
+
+def _llm_failover_enabled() -> bool:
+    return (os.environ.get("JARVIS_LLM_FAILOVER") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _failover_to_gemini(body: dict, timeout: int, reason: str, account_level: bool = False) -> dict | None:
+    if account_level:
+        _llm_failover["skip_claude_until"] = time.monotonic() + LLM_FAILOVER_COOLDOWN_S
+    _llm_failover["last_reason"] = reason
+    if not (_llm_failover_enabled() and gemini.api_key()):
+        return None
+    log.warning("Claude unavailable (%s); answering with Gemini instead.", reason)
+    result = gemini.call(body, timeout, _urlopen_hard_timeout)
+    if result is None:
+        return None
+    _record_api_usage(body, result)
+    if not _llm_failover["announced"]:
+        _llm_failover["announced"] = True
+        dashboard.notify({"type": "llm_failover", "data": {"reason": reason}})
+        threading.Thread(
+            target=queue_or_deliver_notification,
+            args=(f"Heads up: Claude isn't available ({reason}), so I'm using Gemini for now.",),
+            daemon=True,
+        ).start()
+    return result
+
+
+def _claude_failure_reason(code: int, detail: str) -> tuple[str, bool]:
+    """(short spoken reason, account_level) for an HTTP error from Anthropic."""
+    d = detail.lower()
+    if "credit balance" in d or code == 402:
+        return "the Anthropic credit balance is too low", True
+    if code in (401, 403):
+        return "the Anthropic API key was rejected", True
+    if code in (429, 529) or code >= 500:
+        return "Anthropic's API is overloaded or down", False
+    return f"Anthropic returned an error ({code})", False
+
+
 def _claude_request(body: dict, timeout: int) -> dict | None:
     if _llm_provider() == "gemini":
         result = gemini.call(body, timeout, _urlopen_hard_timeout)
@@ -2844,7 +2901,9 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
         log.warning("Set ANTHROPIC_API_KEY in the environment to use Claude.")
-        return None
+        return _failover_to_gemini(body, timeout, "no Anthropic API key is set", account_level=True)
+    if time.monotonic() < _llm_failover["skip_claude_until"] and _llm_failover_enabled() and gemini.api_key():
+        return _failover_to_gemini(body, timeout, _llm_failover["last_reason"])
     encoded = json.dumps(body).encode()
     for attempt in range(1, CLAUDE_MAX_ATTEMPTS + 1):
         req = urllib.request.Request(
@@ -2878,12 +2937,13 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
                 encoded = json.dumps(_strip_cache_ttl(body)).encode()
                 continue
             if not transient or attempt == CLAUDE_MAX_ATTEMPTS:
-                return None
+                reason, account_level = _claude_failure_reason(e.code, detail)
+                return _failover_to_gemini(body, timeout, reason, account_level)
             time.sleep(CLAUDE_RETRY_DELAY_S)
         except Exception as e:
             log.warning("Claude request failed (attempt %d): %s", attempt, e)
             if attempt == CLAUDE_MAX_ATTEMPTS:
-                return None
+                return _failover_to_gemini(body, timeout, "Anthropic couldn't be reached")
             time.sleep(CLAUDE_RETRY_DELAY_S)
     return None
 
@@ -7297,6 +7357,8 @@ def _execute_tool_impl(
                 result = "No text given."
         elif tool_name == "system_status":
             result = system_status() or "Couldn't read system status."
+        elif tool_name == "self_check":
+            result = self_check_report()
         elif tool_name == "api_spend":
             try:
                 spend_days = int(inp.get("days") or 30)
@@ -7805,8 +7867,8 @@ def _claude_stream_first_round(body: dict, timeout: int, speak_live, on_first_to
     Returns the same dict shape _claude_request returns non-streamed, or None on any failure —
     including when Gemini is the active provider (Claude-only; see SPEED.md) — so the caller can
     always fall back to the ordinary non-streaming call for this exact round trip."""
-    if _llm_provider() != "claude":
-        return None
+    if _llm_provider() != "claude" or time.monotonic() < _llm_failover["skip_claude_until"]:
+        return None  # during a failover cooldown the non-streaming path goes straight to Gemini
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
         return None
@@ -8193,10 +8255,239 @@ def handle_text_command(
 
 
 # --- simple-intent fast path (cloud-latency pass, Phase D) -------------------------------------
-def _deterministic_intent_reply(intent: str) -> str | None:
+# --- QOL pass (2026-09-23): self-check, timers/stopwatch, repeat/shorter, last actions, undo ---
+
+_last_reply = {"text": ""}  # last reply Jarvis gave (full text), for "repeat that" / "shorter"
+
+
+def _claude_live_problem() -> str | None:
+    """One ~10-token request straight to Anthropic (no failover) to see if Claude really works."""
+    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    if not key:
+        return "no Anthropic API key is set"
+    body = {"model": CLAUDE_MODEL, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
+    req = urllib.request.Request(CLAUDE_API_URL, data=json.dumps(body).encode(), method="POST", headers={
+        "x-api-key": key, "anthropic-version": CLAUDE_API_VERSION, "content-type": "application/json"})
+    try:
+        _urlopen_hard_timeout(req, 15)
+        return None
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode(errors="replace")
+        except Exception:
+            detail = ""
+        return _claude_failure_reason(e.code, detail)[0]
+    except Exception as e:
+        return f"Anthropic couldn't be reached ({type(e).__name__})"
+
+
+def _gemini_live_problem() -> str | None:
+    key = gemini.api_key()
+    if not key:
+        return "no Gemini API key is set"
+    req = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{gemini.model_name()}",
+        headers={"x-goog-api-key": key})  # metadata lookup: free, no quota used
+    try:
+        _urlopen_hard_timeout(req, 15)
+        return None
+    except urllib.error.HTTPError as e:
+        return f"Gemini returned HTTP {e.code}"
+    except Exception as e:
+        return f"Gemini couldn't be reached ({type(e).__name__})"
+
+
+def self_check_report() -> str:
+    """Checks every moving part and says what's broken first. Works with no LLM at all, which is
+    exactly when it's needed."""
+    problems: list[str] = []
+    fine: list[str] = []
+    checks = {}
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        checks["claude"] = ex.submit(_claude_live_problem)
+        checks["gemini"] = ex.submit(_gemini_live_problem)
+    provider = _llm_provider()
+    for name, fut in checks.items():
+        label = "Claude" if name == "claude" else "Gemini"
+        prob = fut.result()
+        active = " (the active brain)" if provider == name else ""
+        (problems.append(f"{label}{active}: {prob}") if prob else fine.append(f"{label}{active}"))
+    services = _dashboard_get_services_status()
+    tool_servers = [s for s in services if not s["name"].startswith("phone")]
+    for s in tool_servers:
+        if s["status"] == "failed":
+            problems.append(f"the {s['name']} tool server failed to connect ({s['detail']})")
+    ok_servers = [s["name"] for s in tool_servers if s["status"] == "connected"]
+    if tool_servers and all(s["status"] == "pending" for s in tool_servers):
+        fine.append("tool servers not started yet (they start on first use)")
+    elif tool_servers:
+        fine.append(f"{len(ok_servers)} of {len(tool_servers)} tool servers connected")
+    for kind in ("input", "output"):
+        try:
+            dev = sd.query_devices(kind=kind)
+            fine.append(f"{'microphone' if kind == 'input' else 'speakers'} ({dev['name']})")
+        except Exception as e:
+            problems.append(f"no working {'microphone' if kind == 'input' else 'speaker'} ({e})")
+    engines = [n for n, on in (("Deepgram", bool(tts_deepgram.DEEPGRAM_API_KEY)), ("Fish Audio", bool(FISH_AUDIO_API_KEY)),
+                               ("Piper", (_piper_voices_dir() / f"{PIPER_VOICE}.onnx").exists())) if on]
+    (fine.append("voice: " + " then ".join(engines)) if engines else problems.append("no text-to-speech engine is set up"))
+    if face.enabled():
+        prob = face.health_problem()
+        (problems.append(f"camera/face recognition: {prob}") if prob else fine.append("face recognition"))
+    try:
+        du = shutil.disk_usage(Path.home().anchor or "C:\\")
+        pct_free = du.free * 100 // du.total
+        (problems.append(f"the system disk is almost full ({pct_free}% free)") if pct_free < 10
+         else fine.append(f"disk {pct_free}% free"))
+    except OSError:
+        pass
+    if _llm_failover["last_reason"] and provider == "claude":
+        fine.append(f"automatic Gemini failover is on (last reason: {_llm_failover['last_reason']})")
+    fine.append("autonomy " + ("on" if autonomy.enabled() else "off"))
+    head = ("Everything's working." if not problems else
+            f"{len(problems)} problem{'s' if len(problems) > 1 else ''}: " + "; ".join(problems) + ".")
+    return head + " Working: " + ", ".join(fine) + "."
+
+
+# Timers and stopwatch: parsed locally, fired by a threading.Timer, announced as urgent so quiet
+# hours / group-safe mode never swallow them.
+_WORD_NUMS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+              "eight": 8, "nine": 9, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40,
+              "forty-five": 45, "sixty": 60, "ninety": 90, "half an": 0.5, "half a": 0.5}
+_DURATION_RE = re.compile(
+    r"(\d+(?:\.\d+)?|half an?|forty-five|" + "|".join(k for k in _WORD_NUMS if " " not in k and k != "forty-five")
+    + r")\s*-?\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b", re.I)
+_timers: dict[int, dict] = {}
+_timer_ids = iter(range(1, 10**9))
+_timers_lock = threading.Lock()
+_stopwatch = {"started": None}
+
+
+def _parse_duration_s(text: str) -> float:
+    total = 0.0
+    for num, unit in _DURATION_RE.findall(text or ""):
+        n = float(num) if num[0].isdigit() else _WORD_NUMS.get(num.lower(), 0)
+        u = unit.lower()
+        total += n * (3600 if u.startswith("h") else 60 if u.startswith("m") else 1)
+    return total
+
+
+def _say_duration(seconds: float) -> str:
+    seconds = int(round(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts = [f"{v} {n}{'s' if v != 1 else ''}" for v, n in ((h, "hour"), (m, "minute"), (s, "second")) if v]
+    return " ".join(parts) or "0 seconds"
+
+
+def _timer_fired(tid: int) -> None:
+    with _timers_lock:
+        t = _timers.pop(tid, None)
+    if t:
+        queue_or_deliver_notification(f"Your {t['label']} timer is done.", urgent=True)
+
+
+def _timer_reply(transcript: str) -> str | None:
+    """Local handling for timers and the stopwatch; None = let the agent loop handle it
+    (e.g. "set a timer to remind me to call mom", which needs a reminder, not a timer)."""
+    low = (transcript or "").lower()
+    if "remind" in low:
+        return None
+    now = time.monotonic()
+    if "stopwatch" in low:
+        started = _stopwatch["started"]
+        if re.search(r"\b(start|begin|reset|restart)\b", low):
+            _stopwatch["started"] = now
+            return "Stopwatch started."
+        if started is None:
+            return "The stopwatch isn't running."
+        if re.search(r"\b(stop|end|pause|finish)\b", low):
+            _stopwatch["started"] = None
+            return f"Stopped at {_say_duration(now - started)}."
+        return f"{_say_duration(now - started)} so far."
+    if re.search(r"\b(cancel|stop|clear|delete|kill)\b", low):
+        with _timers_lock:
+            n = len(_timers)
+            for t in _timers.values():
+                t["timer"].cancel()
+            _timers.clear()
+        return f"Cancelled {n} timer{'s' if n != 1 else ''}." if n else "There are no timers running."
+    seconds = _parse_duration_s(low)
+    if seconds <= 0:
+        with _timers_lock:
+            active = sorted(_timers.values(), key=lambda t: t["ends"])
+        if not active:
+            return "There are no timers running." if re.search(r"\b(how|left|remaining|status|check)\b", low) else None
+        return "; ".join(f"{t['label']} timer: {_say_duration(t['ends'] - now)} left" for t in active) + "."
+    label = _say_duration(seconds)
+    tid = next(_timer_ids)
+    timer = threading.Timer(seconds, _timer_fired, args=(tid,))
+    timer.daemon = True
+    with _timers_lock:
+        _timers[tid] = {"label": label, "ends": now + seconds, "timer": timer}
+    timer.start()
+    return f"Timer set for {label}."
+
+
+def _recent_actions(limit: int = 5) -> list[tuple]:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            return conn.execute(
+                "SELECT timestamp, tool_name, tool_input, result FROM action_audit ORDER BY id DESC LIMIT ?",
+                (limit,)).fetchall()
+        finally:
+            conn.close()
+
+
+def _last_actions_reply() -> str:
+    rows = _recent_actions(5)
+    if not rows:
+        return "I haven't done anything yet."
+    lines = []
+    for ts, tool, _inp, result in rows:
+        when = ts[11:16] if len(ts) >= 16 else ts
+        lines.append(f"at {when}, {tool.replace('_', ' ')}: {' '.join(str(result).split())[:100]}")
+    return "Most recent first: " + "; ".join(lines) + "."
+
+
+def _undo_instruction(transcript: str) -> str | None:
+    rows = _recent_actions(5)
+    if not rows:
+        return None
+    listed = "\n".join(f"- {ts} {tool} input={inp[:400]} result={' '.join(str(res).split())[:300]}"
+                       for ts, tool, inp, res in rows)
+    return (f"The user said {transcript!r}: undo my most recent action. These are the last actions you "
+            f"took, newest first:\n{listed}\nReverse the newest one that can be reversed (delete what was "
+            "created, move back what was moved, restore what was changed, cancel what was scheduled), using "
+            "your tools. Read-only actions (lookups, status checks) need no undoing; skip them. If nothing can "
+            "be reversed, say so plainly. Then say in one sentence what you undid.")
+
+
+def _shorter_reply() -> str:
+    text = _last_reply["text"]
+    if not text:
+        return "I haven't said anything yet."
+    short = _sleep_mail_claude(
+        "You shorten text for speech. Output plain text only.",
+        f"Say this in one or two short sentences, keeping the key facts:\n{text[:6000]}", 200)
+    return (short or "").strip() or text
+
+
+def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None:
     """Zero-LLM-call answers for the handful of intents that are pure local computation — no
     network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
     None for every other intent (caller falls through to the normal agent loop)."""
+    if intent == "self_check":
+        return self_check_report()
+    if intent == "repeat":
+        return _last_reply["text"] or "I haven't said anything yet."
+    if intent == "shorter":
+        return _shorter_reply()
+    if intent == "last_actions":
+        return _last_actions_reply()
+    if intent == "timer":
+        return _timer_reply(transcript)
     now = datetime.now()
     if intent == "time":
         return f"It's {now.strftime('%I:%M %p').lstrip('0')}."
@@ -8308,7 +8599,8 @@ def _handle_text_command_impl(
     # tools happen to be offered this turn, so it's reachable on every path that can reach a
     # tool at all; the deterministic path never calls a tool in the first place.
     intent = latency.classify_intent(transcript)
-    deterministic_reply = _deterministic_intent_reply(intent)
+    deterministic_reply = _deterministic_intent_reply(intent, transcript)
+    loop_transcript = (_undo_instruction(transcript) if intent == "undo" else None) or transcript
     reduced_tools = _reduced_tools_for_intent(intent, transcript) if deterministic_reply is None else None
     intent_path = "deterministic" if deterministic_reply is not None else ("reduced_tools" if reduced_tools else "full")
     log.info("Intent routing: intent=%s path=%s", intent, intent_path)
@@ -8331,12 +8623,14 @@ def _handle_text_command_impl(
         try:
             # Narrate mid-task only where the reply will also be spoken here (not phone-only).
             reply = run_agent_loop(
-                transcript, tone=tone, narrate=speaks_here, tools_override=reduced_tools
+                loop_transcript, tone=tone, narrate=speaks_here, tools_override=reduced_tools
             )
         except Exception:
             dashboard.end_session(session_id, "failed", None)
             dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
             raise
+    if reply and intent not in ("repeat", "shorter"):
+        _last_reply["text"] = reply
     shown = vibes.decorate(transcript, reply)  # text surfaces only; speech below uses `reply`
     dashboard.end_session(session_id, "done", shown)
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
@@ -8678,6 +8972,29 @@ def _acquire_single_instance_lock() -> bool:
     return True
 
 
+LOG_RETENTION_DAYS = 14
+
+
+def _cleanup_old_logs(folder: Path | None = None, days: int = LOG_RETENTION_DAYS) -> int:
+    """Deletes stray *.log files in the project folder older than `days` (old test-run logs).
+    The live standalone log is size-capped by Jarvis.vbs instead and never touched here."""
+    folder = folder or Path(__file__).resolve().parent
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for f in folder.glob("*.log"):
+        if f.name == "jarvis_standalone.log":
+            continue
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            pass  # in use or already gone
+    if removed:
+        log.info("Deleted %d log file(s) older than %d days.", removed, days)
+    return removed
+
+
 def main() -> int:
     if not _acquire_single_instance_lock():
         log.error(
@@ -8699,6 +9016,7 @@ def main() -> int:
         log.info("Opening Cursor will also open a new window (-n).")
     if CURSOR_OPEN_FULLSCREEN and sys.platform == "win32":
         log.info("Cursor will be sent F11 for fullscreen after focus/launch.")
+    _cleanup_old_logs()
     _preload_piper_async()
     if stt_deepgram.DEEPGRAM_API_KEY:
         threading.Thread(target=stt_deepgram.warm, daemon=True, name="deepgram-stt-warm").start()

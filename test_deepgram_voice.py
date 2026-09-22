@@ -85,7 +85,8 @@ def test_voice_latency_context_start_current_end():
         ("what's the date today", "date"),
         ("turn the volume up", "volume"),
         ("open notepad", "open_app"),
-        ("set a timer for five minutes", "timer_reminder"),
+        ("set a timer for five minutes", "timer"),  # QOL pass: timers are handled locally now
+        ("set a reminder to call mom", "timer_reminder"),
         ("summarize my last three emails", "complex"),
         ("Hi", "greeting"),
         ("hey jarvis", "greeting"),

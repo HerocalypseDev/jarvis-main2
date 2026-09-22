@@ -1048,6 +1048,34 @@ Both live in the gitignored local `mcp_servers.json`, installed pinned (not `@la
   autonomy, a prompt-injected email could drive these UI tools; accepted by the user when asking for it.
   Test: `test_hardening.py::test_mcp_tool_text_goes_through_catastrophic_gate`.
 
+## QOL pass (2026-09-23)
+
+User decision (2026-09-23): **every new feature is on by default with no feature-level limits**
+("I am aware of the risk"). The catastrophic gate still applies (standing rule); new features go
+through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the real one).
+- **Claude -> Gemini failover** (`_failover_to_gemini`, `_claude_failure_reason`): when the Claude
+  brain is selected and a request fails for good (credit balance, bad key, outage after retries,
+  network), the same request goes to Gemini if a Gemini key is set; spoken once per process. After
+  an account-level failure (credit/auth/no key) Claude is skipped for `LLM_FAILOVER_COOLDOWN_S`
+  (600s), including the SSE streaming path. `JARVIS_LLM_FAILOVER=0` disables it.
+- **No-LLM fast paths** (new intents in `jarvis_latency._INTENT_PATTERNS`, answered in
+  `_deterministic_intent_reply(intent, transcript)`): `self_check` ("self check", "diagnostics",
+  "are you ok" -> `self_check_report()`, also a `self_check` tool: live 1-token Claude check (~free),
+  free Gemini model-metadata GET, MCP servers, mic/speakers, TTS engines, face health, disk,
+  failover state, autonomy; problems first; works with both brains down), `repeat` (replays
+  `_last_reply`), `shorter` (one small LLM call), `last_actions` (last 5 `action_audit` rows),
+  `timer` (timers/stopwatch parsed locally, `threading.Timer`, fires as an **urgent** notification;
+  "remind" in the text falls through to the agent loop). `undo` is not deterministic: the command
+  is rewritten (`_undo_instruction`) to include the last 5 audit rows and run through the full agent
+  loop (so >= 40 words -> Sonnet) to reverse the newest reversible one.
+- Logs: `_cleanup_old_logs()` at startup deletes project-folder `*.log` older than 14 days (never
+  `jarvis_standalone.log`); `Jarvis.vbs` now rotates that log to `jarvis_standalone.old.log` at 5 MB
+  instead of deleting it.
+- Test-isolation lesson: a test calling `_execute_tool_impl`/`handle_text_command` with a bare
+  `import jarvis` writes to the REAL `jarvis_memory.db` (audit, sessions, autonomy). Always set
+  `JARVIS_MEMORY_DB_PATH` to a tmp path and stub `_log_action_audit`/`autonomy.after_turn`. Found and
+  cleaned (6 audit rows, 3 sessions, 1 autonomy row) during this pass.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,

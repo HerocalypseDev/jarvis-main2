@@ -978,6 +978,7 @@ def test_face_code_cannot_reach_the_confirmation_gate():
         "build_system_blocks", "run_agent_loop",  # presence line (+ reply-cache key)
         "_reminders_held_now",  # visitor present -> hold a due reminder (speech + toast)
         "main",  # start polling / event hook
+        "self_check_report",  # read-only: face.enabled() + face.health_problem()
     }
     assert users <= allowed, f"face is referenced from unreviewed code: {sorted(users - allowed)}"
     for gate in ("_take_pending_action", "_execute_confirmed_action", "_dashboard_approve_pending", "_dashboard_reject_pending"):

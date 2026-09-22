@@ -92,6 +92,13 @@ def recent(n: int = 20) -> list[dict]:
 _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("greeting", re.compile(r"\A\s*(?:hi|hey|hello|hiya|yo)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
     ("thanks", re.compile(r"\A\s*(?:thanks|thank you|thx|ty)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
+    # QOL pass (2026-09-23): handled in jarvis.py without (or with a rewritten) LLM call.
+    ("self_check", re.compile(r"\bself[- ]?check\b|\bdiagnostics?\b|\bhealth ?check\b|\bcheck yourself\b|\bare you (?:ok|okay|working)\b", re.I)),
+    ("repeat", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:repeat that|say that again|what did you say|come again|repeat)\W*\Z", re.I)),
+    ("shorter", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:say that shorter|shorter|tl;?dr|summari[sz]e that|give me the short version|shorter please)\W*\Z", re.I)),
+    ("last_actions", re.compile(r"\bwhat (?:did|have) you (?:just )?(?:do|done)\b|\bwhat was the last thing you did\b", re.I)),
+    ("undo", re.compile(r"\A\s*(?:jarvis,?\s*)?undo(?: that| it| the last (?:thing|action)| what you (?:just )?did)?\W*\Z", re.I)),
+    ("timer", re.compile(r"\btimers?\b|\bstopwatch\b", re.I)),
     ("time", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?time\b|\bcurrent time\b", re.I)),
     ("date", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?date\b|\bwhat day is it\b", re.I)),
     ("volume", re.compile(r"\bvolume\b|\b(?:mute|unmute)\b|\bturn (?:it |the sound )?(?:up|down)\b", re.I)),
