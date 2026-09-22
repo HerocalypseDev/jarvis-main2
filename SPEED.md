@@ -85,6 +85,21 @@ is bounded by one sentence's synthesis time instead of the whole reply's. No can
 is needed: if the real audio becomes ready before a short filler phrase finishes, they just
 serialize through the existing playback lock for well under a second.
 
+The background pre-synthesis is joined with a bounded `PIPELINE_JOIN_TIMEOUT_S` (90s) rather
+than an unbounded `join()` — every engine call inside it is already individually timeout-bounded
+(Deepgram, Fish) or purely local/CPU (Piper), so this is a defense-in-depth backstop, not the
+primary bound. If it's ever hit, nothing spoken is lost: the abandoned prefetch is just
+discarded (`pending` stays `None`) and that sentence is synthesized again, synchronously, on the
+next loop iteration — the timeout costs only the overlap benefit for that one sentence, never
+the content. A warning is logged either way (audit fix, 2026-09-22).
+
+`speak_text()`'s per-command `tts_backend` (in the latency log) is the *last* engine that
+actually spoke, not the first — updated on every successful sentence, not latched after the
+first one. A command that narrates via Deepgram but whose final (longer) reply falls back to
+Piper mid-command now correctly logs `tts_backend=piper`, not a stale `deepgram` from the
+narration (audit fix, 2026-09-22; `tts_ttfa_ms` is unaffected — that still marks only the first
+successful sentence, which is the correct TTFA definition).
+
 ## Filler phrase (Phase 3.2)
 
 If `reply_sink is None or source == "dashboard"` (i.e. this command will be spoken here) and
@@ -92,6 +107,27 @@ If `reply_sink is None or source == "dashboard"` (i.e. this command will be spok
 once (`jarvis._speak_filler_if_slow`). It's a single fixed short phrase — it hits the existing
 TTS disk cache after the first use, so on every later slow command it's served instantly rather
 than re-synthesized.
+
+The filler also backs off if a mid-task narration line already spoke real content for this same
+command before the delay elapsed, not only if the command finished (audit fix, 2026-09-22): the
+same `threading.Event` used to signal "command done" is also set by `speak_text()` itself the
+moment any audio actually plays. `speak_text()` reaches it via a thread-local
+(`jarvis._current_speak_signal()`, set by `_handle_text_command_impl` for the duration of the
+command on the same thread that runs `run_agent_loop`/narration); the filler's own watcher thread
+holds a direct reference to the same `Event`, so no cross-thread lookup is needed on that side.
+Without this, a command that narrated at ~1s and kept working past 2.5s would get a stale "One
+moment." spoken after real content had already answered part of the question.
+
+## Lazy Whisper preload
+
+`main()` only calls `_preload_whisper_async()` at startup when Whisper is actually likely to be
+needed — i.e. `JARVIS_STT_BACKEND=whisper`, or no `DEEPGRAM_API_KEY` is set (same condition as
+`_use_deepgram_stt()`). When Deepgram is configured and healthy, Whisper is never touched at
+startup; `_get_whisper_model()` still loads it lazily (and only once, lock-guarded) the first
+time a real command actually falls back to it. Before this fix, Whisper's `faster-whisper` model
+was preloaded unconditionally whenever push-to-talk was enabled, paying its CPU/RAM load cost on
+every restart even when Deepgram was primary and healthy and Whisper might never run that session
+(audit fix, 2026-09-22).
 
 ## Latency measurement
 
@@ -134,15 +170,30 @@ capture-end to measure from).
 
 ## Tests
 
-`test_deepgram_voice.py` (31 tests, no real network): `jarvis_cache.CircuitBreaker`,
+`test_deepgram_voice.py` (41 tests, no real network): `jarvis_cache.CircuitBreaker`,
 `jarvis_latency` (marks/finish/classify_intent), `jarvis_stt_deepgram.transcribe` (success, low
-confidence, network error, no key, empty audio), `jarvis_tts_deepgram.synthesize` (success,
-network error, no key, warm), and jarvis.py wiring (Deepgram-first with fallback for both STT and
-TTS, explicit backend overrides, circuit-breaker tripping, sentence splitting/pipelining, filler
-phrase). `test_cache.py`'s existing Fish/Piper tests are unaffected (its `jarvis` fixture now
+confidence, network error, timeout, no key, empty audio), `jarvis_tts_deepgram.synthesize`
+(success, network error, timeout, no key, warm), and jarvis.py wiring (Deepgram-first with
+fallback for both STT and TTS, explicit backend overrides, both circuit breakers tripping *and*
+recovering after cooldown, sentence splitting/pipelining, the bounded pipeline join timeout,
+filler phrase including the narration-already-spoke backoff, and the lazy-Whisper-preload
+condition). `test_cache.py`'s existing Fish/Piper tests are unaffected (its `jarvis` fixture now
 also zeroes both Deepgram module keys so a real `.env` key on the dev machine can't change their
 behavior).
 
 Not verified live (would need a real `DEEPGRAM_API_KEY` and microphone): actual Nova-3
 transcription accuracy/latency on real speech, actual Aura 2 audio quality, real end-to-end
 voice-in -> first-audio-out timing numbers.
+
+## Audit-and-fix pass (2026-09-22)
+
+An adversarial re-read of the whole stack (wiring, lazy-Whisper, STT/TTS correctness, fallback
+chains, latency honesty, sentence pipelining, caching, concurrency, privacy) found five real
+issues, all fixed and pinned by new tests: Whisper was preloaded eagerly even with Deepgram
+configured (now lazy — see above); `tts_backend` latched to the first engine used instead of the
+last (now updated every successful sentence); the filler phrase could speak after narration
+already had (now backs off via a shared signal — see above); the sentence-pipelining background
+thread was joined without a timeout (now bounded, degrades to synchronous re-synthesis rather
+than hanging); and STT circuit-breaker tripping/recovery and a real `TimeoutError` path weren't
+covered by tests (now are). No catastrophic-gate, autonomy-permission, or fallback-removal
+changes were made. Full suite green afterward.

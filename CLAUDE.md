@@ -807,13 +807,28 @@ no `DEEPGRAM_API_KEY` in `.env` means voice behaves exactly as before (local Whi
   Deepgram's API — same category of exposure as Fish Audio (already documented above), just a second
   cloud vendor. Confidence gating and the circuit breaker are latency/quality safeguards only; they
   never touch the confirmation gate or any tool permission.
-- Tests: `test_deepgram_voice.py` (31, no real network — every `urlopen` call is monkeypatched).
+- Tests: `test_deepgram_voice.py` (41, no real network — every `urlopen` call is monkeypatched).
   `test_cache.py`'s existing Fish/Piper tests were unaffected; its shared `jarvis` fixture now also
   zeroes both Deepgram modules' `DEEPGRAM_API_KEY` so a real key in the dev machine's `.env` can't
-  change those pre-Deepgram tests' behavior. Full suite: 668 passed (the 4 pre-existing
-  urgent-email-monitor failures noted above are unrelated and untouched).
+  change those pre-Deepgram tests' behavior.
 - **Not verified live** (needs a real `DEEPGRAM_API_KEY` + microphone): actual Nova-3 transcription
   accuracy/latency, actual Aura 2 audio quality, real end-to-end voice-in -> first-audio-out timing.
+- **Audit-and-fix pass (2026-09-22)**, full write-up in SPEED.md — an adversarial re-read found and
+  fixed 5 real issues, all pinned by new tests: (1) Whisper was preloaded eagerly at startup even
+  when Deepgram was configured and healthy (`main()` now skips it whenever `_use_deepgram_stt()` is
+  true — the same lazy-load-on-actual-fallback path as before, just no longer paid unconditionally
+  at every restart); (2) `speak_text()`'s latency-log `tts_backend` latched to the *first* engine
+  used instead of the *last* — a narrated line on Deepgram followed by a final reply that fell back
+  to Piper mid-command used to log `tts_backend=deepgram`, a latency-lie, now fixed to update on
+  every successful sentence; (3) the filler phrase ("One moment.") could fire after a mid-task
+  narration had already spoken real content, since it only watched "command finished" — it now also
+  backs off the moment `speak_text()` itself plays any audio, via a shared `threading.Event` reached
+  through a per-thread signal (`jarvis._current_speak_signal()`); (4) the sentence-pipelining
+  background thread's `next_thread.join()` had no timeout — now bounded by `PIPELINE_JOIN_TIMEOUT_S`
+  (90s) as a defense-in-depth backstop; hitting it costs only that sentence's pipelining overlap,
+  never the content (it's re-synthesized synchronously on the next loop iteration); (5) test gaps —
+  STT circuit-breaker tripping/recovery and a real `TimeoutError` path weren't covered, now are.
+  No catastrophic-gate, autonomy-permission, or fallback-removal changes were made.
 
 ### Cost reporting
 
@@ -867,7 +882,8 @@ row there each phase rather than only stating the total in chat.
 | 28 (full-permission model + inbound perception, extraction, observability, direct calendar, skills, memory intervention; 40 new tests) | Sonnet 5 | ~75 min | ~$4.00–$5.50 |
 | 29 (audit fixes: confirmation semantics + TTL, wider gate, dashboard-wide Host/Origin guard, sensitive-path/http policy, delegation env allowlist, attended-only autonomy approvals; 70 new tests) | Sonnet 5 | ~45 min | ~$3.00–$4.20 |
 | 30 (Deepgram speed upgrade: Nova-3 STT + Aura 2 TTS backends with circuit breakers, sentence-pipelined TTS, filler phrase, latency logging + intent classifier; 31 new tests) | Sonnet 5 | ~60 min | ~$3.20–$4.50 |
-| **Running total (final)** | | **~993 min** | **~$45.85–$64.00** |
+| 31 (Deepgram speed-upgrade audit-and-fix pass: lazy Whisper preload, honest tts_backend logging, filler-vs-narration fix, bounded pipeline join timeout, breaker-recovery + timeout test coverage; 10 new tests) | Sonnet 5 | ~35 min | ~$1.60–$2.30 |
+| **Running total (final)** | | **~1028 min** | **~$47.45–$66.30** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

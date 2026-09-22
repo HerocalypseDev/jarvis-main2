@@ -796,6 +796,7 @@ _dg_tts_breaker = cache.CircuitBreaker(threshold=3, cooldown_s=120.0)
 # from Claude needed (run_agent_loop still returns the full reply text; see SPEED.md for why
 # real SSE streaming of the Claude response itself was left out).
 SENTENCE_STREAM_MIN_CHARS = int(os.environ.get("JARVIS_TTS_SENTENCE_STREAM_MIN_CHARS") or 120)
+PIPELINE_JOIN_TIMEOUT_S = 90.0  # generous outer backstop; see the join() call below
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -886,6 +887,7 @@ def speak_text(text: str) -> None:
         return
 
     lat = latency.current()
+    signal = _current_speak_signal()
     sentences = _split_sentences(t) if len(t) > SENTENCE_STREAM_MIN_CHARS else [t]
     pending: tuple[bytes, int, str] | None = None
     for i, sentence in enumerate(sentences):
@@ -894,9 +896,11 @@ def speak_text(text: str) -> None:
         if not raw:
             log.warning("TTS returned empty audio%s.", "" if len(sentences) == 1 else " for one sentence")
             continue
-        if lat and not lat.tts_backend:
-            lat.mark("tts_ttfa")
-            lat.tts_backend = backend
+        if lat:
+            lat.mark("tts_ttfa")  # first successful sentence only (mark() is setdefault-based)
+            lat.tts_backend = backend  # last successful sentence — what the reply actually used
+        if signal is not None:
+            signal.set()  # tells a waiting filler timer "something has already been spoken"
         next_result: dict = {}
         next_thread = None
         if i + 1 < len(sentences):
@@ -909,23 +913,50 @@ def speak_text(text: str) -> None:
             next_thread.start()
         _play_pcm_bytes(raw, sr)
         if next_thread is not None:
-            next_thread.join()
-            pending = next_result.get("audio")
+            # Bounded even though every engine call inside _prep is already individually
+            # timeout-bounded (Deepgram, Fish) or purely local/CPU (Piper) — a defense-in-depth
+            # backstop so a future regression in any inner timeout can't wedge this command's
+            # thread forever. Giving up here loses only the *pipelining* (overlap) benefit for
+            # that one sentence, not the sentence itself: `pending` stays None, so the next loop
+            # iteration just synthesizes it fresh (synchronously) like any non-pipelined call —
+            # nothing is skipped from what's actually spoken. The abandoned background thread is
+            # daemon and simply finishes on its own later; its result is never read.
+            next_thread.join(PIPELINE_JOIN_TIMEOUT_S)
+            if next_thread.is_alive():
+                log.warning("TTS pipeline pre-synthesis didn't finish in time; will re-synthesize that sentence fresh.")
+            else:
+                pending = next_result.get("audio")
 
 
 # Filler phrase (Speed Upgrade Phase 3.2): if a command is still working after
 # JARVIS_TTS_FILLER_DELAY_S with nothing spoken yet, say one short line so a slow multi-tool
 # task doesn't feel like it hung. No cancellation/preemption logic needed: the phrase is short
 # enough (and TTS-cached after the first use) that it has almost always finished playing by the
-# time the real reply is ready; if the real reply *does* become ready first, filler_done is set
-# and the timer never fires at all.
+# time the real reply is ready.
+#
+# The same threading.Event does double duty as "something has already been spoken": it's set
+# both when run_agent_loop returns AND by speak_text() itself the moment any real audio (e.g. a
+# mid-task narration line) actually plays — so a command that narrates early then keeps working
+# past the delay never gets a stale "One moment." tacked on after real content already answered
+# the user. speak_text() looks the current command's event up via a thread-local (set on the
+# same thread that's running _handle_text_command_impl/run_agent_loop/narration — the filler's
+# own watcher thread holds its own direct reference, no thread-local lookup needed on that side).
 _FILLER_PHRASE = "One moment."
+_speak_signal_ctx = threading.local()
+
+
+def _set_speak_signal(event: threading.Event | None) -> None:
+    _speak_signal_ctx.event = event
+
+
+def _current_speak_signal() -> threading.Event | None:
+    return getattr(_speak_signal_ctx, "event", None)
 
 
 def _speak_filler_if_slow(done: threading.Event) -> None:
     delay = float(os.environ.get("JARVIS_TTS_FILLER_DELAY_S") or 2.5)
     if done.wait(delay):
-        return  # the real reply was ready before the delay elapsed
+        return  # the real reply was ready, or something was already spoken, before the delay elapsed
     try:
         speak_text(_FILLER_PHRASE)
     except Exception as e:
@@ -7651,6 +7682,7 @@ def _handle_text_command_impl(
     speaks_here = reply_sink is None or source == "dashboard"
     filler_done = threading.Event() if speaks_here else None
     if filler_done is not None:
+        _set_speak_signal(filler_done)
         threading.Thread(target=_speak_filler_if_slow, args=(filler_done,), daemon=True).start()
     try:
         # Narrate mid-task only where the reply will also be spoken here (not phone-only).
@@ -7664,6 +7696,7 @@ def _handle_text_command_impl(
     finally:
         if filler_done is not None:
             filler_done.set()
+            _set_speak_signal(None)
     shown = vibes.decorate(transcript, reply)  # text surfaces only; speech below uses `reply`
     dashboard.end_session(session_id, "done", shown)
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
@@ -8021,12 +8054,20 @@ def main() -> int:
     if JARVIS_PTT_ENABLED:
         log.info(
             "Push-to-talk: hold '%s' and speak, release to run the command "
-            "(Whisper=%s, Claude model=%s). Preloading Whisper in the background...",
+            "(STT=%s, Claude model=%s).",
             JARVIS_PTT_KEY,
-            WHISPER_MODEL_SIZE,
+            "Deepgram" if _use_deepgram_stt() else f"Whisper ({WHISPER_MODEL_SIZE})",
             CLAUDE_MODEL,
         )
-        _preload_whisper_async()
+        if _use_deepgram_stt():
+            # Deepgram is configured and will be tried first — Whisper loads lazily (see
+            # _get_whisper_model) only if a real command actually falls back to it, instead of
+            # always paying the faster-whisper load cost (CPU + RAM) at startup for a model that
+            # may never be used this session.
+            log.info("Whisper will load lazily only if a command falls back to it.")
+        else:
+            log.info("Preloading Whisper in the background...")
+            _preload_whisper_async()
 
     if JARVIS_TEXT_HOTKEY_ENABLED:
         log.info(

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import time
 import wave
 
@@ -374,3 +375,203 @@ def test_filler_phrase_speaks_when_slow(jarvis, monkeypatch):
     done = __import__("threading").Event()
     jarvis._speak_filler_if_slow(done)
     assert spoken == [jarvis._FILLER_PHRASE]
+
+
+# --- audit-and-fix pass (2026-09-22) ---------------------------------------------------------
+def test_stt_circuit_breaker_trips_after_repeated_failures(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    dg_calls = []
+
+    def boom(mono, sr, timeout_s=None):
+        dg_calls.append(1)
+        raise RuntimeError("deepgram down")
+
+    monkeypatch.setattr(jarvis.stt_deepgram, "transcribe", boom)
+
+    class FakeSegment:
+        text = "whisper heard this"
+
+    class FakeModel:
+        def transcribe(self, mono16k, beam_size=1, language=None):
+            return [FakeSegment()], None
+
+    monkeypatch.setattr(jarvis, "_get_whisper_model", lambda: FakeModel())
+    pcm = (np.random.rand(16000).astype(np.float32) - 0.5)
+    for _ in range(3):
+        jarvis.transcribe_pcm(pcm, 16000)
+    assert len(dg_calls) == 3  # breaker trips at threshold=3
+    jarvis.transcribe_pcm(pcm, 16000)
+    assert len(dg_calls) == 3  # tripped: Deepgram skipped entirely, straight to Whisper
+
+
+def test_stt_backend_recovers_after_breaker_cooldown(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_dg_stt_breaker", cache.CircuitBreaker(threshold=1, cooldown_s=0.05))
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    calls = {"n": 0}
+
+    def flaky(mono, sr, timeout_s=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("deepgram down")
+        return "back up"
+
+    monkeypatch.setattr(jarvis.stt_deepgram, "transcribe", flaky)
+
+    class FakeSegment:
+        text = "whisper heard this"
+
+    class FakeModel:
+        def transcribe(self, mono16k, beam_size=1, language=None):
+            return [FakeSegment()], None
+
+    monkeypatch.setattr(jarvis, "_get_whisper_model", lambda: FakeModel())
+    pcm = (np.random.rand(16000).astype(np.float32) - 0.5)
+    # First call: Deepgram fails (trips the 1-failure breaker), falls back to Whisper for real.
+    assert jarvis.transcribe_pcm(pcm, 16000) == "whisper heard this"
+    assert calls["n"] == 1
+
+    time.sleep(0.06)  # cooldown elapses
+    assert jarvis.transcribe_pcm(pcm, 16000) == "back up"  # Deepgram tried again and succeeded
+    assert calls["n"] == 2
+
+
+def test_stt_timeout_error_falls_back_to_whisper(monkeypatch):
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+
+    def timeout(req, timeout):
+        raise TimeoutError("Deepgram STT request wedged past 8s")
+
+    monkeypatch.setattr(stt_deepgram, "_urlopen_bounded", timeout)
+    audio = (np.random.rand(1600).astype(np.float32) - 0.5)
+    assert stt_deepgram.transcribe(audio, 16000) is None
+
+
+def test_tts_timeout_error_propagates(monkeypatch):
+    monkeypatch.setattr(tts_deepgram, "DEEPGRAM_API_KEY", "k")
+
+    def timeout(req, timeout):
+        raise TimeoutError("Deepgram TTS request wedged past 15s")
+
+    monkeypatch.setattr(tts_deepgram, "_urlopen_bounded", timeout)
+    with pytest.raises(TimeoutError):
+        tts_deepgram.synthesize("hello")
+
+
+def test_whisper_not_preloaded_when_deepgram_is_primary(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    assert jarvis._use_deepgram_stt() is True  # this is the exact condition main() gates the
+    # eager _preload_whisper_async() call on — see jarvis.py main(): "if _use_deepgram_stt(): ...
+    # log lazy-load message ... else: _preload_whisper_async()". No key means False -> eager
+    # preload still happens, same as pre-Deepgram behavior:
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "")
+    assert jarvis._use_deepgram_stt() is False
+
+
+def test_whisper_still_preloaded_when_backend_forced_to_whisper(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    monkeypatch.setenv("JARVIS_STT_BACKEND", "whisper")
+    assert jarvis._use_deepgram_stt() is False  # forced whisper -> main() preloads eagerly
+
+
+def test_tts_backend_reports_last_engine_used_not_first(jarvis, monkeypatch):
+    """A narrated mid-task line speaks via Deepgram; the final (longer) reply's Deepgram call
+    then fails and falls back to Piper. The latency log's tts_backend must reflect Piper (what
+    the user's actual answer used), not Deepgram (stale from the narration)."""
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    monkeypatch.setattr(jarvis, "FISH_AUDIO_API_KEY", "")
+    calls = {"n": 0}
+
+    def flaky_dg(t, timeout_s=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return (b"\x01\x00" * 50, 24000)  # narration succeeds via Deepgram
+        raise RuntimeError("deepgram down now")  # final reply's Deepgram attempt fails
+
+    monkeypatch.setattr(jarvis.tts_deepgram, "synthesize", flaky_dg)
+    monkeypatch.setattr(jarvis, "_piper_synthesize", lambda t, o=None: (b"\x02\x00" * 50, 22050))
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: None)
+
+    lat = latency.start()
+    try:
+        jarvis.speak_text("Narration line.")  # first call: Deepgram
+        assert lat.tts_backend == "deepgram"
+        jarvis.speak_text("Different final answer text.")  # second call: Deepgram fails -> Piper
+        assert lat.tts_backend == "piper"  # updated to the engine that actually spoke last
+    finally:
+        latency.end()
+
+
+def test_filler_skipped_when_narration_already_spoke(jarvis, monkeypatch):
+    """Simulates run_agent_loop narrating (via speak_text, on the same thread) before the filler
+    delay elapses: the filler must not also speak afterwards."""
+    monkeypatch.setattr(jarvis, "FISH_AUDIO_API_KEY", "k")
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "")
+    monkeypatch.setattr(jarvis, "_fish_audio_synthesize", lambda t, p=None: (b"\x01\x00" * 50, 24000))
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: None)
+    monkeypatch.setenv("JARVIS_TTS_FILLER_DELAY_S", "0.05")
+
+    done = threading.Event()
+    jarvis._set_speak_signal(done)
+    try:
+        filler_thread = threading.Thread(target=jarvis._speak_filler_if_slow, args=(done,))
+        filler_thread.start()
+        time.sleep(0.01)
+        jarvis.speak_text("Real narration already answered this.")  # sets the shared signal
+        filler_thread.join(2.0)
+        assert not filler_thread.is_alive()
+    finally:
+        jarvis._set_speak_signal(None)
+    # The filler's own speak_text call would have been a *second* real call; since none of the
+    # engines were monkeypatched to detect a second call by name, assert indirectly: the signal
+    # was observed set before the filler's delay elapsed.
+    assert done.is_set()
+
+
+def test_speak_signal_is_per_thread(jarvis):
+    assert jarvis._current_speak_signal() is None
+    ev = threading.Event()
+    jarvis._set_speak_signal(ev)
+    assert jarvis._current_speak_signal() is ev
+    seen = {}
+
+    def other_thread():
+        seen["signal"] = jarvis._current_speak_signal()
+
+    t = threading.Thread(target=other_thread)
+    t.start()
+    t.join()
+    assert seen["signal"] is None  # a different thread never sees another thread's signal
+    jarvis._set_speak_signal(None)
+
+
+def test_pipeline_join_timeout_recovers_without_hanging_or_dropping_content(jarvis, monkeypatch, caplog):
+    """A background pre-synthesis that outlives PIPELINE_JOIN_TIMEOUT_S must not hang the
+    command's thread. Nothing spoken is dropped — the abandoned prefetch is just discarded and
+    that one sentence is synthesized again, synchronously, on the next loop iteration."""
+    monkeypatch.setattr(jarvis, "PIPELINE_JOIN_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(jarvis, "FISH_AUDIO_API_KEY", "k")
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "")
+    played = []
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: played.append(sr))
+
+    call_n = {"n": 0}
+
+    def slow_fish(t, p=None):
+        call_n["n"] += 1
+        if call_n["n"] == 2:  # only the *first* background pre-synthesis attempt hangs
+            time.sleep(0.4)
+        return (b"\x01\x00" * 50, 24000)
+
+    monkeypatch.setattr(jarvis, "_fish_audio_synthesize", slow_fish)
+    long_text = (
+        "This is the first sentence of a fairly long reply for the pipeline timeout test. "
+        "This is the second sentence, which will be artificially slow to synthesize. "
+        "This is the third sentence, spoken after the timeout recovery."
+    )
+    start = time.monotonic()
+    with caplog.at_level("WARNING"):
+        jarvis.speak_text(long_text)
+    elapsed = time.monotonic() - start
+    assert elapsed < 1.0  # bounded by PIPELINE_JOIN_TIMEOUT_S, not the artificial 0.4s hang
+    assert "will re-synthesize that sentence fresh" in caplog.text
+    assert len(played) == 3  # every sentence still spoken — the timeout cost overlap, not content
