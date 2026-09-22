@@ -53,10 +53,12 @@ Hash-based, one active `<section class="view" id="view-NAME">` at a time (`app.j
 No `#/` fallback needed beyond the default — any unrecognized hash falls back to `home`
 (`currentRoute()`). Sessions and Tasks kept their own full-width list (no more forced 3-column
 split); the right-hand **context panel** (`#context`, hosting the existing `#detail-panel`) opens
-only on Home/Sessions/Tasks — the routes where clicking something meaningfully has "more detail"
-to show — and stays hidden elsewhere so a content-heavy route like Autonomy or Identity gets the
-full window width. `showDetail()` (unchanged logic) also flips the route: clicking a session in
-the Home "Now" block, for example, jumps to `#/sessions` and populates the context panel there.
+only on Home/Sessions/Tasks/Activity/Audit (`ROUTES_WITH_CONTEXT`) — the routes where clicking
+something meaningfully has "more detail" to show — and stays hidden elsewhere so a content-heavy
+route like Autonomy or Identity gets the full window width. `showDetail()` also flips the route on
+a direct click: clicking a session in the Home "Now" block, for example, jumps to `#/sessions` and
+populates the context panel there; see "Post-overhaul UX pass" below for the fuller navigation
+write-up (including the `navigate: false` background-update case).
 
 ## Home (mission control)
 
@@ -113,6 +115,99 @@ expanded" instead of breaking navigation.
   in single-digit milliseconds; a loading-state UI for that would be more visual noise than
   signal. The existing pattern (leave the last good render in place until the next successful
   fetch) already avoids layout jump for free.
+
+## Post-overhaul UX pass (2026-09-22)
+
+Follow-up fixes after real use of the sidebar shell above — still frontend-only except where
+noted; `jarvis_dashboard.py`'s Host/Origin guards, localhost bind, and the confirmation gate were
+not touched.
+
+**1. New commands open the detail panel automatically.** Every `render()` pass (the 15s
+`/api/state` poll, plus any WebSocket-driven `handleLiveEvent`) now re-syncs the followed
+session's detail into the panel if one is being followed (`state.followedSessionId`), not just on
+the two explicit `session_start`/`session_end` events — so a reply landing between polls still
+shows up promptly. Design decision: a **background** update (`navigate: false`) only refreshes the
+panel's content and reveals it if the *current* route already has a context panel
+(`ROUTES_WITH_CONTEXT`); it never yanks you to a different route just because a new command
+started elsewhere. A **direct click** on a session/task (`navigate: true`, the default) still jumps
+to the owning route, since a deliberate click means "take me there." On Home, a new voice/text/
+dashboard command therefore updates the Sessions panel silently in the background if you're on
+Sessions, but doesn't jump you off Home to show it — clicking it from Home's "Now"/"Recent
+sessions" cards does navigate, same as before. `handleLiveEvent`'s source filter covers
+`voice`/`text`/`dashboard` (not `phone` — nobody's watching a screen for a phone command).
+
+**2. Audit Trail rows open the detail panel.** Clicking (or Enter/Space on a focused) audit row
+shows its timestamp/action/summary/payload in the panel, and — since `dashboard_sessions` and
+`action_audit` share no session_id column (see the CLAUDE.md graphify entry on this) — an exact
+match on the row's `transcript` against the currently-loaded sessions list also loads that
+session's own transcript/reply into the same panel when one exists. Every previously click-only
+row (Sessions, Tasks, Activity, Audit) got the same `wireRowActivation()` keyboard handling
+(Enter/Space), not just Audit.
+
+**3. Sparse full-width routes got denser.** `.usage-cards` (shared by Home/Identity/Sleep/Usage)
+switched from `flex-wrap` to a `grid-template-columns: repeat(auto-fill, minmax(180px, 1fr))`
+layout so cards stretch to fill a wide row instead of clumping top-left with empty space beside
+them. The Usage daily-spend chart grew from 90px to 180px tall; Sleep's three SVG charts grew from
+a 130-tall to a 170-tall viewBox (they scale to their container, so this is a real height increase,
+not just a number). Usage gained a "Tokens & cache savings by period" grid (input/cache-read/
+cache-write/output tokens + $ saved, for today/week/month/all-time) from fields `/api/usage`
+already returned but the UI never showed.
+
+**4. Autonomy was restructured for at-a-glance status**, replacing the old flat list of sections.
+New top-to-bottom order in `autonomy.js`'s `render()`: the summary strip (now 5 cards + a "Last
+activity" line, computed client-side from the same `/api/autonomy` response's `decisions[0]` — no
+new backend field, since `jarvis_autonomy.py` has no explicit "last tick" timestamp to expose) →
+**Needs you** (the pending-review cards plus up to 8 recent failed decisions, in one place) →
+**Running now** (in-flight campaign steps) → Open commitments → Campaigns → Rules → a secondary
+"Automation details" group (file organising, skills, tool proposals, dynamic tools — unchanged,
+just visually demoted) → the Activity log at the very bottom. Every existing control (suggestions,
+commitments, campaigns, rules, log filters, organising roots/rules, skills, dynamic tools) is still
+present and still wired to the same endpoints — nothing was removed, only grouped and re-ordered.
+
+**5. Sleep gained two more stat cards** from fields `/api/sleep` already computed but didn't
+surface: goal hit rate (`goal_hit_nights / nights_tracked`, as a %) and total sleep hours for the
+selected period (`total_hours`). No backend change — both were already in `_period_stats()`'s
+return dict.
+
+**6. Home gained three cards**: "Recent sessions" (last 5, clickable → Sessions + detail, same
+`showDetail` used everywhere else), "Recent autonomy activity" (last 5 `/api/autonomy` decisions,
+via a new light 30s poll — `fetchAutonomySummary()` — kept separate from `autonomy.js`'s own 10s
+poll so Home doesn't pull the Autonomy route's full render cost), and "Presence" (face recognition,
+via a similarly light `fetchHomePresence()` poll of `/api/faces`; the whole card is hidden with
+`hidden` when the feature is off on this machine, since most installs won't have it enabled). Also
+added an "Open tasks" card to "Today" (client-side count of `status in (running, queued)`, no new
+field). All three reuse existing endpoints — no new backend route.
+
+**Voice fixes (jarvis.py, not dashboard_static)**: two real playback bugs, both in `speak_text()`'s
+Deepgram-streaming path (`_speak_streamed`/`_play_pcm_stream`), root-caused rather than papered
+over:
+- **"breaks/glitches while speaking"**: `sd.OutputStream(...)` had no `latency` hint, so PortAudio
+  used its default buffering — a chunk arriving from the network a few milliseconds late (this is a
+  live WebSocket, not a local file) starves the output device mid-word, heard as a crackle/dropout.
+  Fixed with `latency="high"`, trading a little more time-to-first-audio for not glitching. One-line
+  fix; see the comment at `_play_pcm_stream`'s `sd.OutputStream(...)` call.
+- **short utterances ("Hi") getting cut off after "One moment."**: `_speak_streamed`'s own
+  docstring already explains the tradeoff it makes on a mid-stream WebSocket failure — keep
+  whatever already played rather than restart from the top (restarting would double-speak).  That's
+  the right call for a long reply, but for a *short* phrase (the filler phrase itself, or a short
+  reply like "Hi, how can I help?") it means the whole utterance can be heard as truncated, and a
+  short phrase's REST round trip is already fast enough that streaming's time-to-first-audio benefit
+  there is smallest right where the truncation risk is most noticeable. Fixed with a new
+  `TTS_LIVE_STREAM_MIN_CHARS` (default 40, `JARVIS_TTS_LIVE_STREAM_MIN_CHARS`): text shorter than
+  that skips the live WebSocket entirely and goes straight to the REST/cache cascade. The filler
+  phrase ("One moment.", 12 chars) and most short greetings now never open a live stream at all.
+- **Residual limitation, accepted rather than solved**: a longer reply that hits a genuine
+  mid-utterance WebSocket drop *after* already streaming past `TTS_LIVE_STREAM_MIN_CHARS` still
+  ends with whatever was spoken before the drop — the alternative (restarting the whole sentence)
+  would double-speak, which is worse. This is the same kind of documented tradeoff as the Phase C
+  "a connection drop after some sentences already played will repeat the whole reply on retry" note
+  in SPEED.md, just for TTS instead of the LLM stream; real network jitter that severe is rare and
+  the buffering fix above addresses the far more common (chunk-timing, not connection-loss) cause.
+- Tests: `test_play_pcm_stream_asks_portaudio_for_high_latency_buffering` and
+  `test_speak_text_short_phrase_skips_live_stream` in `test_deepgram_voice.py` pin both fixes; one
+  pre-existing test (`test_speak_text_caches_complete_streamed_audio_for_reuse`) was updated to use
+  text long enough to still exercise the streaming path it's testing. Full suite: 733 tests, same 4
+  pre-existing unrelated failures (deleted urgent-email-monitor skill files, documented in CLAUDE.md).
 
 ## How to preview without running full Jarvis
 

@@ -744,6 +744,22 @@ def test_play_pcm_stream_empty_chunks_never_fires_callback(jarvis, monkeypatch):
     assert calls == []
 
 
+def test_play_pcm_stream_asks_portaudio_for_high_latency_buffering(jarvis, monkeypatch):
+    """Voice-bug pass (2026-09-22): an unbuffered OutputStream starves on uneven network chunk
+    timing and crackles ("voice breaks a lot"). latency="high" gives PortAudio room to absorb
+    that jitter instead."""
+    seen_kwargs = {}
+
+    class _RecordingOutputStream(_FakeOutputStream):
+        def __init__(self, *a, **k):
+            seen_kwargs.update(k)
+            super().__init__(*a, **k)
+
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _RecordingOutputStream)
+    jarvis._play_pcm_stream(iter([b"\x00\x00" * 10]), 24000)
+    assert seen_kwargs.get("latency") == "high"
+
+
 def test_speak_streamed_happy_path(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
     monkeypatch.setattr(
@@ -855,10 +871,34 @@ def test_speak_text_caches_complete_streamed_audio_for_reuse(jarvis, monkeypatch
 
     monkeypatch.setattr(jarvis.tts_deepgram, "StreamingSynthesis", fake_stream_ctor)
     monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: None)
-    jarvis.speak_text("Short streamed phrase.")
+    # Long enough to clear TTS_LIVE_STREAM_MIN_CHARS (below it speak_text skips the live stream
+    # entirely — see the voice-bug-pass comment at its call site).
+    text = "A streamed phrase long enough to actually use the live streaming path."
+    jarvis.speak_text(text)
     assert len(stream_calls) == 1
-    jarvis.speak_text("Short streamed phrase.")  # second time: served from cache, no new stream
+    jarvis.speak_text(text)  # second time: served from cache, no new stream
     assert len(stream_calls) == 1
+
+
+def test_speak_text_short_phrase_skips_live_stream(jarvis, monkeypatch):
+    """Voice-bug pass (2026-09-22): the filler phrase ("One moment.") and short replies like
+    "Hi, how can I help?" are the case a live-stream mid-utterance drop is most audible on (it
+    reads as the phrase getting cut off) and benefit least from streaming's lower
+    time-to-first-audio in the first place — so speak_text keeps them on the REST/cache cascade."""
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    monkeypatch.setattr(jarvis.tts_deepgram, "STREAM_ENABLED", True)
+
+    def boom(text, **k):
+        raise AssertionError("a short phrase must not open a live stream")
+
+    monkeypatch.setattr(jarvis.tts_deepgram, "StreamingSynthesis", boom)
+    monkeypatch.setattr(
+        jarvis.tts_deepgram, "synthesize", lambda t, timeout_s=None: (b"\x01\x00" * 10, 24000)
+    )
+    played = []
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: played.append(sr))
+    jarvis.speak_text(jarvis._FILLER_PHRASE)
+    assert played == [24000]
 
 
 def test_filler_phrase_skipped_when_event_set_quickly(jarvis, monkeypatch):

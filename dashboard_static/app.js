@@ -7,7 +7,11 @@ const ROUTES = [
   "home", "sessions", "tasks", "autonomy", "identity", "sleep",
   "usage", "activity", "audit", "victory", "daily",
 ];
-const ROUTES_WITH_CONTEXT = new Set(["home", "sessions", "tasks"]);
+// Routes that have somewhere to click *into* more detail — Autonomy/Identity/Sleep/Usage/
+// Victory/Daily each already show everything inline and want the full width instead (see
+// DASHBOARD.md's "fill empty space" notes), so the context panel stays reserved for the routes
+// where clicking a row genuinely means "tell me more about this one thing."
+const ROUTES_WITH_CONTEXT = new Set(["home", "sessions", "tasks", "audit", "activity"]);
 
 function currentRoute() {
   const raw = (location.hash || "#/home").replace(/^#\/?/, "");
@@ -27,6 +31,14 @@ function onRouteActivated(route) {
   if (route === "sleep") fetchSleep();
   if (route === "identity") fetchIdentity();
   if (route === "autonomy" && window.refreshAutonomy) window.refreshAutonomy();
+  syncContextVisibility();
+}
+
+// Split out from renderRoute() so a detail update can re-check visibility without a hash change
+// (e.g. a new command starts while you're already sitting on Sessions).
+function syncContextVisibility() {
+  const ctx = document.getElementById("context");
+  if (ctx) ctx.classList.toggle("hidden", !ROUTES_WITH_CONTEXT.has(currentRoute()));
 }
 
 function renderRoute() {
@@ -35,8 +47,6 @@ function renderRoute() {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   const view = document.getElementById("view-" + route);
   if (view) view.classList.add("active");
-  const ctx = document.getElementById("context");
-  if (ctx) ctx.classList.toggle("hidden", !ROUTES_WITH_CONTEXT.has(route));
   onRouteActivated(route);
 }
 
@@ -97,6 +107,13 @@ function render() {
   populateToolNames(d.tool_names);
   renderInputMode(d.sessions);
   if (isRouteActive("home")) renderHome();
+  // Keep the detail panel in sync with whichever session is being followed — covers both the
+  // 15s poll and any WS message, not just the two explicit session_start/session_end events
+  // handleLiveEvent reacts to, so a reply that lands between those still shows up promptly.
+  if (state.followedSessionId != null) {
+    const found = (d.sessions || []).find((s) => s.id === state.followedSessionId);
+    if (found) showDetail("session", found, { navigate: false });
+  }
 }
 
 function renderInputMode(sessions) {
@@ -306,11 +323,13 @@ function renderSessions(sessions) {
       lastGroup = group;
     }
     const li = document.createElement("li");
-    li.className = "list-item" + (s.status === "active" ? " active" : "");
+    li.className = "list-item"
+      + (s.status === "active" ? " active" : "")
+      + (state.followedSessionId === s.id ? " followed" : "");
     li.innerHTML = `
       <div class="list-item-title">${badge(s.source)} ${esc(truncate(s.transcript, 60))}</div>
       <div class="list-item-meta">${statusPill(s.status)} &middot; ${esc(s.started_at || "")}</div>`;
-    li.addEventListener("click", () => showDetail("session", s));
+    wireRowActivation(li, () => showDetail("session", s));
     el.appendChild(li);
   });
   if (!sessions || !sessions.length) el.innerHTML = '<li class="empty-state">No sessions yet.</li>';
@@ -342,8 +361,8 @@ function renderTasks(tasks) {
       <div class="list-item-title">${esc(truncate(t.description, 60))}</div>
       <div class="list-item-meta">${statusPill(t.status)} &middot; ${esc(t.kind || "")}${progress} &middot; ${esc(t.started_at || "")}</div>
       ${stopBtn}`;
-    li.addEventListener("click", (e) => {
-      if (e.target.closest(".btn-stop")) return;
+    wireRowActivation(li, (e) => {
+      if (e && e.target && e.target.closest && e.target.closest(".btn-stop")) return;
       showDetail("task", t);
     });
     const btn = li.querySelector(".btn-stop");
@@ -372,7 +391,7 @@ function renderActivity(audit) {
     const li = document.createElement("li");
     li.className = "list-item compact";
     li.innerHTML = `<span class="ts">${esc(a.timestamp)}</span><span class="tool">${esc(a.tool_name)}</span><span class="muted">${esc(truncate(a.result_preview, 80))}</span>`;
-    li.addEventListener("click", () => showDetail("audit", a));
+    wireRowActivation(li, () => showDetail("audit", a));
     el.appendChild(li);
   });
   if (!audit || !audit.length) el.innerHTML = '<li class="empty-state">No activity yet.</li>';
@@ -438,8 +457,27 @@ function prettyCodeHtml(raw) {
   }
 }
 
-function showDetail(kind, item) {
-  if (kind === "session" || kind === "task") {
+// tabindex + click + Enter, so every clickable row (sessions/tasks/activity/audit) is also
+// keyboard-reachable without duplicating the wiring at each call site.
+function wireRowActivation(li, handler) {
+  li.tabIndex = 0;
+  li.addEventListener("click", handler);
+  li.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handler();
+    }
+  });
+}
+
+// navigate=true (the default, for a direct user click) jumps to the owning route so the thing
+// you just clicked is obviously visible. navigate=false (used for the live auto-open in
+// handleLiveEvent/render()) only updates the panel's content and — via syncContextVisibility —
+// reveals it if the route you're *already* on happens to have one, without yanking you away
+// from wherever you're currently looking (see DASHBOARD.md, item 1's navigation write-up).
+function showDetail(kind, item, opts) {
+  const navigate = !opts || opts.navigate !== false;
+  if (navigate && (kind === "session" || kind === "task")) {
     location.hash = kind === "session" ? "#/sessions" : "#/tasks";
   }
   const el = document.getElementById("detail-panel");
@@ -459,7 +497,7 @@ function showDetail(kind, item) {
         </div>
         <div>
           <p class="detail-section-label">Reply</p>
-          <pre class="detail-code">${item.reply ? esc(item.reply) : '<span class="muted">(pending)</span>'}</pre>
+          <pre class="detail-code">${item.reply ? esc(item.reply) : '<span class="muted">Waiting for a reply&hellip;</span>'}</pre>
         </div>
       </div>`;
   } else if (kind === "task") {
@@ -482,6 +520,15 @@ function showDetail(kind, item) {
     const fromTranscript = item.transcript
       ? `<blockquote class="detail-quote">${esc(truncate(item.transcript, 200))}</blockquote>`
       : "";
+    // Same exact-transcript join the backend already documents for Audit <-> Sessions (no
+    // session_id column needed — handle_text_command passes the identical transcript string
+    // into both dashboard_sessions and every audit row for that turn).
+    const linkedSession = item.transcript
+      ? (state.data && state.data.sessions || []).find((s) => s.transcript === item.transcript)
+      : null;
+    const sessionLink = linkedSession
+      ? `<button class="btn btn-small" id="audit-view-session-btn">View session #${esc(linkedSession.id)} &rarr;</button>`
+      : "";
     el.innerHTML = `
       <div class="detail-card">
         <div class="detail-header">
@@ -497,8 +544,13 @@ function showDetail(kind, item) {
           <p class="detail-section-label">Result</p>
           <pre class="detail-code">${prettyCodeHtml(item.result)}</pre>
         </div>
+        ${sessionLink}
       </div>`;
+    if (linkedSession) {
+      document.getElementById("audit-view-session-btn").addEventListener("click", () => showDetail("session", linkedSession));
+    }
   }
+  syncContextVisibility();
 }
 
 async function fetchAuditResults() {
@@ -528,7 +580,7 @@ function renderAuditResults(rows) {
     const li = document.createElement("li");
     li.className = "list-item compact";
     li.innerHTML = `<span class="ts">${esc(a.timestamp)}</span><span class="tool">${esc(a.tool_name)}</span><span class="muted">${esc(truncate(a.result_preview, 80))}</span>`;
-    li.addEventListener("click", () => showDetail("audit", a));
+    wireRowActivation(li, () => showDetail("audit", a));
     el.appendChild(li);
   });
   if (!rows.length) el.innerHTML = '<li class="empty-state">No matching actions.</li>';
@@ -624,6 +676,17 @@ function renderUsage(u) {
     ? ` Approximate pricing used for: ${u.unknown_price_models.join(", ")}.`
     : "";
   document.getElementById("usage-note").textContent = u.estimate_note + extra;
+
+  document.getElementById("usage-tokens").innerHTML = [
+    ["Today", p.today], ["7 days", p.week], ["This month", p.month], ["All time", p.all_time],
+  ].map(([label, d]) => `<div class="usage-token-card">
+      <div class="usage-card-label">${esc(label)}</div>
+      <div class="usage-token-row"><span>Input</span><span>${esc(Number(d.input_tokens || 0).toLocaleString())}</span></div>
+      <div class="usage-token-row"><span>Cache read</span><span>${esc(Number(d.cache_read_tokens || 0).toLocaleString())}</span></div>
+      <div class="usage-token-row"><span>Cache write</span><span>${esc(Number(d.cache_write_tokens || 0).toLocaleString())}</span></div>
+      <div class="usage-token-row"><span>Output</span><span>${esc(Number(d.output_tokens || 0).toLocaleString())}</span></div>
+      <div class="usage-token-row"><span>Saved by caching</span><span>${esc(fmtUsd(d.cache_saved_usd))}</span></div>
+    </div>`).join("");
 }
 
 // Brain switch (Claude <-> Gemini): the chip shows the active provider; clicking switches to the
@@ -681,6 +744,38 @@ document.getElementById("spend-chip").addEventListener("click", () => {
 fetchUsage();
 setInterval(fetchUsage, 60000);
 setInterval(() => { if (isRouteActive("usage")) fetchUsage(); }, 30000);
+
+// Light background polls just for Home's "Recent autonomy activity" / "Presence" cards — reuse
+// the existing /api/autonomy and /api/faces endpoints (no new backend route). Slower cadence
+// than their own routes' polling since Home only needs a glance, not a live feed.
+let lastAutonomy = null;
+let homePresence = null;
+
+async function fetchAutonomySummary() {
+  try {
+    const res = await fetch("/api/autonomy");
+    lastAutonomy = await res.json();
+    if (isRouteActive("home")) renderHome();
+  } catch (e) {
+    /* keep last render */
+  }
+}
+
+async function fetchHomePresence() {
+  try {
+    const res = await fetch("/api/faces");
+    const data = await res.json();
+    homePresence = data.enabled ? data : null;
+    if (isRouteActive("home")) renderHome();
+  } catch (e) {
+    /* keep last render */
+  }
+}
+
+fetchAutonomySummary();
+fetchHomePresence();
+setInterval(fetchAutonomySummary, 30000);
+setInterval(fetchHomePresence, 30000);
 
 document.getElementById("audit-apply-btn").addEventListener("click", fetchAuditResults);
 document.getElementById("audit-clear-btn").addEventListener("click", () => {
@@ -774,22 +869,32 @@ document.addEventListener("click", (e) => {
 
 // When a new voice-originated session starts, open/focus it in the Detail panel so a complex
 // task kicked off by voice elsewhere in the room is immediately visible here too.
+// Any new command — voice, text (typed hotkey), or a dashboard Send — auto-opens the detail
+// panel with that session the instant it starts, transcript first and the reply filled in as
+// soon as it lands (session_end below, and render()'s poll-driven re-sync as a backstop for
+// anything in between). Deliberately excludes "phone": those are meant to stay in the
+// background, not grab dashboard focus for a remote command nobody's watching for.
+// navigate:false on purpose (see showDetail's docstring) — a background command starting
+// shouldn't yank you off whatever route you're already looking at; it only updates the panel
+// and reveals it if the current route already has one.
+const AUTO_OPEN_SOURCES = new Set(["voice", "text", "dashboard"]);
+
 function handleLiveEvent(event) {
   if (!event || !event.type) return;
-  if (event.type === "session_start" && event.data && event.data.source === "voice") {
+  if (event.type === "session_start" && event.data && AUTO_OPEN_SOURCES.has(event.data.source)) {
     showDetail("session", {
       id: event.data.id,
-      source: "voice",
+      source: event.data.source,
       transcript: event.data.transcript,
       status: "active",
       reply: null,
       started_at: new Date().toISOString(),
       ended_at: null,
-    });
+    }, { navigate: false });
   } else if (event.type === "session_end" && event.data && event.data.id === state.followedSessionId) {
     const d = state.data;
     const found = d && d.sessions && d.sessions.find((s) => s.id === event.data.id);
-    if (found) showDetail("session", found);
+    if (found) showDetail("session", found, { navigate: false });
   }
 }
 
@@ -861,7 +966,7 @@ async function fetchSleep() {
 
 // labelFn(d, i) -> x-axis label or "" to skip.
 function sleepBarsSvg(days, goal, labelFn) {
-  const W = 420, H = 130, L = 26, B = 16, T = 8;
+  const W = 420, H = 170, L = 26, B = 16, T = 8;
   const vals = days.map((d) => (d.hours || 0) + (d.nap_hours || 0));
   const max = Math.max(goal + 1, ...vals, 1);
   const y = (h) => T + (H - T - B) * (1 - h / max);
@@ -895,7 +1000,7 @@ function sleepBarsSvg(days, goal, labelFn) {
 }
 
 function sleepTimesSvg(days) {
-  const W = 420, H = 130, L = 34, B = 16, T = 8;
+  const W = 420, H = 170, L = 34, B = 16, T = 8;
   // Minutes since 18:00; bedtime and wake share one clock axis from 18:00 to 12:00 next day.
   const hi = 18 * 60;
   const y = (m) => T + (H - T - B) * (m / hi);
@@ -934,7 +1039,9 @@ function renderSleep() {
     ["Best / worst", fmtHours(cur.best_hours), `worst ${fmtHours(cur.worst_hours)}`, ""],
     ["Avg bedtime → wake", `${cur.avg_bedtime || "–"} → ${cur.avg_wake || "–"}`, cur.bedtime_variability_min != null ? `bedtime varies ±${cur.bedtime_variability_min} min` : "", ""],
     [`Goal (${u.goal_hours}h)`, `${cur.goal_hit_nights}/${cur.nights_tracked}`, `${u.goal_streak_nights}-night streak`, ""],
+    [`Goal hit rate`, cur.nights_tracked ? `${Math.round((cur.goal_hit_nights / cur.nights_tracked) * 100)}%` : "–", `${unit} so far`, ""],
     ["Sleep debt", `${cur.debt_hours}h`, `vs ${u.goal_hours}h/night`, ""],
+    [`Total sleep (${unit})`, fmtHours(cur.total_hours), `over ${cur.nights_tracked} tracked nights`, ""],
     ["Naps", cur.nap_count ? `${cur.nap_count}` : "0", cur.nap_count ? `avg ${cur.nap_avg_minutes} min &middot; ${fmtHours(cur.nap_total_hours)} total` : `none yet (say "nap mode")`, ""],
   ];
   cards.innerHTML = c
@@ -1229,9 +1336,63 @@ function renderHome() {
   const homeNowSession = document.querySelector("#home-now [data-home-session]");
   if (homeNowSession) homeNowSession.addEventListener("click", () => showDetail("session", latestSession));
 
+  const openTasks = (d.tasks || []).filter((t) => t.status === "running" || t.status === "queued").length;
   const todayCards = [];
   if (lastUsage) todayCards.push(healthCard("Spend today", fmtUsd(lastUsage.periods.today.cost_usd), false));
   if (d.counts) todayCards.push(healthCard("Done today", String(d.counts.tasks_done_today ?? 0), false));
   todayCards.push(healthCard("Sessions", String((d.sessions || []).length), false));
+  todayCards.push(healthCard("Open tasks", String(openTasks), false));
   document.getElementById("home-today").innerHTML = todayCards.join("");
+
+  // Recent sessions (beyond the single "Now" row above): last 5, clickable -> detail panel.
+  const recentSessions = (d.sessions || []).slice(0, 5);
+  const recentList = document.getElementById("home-recent-sessions");
+  recentList.innerHTML = "";
+  if (!recentSessions.length) {
+    recentList.innerHTML = '<li class="empty-state">No sessions yet.</li>';
+  } else {
+    recentSessions.forEach((s) => {
+      const li = document.createElement("li");
+      li.className = "list-item compact";
+      li.innerHTML = `<span class="ts">${esc(s.started_at || "")}</span>${badge(s.source)} ${esc(truncate(s.transcript, 60))}`;
+      wireRowActivation(li, () => showDetail("session", s));
+      recentList.appendChild(li);
+    });
+  }
+
+  // Recent autonomy activity: same /api/autonomy data the Autonomy route shows, polled lightly
+  // (see fetchAutonomySummary below) so Home doesn't need its own backend endpoint.
+  const autoList = document.getElementById("home-recent-autonomy");
+  if (!lastAutonomy) {
+    autoList.innerHTML = '<li class="empty-state">Autonomy data not loaded yet.</li>';
+  } else if (!lastAutonomy.enabled) {
+    autoList.innerHTML = '<li class="empty-state">Autonomy is off.</li>';
+  } else {
+    const recentDecisions = (lastAutonomy.decisions || []).slice(0, 5);
+    autoList.innerHTML = recentDecisions.length
+      ? recentDecisions
+          .map((x) => `<li class="list-item compact"><span class="ts">${esc((x.created_at || "").replace("T", " ").slice(0, 16))}</span>
+            <span class="tool">${esc(x.decision || "")}</span> <span class="muted">${esc(truncate(x.context_summary || x.action_taken || "", 60))}</span></li>`)
+          .join("")
+      : '<li class="empty-state">Nothing logged yet.</li>';
+  }
+
+  // Presence (face recognition), only shown when the feature is enabled on this machine. Kept
+  // as a small local helper (not identityPresenceText, which reads the Identity route's own
+  // module-level identityState) so Home works even if the Identity route was never visited.
+  const presenceEl = document.getElementById("home-presence");
+  const presenceBlock = presenceEl.closest(".home-block");
+  if (homePresence && homePresence.enabled) {
+    presenceBlock.hidden = false;
+    const st = homePresence.presence || {};
+    presenceEl.textContent = homePresence.paused
+      ? "Paused — the camera is off"
+      : st.camera_unreachable ? "Camera unreachable"
+      : st.camera_covered ? "Camera covered"
+      : st.owner_present ? `${st.owner_name} is here`
+      : st.unknown_present ? "Someone unrecognized is in view"
+      : "Nobody in view";
+  } else {
+    presenceBlock.hidden = true;
+  }
 }

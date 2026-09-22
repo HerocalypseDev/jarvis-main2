@@ -369,6 +369,10 @@ body {
 }
 .list-item:hover { border-color: var(--cyan-dim); }
 .list-item.active { border-color: var(--cyan); box-shadow: var(--glow); }
+/* "being viewed in the context panel" — distinct from .active ("in progress"), since an older
+   finished session can be the one you're currently looking at while a different one is running. */
+.list-item.followed { box-shadow: inset 3px 0 0 var(--cyan); }
+.list-item:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
 .list-item-title { font-size: 0.88em; }
 .list-item-meta { font-size: 0.75em; color: var(--text-muted); margin-top: 3px; }
 
@@ -513,12 +517,13 @@ body {
 
 /* Usage tab + top-bar spend chip */
 .spend-chip { cursor: pointer; color: var(--cyan); border-color: var(--cyan-dim); }
-.usage-cards { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+/* grid (not flex-wrap) so cards stretch to fill the row on wide screens instead of clumping
+   top-left with empty space beside them; shared by Home/Identity/Sleep/Usage's card strips. */
+.usage-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 10px; }
 .usage-card {
   border: 1px solid var(--cyan-dim);
   border-radius: 6px;
-  padding: 6px 12px;
-  min-width: 110px;
+  padding: 10px 14px;
 }
 .usage-card-label { font-size: 0.75em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .usage-card-value { font-size: 1.3em; color: var(--cyan); text-shadow: var(--glow); }
@@ -531,14 +536,19 @@ body {
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  height: 90px;
-  min-width: 260px;
-  flex: 1;
+  height: 180px;
+  min-width: 320px;
+  flex: 1.5;
 }
 .usage-bar-col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
 .usage-bar { width: 100%; background: var(--cyan-dim); border-top: 2px solid var(--cyan); border-radius: 2px 2px 0 0; }
 .usage-bar-label { font-size: 0.65em; color: var(--text-muted); margin-top: 2px; }
-.usage-lower .list { flex: 1; min-width: 220px; }
+.usage-lower .list { flex: 1; min-width: 260px; max-height: 320px; overflow-y: auto; }
+.usage-token-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 14px 0; }
+.usage-token-card { border: 1px solid var(--cyan-dim); border-radius: 6px; padding: 10px 14px; }
+.usage-token-card .usage-card-label { margin-bottom: 4px; }
+.usage-token-row { display: flex; justify-content: space-between; font-size: 0.85em; color: var(--text-muted); }
+.usage-token-row span:last-child { color: var(--text); }
 
 .llm-chip { cursor: pointer; }
 .llm-chip.llm-gemini { color: var(--warn); border-color: var(--warn); }

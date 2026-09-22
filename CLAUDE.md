@@ -118,6 +118,34 @@ Rules:
   confirmed to run without error, including the RAM-danger styling and alert banner firing
   correctly at 91%. **Not verified**: an actual rendered browser view (no claude-in-chrome/jsdom
   available this session) — the user should eyeball it live before treating this as fully done.
+- **Post-overhaul UX pass (2026-09-22)**: full write-up in DASHBOARD.md's "Post-overhaul UX pass"
+  section. Summary: (1/2) new voice/text/dashboard commands and Audit Trail row clicks now drive
+  the context/detail panel automatically (a background update reveals the panel only if the
+  current route already has one; a direct click still navigates — see DASHBOARD.md for the full
+  navigation write-up); (3) Usage/Sleep/Identity/Home's shared `.usage-cards` strip is now a
+  responsive grid instead of flex-wrap, taller charts, and a new Usage "tokens & cache savings by
+  period" breakdown from fields `/api/usage` already returned; (4) Autonomy was restructured into
+  Needs-you / Running-now / commitments / campaigns / rules / secondary "Automation details" /
+  activity log, with every existing control kept, just regrouped; (5) Sleep gained a goal-hit-rate
+  % card and a total-sleep-this-period card from fields already computed; (6) Home gained Recent
+  sessions (clickable), Recent autonomy activity, a Presence card (face recognition, hidden when
+  the feature is off), and an Open-tasks count — via two new light 30s polls of the existing
+  `/api/autonomy`/`/api/faces` endpoints, no new backend route. Two real voice-playback bugs were
+  also root-caused and fixed in `jarvis.py` (not dashboard code): `_play_pcm_stream`'s
+  `sd.OutputStream` now passes `latency="high"` so uneven network chunk timing can't starve the
+  output device into a crackle/dropout ("voice breaks a lot"); and a new
+  `TTS_LIVE_STREAM_MIN_CHARS` (40, `JARVIS_TTS_LIVE_STREAM_MIN_CHARS`) keeps short text — the
+  filler phrase and short replies like "Hi, how can I help?" — off the live Deepgram WebSocket
+  entirely, since `_speak_streamed`'s existing "keep whatever already played, don't restart" rule
+  on a mid-stream drop is the right call for a long reply but sounds like the whole thing got cut
+  off on a short one, and a short phrase's REST round trip is already fast enough that streaming
+  buys little there anyway. Residual, accepted: a genuine mid-utterance WebSocket drop on a
+  *longer* reply (past the 40-char floor) still ends with whatever played before the drop, the
+  same class of tradeoff as Phase C's documented LLM-stream retry behavior in SPEED.md. Tests:
+  2 new in `test_deepgram_voice.py` (92 total in that file), one pre-existing test's fixture text
+  lengthened to keep exercising the streaming path it tests. Full suite: 733 tests, same 4
+  pre-existing unrelated failures (deleted urgent-email-monitor skill files, see "Audit hardening"
+  below).
 
 ## Speech shaping (2026-09-18)
 
@@ -1004,7 +1032,8 @@ row there each phase rather than only stating the total in chat.
 | 32 (cloud-latency pass: streaming STT + TTS WebSockets, simple-intent fast path, Claude SSE token streaming to speech, all default-on; websocket-client dependency; 48 new tests) | Sonnet 5 | ~110 min | ~$4.50–$6.20 |
 | 33 (cloud-latency audit-and-fix pass: found and fixed a real double-speak bug in multi-round streamed narration, plus a stale comment; 1 new test) | Sonnet 5 | ~30 min | ~$1.30–$1.90 |
 | 34 (dashboard UI/UX overhaul: sidebar + hash-routed shell, Home mission-control view, full feature parity lift-and-shift, verified via headless harness + standalone preview server) | Sonnet 5 | ~85 min | ~$3.60–$5.00 |
-| **Running total (final)** | | **~1253 min** | **~$56.85–$79.40** |
+| 35 (post-overhaul UX pass: detail-panel auto-open + audit click-through, denser Usage/Sleep/Home/Autonomy layouts, Usage token breakdown, Autonomy restructure, Home enrichment, 2 root-caused voice playback bugs; 2 new tests) | Sonnet 5 | ~70 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~1323 min** | **~$59.85–$83.60** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

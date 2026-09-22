@@ -788,7 +788,12 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
     with _playback_lock:
         jarvis_speaking.set()
         try:
-            with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32") as out:
+            # latency="high" asks PortAudio for a bigger internal buffer: without it, a chunk
+            # that arrives from the network a little late (Deepgram is a live WebSocket, not a
+            # local file) starves the output device mid-utterance, which is heard as a crackle
+            # or a dropout — this is the reported "voice breaks a lot" symptom (2026-09-22
+            # voice-bug pass). This trades a little more time-to-first-audio for not glitching.
+            with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32", latency="high") as out:
                 for chunk in chunks:
                     pcm_i16 = np.frombuffer(chunk, dtype=np.int16)
                     if pcm_i16.size == 0:
@@ -857,6 +862,9 @@ _dg_tts_breaker = cache.CircuitBreaker(threshold=3, cooldown_s=120.0)
 # real SSE streaming of the Claude response itself was left out).
 SENTENCE_STREAM_MIN_CHARS = int(os.environ.get("JARVIS_TTS_SENTENCE_STREAM_MIN_CHARS") or 120)
 PIPELINE_JOIN_TIMEOUT_S = 90.0  # generous outer backstop; see the join() call below
+# Below this length, speak_text() uses the REST/cache TTS cascade instead of the live streaming
+# WebSocket — see the comment at its one call site in speak_text() (voice-bug pass, 2026-09-22).
+TTS_LIVE_STREAM_MIN_CHARS = int(os.environ.get("JARVIS_TTS_LIVE_STREAM_MIN_CHARS") or 40)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -1044,7 +1052,15 @@ def speak_text(text: str) -> None:
                 raw, sr, backend = cache_hit
             else:
                 raw, sr, backend = b"", 0, ""
-                if _use_deepgram_tts_stream():
+                # Below TTS_LIVE_STREAM_MIN_CHARS, skip the live WebSocket and go straight to the
+                # REST/cache cascade. A live stream that drops mid-utterance leaves whatever
+                # already played as the final word (see _speak_streamed's docstring: replaying
+                # from the top would double-speak) — for a short phrase that reads as an audible
+                # cutoff, and the filler phrase ("One moment.") and short replies like "Hi, how
+                # can I help?" are exactly the case reported (2026-09-22 voice-bug pass). A short
+                # phrase's REST round trip is already fast, so streaming's time-to-first-audio
+                # win is smallest right where the truncation risk is most noticeable.
+                if len(sentence) >= TTS_LIVE_STREAM_MIN_CHARS and _use_deepgram_tts_stream():
 
                     def _mark_first_audio() -> None:
                         if lat:

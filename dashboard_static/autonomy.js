@@ -93,17 +93,42 @@
       h("div", { class: "usage-card-value" }, String(value)));
   }
 
+  // A small danger-styled variant of card(), for the "Needs attention" summary number — matches
+  // Home's usage-card-danger convention so the same visual language means the same thing
+  // everywhere in the dashboard.
+  function cardFlag(label, value, danger) {
+    return h("div", { class: "usage-card" + (danger ? " usage-card-danger" : "") },
+      h("div", { class: "usage-card-label" }, label),
+      h("div", { class: "usage-card-value" }, String(value)));
+  }
+
   function render(d) {
     if (!d.available) {
       root.replaceChildren(h("p", { class: "muted" }, "Autonomy is not available in this build."));
       return;
     }
     const b = d.budgets || {};
-    const top = h("div", { class: "usage-cards" },
-      card("Autonomy", d.enabled ? "ON" : "off"),
-      card("Mode", d.dry_run ? "dry run" : "live"),
-      card("Acts today", `${b.acts_today}/${b.max_acts}`),
-      card("Suggestions today", `${b.suggestions_today}/${b.max_suggestions}`));
+    const decisionsAll = d.decisions || [];
+    const cutoff24h = Date.now() - 24 * 3600 * 1000;
+    const recentFailures = decisionsAll.filter((x) => {
+      if (x.outcome !== "failed" || !x.created_at) return false;
+      const t = Date.parse(x.created_at.endsWith("Z") ? x.created_at : x.created_at + "Z");
+      return !isNaN(t) && t >= cutoff24h;
+    });
+    const proposalsRaw = d.dynamic_tool_proposals || [];
+    const suggRaw = d.pending_suggestions || [];
+    const needsAttentionCount = suggRaw.length + recentFailures.length + proposalsRaw.length;
+    const lastActivity = decisionsAll.length ? when(decisionsAll[0].created_at) : null;
+
+    // A. Top summary strip — everything you'd want to know in 5 seconds, before scrolling.
+    const top = h("div", {},
+      h("div", { class: "usage-cards" },
+        card("Autonomy", d.enabled ? "ON" : "off"),
+        card("Mode", d.dry_run ? "dry run" : "live"),
+        card("Acts today", `${b.acts_today}/${b.max_acts}`),
+        card("Suggestions today", `${b.suggestions_today}/${b.max_suggestions}`),
+        cardFlag("Needs attention", needsAttentionCount, needsAttentionCount > 0)),
+      lastActivity ? h("div", { class: "muted" }, `Last activity: ${lastActivity}`) : null);
 
     const controls = h("div", { class: "auto-controls" },
       h("button", {
@@ -182,6 +207,26 @@
         }, h("input", { name: "description", placeholder: "add a step (background task)", size: "30" }),
           h("button", { class: "btn btn-small btn-ghost", type: "submit" }, "Add step")));
     });
+
+    // B/C. "Needs you" and "Running now" — quick-scan summaries built from the same
+    // projects/decisions data the full lists below already have; nothing new is fetched.
+    const runningNow = (d.projects || [])
+      .filter((p) => {
+        let meta = {};
+        try { meta = JSON.parse(p.metadata_json || "{}"); } catch (e) { /* ignore */ }
+        return p.status === "running" && meta.campaign_approved !== false;
+      })
+      .map((p) => {
+        const latest = (actionsByProject[p.id] || [])[0];
+        return h("li", { class: "muted" }, `${p.name}${latest ? ` — ${latest.status}: ${latest.description}` : ""}`);
+      });
+    const recentFailureRows = recentFailures.slice(0, 8).map((x) => h("li", { class: "muted" },
+      `${when(x.created_at)} · ${x.decision} failed: ${(x.action_taken || x.context_summary || "").slice(0, 100)}`));
+    const needsYouItems = [
+      ...suggList,
+      ...recentFailureRows,
+      ...(proposalsRaw.length ? [h("li", { class: "muted" }, `${proposalsRaw.length} tool proposal(s) waiting below ↓`)] : []),
+    ];
 
     const policies = (d.policies || []).map((p) => h("li", {},
       `#${p.id} ${p.match_kind} ${p.match_value || p.category} → ${p.verdict} `,
@@ -269,12 +314,31 @@
       " ",
       h("button", { class: "btn btn-small btn-ghost", onclick: () => call("POST", `/api/dynamic_tools/proposals/${t.id}/reject`) }, "Reject")));
 
-    root.replaceChildren(top, controls,
-      section("Recorded for review (low confidence or an ask rule)"), h("ul", { class: "list" }, suggList),
-      section("Open commitments"), h("ul", { class: "list compact" }, commits.length ? commits : none("None tracked yet.")),
-      section("Projects & campaigns"), h("ul", { class: "list compact" }, projects.length ? projects : none("None.")),
-      section("Rules (auto-approve / ask / ignore)"), h("ul", { class: "list compact" }, policies), form,
-      section("Activity log - what autonomy did and why"), logSection,
+    const blockTitle = (text) => h("h2", { class: "block-title" }, text);
+
+    root.replaceChildren(
+      top, controls,
+
+      // B. Needs you — everything that's actually waiting on a decision, in one place, so a new
+      // user can tell "is there anything for me to do?" without reading every section below.
+      blockTitle("Needs you"),
+      h("ul", { class: "list" }, needsYouItems.length ? needsYouItems : none("Nothing needs you right now.")),
+
+      // C. Running now — a glance at what's actually in flight, separate from the full
+      // pause/resume/add-step controls (still in "Campaigns" below).
+      blockTitle("Running now"),
+      h("ul", { class: "list compact" }, runningNow.length ? runningNow : none("Nothing running right now.")),
+
+      // D/E/F. Open commitments, campaigns (full controls), rules — the things you manage.
+      blockTitle("Open commitments"),
+      h("ul", { class: "list compact" }, commits.length ? commits : none("None tracked yet.")),
+      blockTitle("Campaigns"),
+      h("ul", { class: "list compact" }, projects.length ? projects : none("None.")),
+      blockTitle("Rules (auto-approve / ask / ignore)"),
+      h("ul", { class: "list compact" }, policies), form,
+
+      // Secondary/advanced — automation plumbing and history, not day-to-day decisions.
+      blockTitle("Automation details"),
       section("File organising (on by default; moves or copies only, never deletes)"),
       h("ul", { class: "list compact" }, orgRoots.length ? orgRoots : none("No organised folders exist on this machine.")), orgRootForm,
       h("ul", { class: "list compact" }, orgRules), orgRuleForm,
@@ -282,7 +346,11 @@
       section("Skills (composed sequences of existing tools)"), h("ul", { class: "list compact" }, skills.length ? skills : none("None yet.")),
       section("Tool proposals waiting for you"), h("ul", { class: "list" }, proposals.length ? proposals : none("None.")),
       section("Dynamic tools" + (d.dynamic_tools_disabled ? " (disabled by env)" : "")),
-      h("ul", { class: "list compact" }, tools.length ? tools : none("None created.")));
+      h("ul", { class: "list compact" }, tools.length ? tools : none("None created.")),
+
+      blockTitle("Activity log — what autonomy did and why"),
+      logSection,
+    );
   }
 
   async function refresh() {
