@@ -1029,6 +1029,25 @@ real gaps were built:
   writes the ~33k prefix (~$0.13). `PRICES` has `claude-sonnet-5`.
 - **Not verified live**: the API key had no credit balance (400 "credit balance is too low").
 
+## Context7 + Windows-MCP (2026-09-23)
+
+Both live in the gitignored local `mcp_servers.json`, installed pinned (not `@latest`):
+- **context7**: `@upstash/context7-mcp@4.1.1` (global npm, run with `node .../dist/index.js`), tools
+  `resolve-library-id`/`query-docs`, no API key. Handshake verified; **the lookup itself failed**:
+  context7.com (76.76.21.21) timed out from this network while GitHub/Google/other Vercel sites
+  loaded, so likely an ISP/network block. It will just return errors until that's reachable.
+- **windows**: `uvx windows-mcp==0.8.5 serve --tools <whitelist>` with `ANONYMIZED_TELEMETRY=false`.
+  Only UI tools are allowed: Click, Type, Scroll, Move, Shortcut, Wait, WaitFor, App, Snapshot,
+  Screenshot, DisplayInventory, MultiSelect, MultiEdit. **PowerShell, FileSystem, Process, Registry,
+  Clipboard, Scrape, Notification are deliberately excluded**: they would bypass the catastrophic
+  gate and `sensitive_reason` path guards. Don't widen the whitelist without that review.
+- **Gate extended to all MCP tools**: `_execute_tool_impl` now runs `_catastrophic_reason` over an MCP
+  call's scalar input values and stages it like run_shell (so Type/Shortcut typing
+  `shutdown /s` into a terminal is staged, not run). Still a text tripwire: a multi-step UI sequence
+  (open Run box, type something harmless-looking, press Enter) is not caught. With full auto-act
+  autonomy, a prompt-injected email could drive these UI tools; accepted by the user when asking for it.
+  Test: `test_hardening.py::test_mcp_tool_text_goes_through_catastrophic_gate`.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1090,7 +1109,8 @@ row there each phase rather than only stating the total in chat.
 | 37 (removed the buggy "One moment." filler phrase + its tests) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
 | 38 (browser automation switched to Opera GX, local config only) | Opus 5.5 | ~5 min | ~$0.20–$0.35 |
 | 39 (layered memory: per-command relevant-fact retrieval + guarded auto fact extraction; 2 new tests) | Opus 5.5 | ~20 min | ~$1.00–$1.50 |
-| **Running total (final)** | | **~1393 min** | **~$63.05–$88.35** |
+| 40 (Sonnet 5 routing for hard commands, Context7 + Windows-MCP (UI-only whitelist), catastrophic gate extended to MCP tools; 3 new tests) | Opus 5.5 | ~30 min | ~$1.80–$2.60 |
+| **Running total (final)** | | **~1423 min** | **~$64.85–$90.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

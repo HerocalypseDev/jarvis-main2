@@ -7240,7 +7240,21 @@ def _execute_tool_impl(
     result = f"Unrecognized tool: {tool_name!r}"
     try:
         if tool_name.startswith("mcp_"):
-            result = execute_mcp_tool(tool_name, inp)
+            # MCP tools can type into a terminal or Run box (Windows-MCP Type/Shortcut, the
+            # browser), so their text goes through the same tripwire as run_shell/run_python.
+            reason = None if skip_confirmation else _catastrophic_reason(
+                " ".join(str(v) for v in inp.values() if isinstance(v, (str, int, float)))
+            )
+            if reason:
+                if _queue_pending_confirmation(tool_name, dict(inp), reason):
+                    result = (
+                        f"That would {reason} — staged, not run. "
+                        'Say "yes" on your next turn to actually run it.'
+                    )
+                else:
+                    result = "Another confirmation is already pending; ignoring this one."
+            else:
+                result = execute_mcp_tool(tool_name, inp)
         elif tool_name == "open_url":
             url = str(inp.get("url") or "").strip()
             result = f"Opened {url}." if url else "No URL given."

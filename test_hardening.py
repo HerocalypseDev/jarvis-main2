@@ -226,3 +226,19 @@ def test_origin_parsing_is_strict():
     assert not d._origin_is_loopback("null")
     assert not d._origin_is_loopback("http://127.0.0.1.evil.com")
     assert d._host_is_loopback("localhost:8765") and not d._host_is_loopback("evil.com")
+
+
+def test_mcp_tool_text_goes_through_catastrophic_gate(monkeypatch):
+    """Windows-MCP's Type tool (or the browser) could type a shutdown into a terminal; that must
+    be staged like run_shell, not run. Harmless MCP calls still go straight through."""
+    import jarvis
+    ran = []
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "ok")
+    monkeypatch.setattr(jarvis, "_pending_action", None)
+    out = jarvis._execute_tool_impl("mcp_windows_Type", {"text": "shutdown /s /t 0", "loc": [10, 10]}, "t")
+    assert "staged, not run" in out and ran == []
+    assert jarvis._pending_action["tool_name"] == "mcp_windows_Type"
+    monkeypatch.setattr(jarvis, "_pending_action", None)
+    assert jarvis._execute_tool_impl("mcp_windows_Type", {"text": "hello world"}, "t") == "ok"
+    assert jarvis._execute_tool_impl("mcp_windows_Type", {"text": "shutdown /s"}, "t", skip_confirmation=True) == "ok"
+    assert ran == ["mcp_windows_Type", "mcp_windows_Type"]

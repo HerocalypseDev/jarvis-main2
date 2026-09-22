@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1790118391.644872,
-    "seen": 1790118645.0604844,
-    "ast_hash": "6ab6a175249b2a4e43f2453c156cc820",
+    "mtime": 1790117178.4909792,
+    "seen": 1790117530.136592,
+    "ast_hash": "6caa79ac572e1dce327e3a2d33a2cf82",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -108,9 +108,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1790118623.4734821,
-    "seen": 1790118645.060645,
-    "ast_hash": "98511c91e2701d30e7a177d80bd768cb",
+    "mtime": 1790117507.9031992,
+    "seen": 1790117530.1371055,
+    "ast_hash": "793f7105d06098b184e03b08b39cafba",
     "semantic_hash": ""
   },
   "README.md": {
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "jarvis_billing.py": {
-    "mtime": 1790117895.9999778,
-    "seen": 1790118645.0604968,
-    "ast_hash": "2f5dc4c79a6b0656d8757fbc2566de44",
+    "mtime": 1789771524.5525248,
+    "seen": 1789771688.338645,
+    "ast_hash": "be76089f4fc3b5571ead8fe6d141e622",
     "semantic_hash": ""
   },
   "jarvis_gemini.py": {
@@ -618,9 +618,9 @@
     "semantic_hash": ""
   },
   "test_hardening.py": {
-    "mtime": 1790118406.7035441,
-    "seen": 1790118645.060629,
-    "ast_hash": "2fe9db925f1d686738180585c855e544",
+    "mtime": 1789966529.612895,
+    "seen": 1789967272.0711796,
+    "ast_hash": "602a480b7db87744c459e2f10cde8da5",
     "semantic_hash": ""
   },
   "snake_js/index.html": {
@@ -648,9 +648,9 @@
     "semantic_hash": ""
   },
   "test_deepgram_voice.py": {
-    "mtime": 1790117969.4212935,
-    "seen": 1790118645.0605989,
-    "ast_hash": "2bfffea4c6d493e5df7e6910d18711d3",
+    "mtime": 1790116521.2105658,
+    "seen": 1790116559.9855232,
+    "ast_hash": "423f0acc2c04b7fa8e1729cb8316c616",
     "semantic_hash": ""
   },
   "SPEED.md": {
