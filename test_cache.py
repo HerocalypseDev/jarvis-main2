@@ -618,47 +618,6 @@ def test_gmail_watch_skill_requires_spoken_alert_for_important_mail():
     assert "NO spoken reply" in text
 
 
-def test_urgent_email_reply_monitor_skill_drafts_then_sends():
-    import json
-    from pathlib import Path
-    skills = Path(__file__).parent / "skills"
-    skill = json.loads((skills / "urgent_email_reply_monitor.json").read_text(encoding="utf-8"))
-    watch = json.loads((skills / "gmail_watch.json").read_text(encoding="utf-8"))
-    assert skill["name"] == "urgent_email_reply_monitor"
-    assert skill["schedule"] == {"every_minutes": 5}
-    assert watch["schedule"] == {"every_minutes": 60}  # stays distinct from the hourly watch
-    text = skill["instructions"]
-    assert "draft_email" in text and "mcp_gmail_send_email" in text
-    assert "NEVER call send_email" not in text and "do NOT retry" in text
-    assert "Temu" in text and "Reddit" in text
-    assert "handled" in text  # dedupe so a message is not drafted every run
-    assert "NO spoken reply" in text
-
-
-def test_urgent_email_reply_monitor_v2_signoff_context_no_default_no():
-    import json
-    from pathlib import Path
-    skill = json.loads((Path(__file__).parent / "skills" / "urgent_email_reply_monitor_v2.json").read_text(encoding="utf-8"))
-    text = skill["instructions"]
-    assert "Best, Hero's assistant" in text
-    assert "drafted and sent by my AI assistant" not in text
-    assert "DEFAULT ANSWER IS NO" not in text
-    assert "list-events" in text and "recall_facts" in text and "search_emails" in text
-    assert text.index("recall_facts") < text.index("mcp_gmail_send_email")
-
-
-def test_urgent_email_reply_monitor_gathers_context_and_defaults_to_no():
-    import json
-    from pathlib import Path
-    skill = json.loads((Path(__file__).parent / "skills" / "urgent_email_reply_monitor.json").read_text(encoding="utf-8"))
-    text = skill["instructions"]
-    assert "mcp_googlecalendar_" in text and "semantic_recall" in text
-    assert "list_commitments" in text and "search_emails" in text
-    assert "This message was drafted and sent by my AI assistant" in text
-    assert "DEFAULT ANSWER IS NO" in text
-    assert text.index("semantic_recall") < text.index("mcp_gmail_send_email")
-
-
 def _gate_env(jarvis, monkeypatch):
     spoken = []
     monkeypatch.setattr(jarvis, "_speak_shaped", lambda t: spoken.append(t))
@@ -748,11 +707,6 @@ def test_tool_result_fallback_can_be_disabled(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "noted: no reply needed")
     _tool_only_claude(monkeypatch, jarvis)
     assert jarvis.run_agent_loop("x", tool_result_fallback=False) == ""
-
-
-def test_urgent_email_monitor_skill_is_silent_when_empty(jarvis):
-    skill = next(s for s in jarvis._load_skills() if s["name"] == "urgent_email_reply_monitor")
-    assert skill.get("silent_when_empty") is True
 
 
 def test_scheduled_skill_with_silent_flag_speaks_nothing_on_empty_reply(jarvis, monkeypatch):

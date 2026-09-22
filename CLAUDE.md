@@ -1087,8 +1087,8 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
 - **Deliberately NOT changed** (standing user decisions): autonomy stays on by default with no default
   email-recipient allowlist (`JARVIS_AUTONOMY_EMAIL_AUTO_ALLOW` remains opt-in) - full auto-act was an
   explicit 2026-09-20 decision; `graphify-out/` stays tracked; git history was not rewritten (old logs
-  remain in past commits). The urgent-email auto-reply skills are still deleted in the working tree
-  (4 tests in `test_cache.py` fail until they are restored or those tests are removed); if restored,
-  add a deterministic handled-ID table and per-sender cap first (memory-search dedupe is fuzzy).
+  remain in past commits). The urgent-email auto-reply skills were deleted by the user on purpose
+  (2026-09-22) and their 4 tests removed from `test_cache.py`; if ever re-added, add a deterministic
+  handled-ID table and per-sender cap first (memory-search dedupe is fuzzy).
 - MCP servers still run through `npx ...@latest` in the local `mcp_servers.json` (gitignored); pin
   versions there yourself.
