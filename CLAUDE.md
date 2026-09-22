@@ -1045,7 +1045,8 @@ row there each phase rather than only stating the total in chat.
 | 34 (dashboard UI/UX overhaul: sidebar + hash-routed shell, Home mission-control view, full feature parity lift-and-shift, verified via headless harness + standalone preview server) | Sonnet 5 | ~85 min | ~$3.60–$5.00 |
 | 35 (post-overhaul UX pass: detail-panel auto-open + audit click-through, denser Usage/Sleep/Home/Autonomy layouts, Usage token breakdown, Autonomy restructure, Home enrichment, 2 root-caused voice playback bugs; 2 new tests) | Sonnet 5 | ~70 min | ~$3.00–$4.20 |
 | 36 (post-overhaul audit-and-fix pass: found and fixed a playback-aborting odd-byte-chunk bug, a missing transcript column breaking Activity→session linking, and a mislabeled Home autonomy empty-state; 2 new tests) | Sonnet 5 | ~40 min | ~$1.70–$2.40 |
-| **Running total (final)** | | **~1363 min** | **~$61.55–$86.00** |
+| 37 (removed the buggy "One moment." filler phrase + its tests) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
+| **Running total (final)** | | **~1368 min** | **~$61.85–$86.50** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
