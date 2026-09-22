@@ -219,6 +219,36 @@ def test_audit_filters(dashboard, db_path):
         assert set(state["tool_names"]) == {"web_search", "open_app"}
 
 
+def test_state_audit_rows_include_transcript_for_session_linking(dashboard, db_path):
+    """Post-overhaul UX audit (2026-09-22): the Activity route's rows come from /api/state's
+    compact audit list (_fetch_audit), not /api/audit's filtered one (_fetch_audit_filtered) —
+    the frontend links an audit row to its session by an exact transcript match, so a row with no
+    transcript field can never link even when a real session shares its transcript. _fetch_audit
+    was missing the column entirely."""
+    conn = sqlite3.connect(dashboard._db_path())
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS action_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp TEXT NOT NULL, transcript TEXT NOT NULL, tool_name TEXT NOT NULL, "
+        "tool_input TEXT NOT NULL, result TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO action_audit (timestamp, transcript, tool_name, tool_input, result) "
+        "VALUES (?,?,?,?,?)",
+        ("2020-01-01T00:00:00", "what time is it", "get_time", "{}", "It's noon."),
+    )
+    conn.commit()
+    conn.close()
+
+    from fastapi.testclient import TestClient
+
+    app = dashboard._build_app()
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        r = c.get("/api/state")
+        rows = r.json()["audit"]
+        assert len(rows) == 1
+        assert rows[0]["transcript"] == "what time is it"
+
+
 def test_metrics_passthrough(dashboard):
     from fastapi.testclient import TestClient
 

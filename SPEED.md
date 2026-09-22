@@ -199,6 +199,19 @@ it's never cached as if it were the full utterance) — `latency.tts_backend` is
 either way. Verified live: real audio played through actual speakers via `_speak_streamed`
 end-to-end.
 
+**Voice-bug audit pass (2026-09-22)** found a real bug in `_play_pcm_stream`: a WebSocket frame
+boundary from Deepgram has no reason to land on a 2-byte int16 sample boundary — it's an arbitrary
+chunking of a raw PCM byte stream, not file-aligned data. An odd-length chunk made
+`np.frombuffer(chunk, dtype=np.int16)` raise `ValueError`, which propagated out of the `for chunk
+in chunks:` loop and aborted the rest of the utterance from that point on — a very plausible real
+cause of the reported "voice breaks a lot" symptom (and, worse than a crackle, an outright
+truncation) that could happen even on a perfectly healthy connection, with no network fault
+involved at all. Fixed by carrying any trailing odd byte over to be prepended to the next chunk
+instead of parsing it prematurely (`leftover` bytes in `_play_pcm_stream`). Pinned by
+`test_play_pcm_stream_survives_a_chunk_split_on_an_odd_byte_boundary` in
+`test_deepgram_voice.py`, which splits a real int16 buffer at an odd byte offset and asserts every
+sample is still written, in order, with none dropped.
+
 ### Phase D — simple-intent fast path (no new local model)
 
 Two narrow, safe shortcuts around the ~100+ tool schema prefix, both gated by

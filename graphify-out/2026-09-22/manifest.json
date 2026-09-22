@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1790067353.9223275,
-    "seen": 1790067685.628754,
-    "ast_hash": "612eef40ee1c89fa5a124ec6fc524732",
+    "mtime": 1790076532.2823968,
+    "seen": 1790076968.5667305,
+    "ast_hash": "5e9c9cb8b01fe02a33ba2aece85856d2",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -108,9 +108,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1790069157.2724779,
-    "seen": 1790069748.4694154,
-    "ast_hash": "d7ba89d148ce92c780843e0307587c22",
+    "mtime": 1790076941.3811977,
+    "seen": 1790076968.5668557,
+    "ast_hash": "6204148ae44390d2ad8573f7682e1f9b",
     "semantic_hash": ""
   },
   "README.md": {
@@ -126,9 +126,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/app.js": {
-    "mtime": 1790068357.0870128,
-    "seen": 1790069748.4690218,
-    "ast_hash": "cfadf8b07f3d5d3f232ad6570fb88469",
+    "mtime": 1790076175.409797,
+    "seen": 1790076968.5667195,
+    "ast_hash": "bd1a5f570e419b538f086fff2a98638e",
     "semantic_hash": ""
   },
   "jarvis_dashboard.py": {
@@ -138,9 +138,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/index.html": {
-    "mtime": 1790068129.8906026,
-    "seen": 1790069748.4694986,
-    "ast_hash": "efe72486d7759a498a1d997fef74befe",
+    "mtime": 1790076095.904765,
+    "seen": 1790076968.5668833,
+    "ast_hash": "9efb29a617e99ba977170c9ee484deda",
     "semantic_hash": ""
   },
   "test_dashboard.py": {
@@ -546,9 +546,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/autonomy.js": {
-    "mtime": 1790068371.9680014,
-    "seen": 1790069748.4690287,
-    "ast_hash": "3ec90a9af9aec66c2c8386cc4702fb3c",
+    "mtime": 1790075618.1742427,
+    "seen": 1790076968.5667226,
+    "ast_hash": "752c5bb8b0d38e7e0f0602e191347468",
     "semantic_hash": ""
   },
   "jarvis_autonomy.py": {
@@ -648,9 +648,9 @@
     "semantic_hash": ""
   },
   "test_deepgram_voice.py": {
-    "mtime": 1790067315.131992,
-    "seen": 1790067685.6291275,
-    "ast_hash": "28ab77c49f508d44919915a34582e8f2",
+    "mtime": 1790076600.5723221,
+    "seen": 1790076968.5668306,
+    "ast_hash": "3385bf2f1a09597c35aa4331bbdbd5f3",
     "semantic_hash": ""
   },
   "SPEED.md": {
@@ -660,9 +660,9 @@
     "semantic_hash": ""
   },
   "DASHBOARD.md": {
-    "mtime": 1790069066.7591379,
-    "seen": 1790069748.4694204,
-    "ast_hash": "5f4a8d9de98d3196fc66f14b69ac7b22",
+    "mtime": 1790076885.308012,
+    "seen": 1790076968.5668576,
+    "ast_hash": "058cf25a9ea5479a9caeb0e8cb459b81",
     "semantic_hash": ""
   }
 }

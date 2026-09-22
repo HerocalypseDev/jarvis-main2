@@ -276,7 +276,7 @@ def _fetch_tasks(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
 def _fetch_audit(conn: sqlite3.Connection, limit: int = 30) -> list[dict]:
     try:
         rows = conn.execute(
-            "SELECT id, timestamp, tool_name, tool_input, result FROM action_audit "
+            "SELECT id, timestamp, transcript, tool_name, tool_input, result FROM action_audit "
             "ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -284,10 +284,10 @@ def _fetch_audit(conn: sqlite3.Connection, limit: int = 30) -> list[dict]:
         return []
     out = []
     for r in rows:
-        tool_input = r[3] or ""
-        result = r[4] or ""
+        tool_input = r[4] or ""
+        result = r[5] or ""
         out.append({
-            "id": r[0], "timestamp": r[1], "tool_name": r[2],
+            "id": r[0], "timestamp": r[1], "transcript": r[2], "tool_name": r[3],
             "tool_input": tool_input, "result": result,
             "result_preview": result[:200],
         })

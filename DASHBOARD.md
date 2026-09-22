@@ -209,6 +209,31 @@ over:
   text long enough to still exercise the streaming path it's testing. Full suite: 733 tests, same 4
   pre-existing unrelated failures (deleted urgent-email-monitor skill files, documented in CLAUDE.md).
 
+**Audit-and-fix pass (2026-09-22, same day)** — adversarial re-read of everything above, three real
+bugs found and fixed:
+1. *`_fetch_audit` (the Activity route's `/api/state` compact audit list) never selected the
+   `transcript` column at all*, only `_fetch_audit_filtered` (the dedicated Audit Trail route) did
+   — so clicking an Activity row could never show its "View session →" link even when a real
+   session shared its transcript, silently (not a crash, just a feature that never activated on
+   that one route). Fixed by adding `transcript` to `_fetch_audit`'s SELECT and output dict —
+   read-only, no schema change (the column already existed on `action_audit`). Pinned by
+   `test_state_audit_rows_include_transcript_for_session_linking` in `test_dashboard.py`.
+2. *`_play_pcm_stream`'s odd-byte-chunk crash* — see SPEED.md's Phase B section for the full
+   write-up; a real cause of playback stopping mid-utterance, independent of network health.
+3. *Home's "Recent autonomy activity" card mislabeled "not available in this build" as "Autonomy
+   is off"* — it checked `lastAutonomy.enabled` without first checking `lastAutonomy.available`
+   (the same two fields `autonomy.js`'s own render() checks, in the same order). Fixed to match.
+Also audited and confirmed correct, no changes needed: the auto-open/follow logic under rapid
+consecutive commands (the newest session always wins `state.followedSessionId`, an older
+`session_end` for a since-superseded session is a no-op); no leaked duplicate `setInterval`s or
+WebSocket connections on route changes (every interval is set up exactly once, at module load,
+not inside `onRouteActivated`); the sentence-pipelining pre-fetch thread still never streams/plays
+audio (dedicated test already covers this); the Autonomy restructure still routes every existing
+control (Approve/Dismiss/Never, Done/Cancel, Accept, Pause/Resume campaign, Add step, Remove
+policy, Add rule, Revoke/Disable skills and dynamic tools, organise rules/roots, tool-proposal
+approve/reject) through the exact same handlers, just regrouped into the new sections — none were
+dropped or duplicated. Full suite: 736 tests (2 new here, same 4 pre-existing unrelated failures).
+
 ## How to preview without running full Jarvis
 
 `jarvis_dashboard._build_app(...)` builds the FastAPI app standalone (same helper `test_dashboard.py`

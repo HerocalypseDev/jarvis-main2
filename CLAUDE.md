@@ -146,6 +146,16 @@ Rules:
   lengthened to keep exercising the streaming path it tests. Full suite: 733 tests, same 4
   pre-existing unrelated failures (deleted urgent-email-monitor skill files, see "Audit hardening"
   below).
+- **Audit-and-fix pass (2026-09-22, same day)**: full write-up in DASHBOARD.md's "Audit-and-fix
+  pass" section. Three real bugs found and fixed: `_fetch_audit` (Activity route's compact list)
+  never selected the `transcript` column, silently breaking session-linking on that one route
+  even though the dedicated Audit Trail route worked correctly; `_play_pcm_stream` crashed/aborted
+  playback on a WebSocket chunk that happened to split on an odd byte boundary (a real, plausible,
+  network-independent cause of the reported "voice breaks a lot" — see SPEED.md's Phase B);
+  Home's autonomy card mislabeled "not available in this build" as "off". Everything else audited
+  clean: rapid-consecutive-command following, no leaked intervals/WS connections, the streaming
+  pre-fetch-never-plays safety property, and every Autonomy control still wired after the
+  restructure. Full suite: 736 tests (2 new), same 4 pre-existing unrelated failures.
 
 ## Speech shaping (2026-09-18)
 
@@ -1033,7 +1043,8 @@ row there each phase rather than only stating the total in chat.
 | 33 (cloud-latency audit-and-fix pass: found and fixed a real double-speak bug in multi-round streamed narration, plus a stale comment; 1 new test) | Sonnet 5 | ~30 min | ~$1.30–$1.90 |
 | 34 (dashboard UI/UX overhaul: sidebar + hash-routed shell, Home mission-control view, full feature parity lift-and-shift, verified via headless harness + standalone preview server) | Sonnet 5 | ~85 min | ~$3.60–$5.00 |
 | 35 (post-overhaul UX pass: detail-panel auto-open + audit click-through, denser Usage/Sleep/Home/Autonomy layouts, Usage token breakdown, Autonomy restructure, Home enrichment, 2 root-caused voice playback bugs; 2 new tests) | Sonnet 5 | ~70 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~1323 min** | **~$59.85–$83.60** |
+| 36 (post-overhaul audit-and-fix pass: found and fixed a playback-aborting odd-byte-chunk bug, a missing transcript column breaking Activity→session linking, and a mislabeled Home autonomy empty-state; 2 new tests) | Sonnet 5 | ~40 min | ~$1.70–$2.40 |
+| **Running total (final)** | | **~1363 min** | **~$61.55–$86.00** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

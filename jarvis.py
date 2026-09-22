@@ -785,6 +785,13 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
     once, the instant the *first* chunk is written — so the caller can mark a true
     time-to-first-audio instead of one measured after the whole stream finished."""
     any_played = False
+    # A WebSocket frame boundary from Deepgram has no reason to land on a 2-byte int16 sample
+    # boundary — it's an arbitrary chunking of a raw PCM byte stream. An odd-length chunk used to
+    # make np.frombuffer raise ValueError, which aborted the whole utterance from that point on
+    # (audit pass, 2026-09-22 voice-bug pass: a very plausible cause of playback just stopping
+    # mid-word even on a perfectly healthy connection). Carry any trailing odd byte over to be
+    # prepended to the next chunk instead of parsing it prematurely.
+    leftover = b""
     with _playback_lock:
         jarvis_speaking.set()
         try:
@@ -795,9 +802,14 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
             # voice-bug pass). This trades a little more time-to-first-audio for not glitching.
             with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32", latency="high") as out:
                 for chunk in chunks:
-                    pcm_i16 = np.frombuffer(chunk, dtype=np.int16)
-                    if pcm_i16.size == 0:
+                    buf = leftover + chunk
+                    if len(buf) % 2:
+                        leftover, buf = buf[-1:], buf[:-1]
+                    else:
+                        leftover = b""
+                    if not buf:
                         continue
+                    pcm_i16 = np.frombuffer(buf, dtype=np.int16)
                     out.write((pcm_i16.astype(np.float32) / 32768.0).reshape(-1, 1))
                     if not any_played and on_first_chunk is not None:
                         on_first_chunk()

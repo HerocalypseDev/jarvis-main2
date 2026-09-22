@@ -1365,6 +1365,8 @@ function renderHome() {
   const autoList = document.getElementById("home-recent-autonomy");
   if (!lastAutonomy) {
     autoList.innerHTML = '<li class="empty-state">Autonomy data not loaded yet.</li>';
+  } else if (!lastAutonomy.available) {
+    autoList.innerHTML = '<li class="empty-state">Autonomy is not available in this build.</li>';
   } else if (!lastAutonomy.enabled) {
     autoList.innerHTML = '<li class="empty-state">Autonomy is off.</li>';
   } else {

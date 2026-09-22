@@ -744,6 +744,37 @@ def test_play_pcm_stream_empty_chunks_never_fires_callback(jarvis, monkeypatch):
     assert calls == []
 
 
+def test_play_pcm_stream_survives_a_chunk_split_on_an_odd_byte_boundary(jarvis, monkeypatch):
+    """Voice-bug audit pass (2026-09-22): a WebSocket frame boundary has no reason to land on a
+    2-byte int16 sample boundary. Before the fix, an odd-length chunk made np.frombuffer raise
+    ValueError, which aborted the whole utterance from that point on — a very plausible real
+    cause of "voice breaks a lot" even without any network failure. Split a real int16 buffer at
+    an odd byte offset to simulate this and assert playback still completes with every sample."""
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+    samples = jarvis.np.array([1, 2, 3, 4, 5, 6], dtype=jarvis.np.int16)
+    whole = samples.tobytes()
+    # Split after 3 bytes: chunk 1 ends mid-sample, chunk 2 starts mid-sample.
+    chunk1, chunk2 = whole[:3], whole[3:]
+    written = []
+    out_ref = []
+
+    class _CapturingOutputStream(_FakeOutputStream):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            out_ref.append(self)
+
+        def write(self, data):
+            written.append(data)
+
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _CapturingOutputStream)
+    played = jarvis._play_pcm_stream(iter([chunk1, chunk2]), 24000)
+    assert played is True
+    # Every sample from both chunks was eventually written, none dropped or corrupted.
+    rebuilt = jarvis.np.concatenate(written).reshape(-1) if written else jarvis.np.array([])
+    rebuilt_i16 = (rebuilt * 32768.0).round().astype(jarvis.np.int16)
+    assert list(rebuilt_i16) == list(samples)
+
+
 def test_play_pcm_stream_asks_portaudio_for_high_latency_buffering(jarvis, monkeypatch):
     """Voice-bug pass (2026-09-22): an unbuffered OutputStream starves on uneven network chunk
     timing and crackles ("voice breaks a lot"). latency="high" gives PortAudio room to absorb
