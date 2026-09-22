@@ -339,7 +339,7 @@ def test_face_tools_are_hidden_unless_the_feature_is_enabled(jarvis):
 def test_tool_sees_the_real_command_source(jarvis, monkeypatch, fx, source, refused):
     seen = {}
 
-    def agent(transcript, tone=None, narrate=False):
+    def agent(transcript, tone=None, narrate=False, tools_override=None):
         seen["reply"] = jarvis._execute_tool_impl("enroll_face", {"name": "Hero"}, transcript)
         return "ok"
 
@@ -716,7 +716,7 @@ def test_face_privacy_tool_pause_from_phone_works_resume_does_not(jarvis, monkey
     def agent(source, action):
         out = {}
 
-        def run(transcript, tone=None, narrate=False):
+        def run(transcript, tone=None, narrate=False, tools_override=None):
             out["r"] = jarvis._execute_tool_impl("face_privacy", {"action": action}, transcript)
             return "ok"
 
@@ -1238,7 +1238,7 @@ def test_delete_via_the_real_tool_path_needs_two_user_messages(jarvis, monkeypat
     replies = []
 
     def agent_turn(script):
-        def run(transcript, tone=None, narrate=False):
+        def run(transcript, tone=None, narrate=False, tools_override=None):
             for conf in script:
                 replies.append(jarvis._execute_tool("delete_face", {"name": "Hero", "confirm": conf}, transcript))
             return "ok"
@@ -1651,7 +1651,7 @@ def test_away_mode_tool_respects_the_source(jarvis, monkeypatch, enrolled):
     out = []
 
     def turn(source, action):
-        def agent(transcript, tone=None, narrate=False):
+        def agent(transcript, tone=None, narrate=False, tools_override=None):
             out.append(jarvis._execute_tool("away_mode", {"action": action}, transcript))
             return "ok"
 

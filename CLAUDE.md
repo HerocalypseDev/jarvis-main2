@@ -830,6 +830,75 @@ no `DEEPGRAM_API_KEY` in `.env` means voice behaves exactly as before (local Whi
   STT circuit-breaker tripping/recovery and a real `TimeoutError` path weren't covered, now are.
   No catastrophic-gate, autonomy-permission, or fallback-removal changes were made.
 
+## Cloud-latency pass (2026-09-22)
+
+Full write-up in SPEED.md (env vars, protocol details, what was verified live, accepted edge
+cases). Builds on the Deepgram REST work above; explicitly cloud-only per user instruction — no
+new local/heavy models. New dependency: `websocket-client==1.9.0` (pinned in `requirements.txt`,
+a small widely-used *synchronous* client chosen because it fits this codebase's threaded
+architecture better than an async one). All four phases default **on** (explicit user decision,
+"everything should be on by default, aware of the risk") and each independently falls back to the
+exact proven non-streaming/full-tool path on any failure.
+
+- **Phase A — streaming STT** (`jarvis_stt_deepgram.StreamingSession`): a live
+  `wss://.../v1/listen` session opens at push-to-talk press (on its own thread so the capture
+  loop is never blocked on the connect) and is fed every captured block while held; `feed()`
+  only enqueues bytes so a slow connection can't stall audio capture. On release,
+  `transcribe_pcm(stream_session=...)` finalizes it and uses the result if valid, else falls
+  through to the existing REST-on-full-buffer path, then Whisper, exactly as before. Two races
+  were found and fixed while building it: `feed()` calls before the connect resolves must be
+  queued, not dropped; `finish()` must wait for an in-flight `start()` rather than racing ahead
+  on a very short hold. `JARVIS_DEEPGRAM_STT_STREAM=1` (default). Verified live against the real
+  API (a synthesized-audio round trip through the exact class, and the press-before-connect race
+  against a real connection).
+- **Phase B — streaming TTS playback** (`jarvis_tts_deepgram.StreamingSynthesis`, a *separate*
+  Deepgram endpoint from the STT one): `speak_text()` tries this first for the sentence about to
+  play right now, via a new `_play_pcm_stream` (`sd.OutputStream.write()` per chunk instead of
+  `sd.play()` on a complete buffer) — first-chunk latency was ~0.3s into a ~1.3s utterance on a
+  live test. Deliberately **never** used by the existing sentence-pipelining pre-fetch thread —
+  that thread only fetches bytes, since if it also played audio it would fight the main thread's
+  playback over the same device/lock and turn "synthesize ahead while this one plays" into
+  waiting twice. `JARVIS_DEEPGRAM_TTS_STREAM=1` (default). Verified live: real audio played
+  through actual speakers end-to-end.
+- **Phase D — simple-intent fast path**: `time`/`date` skip the LLM call entirely (pure local
+  clock read, `_deterministic_intent_reply`); `volume` and a *confidently named* `open_app`
+  (re-checked against `ALLOWED_APPS` — `classify_intent`'s broad "open ..." regex is deliberately
+  not trusted alone, so "open my email" still gets the full tool list) get a small reduced tool
+  schema instead of the full ~100+ (`run_agent_loop(tools_override=...)`). The catastrophic gate
+  is unaffected either way — it's enforced in `_execute_tool`, not by which tools were offered.
+  `latency.path` logs which of `deterministic`/`reduced_tools`/`full` a command took.
+- **Phase C — LLM token streaming to speech** (`jarvis._claude_stream_first_round`), the
+  highest-risk piece, scoped narrowly: only the agent loop's first round trip, only when the
+  reply will actually be spoken here (`narrate=True`, same condition as existing narration).
+  Parses Claude's own SSE stream (`stream: true` on the same endpoint, no WebSocket needed) on a
+  background thread, reconstructing the *exact* non-streamed response shape so every later round
+  trip and all tool-result handling is completely untouched. Speaks each complete sentence as it
+  arrives (composes with Phase B for free — a live sentence's audio can itself stream); stops
+  speaking once a `tool_use` block starts (matches existing narrate semantics, just progressive)
+  and flushes any held-back short fragment at that block's own end rather than the whole message's
+  end — a real bug caught by testing (a short narration line right before a tool call was being
+  silently dropped). On any failure (network, malformed SSE, Gemini as the active provider —
+  Claude-only, checked and no-op'd rather than guessed at) it returns `None` and the same round
+  trip is retried via the proven non-streaming call. `reply_already_spoken_via_stream()` (a
+  per-thread flag, reset at the *start* of every command, not just read-and-reset at the end, so
+  an unrelated exception can't leak it into the next command) stops the caller from speaking an
+  already-streamed reply again; a streamed reply also skips `_summarize_for_speech`, which exists
+  to soften a wait-then-shorten cost a live stream never had. `JARVIS_LLM_TTS_STREAM=1` (default).
+  **Accepted rough edge**: a connection drop *after* some sentences already played will repeat the
+  whole reply on retry — rare and bounded (a stutter, not silence/corruption), not worth more
+  bookkeeping to avoid. **Test-safety note**: a fake `ANTHROPIC_API_KEY` + unguarded `narrate=True`
+  would otherwise make a real network call — both shared `jarvis` test fixtures now default
+  `JARVIS_LLM_TTS_STREAM=0`. Not verified live end-to-end (this session's Anthropic key has no
+  credit balance, pre-existing and unrelated to this work) — confirmed instead that a real HTTP
+  error from the API is handled identically by both paths, and the SSE parsing itself is covered
+  by mocked tests built from Anthropic's documented event shapes.
+- **Phase E**: nothing further needed — the filler-vs-narration fix and honest `stream`-vs-`rest`
+  backend labels from the earlier audit pass already satisfy it.
+- Tests: `test_deepgram_voice.py` grew from 41 to 89 (protocol tests for both new WebSocket
+  classes, the streaming-vs-prefetch safety property, intent-routing, SSE parsing including the
+  tool_use-interruption edge case, and the already-spoken-flag not leaking between commands).
+  Full suite: 726 passed (the 4 pre-existing unrelated urgent-email-monitor failures untouched).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -883,7 +952,8 @@ row there each phase rather than only stating the total in chat.
 | 29 (audit fixes: confirmation semantics + TTL, wider gate, dashboard-wide Host/Origin guard, sensitive-path/http policy, delegation env allowlist, attended-only autonomy approvals; 70 new tests) | Sonnet 5 | ~45 min | ~$3.00–$4.20 |
 | 30 (Deepgram speed upgrade: Nova-3 STT + Aura 2 TTS backends with circuit breakers, sentence-pipelined TTS, filler phrase, latency logging + intent classifier; 31 new tests) | Sonnet 5 | ~60 min | ~$3.20–$4.50 |
 | 31 (Deepgram speed-upgrade audit-and-fix pass: lazy Whisper preload, honest tts_backend logging, filler-vs-narration fix, bounded pipeline join timeout, breaker-recovery + timeout test coverage; 10 new tests) | Sonnet 5 | ~35 min | ~$1.60–$2.30 |
-| **Running total (final)** | | **~1028 min** | **~$47.45–$66.30** |
+| 32 (cloud-latency pass: streaming STT + TTS WebSockets, simple-intent fast path, Claude SSE token streaming to speech, all default-on; websocket-client dependency; 48 new tests) | Sonnet 5 | ~110 min | ~$4.50–$6.20 |
+| **Running total (final)** | | **~1138 min** | **~$51.95–$72.50** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

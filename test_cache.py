@@ -85,6 +85,11 @@ def jarvis(monkeypatch, tmp_path):
     # so delenv alone wouldn't touch them).
     monkeypatch.setattr(j.stt_deepgram, "DEEPGRAM_API_KEY", "")
     monkeypatch.setattr(j.tts_deepgram, "DEEPGRAM_API_KEY", "")
+    # LLM token streaming off unless a test opts in — with a fake ANTHROPIC_API_KEY, any test
+    # that calls run_agent_loop(narrate=True) without this would otherwise make a REAL network
+    # call to Anthropic's streaming endpoint (the env var is read fresh per call, unlike the
+    # Deepgram keys above, so setenv alone is enough here).
+    monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "0")
     monkeypatch.setattr(j, "get_mcp_tool_schemas", lambda: [])
     monkeypatch.setattr(j, "_history_snapshot", lambda: [])
     monkeypatch.setattr(j, "_append_history", lambda *a, **k: None)
@@ -203,7 +208,10 @@ def test_phone_command_gets_no_spoken_ack(jarvis, monkeypatch):
     spoken, sunk = [], []
     monkeypatch.setattr(jarvis, "speak_text", lambda t, *a, **k: spoken.append(t))
     monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
-    monkeypatch.setattr(jarvis, "run_agent_loop", lambda transcript, tone=None, narrate=False: "done")
+    monkeypatch.setattr(
+        jarvis, "run_agent_loop",
+        lambda transcript, tone=None, narrate=False, tools_override=None: "done",
+    )
     jarvis.handle_text_command("hello", source="telegram", reply_sink=sunk.append)
     assert "Message received." not in spoken
     assert sunk == ["done"]

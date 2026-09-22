@@ -18,3 +18,4 @@ pycaw==20251023
 insightface==2.0
 cryptography==50.0.1
 opencv-python==5.0.0.93
+websocket-client==1.9.0

@@ -144,6 +144,178 @@ def test_stt_empty_audio_short_circuits_without_a_request(monkeypatch):
     assert stt_deepgram.transcribe(np.zeros(0, dtype=np.float32), 16000) == ""
 
 
+# --- jarvis_stt_deepgram.StreamingSession (cloud-latency pass, Phase A) -----------------------
+class _FakeWS:
+    """Duck-types the websocket-client WebSocket object's send/recv/close surface."""
+
+    def __init__(self, recv_messages=(), fail_send=False, fail_recv_immediately=False):
+        self.sent: list[tuple[str, object]] = []
+        self._recv_messages = list(recv_messages)
+        self._fail_send = fail_send
+        self._fail_recv_immediately = fail_recv_immediately
+        self.closed = False
+
+    def send_binary(self, data):
+        if self._fail_send:
+            raise ConnectionError("send failed")
+        self.sent.append(("binary", data))
+
+    def send(self, data):
+        if self._fail_send:
+            raise ConnectionError("send failed")
+        self.sent.append(("text", data))
+
+    def recv(self):
+        if self._fail_recv_immediately:
+            raise ConnectionError("recv failed")
+        if self._recv_messages:
+            return self._recv_messages.pop(0)
+        raise ConnectionError("connection closed by server")
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeWebsocketLib:
+    def __init__(self, ws=None, connect_error=None):
+        self._ws = ws
+        self._connect_error = connect_error
+        self.connect_calls = []
+
+    def create_connection(self, url, header=None, timeout=None):
+        self.connect_calls.append((url, header, timeout))
+        if self._connect_error is not None:
+            raise self._connect_error
+        return self._ws
+
+
+def _results_msg(transcript: str, is_final: bool, confidence: float = 0.95) -> str:
+    return json.dumps({
+        "type": "Results",
+        "is_final": is_final,
+        "channel": {"alternatives": [{"transcript": transcript, "confidence": confidence}]},
+    })
+
+
+def test_streaming_session_happy_path_uses_only_final_results(monkeypatch):
+    ws = _FakeWS(recv_messages=[
+        _results_msg("hello", is_final=False, confidence=0.4),  # interim: must be ignored
+        _results_msg("hello there", is_final=True, confidence=0.97),
+        json.dumps({"type": "Metadata", "request_id": "x"}),
+    ])
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", _FakeWebsocketLib(ws=ws))
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+
+    session = stt_deepgram.StreamingSession(16000)
+    assert session.start() is True
+    session.feed(np.zeros(1600, dtype=np.float32))
+    result = session.finish(timeout_s=2.0)
+    assert result == ("hello there", 0.97)
+    assert ws.closed is True
+    # exactly one audio chunk, then Finalize, then CloseStream, in that order (no reordering)
+    kinds = [k for k, _ in ws.sent]
+    assert kinds == ["binary", "text", "text"]
+    assert json.loads(ws.sent[1][1])["type"] == "Finalize"
+    assert json.loads(ws.sent[2][1])["type"] == "CloseStream"
+
+
+def test_streaming_session_accumulates_multiple_final_segments(monkeypatch):
+    ws = _FakeWS(recv_messages=[
+        _results_msg("first segment", is_final=True, confidence=0.9),
+        _results_msg("second segment", is_final=True, confidence=0.92),
+    ])
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", _FakeWebsocketLib(ws=ws))
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = stt_deepgram.StreamingSession(16000)
+    session.start()
+    result = session.finish(timeout_s=2.0)
+    assert result == ("first segment second segment", 0.92)
+
+
+def test_streaming_session_connect_failure_returns_false_and_finish_is_none(monkeypatch):
+    monkeypatch.setattr(
+        stt_deepgram, "_websocket_lib", _FakeWebsocketLib(connect_error=RuntimeError("no route"))
+    )
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = stt_deepgram.StreamingSession(16000)
+    assert session.start() is False
+    session.feed(np.zeros(1600, dtype=np.float32))  # must not raise even with no connection
+    assert session.finish() is None
+
+
+def test_streaming_session_no_key_never_connects(monkeypatch):
+    fake_lib = _FakeWebsocketLib(ws=_FakeWS())
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", fake_lib)
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "")
+    session = stt_deepgram.StreamingSession(16000)
+    assert session.start() is False
+    assert fake_lib.connect_calls == []
+
+
+def test_streaming_session_mid_stream_send_failure_falls_back(monkeypatch):
+    ws = _FakeWS(fail_send=True)
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", _FakeWebsocketLib(ws=ws))
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = stt_deepgram.StreamingSession(16000)
+    session.start()
+    session.feed(np.zeros(1600, dtype=np.float32))
+    assert session.finish(timeout_s=2.0) is None  # send failed -> caller falls back to REST
+
+
+def test_streaming_session_low_confidence_falls_back(monkeypatch):
+    ws = _FakeWS(recv_messages=[_results_msg("mumble", is_final=True, confidence=0.2)])
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", _FakeWebsocketLib(ws=ws))
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = stt_deepgram.StreamingSession(16000)
+    session.start()
+    assert session.finish(timeout_s=2.0) is None
+
+
+def test_streaming_session_empty_stream_returns_empty_transcript(monkeypatch):
+    ws = _FakeWS(recv_messages=[])  # server closes immediately, nothing was ever said
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", _FakeWebsocketLib(ws=ws))
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = stt_deepgram.StreamingSession(16000)
+    session.start()
+    result = session.finish(timeout_s=2.0)
+    assert result == ("", 0.0)  # valid silence, distinct from None (a real failure)
+
+
+def test_streaming_session_feed_before_start_resolves_is_not_dropped(monkeypatch):
+    """Mirrors jarvis.py's real usage: start() is kicked off on a helper thread and feed() is
+    called immediately without waiting for it — nothing fed in that window should be lost."""
+    ws = _FakeWS(recv_messages=[_results_msg("not dropped", is_final=True, confidence=0.9)])
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", _FakeWebsocketLib(ws=ws))
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = stt_deepgram.StreamingSession(16000)
+
+    t = threading.Thread(target=session.start)
+    t.start()
+    session.feed(np.zeros(1600, dtype=np.float32))  # racing ahead of start() resolving
+    t.join()
+    result = session.finish(timeout_s=2.0)
+    assert result == ("not dropped", 0.9)
+    assert "binary" in [k for k, _ in ws.sent]  # the fed chunk really was sent
+
+
+def test_streaming_session_finish_waits_for_in_flight_start(monkeypatch):
+    """finish() called (almost) immediately after start() is kicked off on another thread must
+    not race ahead and wrongly conclude "no session" while the connect is still in flight."""
+    ws = _FakeWS(recv_messages=[_results_msg("quick", is_final=True, confidence=0.9)])
+
+    class SlowLib(_FakeWebsocketLib):
+        def create_connection(self, url, header=None, timeout=None):
+            time.sleep(0.1)
+            return super().create_connection(url, header=header, timeout=timeout)
+
+    monkeypatch.setattr(stt_deepgram, "_websocket_lib", SlowLib(ws=ws))
+    monkeypatch.setattr(stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = stt_deepgram.StreamingSession(16000)
+    threading.Thread(target=session.start, daemon=True).start()
+    result = session.finish(timeout_s=2.0)  # must wait out the 0.1s connect, not return None early
+    assert result == ("quick", 0.9)
+
+
 # --- jarvis_tts_deepgram ------------------------------------------------------------------------
 def test_tts_no_key_raises(monkeypatch):
     monkeypatch.setattr(tts_deepgram, "DEEPGRAM_API_KEY", "")
@@ -187,6 +359,101 @@ def test_stt_warm_never_raises_on_failure(monkeypatch):
     stt_deepgram.warm()  # swallows the failure, must not raise
 
 
+# --- jarvis_tts_deepgram.StreamingSynthesis (cloud-latency pass, Phase B) ----------------------
+class _FakeSpeakWS:
+    def __init__(self, recv_sequence=(), fail_send=False):
+        self.sent: list = []
+        self._seq = list(recv_sequence)
+        self._fail_send = fail_send
+        self.closed = False
+
+    def send(self, data):
+        if self._fail_send:
+            raise ConnectionError("send failed")
+        self.sent.append(data)
+
+    def recv(self):
+        if self._seq:
+            item = self._seq.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+        raise ConnectionError("connection closed by server")
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeSpeakWebsocketLib:
+    def __init__(self, ws=None, connect_error=None):
+        self._ws = ws
+        self._connect_error = connect_error
+        self.connect_calls = []
+
+    def create_connection(self, url, header=None, timeout=None):
+        self.connect_calls.append((url, header, timeout))
+        if self._connect_error is not None:
+            raise self._connect_error
+        return self._ws
+
+
+def test_streaming_synthesis_connect_sends_speak_then_close(monkeypatch):
+    ws = _FakeSpeakWS(recv_sequence=[b"\x01\x02", b"\x03\x04"])
+    monkeypatch.setattr(tts_deepgram, "_websocket_lib", _FakeSpeakWebsocketLib(ws=ws))
+    monkeypatch.setattr(tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = tts_deepgram.StreamingSynthesis("hello there")
+    assert session.connect() is True
+    assert json.loads(ws.sent[0]) == {"type": "Speak", "text": "hello there"}
+    assert json.loads(ws.sent[1]) == {"type": "Close"}
+
+
+def test_streaming_synthesis_chunks_yields_only_binary_frames(monkeypatch):
+    ws = _FakeSpeakWS(recv_sequence=[
+        b"\x01\x02",
+        json.dumps({"type": "Warning", "msg": "ignore me"}),
+        b"\x03\x04",
+        "",  # clean end-of-stream (empty message) — chunks() stops without raising
+    ])
+    monkeypatch.setattr(tts_deepgram, "_websocket_lib", _FakeSpeakWebsocketLib(ws=ws))
+    monkeypatch.setattr(tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = tts_deepgram.StreamingSynthesis("hi")
+    session.connect()
+    assert list(session.chunks()) == [b"\x01\x02", b"\x03\x04"]
+    session.close()
+    assert ws.closed is True
+
+
+def test_streaming_synthesis_connect_failure_returns_false(monkeypatch):
+    monkeypatch.setattr(
+        tts_deepgram, "_websocket_lib", _FakeSpeakWebsocketLib(connect_error=RuntimeError("no route"))
+    )
+    monkeypatch.setattr(tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = tts_deepgram.StreamingSynthesis("hi")
+    assert session.connect() is False
+
+
+def test_streaming_synthesis_no_key_never_connects(monkeypatch):
+    fake_lib = _FakeSpeakWebsocketLib(ws=_FakeSpeakWS())
+    monkeypatch.setattr(tts_deepgram, "_websocket_lib", fake_lib)
+    monkeypatch.setattr(tts_deepgram, "DEEPGRAM_API_KEY", "")
+    session = tts_deepgram.StreamingSynthesis("hi")
+    assert session.connect() is False
+    assert fake_lib.connect_calls == []
+
+
+def test_streaming_synthesis_mid_stream_recv_failure_propagates(monkeypatch):
+    ws = _FakeSpeakWS(recv_sequence=[b"\x01\x02", ConnectionError("dropped")])
+    monkeypatch.setattr(tts_deepgram, "_websocket_lib", _FakeSpeakWebsocketLib(ws=ws))
+    monkeypatch.setattr(tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    session = tts_deepgram.StreamingSynthesis("hi")
+    session.connect()
+    got = []
+    with pytest.raises(ConnectionError):
+        for chunk in session.chunks():
+            got.append(chunk)
+    assert got == [b"\x01\x02"]  # the chunk before the failure was still yielded
+
+
 # --- wiring in jarvis.py -------------------------------------------------------------------------
 @pytest.fixture()
 def jarvis(monkeypatch, tmp_path):
@@ -205,6 +472,10 @@ def jarvis(monkeypatch, tmp_path):
     monkeypatch.setattr(j, "_tts_disk_cache", cache.TTSDiskCache(tmp_path / "tts"))
     monkeypatch.setattr(j, "_dg_stt_breaker", cache.CircuitBreaker(threshold=3, cooldown_s=120.0))
     monkeypatch.setattr(j, "_dg_tts_breaker", cache.CircuitBreaker(threshold=3, cooldown_s=120.0))
+    # LLM token streaming off unless a test opts in — with a fake ANTHROPIC_API_KEY, any test
+    # that calls run_agent_loop(narrate=True) without this would otherwise make a REAL network
+    # call to Anthropic's streaming endpoint.
+    monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "0")
     j._reply_cache.clear()
     j._tool_result_cache.clear()
     cache.reset_stats()
@@ -260,6 +531,62 @@ def test_transcribe_pcm_backend_forced_to_whisper(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "_get_whisper_model", lambda: FakeModel())
     pcm = (np.random.rand(16000).astype(np.float32) - 0.5)
     assert jarvis.transcribe_pcm(pcm, 16000) == "ok"
+
+
+class _StubSession:
+    """Duck-types jarvis_stt_deepgram.StreamingSession's finish() surface for jarvis.py-level
+    wiring tests — the protocol itself is covered separately in the StreamingSession tests."""
+
+    def __init__(self, result):
+        self._result = result
+        self.finish_calls = 0
+
+    def finish(self, timeout_s=None):
+        self.finish_calls += 1
+        return self._result
+
+
+def test_transcribe_pcm_uses_streaming_session_result_when_present(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "k")
+
+    def boom(*a, **k):
+        raise AssertionError("REST should not be called when the stream already succeeded")
+
+    monkeypatch.setattr(jarvis.stt_deepgram, "transcribe", boom)
+    session = _StubSession(("streamed text", 0.9))
+    pcm = (np.random.rand(16000).astype(np.float32) - 0.5)
+    assert jarvis.transcribe_pcm(pcm, 16000, stream_session=session) == "streamed text"
+    assert session.finish_calls == 1
+
+
+def test_transcribe_pcm_falls_back_to_rest_when_stream_fails(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    rest_calls = []
+    monkeypatch.setattr(
+        jarvis.stt_deepgram, "transcribe", lambda mono, sr, timeout_s=None: rest_calls.append(1) or "rest text"
+    )
+    session = _StubSession(None)  # stream produced nothing usable
+    pcm = (np.random.rand(16000).astype(np.float32) - 0.5)
+    assert jarvis.transcribe_pcm(pcm, 16000, stream_session=session) == "rest text"
+    assert rest_calls == [1]
+
+
+def test_transcribe_pcm_too_short_audio_still_tears_down_stream_session(jarvis, monkeypatch):
+    session = _StubSession(("should be discarded", 0.9))
+    pcm = np.zeros(100, dtype=np.float32)  # well under the 0.2s silence floor
+    assert jarvis.transcribe_pcm(pcm, 16000, stream_session=session) == ""
+    assert session.finish_calls == 1  # torn down even though its result was never used
+
+
+def test_stt_stream_enabled_matches_deepgram_availability(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "k")
+    monkeypatch.setattr(jarvis.stt_deepgram, "STREAM_ENABLED", True)
+    assert jarvis._stt_stream_enabled() is True
+    monkeypatch.setattr(jarvis.stt_deepgram, "STREAM_ENABLED", False)
+    assert jarvis._stt_stream_enabled() is False
+    monkeypatch.setattr(jarvis.stt_deepgram, "STREAM_ENABLED", True)
+    monkeypatch.setattr(jarvis.stt_deepgram, "DEEPGRAM_API_KEY", "")
+    assert jarvis._stt_stream_enabled() is False
 
 
 def test_speak_text_uses_deepgram_before_fish_and_piper(jarvis, monkeypatch):
@@ -356,6 +683,182 @@ def test_speak_text_pipelines_sentences_for_long_replies(jarvis, monkeypatch):
     jarvis.speak_text(long_text)
     assert len(calls) >= 2  # split into multiple synth calls, not one giant blob
     assert len(played) == len(calls)  # each sentence played
+
+
+# --- streaming TTS wiring (cloud-latency pass, Phase B) -----------------------------------------
+class _FakeOutputStream:
+    """Duck-types sd.OutputStream's context-manager + write() surface so _play_pcm_stream's real
+    logic (including on_first_chunk timing and exception handling) runs against real jarvis.py
+    code without touching real audio hardware."""
+
+    def __init__(self, *a, **k):
+        self.written: list = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def write(self, data):
+        self.written.append(data)
+
+
+def _speak_session_stub(chunks_or_exc):
+    """Duck-types tts_deepgram.StreamingSynthesis for _speak_streamed tests: `chunks_or_exc` is a
+    list where items are either bytes (yielded) or an Exception instance (raised at that point)."""
+
+    class _Stub:
+        def __init__(self):
+            self.closed = False
+
+        def connect(self):
+            return True
+
+        def chunks(self):
+            for item in chunks_or_exc:
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+
+        def close(self):
+            self.closed = True
+
+    return _Stub()
+
+
+def test_play_pcm_stream_fires_on_first_chunk_once(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+    calls = []
+    chunks = [b"\x00\x00" * 10, b"\x01\x00" * 10, b"\x02\x00" * 10]
+    played = jarvis._play_pcm_stream(iter(chunks), 24000, on_first_chunk=lambda: calls.append(1))
+    assert played is True
+    assert calls == [1]  # exactly once, not per chunk
+
+
+def test_play_pcm_stream_empty_chunks_never_fires_callback(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+    calls = []
+    played = jarvis._play_pcm_stream(iter([b"", b""]), 24000, on_first_chunk=lambda: calls.append(1))
+    assert played is False
+    assert calls == []
+
+
+def test_speak_streamed_happy_path(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+    monkeypatch.setattr(
+        jarvis.tts_deepgram, "StreamingSynthesis",
+        lambda text, **k: _speak_session_stub([b"\x01\x00" * 10, b"\x02\x00" * 10]),
+    )
+    fired = []
+    handled, raw, sr, backend, complete = jarvis._speak_streamed("hello", on_first_audio=lambda: fired.append(1))
+    assert handled is True
+    assert complete is True
+    assert backend == "deepgram_stream"
+    assert raw == (b"\x01\x00" * 10) + (b"\x02\x00" * 10)
+    assert fired == [1]
+
+
+def test_speak_streamed_connect_failure_is_not_handled(jarvis, monkeypatch):
+    class _FailStub:
+        def connect(self):
+            return False
+
+    monkeypatch.setattr(jarvis.tts_deepgram, "StreamingSynthesis", lambda text, **k: _FailStub())
+    handled, raw, sr, backend, complete = jarvis._speak_streamed("hello")
+    assert handled is False
+    assert raw == b""
+
+
+def test_speak_streamed_mid_stream_failure_after_audio_is_handled_but_incomplete(jarvis, monkeypatch):
+    """Real audio already played before the interruption — must be reported as handled (so the
+    caller never double-speaks by falling back to another engine) but NOT complete (so it's
+    never cached as if it were the full utterance)."""
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+    monkeypatch.setattr(
+        jarvis.tts_deepgram, "StreamingSynthesis",
+        lambda text, **k: _speak_session_stub([b"\x01\x00" * 10, ConnectionError("dropped")]),
+    )
+    handled, raw, sr, backend, complete = jarvis._speak_streamed("hello")
+    assert handled is True
+    assert complete is False
+    assert raw == b"\x01\x00" * 10  # the chunk that did play, nothing more
+
+
+def test_speak_streamed_failure_before_any_audio_is_not_handled(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+    monkeypatch.setattr(
+        jarvis.tts_deepgram, "StreamingSynthesis",
+        lambda text, **k: _speak_session_stub([ConnectionError("dropped immediately")]),
+    )
+    handled, raw, sr, backend, complete = jarvis._speak_streamed("hello")
+    assert handled is False  # nothing ever played -> safe for the caller to fall back to REST
+
+
+def test_speak_text_streams_current_sentence_but_prefetch_never_streams(jarvis, monkeypatch):
+    """The critical Phase B safety property: the background pre-fetch thread for the *next*
+    sentence must only fetch bytes via _synthesize_and_cache, never call the streaming path —
+    otherwise its own playback would fight the main thread's over the shared device/lock."""
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    monkeypatch.setattr(jarvis.tts_deepgram, "STREAM_ENABLED", True)
+    monkeypatch.setattr(jarvis, "FISH_AUDIO_API_KEY", "")
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+
+    stream_calls = []
+
+    def fake_stream_ctor(text, **k):
+        stream_calls.append(text)
+        return _speak_session_stub([b"\x01\x00" * 10])
+
+    monkeypatch.setattr(jarvis.tts_deepgram, "StreamingSynthesis", fake_stream_ctor)
+    rest_calls = []
+    monkeypatch.setattr(
+        jarvis.tts_deepgram, "synthesize",
+        lambda text, timeout_s=None: (rest_calls.append(text) or (b"\x02\x00" * 10, 24000)),
+    )
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: None)
+
+    long_text = (
+        "This is the first sentence of a fairly long reply for the streaming pipeline test. "
+        "This is the second sentence, which must be pre-fetched without streaming at all."
+    )
+    jarvis.speak_text(long_text)
+    assert len(stream_calls) == 1  # only the first (synchronous, "play now") sentence streamed
+    assert len(rest_calls) == 1  # the second sentence was pre-fetched via plain REST, never a stream
+
+
+def test_speak_text_skips_streaming_on_cache_hit(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    monkeypatch.setattr(jarvis.tts_deepgram, "STREAM_ENABLED", True)
+    key = jarvis.cache.stable_hash("deepgram", jarvis.tts_deepgram.DEEPGRAM_TTS_MODEL, "Cached phrase.")
+    jarvis._tts_disk_cache.put(key, b"\x01\x00" * 10, 24000)
+
+    def boom(text, **k):
+        raise AssertionError("must not attempt a stream when the phrase is already cached")
+
+    monkeypatch.setattr(jarvis.tts_deepgram, "StreamingSynthesis", boom)
+    played = []
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: played.append(sr))
+    jarvis.speak_text("Cached phrase.")
+    assert played == [24000]
+
+
+def test_speak_text_caches_complete_streamed_audio_for_reuse(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "k")
+    monkeypatch.setattr(jarvis.tts_deepgram, "STREAM_ENABLED", True)
+    monkeypatch.setattr(jarvis.sd, "OutputStream", _FakeOutputStream)
+    stream_calls = []
+
+    def fake_stream_ctor(text, **k):
+        stream_calls.append(text)
+        return _speak_session_stub([b"\x01\x00" * 10])
+
+    monkeypatch.setattr(jarvis.tts_deepgram, "StreamingSynthesis", fake_stream_ctor)
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: None)
+    jarvis.speak_text("Short streamed phrase.")
+    assert len(stream_calls) == 1
+    jarvis.speak_text("Short streamed phrase.")  # second time: served from cache, no new stream
+    assert len(stream_calls) == 1
 
 
 def test_filler_phrase_skipped_when_event_set_quickly(jarvis, monkeypatch):
@@ -575,3 +1078,307 @@ def test_pipeline_join_timeout_recovers_without_hanging_or_dropping_content(jarv
     assert elapsed < 1.0  # bounded by PIPELINE_JOIN_TIMEOUT_S, not the artificial 0.4s hang
     assert "will re-synthesize that sentence fresh" in caplog.text
     assert len(played) == 3  # every sentence still spoken — the timeout cost overlap, not content
+
+
+# --- simple-intent fast path (cloud-latency pass, Phase D) --------------------------------------
+def test_deterministic_intent_reply_time_and_date(jarvis):
+    time_reply = jarvis._deterministic_intent_reply("time")
+    assert time_reply is not None and time_reply.startswith("It's ")
+    date_reply = jarvis._deterministic_intent_reply("date")
+    assert date_reply is not None and date_reply.startswith("Today is ")
+    assert jarvis._deterministic_intent_reply("complex") is None
+    assert jarvis._deterministic_intent_reply("volume") is None
+    assert jarvis._deterministic_intent_reply("open_app") is None
+
+
+def test_reduced_tools_for_volume_intent(jarvis):
+    tools = jarvis._reduced_tools_for_intent("volume", "turn the volume up")
+    assert tools is not None
+    assert [t["name"] for t in tools] == ["system_action"]
+
+
+def test_reduced_tools_for_open_app_with_known_app(jarvis):
+    tools = jarvis._reduced_tools_for_intent("open_app", "open notepad please")
+    assert tools is not None
+    assert [t["name"] for t in tools] == ["open_app"]
+
+
+def test_reduced_tools_for_open_app_with_unknown_target_falls_through(jarvis):
+    # "open my email" matches the broad open_app regex in classify_intent, but "email" isn't in
+    # ALLOWED_APPS — must fall through to the full tool list, not be wrongly restricted.
+    assert jarvis._reduced_tools_for_intent("open_app", "open my email") is None
+
+
+def test_reduced_tools_for_complex_intent_is_none(jarvis):
+    assert jarvis._reduced_tools_for_intent("complex", "summarize my last three emails") is None
+
+
+def test_deterministic_reply_skips_run_agent_loop_entirely(jarvis, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("run_agent_loop must not be called for a deterministic intent")
+
+    monkeypatch.setattr(jarvis, "run_agent_loop", boom)
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+    out = []
+    jarvis.handle_text_command("what time is it", source="text", reply_sink=out.append)
+    assert out and out[0].startswith("It's ")
+
+
+def test_volume_command_gets_reduced_tools(jarvis, monkeypatch):
+    seen = {}
+
+    def fake_run_agent_loop(transcript, tone=None, narrate=False, tools_override=None, **k):
+        seen["tools_override"] = tools_override
+        return "Volume turned up."
+
+    monkeypatch.setattr(jarvis, "run_agent_loop", fake_run_agent_loop)
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+    jarvis.handle_text_command("turn the volume up", source="text")
+    assert seen["tools_override"] is not None
+    assert [t["name"] for t in seen["tools_override"]] == ["system_action"]
+
+
+def test_complex_command_gets_full_tools(jarvis, monkeypatch):
+    seen = {}
+
+    def fake_run_agent_loop(transcript, tone=None, narrate=False, tools_override=None, **k):
+        seen["tools_override"] = tools_override
+        return "Here's a summary."
+
+    monkeypatch.setattr(jarvis, "run_agent_loop", fake_run_agent_loop)
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+    jarvis.handle_text_command("summarize my last three emails", source="text")
+    assert seen["tools_override"] is None  # None -> run_agent_loop uses the full tool list
+
+
+def test_deterministic_path_recorded_on_voice_latency(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+
+    def boom(*a, **k):
+        raise AssertionError("run_agent_loop must not be called for a deterministic intent")
+
+    monkeypatch.setattr(jarvis, "run_agent_loop", boom)
+    monkeypatch.setattr(
+        jarvis.voice_tone, "analyze_tone", lambda *a, **k: {"tone": "neutral", "confidence": 1.0}
+    )
+    monkeypatch.setattr(jarvis, "transcribe_pcm", lambda audio, sr, stream_session=None: "what time is it")
+    # _handle_voice_command_impl owns the whole latency.start()/finish()/end() lifecycle itself —
+    # just call it and read back what it recorded.
+    jarvis._handle_voice_command_impl(np.ones(16000, dtype=np.float32), 16000)
+    recent = latency.recent(1)
+    assert recent and recent[-1]["intent"] == "time"
+    assert recent[-1]["path"] == "deterministic"
+    assert recent[-1]["ttft_ms"] is None  # no Claude call happened at all
+
+
+# --- LLM token streaming -> speech (cloud-latency pass, Phase C) --------------------------------
+def test_extract_ready_sentences_waits_for_boundary(jarvis):
+    ready, remainder = jarvis._extract_ready_sentences("This is a growing sentence with no end yet")
+    assert ready == [] and remainder == "This is a growing sentence with no end yet"
+
+
+def test_extract_ready_sentences_emits_complete_ones(jarvis):
+    ready, remainder = jarvis._extract_ready_sentences(
+        "This is the first complete sentence. This is the second one. And a partial"
+    )
+    assert ready == ["This is the first complete sentence.", "This is the second one."]
+    assert remainder == "And a partial"
+
+
+def test_extract_ready_sentences_merges_short_fragments(jarvis):
+    ready, remainder = jarvis._extract_ready_sentences("Ok. This is a longer second sentence here. ")
+    assert ready == ["Ok. This is a longer second sentence here."]
+    assert remainder == ""
+
+
+def _sse_lines(events: list[tuple[str, dict]]) -> list[bytes]:
+    out = []
+    for event_name, data in events:
+        out.append(f"event: {event_name}\n".encode())
+        out.append(f"data: {json.dumps(data)}\n".encode())
+        out.append(b"\n")
+    return out
+
+
+def _sse_text_reply(chunks: list[str], stop_reason: str = "end_turn") -> list[bytes]:
+    events = [
+        ("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 10}}}),
+        ("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+    ]
+    for c in chunks:
+        events.append(("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": c}}))
+    events.append(("content_block_stop", {"type": "content_block_stop", "index": 0}))
+    events.append(("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop_reason}, "usage": {"output_tokens": 12}}))
+    events.append(("message_stop", {"type": "message_stop"}))
+    return _sse_lines(events)
+
+
+class _FakeSSEResponse:
+    def __init__(self, lines):
+        self._lines = lines
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def __iter__(self):
+        return iter(self._lines)
+
+
+def test_claude_stream_first_round_speaks_sentences_live_and_reconstructs_content(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    full_text = "This is the first complete sentence here. " "This second one is also long enough. " "A short tail."
+    lines = _sse_text_reply(["This is the ", "first complete sentence here. ", "This second one ", "is also long enough. ", "A short tail."])
+    monkeypatch.setattr(jarvis.urllib.request, "urlopen", lambda req, timeout=None: _FakeSSEResponse(lines))
+    spoken = []
+    result = jarvis._claude_stream_first_round({"model": "x", "messages": []}, 5, spoken.append)
+    assert result is not None
+    assert result["content"] == [{"type": "text", "text": full_text}]
+    assert result["stop_reason"] == "end_turn"
+    assert result["usage"]["input_tokens"] == 10 and result["usage"]["output_tokens"] == 12
+    # spoken as complete sentences as they arrive, not the whole reply at once, and nothing lost
+    assert " ".join(spoken) == full_text
+    assert len(spoken) >= 2
+
+
+def test_claude_stream_first_round_fires_on_first_token_once(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    lines = _sse_text_reply(["One. ", "Two. ", "Three."])
+    monkeypatch.setattr(jarvis.urllib.request, "urlopen", lambda req, timeout=None: _FakeSSEResponse(lines))
+    fired = []
+    jarvis._claude_stream_first_round(
+        {"model": "x", "messages": []}, 5, lambda s: None, on_first_token=lambda: fired.append(1)
+    )
+    assert fired == [1]
+
+
+def test_claude_stream_first_round_stops_speaking_once_tool_use_starts(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    events = [
+        ("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": 5}}}),
+        ("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+        ("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Let me check that. "}}),
+        ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        ("content_block_start", {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "t1", "name": "system_status"}}),
+        ("content_block_delta", {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{}"}}),
+        ("content_block_stop", {"type": "content_block_stop", "index": 1}),
+        ("message_delta", {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 20}}),
+        ("message_stop", {"type": "message_stop"}),
+    ]
+    monkeypatch.setattr(jarvis.urllib.request, "urlopen", lambda req, timeout=None: _FakeSSEResponse(_sse_lines(events)))
+    spoken = []
+    result = jarvis._claude_stream_first_round({"model": "x", "messages": []}, 5, spoken.append)
+    assert result is not None
+    assert result["stop_reason"] == "tool_use"
+    assert [b["type"] for b in result["content"]] == ["text", "tool_use"]
+    assert result["content"][1]["name"] == "system_status" and result["content"][1]["input"] == {}
+    assert spoken == ["Let me check that."]  # the text before the tool call, spoken live
+
+
+def test_claude_stream_first_round_gemini_provider_no_ops(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "gemini")
+
+    def boom(*a, **k):
+        raise AssertionError("must not attempt a network call when Gemini is the active provider")
+
+    monkeypatch.setattr(jarvis.urllib.request, "urlopen", boom)
+    assert jarvis._claude_stream_first_round({"model": "x", "messages": []}, 5, lambda s: None) is None
+
+
+def test_claude_stream_first_round_network_failure_returns_none(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    def boom(req, timeout=None):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(jarvis.urllib.request, "urlopen", boom)
+    assert jarvis._claude_stream_first_round({"model": "x", "messages": []}, 5, lambda s: None) is None
+
+
+def test_claude_stream_first_round_error_event_returns_none(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    events = [("error", {"type": "error", "error": {"message": "overloaded"}})]
+    monkeypatch.setattr(jarvis.urllib.request, "urlopen", lambda req, timeout=None: _FakeSSEResponse(_sse_lines(events)))
+    assert jarvis._claude_stream_first_round({"model": "x", "messages": []}, 5, lambda s: None) is None
+
+
+def test_run_agent_loop_streams_text_only_final_reply_and_marks_spoken(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "1")  # fixture defaults this off; opt in — fully mocked below, no real network
+    monkeypatch.setattr(jarvis, "get_mcp_tool_schemas", lambda: [])
+    spoken = []
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
+
+    def fake_stream(body, timeout, speak_live, on_first_token=None):
+        if on_first_token:
+            on_first_token()
+        speak_live("Paris is the capital of France.")
+        return {"content": [{"type": "text", "text": "Paris is the capital of France."}], "stop_reason": "end_turn", "usage": {}}
+
+    monkeypatch.setattr(jarvis, "_claude_stream_first_round", fake_stream)
+
+    def boom(*a, **k):
+        raise AssertionError("the non-streaming _claude_request must not be called when streaming succeeds")
+
+    monkeypatch.setattr(jarvis, "_claude_request", boom)
+    reply = jarvis.run_agent_loop("what is the capital of france", narrate=True)
+    assert reply == "Paris is the capital of France."
+    assert spoken == ["Paris is the capital of France."]
+    assert jarvis.reply_already_spoken_via_stream() is True
+
+
+def test_run_agent_loop_falls_back_to_non_streaming_when_stream_fails(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "1")  # fixture defaults this off; opt in — fully mocked below, no real network
+    monkeypatch.setattr(jarvis, "get_mcp_tool_schemas", lambda: [])
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    monkeypatch.setattr(jarvis, "_claude_stream_first_round", lambda *a, **k: None)
+    calls = {"n": 0}
+
+    def fake_request(body, timeout):
+        calls["n"] += 1
+        return {"content": [{"type": "text", "text": "Fallback answer."}], "stop_reason": "end_turn", "usage": {}}
+
+    monkeypatch.setattr(jarvis, "_claude_request", fake_request)
+    reply = jarvis.run_agent_loop("hello", narrate=True)
+    assert reply == "Fallback answer."
+    assert calls["n"] == 1
+    assert jarvis.reply_already_spoken_via_stream() is False
+
+
+def test_reply_already_spoken_flag_resets_between_commands(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "1")  # fixture defaults this off; opt in — fully mocked below, no real network
+    monkeypatch.setattr(jarvis, "get_mcp_tool_schemas", lambda: [])
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+
+    def fake_stream(body, timeout, speak_live, on_first_token=None):
+        speak_live("Streamed reply.")
+        return {"content": [{"type": "text", "text": "Streamed reply."}], "stop_reason": "end_turn", "usage": {}}
+
+    monkeypatch.setattr(jarvis, "_claude_stream_first_round", fake_stream)
+
+    def boom(*a, **k):
+        raise AssertionError("should not need the fallback")
+
+    monkeypatch.setattr(jarvis, "_claude_request", boom)
+    jarvis.handle_text_command("streamed command", source="text")
+    # A second, unrelated command that never streams must not inherit the first one's flag.
+    monkeypatch.setattr(jarvis, "_claude_stream_first_round", lambda *a, **k: None)
+    monkeypatch.setattr(
+        jarvis, "_claude_request",
+        lambda body, timeout: {"content": [{"type": "text", "text": "Second reply."}], "stop_reason": "end_turn", "usage": {}},
+    )
+    spoken = []
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
+    jarvis.handle_text_command("second command", source="text")
+    assert spoken == ["Second reply."]  # actually spoken, not wrongly suppressed by stale state

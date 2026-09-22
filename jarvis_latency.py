@@ -32,6 +32,7 @@ class VoiceLatency:
         self.stt_backend = ""
         self.tts_backend = ""
         self.intent = ""
+        self.path = ""  # "deterministic" | "reduced_tools" | "full" — set by jarvis.py's intent router
         self._marks: dict[str, float] = {}
 
     def mark(self, stage: str) -> None:
@@ -45,15 +46,15 @@ class VoiceLatency:
         stt_ms, ttft_ms, tts_ms = self._ms("stt"), self._ms("ttft"), self._ms("tts_ttfa")
         e2e_ms = int((time.monotonic() - self.t0) * 1000)
         log.info(
-            "latency stt=%sms ttft=%sms tts=%sms e2e=%sms stt_backend=%s tts_backend=%s intent=%s",
+            "latency stt=%sms ttft=%sms tts=%sms e2e=%sms stt_backend=%s tts_backend=%s intent=%s path=%s",
             stt_ms, ttft_ms, tts_ms, e2e_ms, self.stt_backend or "-", self.tts_backend or "-",
-            self.intent or "-",
+            self.intent or "-", self.path or "-",
         )
         with _history_lock:
             _history.append({
                 "stt_ms": stt_ms, "ttft_ms": ttft_ms, "tts_ttfa_ms": tts_ms, "e2e_ms": e2e_ms,
                 "stt_backend": self.stt_backend, "tts_backend": self.tts_backend,
-                "intent": self.intent, "at": time.time(),
+                "intent": self.intent, "path": self.path, "at": time.time(),
             })
 
 

@@ -23,6 +23,7 @@ import io
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import sqlite3
@@ -595,15 +596,42 @@ def _use_deepgram_stt() -> bool:
     return bool(stt_deepgram.DEEPGRAM_API_KEY) and _dg_stt_breaker.allow()
 
 
-def transcribe_pcm(pcm: np.ndarray, sample_rate: int) -> str:
+def _stt_stream_enabled() -> bool:
+    """Gates opening a live Deepgram WebSocket at PTT-press time (cloud-latency pass, Phase A).
+    Only worth doing at all if Deepgram REST would be used anyway; JARVIS_DEEPGRAM_STT_STREAM
+    defaults on (matches jarvis_stt_deepgram.STREAM_ENABLED) but can be forced off without
+    touching the key, e.g. to fall back to the simpler REST-on-release path for debugging."""
+    return _use_deepgram_stt() and stt_deepgram.STREAM_ENABLED
+
+
+def transcribe_pcm(
+    pcm: np.ndarray, sample_rate: int, stream_session: "stt_deepgram.StreamingSession | None" = None
+) -> str:
     if pcm.ndim > 1:
         mono = np.mean(pcm.astype(np.float64), axis=1).astype(np.float32)
     else:
         mono = pcm.astype(np.float32)
+    lat = latency.current()
     if mono.size < int(sample_rate * 0.2):
+        if stream_session is not None:
+            stream_session.finish()  # tear the socket down cleanly; result is discarded
         return ""
 
-    lat = latency.current()
+    if stream_session is not None:
+        try:
+            result = stream_session.finish()
+        except Exception as e:
+            result = None
+            log.warning("Deepgram streaming STT finalize raised: %s", e)
+        _dg_stt_breaker.record(result is not None)
+        if result is not None:
+            text, _confidence = result
+            if lat:
+                lat.mark("stt")
+                lat.stt_backend = "deepgram_stream"
+            return text
+        log.info("Deepgram streaming STT unavailable this turn; falling back to REST.")
+
     if _use_deepgram_stt():
         try:
             text = stt_deepgram.transcribe(mono, sample_rate)
@@ -747,6 +775,38 @@ def _play_pcm_bytes(raw: bytes, sample_rate: int) -> None:
             jarvis_speaking.clear()
 
 
+def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
+    """Plays int16 PCM chunks as they're produced by an iterable (a live WebSocket generator),
+    via sd.OutputStream instead of sd.play, so playback of the first chunk can start before later
+    chunks have even arrived. Returns True the moment at least one chunk was actually written to
+    the output device — the caller uses this to decide whether it's safe to fall back to a
+    different engine (never once real audio has started playing; that would double-speak) even
+    if a later chunk in the same stream then fails. on_first_chunk, if given, is called exactly
+    once, the instant the *first* chunk is written — so the caller can mark a true
+    time-to-first-audio instead of one measured after the whole stream finished."""
+    any_played = False
+    with _playback_lock:
+        jarvis_speaking.set()
+        try:
+            with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32") as out:
+                for chunk in chunks:
+                    pcm_i16 = np.frombuffer(chunk, dtype=np.int16)
+                    if pcm_i16.size == 0:
+                        continue
+                    out.write((pcm_i16.astype(np.float32) / 32768.0).reshape(-1, 1))
+                    if not any_played and on_first_chunk is not None:
+                        on_first_chunk()
+                    any_played = True
+        except Exception as e:
+            log.warning(
+                "Deepgram streaming TTS playback failed%s: %s",
+                "" if any_played else " before any audio played", e,
+            )
+        finally:
+            jarvis_speaking.clear()
+    return any_played
+
+
 # Piper's espeak-based phonemizer has no concept of markdown or symbol-as-word — fed "**Discord**"
 # or "$76,300" literally, it tries to pronounce the asterisks/dollar sign as speech sounds and
 # produces garbled noise instead of skipping them. Claude's replies are meant to be spoken, not
@@ -818,23 +878,61 @@ def _use_deepgram_tts() -> bool:
     return bool(tts_deepgram.DEEPGRAM_API_KEY) and _dg_tts_breaker.allow()
 
 
+def _use_deepgram_tts_stream() -> bool:
+    """Cloud-latency pass, Phase B: gates Deepgram's WebSocket speak API (audio plays as it's
+    generated) ahead of the plain REST /v1/speak call. Only relevant when Deepgram TTS would be
+    tried at all. Deliberately NOT used by the sentence-pipelining pre-fetch thread below — that
+    thread must only *fetch* bytes, never play them, or its playback would fight the main
+    thread's playback over the same device/lock and turn "synthesize the next sentence while
+    this one plays" into "wait for this one to finish, then wait again," defeating the whole
+    point of pre-fetching. Streaming is only ever attempted for the sentence about to play
+    synchronously right now — see speak_text()."""
+    return _use_deepgram_tts() and tts_deepgram.STREAM_ENABLED
+
+
+def _tts_cache_keys(text: str) -> dict[str, str]:
+    keys: dict[str, str] = {}
+    if _use_deepgram_tts():
+        keys["deepgram"] = cache.stable_hash("deepgram", tts_deepgram.DEEPGRAM_TTS_MODEL, text)
+    if FISH_AUDIO_API_KEY:
+        keys["fish"] = cache.stable_hash(
+            "fish", FISH_AUDIO_MODEL, FISH_AUDIO_VOICE_ID, text, sleep_mode.fish_audio_prosody_overrides()
+        )
+    keys["piper"] = cache.stable_hash("piper", PIPER_VOICE, text, sleep_mode.tts_overrides())
+    return keys
+
+
+def _tts_cache_peek(text: str) -> tuple[bytes, int, str] | None:
+    """Silent cache lookup (no hit/miss stats recorded — the caller decides whether/how to
+    record, since it may fall through to _synthesize_and_cache next, which records its own
+    lookup) so speak_text() can skip straight to playback, or skip attempting a network stream
+    entirely, when a short phrase is already cached under any configured engine's key."""
+    if not (cache.enabled("tts") and len(text) <= TTS_CACHE_MAX_CHARS):
+        return None
+    for backend, key in _tts_cache_keys(text).items():
+        hit = _tts_disk_cache.get(key)
+        if hit:
+            return hit[0], hit[1], backend
+    return None
+
+
 def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
-    """Runs the Deepgram -> Fish -> Piper synth cascade (skipping engines that aren't
-    configured/enabled), using the on-disk TTS cache for short phrases — keyed per engine, so a
-    fallback clip is never stored under another engine's key and served in place of the real
-    voice; a cache hit for *any* configured engine is strictly better than synthesizing, so all
-    of them are checked before falling through to synthesis. Returns (pcm, sample_rate,
-    backend_name); backend_name is "" only if every engine failed (raw is empty too)."""
+    """Runs the Deepgram REST -> Fish -> Piper synth cascade (skipping engines that aren't
+    configured/enabled), using the on-disk TTS cache for short phrases — keyed per engine
+    (REST and streamed Deepgram audio share one "deepgram" key: same model, same audio either
+    way), so a fallback clip is never stored under another engine's key and served in place of
+    the real voice; a cache hit for *any* configured engine is strictly better than synthesizing,
+    so all of them are checked before falling through to synthesis. Returns (pcm, sample_rate,
+    backend_name); backend_name is "" only if every engine failed (raw is empty too).
+
+    Never attempts the streaming WebSocket path — this function is used both directly and by the
+    sentence-pipelining pre-fetch thread, which must only fetch bytes, never play audio itself
+    (see _use_deepgram_tts_stream's docstring)."""
     fish_prosody = sleep_mode.fish_audio_prosody_overrides()
     piper_overrides = sleep_mode.tts_overrides()
     use_cache = cache.enabled("tts") and len(text) <= TTS_CACHE_MAX_CHARS
-    keys: dict[str, str] = {}
+    keys = _tts_cache_keys(text) if use_cache else {}
     if use_cache:
-        if _use_deepgram_tts():
-            keys["deepgram"] = cache.stable_hash("deepgram", tts_deepgram.DEEPGRAM_TTS_MODEL, text)
-        if FISH_AUDIO_API_KEY:
-            keys["fish"] = cache.stable_hash("fish", FISH_AUDIO_MODEL, FISH_AUDIO_VOICE_ID, text, fish_prosody)
-        keys["piper"] = cache.stable_hash("piper", PIPER_VOICE, text, piper_overrides)
         for backend, key in keys.items():
             hit = _tts_disk_cache.get(key)
             if hit:
@@ -874,6 +972,45 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
         return b"", 0, ""
 
 
+def _speak_streamed(text: str, on_first_audio=None) -> tuple[bool, bytes, int, str, bool]:
+    """Attempts Deepgram's streaming speak WebSocket for `text`, playing audio as it's generated
+    via _play_pcm_stream instead of waiting for the whole utterance. Returns (handled, raw,
+    sample_rate, backend, complete):
+      - handled=True: playback was attempted and at least some real audio played — the caller
+        must NOT also try another engine for this text, even if it only partially completed
+        (that would replay already-spoken content). `raw` is everything that was collected,
+        for caching.
+      - handled=False: nothing was ever played (connect or first-chunk failure) — safe for the
+        caller to fall back to the normal _synthesize_and_cache cascade.
+      - complete: True only if the whole stream was consumed without error; only then is `raw`
+        safe to cache under the shared "deepgram" key (never cache a partial utterance).
+    on_first_audio, if given, fires the instant the first chunk actually plays (see
+    _play_pcm_stream) — used to mark a true time-to-first-audio instead of one measured only
+    after this whole call returns."""
+    session = tts_deepgram.StreamingSynthesis(text)
+    if not session.connect():
+        return False, b"", 0, "", False
+    collected: list[bytes] = []
+    complete = True
+
+    def _tap():
+        nonlocal complete
+        try:
+            for chunk in session.chunks():
+                collected.append(chunk)
+                yield chunk
+        except Exception as e:
+            complete = False
+            log.warning("Deepgram streaming TTS interrupted mid-sentence: %s", e)
+
+    played = _play_pcm_stream(_tap(), tts_deepgram.DEEPGRAM_TTS_SAMPLE_RATE, on_first_chunk=on_first_audio)
+    session.close()
+    if not played:
+        return False, b"", 0, "", False
+    _dg_tts_breaker.record(True)
+    return True, b"".join(collected), tts_deepgram.DEEPGRAM_TTS_SAMPLE_RATE, "deepgram_stream", complete
+
+
 def speak_text(text: str) -> None:
     """Speak arbitrary dynamic text (voice-command replies). Deepgram Aura 2 (cloud) is the
     primary voice when configured; Fish Audio, then Piper (local/offline/free), are the
@@ -891,13 +1028,48 @@ def speak_text(text: str) -> None:
     sentences = _split_sentences(t) if len(t) > SENTENCE_STREAM_MIN_CHARS else [t]
     pending: tuple[bytes, int, str] | None = None
     for i, sentence in enumerate(sentences):
-        raw, sr, backend = pending if pending is not None else _synthesize_and_cache(sentence)
-        pending = None
-        if not raw:
+        already_played = False
+        if pending is not None:
+            raw, sr, backend = pending
+            pending = None
+        else:
+            # A cache hit is checked before attempting anything over the network (streaming
+            # included) — a cached clip is always faster than even a live stream, and this is
+            # the only path that can decide "don't even try Deepgram" before paying for a
+            # WebSocket connect. Pre-fetch (below) never streams/plays — see
+            # _use_deepgram_tts_stream's docstring for why.
+            cache_hit = _tts_cache_peek(sentence)
+            if cache_hit is not None:
+                cache.record("tts", True, repr(sentence[:30]))
+                raw, sr, backend = cache_hit
+            else:
+                raw, sr, backend = b"", 0, ""
+                if _use_deepgram_tts_stream():
+
+                    def _mark_first_audio() -> None:
+                        if lat:
+                            lat.mark("tts_ttfa")
+                        if signal is not None:
+                            signal.set()
+
+                    handled, s_raw, s_sr, s_backend, complete = _speak_streamed(
+                        sentence, on_first_audio=_mark_first_audio
+                    )
+                    if handled:
+                        already_played = True
+                        raw, sr, backend = s_raw, s_sr, s_backend
+                        if complete and raw and cache.enabled("tts") and len(sentence) <= TTS_CACHE_MAX_CHARS:
+                            key = cache.stable_hash("deepgram", tts_deepgram.DEEPGRAM_TTS_MODEL, sentence)
+                            _tts_disk_cache.put(key, raw, sr)
+                if not already_played:
+                    raw, sr, backend = _synthesize_and_cache(sentence)
+
+        if not raw and not already_played:
             log.warning("TTS returned empty audio%s.", "" if len(sentences) == 1 else " for one sentence")
             continue
         if lat:
-            lat.mark("tts_ttfa")  # first successful sentence only (mark() is setdefault-based)
+            lat.mark("tts_ttfa")  # first successful sentence only (mark() is setdefault-based);
+            # a no-op here when the streaming path's on_first_audio already marked it earlier
             lat.tts_backend = backend  # last successful sentence — what the reply actually used
         if signal is not None:
             signal.set()  # tells a waiting filler timer "something has already been spoken"
@@ -911,7 +1083,8 @@ def speak_text(text: str) -> None:
 
             next_thread = threading.Thread(target=_prep, daemon=True)
             next_thread.start()
-        _play_pcm_bytes(raw, sr)
+        if not already_played:
+            _play_pcm_bytes(raw, sr)
         if next_thread is not None:
             # Bounded even though every engine call inside _prep is already individually
             # timeout-bounded (Deepgram, Fish) or purely local/CPU (Piper) — a defense-in-depth
@@ -7433,9 +7606,254 @@ def _execute_tool_impl(
 
 MAX_NARRATED_LINES = 3  # spoken "on it" lines per command, so a long task isn't chatty
 
+# LLM token streaming -> speech (Speed Upgrade cloud-latency pass, Phase C). Only ever attempted
+# for the agent loop's *first* round trip (see run_agent_loop) — a deliberately narrow scope to
+# keep this out of the tool_use parsing loop's established, well-tested processing: the streaming
+# call below reconstructs the exact same {"content": [...], "stop_reason": ..., "usage": {...}}
+# shape _claude_request returns non-streamed, so every later round trip (after a tool call) and
+# every bit of tool-result handling is completely untouched either way. Claude-only — no-ops
+# (returns None, caller falls back to the ordinary non-streaming call) when Gemini is the active
+# provider. On ANY failure (network, malformed SSE) it also returns None, so the exact same round
+# trip is simply retried via the proven non-streaming path — the only cost of a stream hiccup is
+# a slightly slower retry, never a broken or duplicated reply... except in one accepted edge
+# case: if the connection drops *after* some sentences were already spoken live, those sentences
+# will be spoken again as part of the retried (full, non-streamed) reply. Rare (mid-response
+# network drop) and bounded (a stutter, not silence or corruption) — see SPEED.md.
+_stream_spoken_ctx = threading.local()
+
+
+def _reset_reply_stream_spoken() -> None:
+    """Called at the start of every command (_handle_text_command_impl), not just when the flag
+    is read — if something between a previous command's run_agent_loop returning and its own
+    reply_already_spoken_via_stream() check ever raised, the flag could otherwise leak into a
+    later command on the same worker thread and wrongly suppress a real reply that was never
+    actually spoken."""
+    _stream_spoken_ctx.spoken = False
+
+
+def _mark_reply_stream_spoken() -> None:
+    _stream_spoken_ctx.spoken = True
+
+
+def reply_already_spoken_via_stream() -> bool:
+    """Checked by _handle_text_command_impl right after run_agent_loop returns: True means the
+    final reply text was already spoken live, sentence by sentence, while it streamed in — the
+    caller must not also call speak_text() on the full reply (that would repeat it). Always
+    call this at most once per command; it resets itself."""
+    was = getattr(_stream_spoken_ctx, "spoken", False)
+    _stream_spoken_ctx.spoken = False
+    return was
+
+
+def _llm_tts_stream_enabled() -> bool:
+    return (os.environ.get("JARVIS_LLM_TTS_STREAM") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _extract_ready_sentences(buf: str) -> tuple[list[str], str]:
+    """Splits `buf` on sentence boundaries the same way _split_sentences does (same compiled
+    regex), returning (sentences ready to speak now, leftover still-accumulating text). Merges
+    any candidate under 20 chars into its neighbor, exactly like _split_sentences, so a live
+    stream never speaks a choppy 2-word fragment on its own."""
+    parts = _SENTENCE_SPLIT_RE.split(buf)
+    if len(parts) < 2:
+        return [], buf
+    ready, remainder = parts[:-1], parts[-1]
+    out: list[str] = []
+    carry = ""
+    for p in ready:
+        candidate = f"{carry} {p}".strip() if carry else p
+        if len(candidate) < 20:
+            carry = candidate
+        else:
+            out.append(candidate)
+            carry = ""
+    if carry:
+        # Not .strip()'d: when remainder is still empty, the trailing space must be kept so the
+        # *next* delta that arrives appends after a real word boundary instead of gluing onto
+        # carry with no space ("Hello there.How are you" instead of "Hello there. How are you").
+        remainder = f"{carry} {remainder}" if remainder else f"{carry} "
+    return out, remainder
+
+
+def _claude_stream_first_round(body: dict, timeout: int, speak_live, on_first_token=None) -> dict | None:
+    """Streams one Claude Messages API round trip via SSE. speak_live(text), if given, is called
+    once per complete sentence as it arrives — but only for text before any tool_use content
+    block starts in this message; once one starts, further text (if any) is just accumulated
+    silently, matching the existing narrate semantics for a non-final turn (a message with both
+    text and a tool call already gets its text spoken as a unit today — this just makes that
+    happen progressively instead of after the whole round trip completes). on_first_token, if
+    given, fires exactly once, the instant the first content block actually starts — so a caller
+    can mark a true time-to-first-token instead of one measured only after the whole stream
+    finished (the same "measure it where it really happens" fix the TTS streaming path uses).
+
+    Returns the same dict shape _claude_request returns non-streamed, or None on any failure —
+    including when Gemini is the active provider (Claude-only; see SPEED.md) — so the caller can
+    always fall back to the ordinary non-streaming call for this exact round trip."""
+    if _llm_provider() != "claude":
+        return None
+    api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
+        return None
+    req = urllib.request.Request(
+        CLAUDE_API_URL,
+        data=json.dumps({**body, "stream": True}).encode(),
+        method="POST",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": CLAUDE_API_VERSION,
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        },
+    )
+    line_q: queue.Queue = queue.Queue()
+
+    def _reader() -> None:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                for raw_line in resp:
+                    line_q.put(raw_line)
+        except Exception as e:
+            line_q.put(e)
+        finally:
+            line_q.put(None)
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    deadline = time.monotonic() + timeout
+    content_blocks: list[dict] = []
+    current_block: dict | None = None
+    tool_use_started = False
+    spoken_buf = ""
+    stop_reason = None
+    usage: dict = {}
+    event_name = None
+    first_token_fired = False
+
+    def _speak_ready(buf: str) -> str:
+        if tool_use_started or speak_live is None:
+            return buf
+        ready, remainder = _extract_ready_sentences(buf)
+        for sentence in ready:
+            try:
+                speak_live(sentence)
+            except Exception as e:
+                log.warning("Live streamed-sentence speech failed: %s", e)
+        return remainder
+
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                log.warning("Claude streaming request timed out.")
+                return None
+            item = line_q.get(timeout=remaining)
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                log.warning("Claude streaming request failed: %s", item)
+                return None
+            line = item.decode("utf-8", errors="replace").strip("\r\n")
+            if not line:
+                event_name = None
+                continue
+            if line.startswith("event:"):
+                event_name = line[len("event:"):].strip()
+                continue
+            if not line.startswith("data:"):
+                continue
+            try:
+                evt = json.loads(line[len("data:"):].strip())
+            except ValueError:
+                continue
+
+            if event_name == "content_block_start":
+                if not first_token_fired and on_first_token is not None:
+                    try:
+                        on_first_token()
+                    except Exception as e:
+                        log.debug("on_first_token callback failed (harmless): %s", e)
+                    first_token_fired = True
+                block = evt.get("content_block") or {}
+                block_type = block.get("type")
+                current_block = {"type": block_type}
+                if block_type == "tool_use":
+                    tool_use_started = True
+                    current_block["id"] = block.get("id")
+                    current_block["name"] = block.get("name")
+                    current_block["_partial_json"] = ""
+                elif block_type == "text":
+                    current_block["text"] = ""
+            elif event_name == "content_block_delta":
+                delta = evt.get("delta") or {}
+                if current_block is None:
+                    continue
+                if delta.get("type") == "text_delta" and current_block.get("type") == "text":
+                    current_block["text"] += delta.get("text") or ""
+                    spoken_buf += delta.get("text") or ""
+                    spoken_buf = _speak_ready(spoken_buf)
+                elif delta.get("type") == "input_json_delta" and current_block.get("type") == "tool_use":
+                    current_block["_partial_json"] += delta.get("partial_json") or ""
+            elif event_name == "content_block_stop":
+                if current_block is not None:
+                    if current_block.get("type") == "tool_use":
+                        raw_json = current_block.pop("_partial_json", "")
+                        try:
+                            current_block["input"] = json.loads(raw_json) if raw_json else {}
+                        except ValueError:
+                            current_block["input"] = {}
+                    elif current_block.get("type") == "text" and not tool_use_started and speak_live is not None:
+                        # This text block is genuinely done — flush whatever's still sitting in
+                        # spoken_buf (held back only because it was too short to speak alone)
+                        # rather than silently dropping it. Without this, a short narration line
+                        # immediately followed by a tool_use (e.g. "Let me check that." then a
+                        # tool call) would never be spoken at all: the incremental extractor
+                        # would keep waiting for it to be joined with more text that never comes
+                        # in *this* block, and the end-of-message flush below is skipped once a
+                        # tool_use has started.
+                        if spoken_buf.strip():
+                            try:
+                                speak_live(spoken_buf.strip())
+                            except Exception as e:
+                                log.warning("Live streamed-sentence speech failed: %s", e)
+                        spoken_buf = ""
+                    content_blocks.append(current_block)
+                current_block = None
+            elif event_name == "message_start":
+                msg_usage = (evt.get("message") or {}).get("usage")
+                if msg_usage:
+                    usage.update(msg_usage)
+            elif event_name == "message_delta":
+                delta = evt.get("delta") or {}
+                if "stop_reason" in delta:
+                    stop_reason = delta.get("stop_reason")
+                if evt.get("usage"):
+                    usage.update(evt["usage"])
+            elif event_name == "error":
+                log.warning("Claude streaming request returned an error event: %s", evt)
+                return None
+            elif event_name == "message_stop":
+                break
+    except queue.Empty:
+        log.warning("Claude streaming request timed out waiting for the next event.")
+        return None
+    except Exception as e:
+        log.warning("Claude streaming request parse failed: %s", e)
+        return None
+
+    if not tool_use_started and speak_live is not None and spoken_buf.strip():
+        try:
+            speak_live(spoken_buf.strip())
+        except Exception as e:
+            log.warning("Live streamed-sentence speech failed: %s", e)
+
+    result = {"content": content_blocks, "stop_reason": stop_reason or "end_turn", "usage": usage}
+    _record_api_usage(body, result)
+    return result
+
 
 def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = False,
-                   record_history: bool = True, tool_result_fallback: bool = True) -> str:
+                   record_history: bool = True, tool_result_fallback: bool = True,
+                   tools_override: list[dict] | None = None) -> str:
     """Real observe-act-observe loop: Claude picks tools, sees each result, and decides
     what (if anything) to do next, up to MAX_AGENT_ITERATIONS round trips, before giving a
     final spoken reply. Replaces the old single forced perform_actions tool call.
@@ -7447,7 +7865,12 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     narrate: when True (the caller is going to speak the reply out loud), any text Claude writes
     *alongside* a tool call ("Let me find that folder.") is spoken right away, before the tools
     run, so a long multi-tool task isn't silent until the end. Narrated text is left out of the
-    returned reply so it isn't spoken a second time."""
+    returned reply so it isn't spoken a second time.
+
+    tools_override, if given, replaces the full AGENT_TOOLS + dynamic + MCP tool list with this
+    smaller one (see _reduced_tools_for_intent) — a latency optimization for simple commands,
+    never a safety boundary: the catastrophic gate is enforced in _execute_tool regardless of
+    which tools were on offer this turn."""
     if not _llm_configured():
         log.warning("No API key for the active brain (%s) — set it in .env.", _llm_provider())
         return ""
@@ -7472,7 +7895,14 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     narrated = 0
     used_tool_names: list[str] = []
     any_tool_failed = False
-    tools = AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()
+    # tools_override (Speed Upgrade cloud-latency pass, Phase D): a handful of simple intents
+    # (see _reduced_tools_for_intent) pass a small hand-picked list here instead of the full
+    # ~100+ tool schema set, cutting the prompt Claude has to read for a trivial command. This
+    # never removes the catastrophic gate — that's enforced in _execute_tool regardless of which
+    # tools were offered — it only narrows which tools Claude *can pick from* this turn. Builds
+    # its own separate cached prefix from the full-tool-list one (Anthropic caches by exact
+    # prefix match), so its cache hit rate ramps up independently as these commands repeat.
+    tools = tools_override if tools_override is not None else (AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas())
     tone_line = voice_tone.tone_context_line(tone) if tone else ""
     # Built once per command, not per round trip: the volatile block (clock minute) sits
     # before the messages in the cached prefix, so recomputing it mid-loop across a minute
@@ -7482,18 +7912,34 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
 
     lat = latency.current()
     for iteration in range(MAX_AGENT_ITERATIONS):
-        data = _claude_request(
-            {
-                "model": CLAUDE_MODEL,
-                "max_tokens": 1536,
-                "system": system_blocks,
-                "messages": _messages_with_cache_breakpoint(messages),
-                "tools": cached_tools,
-            },
-            timeout=60,
-        )
+        request_body = {
+            "model": CLAUDE_MODEL,
+            "max_tokens": 1536,
+            "system": system_blocks,
+            "messages": _messages_with_cache_breakpoint(messages),
+            "tools": cached_tools,
+        }
+        # LLM token streaming -> speech (Phase C): only the first round trip, and only when the
+        # caller is actually going to speak the reply here (narrate=True, same condition the
+        # existing mid-task narration already uses). See _claude_stream_first_round's docstring
+        # for the full scoping rationale.
+        streamed_this_round = False
+        data = None
+        if iteration == 0 and narrate and _llm_tts_stream_enabled():
+            def _on_first_token(_lat=lat):
+                if _lat:
+                    _lat.mark("ttft")
+
+            data = _claude_stream_first_round(
+                request_body, 60,
+                lambda s: speak_text(_collapse_paths_for_speech(s)),
+                on_first_token=_on_first_token,
+            )
+            streamed_this_round = data is not None
+        if data is None:
+            data = _claude_request(request_body, timeout=60)
         if lat and iteration == 0:
-            lat.mark("ttft")
+            lat.mark("ttft")  # no-op if the streaming path above already marked it earlier
         if data is None:
             reply = " ".join(reply_parts).strip() or _llm_unavailable_reply()
             if record_history:
@@ -7508,7 +7954,15 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         tool_uses = [b for b in content if b.get("type") == "tool_use"]
         going_on = bool(tool_uses) and data.get("stop_reason") == "tool_use"
 
-        if narrate and going_on and narrated < MAX_NARRATED_LINES and " ".join(texts).strip():
+        if streamed_this_round:
+            # Already spoken live, sentence by sentence, as it streamed in — never speak it
+            # again, whether this round ends the turn (reply_already_spoken_via_stream() tells
+            # the caller not to) or continues into a tool call (skip the narrate branch below,
+            # which would otherwise repeat the same text).
+            reply_parts.extend(texts)
+            if not going_on:
+                _mark_reply_stream_spoken()
+        elif narrate and going_on and narrated < MAX_NARRATED_LINES and " ".join(texts).strip():
             line = " ".join(t.strip() for t in texts if t.strip())
             narrated += 1
             log.info("Narrating mid-task: %r", line[:120])
@@ -7604,6 +8058,36 @@ def handle_text_command(
         _command_ctx.source = prev
 
 
+# --- simple-intent fast path (cloud-latency pass, Phase D) -------------------------------------
+def _deterministic_intent_reply(intent: str) -> str | None:
+    """Zero-LLM-call answers for the handful of intents that are pure local computation — no
+    network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
+    None for every other intent (caller falls through to the normal agent loop)."""
+    now = datetime.now()
+    if intent == "time":
+        return f"It's {now.strftime('%I:%M %p').lstrip('0')}."
+    if intent == "date":
+        return f"Today is {now.strftime('%A, %B %d, %Y')}."
+    return None
+
+
+def _reduced_tools_for_intent(intent: str, transcript: str) -> list[dict] | None:
+    """A small, safe tool subset for a couple of simple intents that still need Claude (to parse
+    which action/app was meant and phrase the reply) but not the full ~100+ tool schema list.
+    Returns None — meaning "use the full tool list" — for every other intent, and also for
+    "open_app" unless the transcript confidently names one of the actual openable apps: a
+    broader request like "open my email" must still get the full tool list (it needs Gmail
+    tools, not open_app), so classify_intent's deliberately broad "open ..." regex is narrowed
+    back down here before it's allowed to restrict anything."""
+    if intent == "volume":
+        return [t for t in AGENT_TOOLS if t["name"] == "system_action"]
+    if intent == "open_app":
+        low = transcript.lower()
+        if any(app in low for app in ALLOWED_APPS):
+            return [t for t in AGENT_TOOLS if t["name"] == "open_app"]
+    return None
+
+
 def _handle_text_command_impl(
     transcript: str, reply_sink=None, tone: dict | None = None, source: str = "text"
 ) -> None:
@@ -7626,6 +8110,8 @@ def _handle_text_command_impl(
     falls back to a text-only read of the same transcript."""
     if not transcript:
         return
+    _reset_reply_stream_spoken()  # clean slate regardless of how the previous command on this
+    # worker thread ended — see the function's own docstring for why this matters.
 
     # A yes/no to Jarvis's Telegram question about reminders ("someone I don't recognize is at your
     # computer, disable reminders?"). Phone only, and only a clear whole-message yes/no. It runs
@@ -7672,6 +8158,24 @@ def _handle_text_command_impl(
     if tone is None:
         tone = voice_tone.analyze_tone(transcript)
 
+    # Simple-intent fast path (cloud-latency pass, Phase D): a small allowlist of intents skip
+    # either the whole Claude round trip (time/date — deterministic, zero LLM call, zero
+    # network) or get a much smaller tool schema list (volume, a confidently-named open_app), so
+    # ttft isn't dominated by the ~100+ tool prefix for a trivial command. Everything else —
+    # including anything that fails these narrow checks — gets the exact same full-tool
+    # run_agent_loop call as before. The catastrophic gate lives in _execute_tool, not in which
+    # tools happen to be offered this turn, so it's reachable on every path that can reach a
+    # tool at all; the deterministic path never calls a tool in the first place.
+    intent = latency.classify_intent(transcript)
+    deterministic_reply = _deterministic_intent_reply(intent)
+    reduced_tools = _reduced_tools_for_intent(intent, transcript) if deterministic_reply is None else None
+    intent_path = "deterministic" if deterministic_reply is not None else ("reduced_tools" if reduced_tools else "full")
+    log.info("Intent routing: intent=%s path=%s", intent, intent_path)
+    fast_lat = latency.current()
+    if fast_lat:
+        fast_lat.intent = intent
+        fast_lat.path = intent_path
+
     record_recent_task(transcript)
     # Dashboard session bookkeeping: best-effort, never raises (see jarvis_dashboard.py) — a
     # failure here must never affect the actual command below.
@@ -7680,23 +8184,26 @@ def _handle_text_command_impl(
         {"type": "session_start", "data": {"id": session_id, "source": source, "transcript": transcript}}
     )
     speaks_here = reply_sink is None or source == "dashboard"
-    filler_done = threading.Event() if speaks_here else None
-    if filler_done is not None:
-        _set_speak_signal(filler_done)
-        threading.Thread(target=_speak_filler_if_slow, args=(filler_done,), daemon=True).start()
-    try:
-        # Narrate mid-task only where the reply will also be spoken here (not phone-only).
-        reply = run_agent_loop(
-            transcript, tone=tone, narrate=speaks_here
-        )
-    except Exception:
-        dashboard.end_session(session_id, "failed", None)
-        dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
-        raise
-    finally:
+    if deterministic_reply is not None:
+        reply = deterministic_reply
+    else:
+        filler_done = threading.Event() if speaks_here else None
         if filler_done is not None:
-            filler_done.set()
-            _set_speak_signal(None)
+            _set_speak_signal(filler_done)
+            threading.Thread(target=_speak_filler_if_slow, args=(filler_done,), daemon=True).start()
+        try:
+            # Narrate mid-task only where the reply will also be spoken here (not phone-only).
+            reply = run_agent_loop(
+                transcript, tone=tone, narrate=speaks_here, tools_override=reduced_tools
+            )
+        except Exception:
+            dashboard.end_session(session_id, "failed", None)
+            dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
+            raise
+        finally:
+            if filler_done is not None:
+                filler_done.set()
+                _set_speak_signal(None)
     shown = vibes.decorate(transcript, reply)  # text surfaces only; speech below uses `reply`
     dashboard.end_session(session_id, "done", shown)
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
@@ -7715,23 +8222,35 @@ def _handle_text_command_impl(
         if reply_sink is None or source == "dashboard":
             # Dashboard/audit trail always get the full `reply` above — only what actually
             # comes out of the speakers is shortened and stripped of full file paths.
-            speak_text(_collapse_paths_for_speech(_summarize_for_speech(reply)))
+            # Skip if run_agent_loop already spoke this exact reply live, sentence by sentence,
+            # as it streamed in (Phase C) — speaking it again here would repeat it. A streamed
+            # reply also bypasses _summarize_for_speech on purpose: it was never a "wait for the
+            # whole thing then read it" cost in the first place, which is the problem
+            # summarization exists to soften, so there's nothing left for it to solve here.
+            if not reply_already_spoken_via_stream():
+                speak_text(_collapse_paths_for_speech(_summarize_for_speech(reply)))
 
 
-def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
+def handle_voice_command(
+    audio: np.ndarray, sample_rate: int, stream_session: "stt_deepgram.StreamingSession | None" = None
+) -> None:
     _inflight_enter()  # covers transcription, which happens before handle_text_command
     try:
-        _handle_voice_command_impl(audio, sample_rate)
+        _handle_voice_command_impl(audio, sample_rate, stream_session=stream_session)
     finally:
         _inflight_exit()
 
 
-def _handle_voice_command_impl(audio: np.ndarray, sample_rate: int) -> None:
+def _handle_voice_command_impl(
+    audio: np.ndarray, sample_rate: int, stream_session: "stt_deepgram.StreamingSession | None" = None
+) -> None:
     if audio.size == 0:
+        if stream_session is not None:
+            stream_session.finish()  # tear down cleanly; nothing to transcribe
         return
     lat = latency.start()  # t0 = capture-end, right now
     try:
-        transcript = transcribe_pcm(audio, sample_rate)
+        transcript = transcribe_pcm(audio, sample_rate, stream_session=stream_session)
     except Exception as e:
         log.warning("Transcription failed: %s", e)
         latency.end()
@@ -8036,6 +8555,7 @@ def main() -> int:
     blocksize = block_samples()
     ptt_active = False
     ptt_buffer: list[np.ndarray] = []
+    stream_session: "stt_deepgram.StreamingSession | None" = None
 
     if FOCUS_EXISTING_CURSOR_WINDOW:
         log.info(
@@ -8212,9 +8732,24 @@ def main() -> int:
                     if pressed and not ptt_active:
                         ptt_active = True
                         ptt_buffer = []
+                        # Streaming STT (Phase A): open the Deepgram live session *now*, at
+                        # press-time, so transcription of everything the user says has mostly
+                        # already happened by the time they release the key. start() itself is a
+                        # bounded network call (its own timeout), so it runs on a helper thread —
+                        # the capture loop keeps reading audio blocks the instant it's kicked off
+                        # rather than waiting on the connection; feed() below is a no-op until
+                        # start() actually finishes (stream_session stays usable either way, it
+                        # just silently drops early blocks fed before the socket is up).
+                        stream_session = (
+                            stt_deepgram.StreamingSession(SAMPLE_RATE) if _stt_stream_enabled() else None
+                        )
+                        if stream_session is not None:
+                            threading.Thread(target=stream_session.start, daemon=True).start()
                         log.info("Push-to-talk: listening...")
                     if ptt_active:
                         ptt_buffer.append(data.copy())
+                        if stream_session is not None:
+                            stream_session.feed(data)
                         if not pressed:
                             ptt_active = False
                             audio = (
@@ -8230,8 +8765,10 @@ def main() -> int:
                             threading.Thread(
                                 target=handle_voice_command,
                                 args=(audio, SAMPLE_RATE),
+                                kwargs={"stream_session": stream_session},
                                 daemon=True,
                             ).start()
+                            stream_session = None
 
     except KeyboardInterrupt:
         log.info("Stopped.")

@@ -296,7 +296,10 @@ def test_only_the_phone_can_answer(j, monkeypatch):
 def test_a_non_answer_from_the_phone_is_an_ordinary_command(j, monkeypatch):
     gr.on_stranger_arrived(T0)
     ran = []
-    monkeypatch.setattr(j, "run_agent_loop", lambda t, tone=None, narrate=False: ran.append(t) or "done")
+    monkeypatch.setattr(
+        j, "run_agent_loop",
+        lambda t, tone=None, narrate=False, tools_override=None: ran.append(t) or "done",
+    )
     out = []
     j.handle_text_command("what's the weather", source="phone", reply_sink=out.append)
     assert ran == ["what's the weather"] and out == ["done"] and gr.state() == gr.AWAITING_ANSWER
@@ -330,7 +333,7 @@ def test_reminders_mode_tool_from_any_source(j, monkeypatch):
     out = []
 
     def run(action):
-        def agent(transcript, tone=None, narrate=False):
+        def agent(transcript, tone=None, narrate=False, tools_override=None):
             out.append(j._execute_tool("reminders_mode", {"action": action}, transcript))
             return "ok"
 
