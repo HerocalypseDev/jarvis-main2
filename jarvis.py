@@ -7955,12 +7955,19 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         going_on = bool(tool_uses) and data.get("stop_reason") == "tool_use"
 
         if streamed_this_round:
-            # Already spoken live, sentence by sentence, as it streamed in — never speak it
-            # again, whether this round ends the turn (reply_already_spoken_via_stream() tells
-            # the caller not to) or continues into a tool call (skip the narrate branch below,
-            # which would otherwise repeat the same text).
-            reply_parts.extend(texts)
-            if not going_on:
+            # Already spoken live, sentence by sentence, as it streamed in. If this round
+            # continues into a tool call, the text is excluded from reply_parts — exactly like
+            # the narrate branch below already does for a non-final turn — otherwise it would be
+            # spoken a *second* time as part of the eventual final reply (a real bug caught by
+            # testing: without this, "Let me check that. Your CPU is at 42 percent." was both
+            # streamed live AND folded into `reply`, which _handle_text_command_impl then spoke
+            # again in full). Only when this round *is* the final one does the text belong in
+            # `reply` (for dashboard/history/reply-cache) — and only then is
+            # reply_already_spoken_via_stream() set, so the caller knows not to re-speak it.
+            if going_on:
+                pass
+            else:
+                reply_parts.extend(texts)
                 _mark_reply_stream_spoken()
         elif narrate and going_on and narrated < MAX_NARRATED_LINES and " ".join(texts).strip():
             line = " ".join(t.strip() for t in texts if t.strip())
@@ -8737,9 +8744,9 @@ def main() -> int:
                         # already happened by the time they release the key. start() itself is a
                         # bounded network call (its own timeout), so it runs on a helper thread —
                         # the capture loop keeps reading audio blocks the instant it's kicked off
-                        # rather than waiting on the connection; feed() below is a no-op until
-                        # start() actually finishes (stream_session stays usable either way, it
-                        # just silently drops early blocks fed before the socket is up).
+                        # rather than waiting on the connection; feed() below queues bytes even
+                        # before start() has finished connecting (nothing said in the first
+                        # instant of a hold is dropped — see StreamingSession.feed's docstring).
                         stream_session = (
                             stt_deepgram.StreamingSession(SAMPLE_RATE) if _stt_stream_enabled() else None
                         )

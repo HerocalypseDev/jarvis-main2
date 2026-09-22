@@ -894,10 +894,31 @@ exact proven non-streaming/full-tool path on any failure.
   by mocked tests built from Anthropic's documented event shapes.
 - **Phase E**: nothing further needed — the filler-vs-narration fix and honest `stream`-vs-`rest`
   backend labels from the earlier audit pass already satisfy it.
-- Tests: `test_deepgram_voice.py` grew from 41 to 89 (protocol tests for both new WebSocket
+- Tests: `test_deepgram_voice.py` grew from 41 to 90 (protocol tests for both new WebSocket
   classes, the streaming-vs-prefetch safety property, intent-routing, SSE parsing including the
   tool_use-interruption edge case, and the already-spoken-flag not leaking between commands).
   Full suite: 726 passed (the 4 pre-existing unrelated urgent-email-monitor failures untouched).
+- **Audit-and-fix pass (2026-09-22, second pass)**, full write-up in SPEED.md — found one real
+  High-severity bug: a multi-round command (streamed narration ending in a `tool_use`, then a
+  normal final round) spoke the narration **twice** — once live during the stream, once again
+  as part of the final reply, because the streamed text was folded into `reply_parts` regardless
+  of whether the round continued into a tool call. Fixed to match the existing non-streamed
+  narrate branch exactly: excluded from `reply_parts` whenever the round continues, only
+  included (and only then marked already-spoken) on the round that actually ends the turn.
+  Caught by a new test running a genuine two-round scenario — every existing test only exercised
+  single-round streaming. Also fixed a stale comment in `main()`'s push-to-talk loop claiming
+  `feed()` drops audio fed before the WebSocket connects, which was true of an earlier draft but
+  not the shipped code (the queue-based design holds those bytes instead). Everything else
+  audited clean with code-level evidence: chunks really do send during the hold, not only after
+  release; no double `run_agent_loop` call from interim-vs-final transcripts; every streaming
+  path (STT, TTS, Claude) has a bounded timeout with no infinite-wait path; the catastrophic gate
+  is unreachable any differently through a reduced tool list or a streamed response than through
+  the full non-streamed path (enforced in `_execute_tool`, not by which tools were offered or
+  whether the round streamed); no `run_agent_loop` caller outside the direct
+  `_handle_text_command_impl` path (scheduled skills, queued tasks, autonomous actions,
+  background research) ever passes `narrate=True`, so streaming can never run on the scheduler
+  or autonomy tick thread; no API key or secret appears in any new log line. No catastrophic-gate,
+  autonomy-permission, or fallback-removal changes were made. Full suite green afterward.
 
 ### Cost reporting
 
@@ -953,7 +974,8 @@ row there each phase rather than only stating the total in chat.
 | 30 (Deepgram speed upgrade: Nova-3 STT + Aura 2 TTS backends with circuit breakers, sentence-pipelined TTS, filler phrase, latency logging + intent classifier; 31 new tests) | Sonnet 5 | ~60 min | ~$3.20–$4.50 |
 | 31 (Deepgram speed-upgrade audit-and-fix pass: lazy Whisper preload, honest tts_backend logging, filler-vs-narration fix, bounded pipeline join timeout, breaker-recovery + timeout test coverage; 10 new tests) | Sonnet 5 | ~35 min | ~$1.60–$2.30 |
 | 32 (cloud-latency pass: streaming STT + TTS WebSockets, simple-intent fast path, Claude SSE token streaming to speech, all default-on; websocket-client dependency; 48 new tests) | Sonnet 5 | ~110 min | ~$4.50–$6.20 |
-| **Running total (final)** | | **~1138 min** | **~$51.95–$72.50** |
+| 33 (cloud-latency audit-and-fix pass: found and fixed a real double-speak bug in multi-round streamed narration, plus a stale comment; 1 new test) | Sonnet 5 | ~30 min | ~$1.30–$1.90 |
+| **Running total (final)** | | **~1168 min** | **~$53.25–$74.40** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

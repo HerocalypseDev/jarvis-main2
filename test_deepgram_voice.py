@@ -1355,6 +1355,49 @@ def test_run_agent_loop_falls_back_to_non_streaming_when_stream_fails(jarvis, mo
     assert jarvis.reply_already_spoken_via_stream() is False
 
 
+def test_run_agent_loop_multi_round_streams_narration_then_speaks_final_reply_once(jarvis, monkeypatch):
+    """Audit scenario: round 0 streams narration + a tool_use (so the loop must continue);
+    round 1+ run the normal non-streaming path as always. The narration must be spoken exactly
+    once (live, during the stream — not again via the existing narrate branch), the tool must
+    actually execute, and the final answer must not be marked as already-spoken (it wasn't
+    streamed) so the caller still speaks it once, normally."""
+    monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "1")  # fixture defaults this off; opt in — fully mocked below, no real network
+    monkeypatch.setattr(jarvis, "get_mcp_tool_schemas", lambda: [])
+    spoken = []
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
+    executed_tools = []
+    monkeypatch.setattr(jarvis, "_execute_tool", lambda name, inp, transcript: executed_tools.append(name) or "42 percent")
+
+    def fake_stream(body, timeout, speak_live, on_first_token=None):
+        speak_live("Let me check that for you.")
+        return {
+            "content": [
+                {"type": "text", "text": "Let me check that for you."},
+                {"type": "tool_use", "id": "t1", "name": "system_status", "input": {}},
+            ],
+            "stop_reason": "tool_use",
+            "usage": {},
+        }
+
+    monkeypatch.setattr(jarvis, "_claude_stream_first_round", fake_stream)
+    request_calls = []
+
+    def fake_request(body, timeout):
+        request_calls.append(body)
+        return {"content": [{"type": "text", "text": "Your CPU is at 42 percent."}], "stop_reason": "end_turn", "usage": {}}
+
+    monkeypatch.setattr(jarvis, "_claude_request", fake_request)
+    reply = jarvis.run_agent_loop("what's my cpu usage", narrate=True)
+
+    assert reply == "Your CPU is at 42 percent."
+    assert executed_tools == ["system_status"]  # the tool really ran
+    assert len(request_calls) == 1  # exactly one non-streamed round trip for the final answer
+    assert spoken == ["Let me check that for you."]  # narration spoken exactly once (live)
+    # The final answer was never streamed, so the caller (_handle_text_command_impl) must still
+    # speak it normally — reply_already_spoken_via_stream() must be False, not True.
+    assert jarvis.reply_already_spoken_via_stream() is False
+
+
 def test_reply_already_spoken_flag_resets_between_commands(jarvis, monkeypatch):
     monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "1")  # fixture defaults this off; opt in — fully mocked below, no real network
     monkeypatch.setattr(jarvis, "get_mcp_tool_schemas", lambda: [])

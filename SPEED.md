@@ -252,6 +252,18 @@ flag into the next command on the same worker thread and wrongly silence a real 
 that. A streamed reply also skips `_summarize_for_speech` — that function exists to soften the
 "wait for the whole reply, then read a shortened version" cost, which a live-streamed reply never
 had in the first place.
+**Audit fix (2026-09-22, second pass)**: a multi-round command — round 0 streams narration and
+ends in a `tool_use`, later rounds run the normal non-streaming path — was speaking the
+narration **twice**: once live during the stream, and again because the streamed text was still
+being folded into `reply_parts` regardless of whether the round continued into a tool call, so
+it ended up concatenated into the final `reply` text that `_handle_text_command_impl` then spoke
+in full ("Let me check that. Your CPU is at 42 percent." spoken live, then the exact same thing
+spoken again as one block). Fixed to match the existing (non-streamed) narrate branch's own
+behavior exactly: streamed text is excluded from `reply_parts` whenever the round continues
+(`going_on=True`) and only included — with `reply_already_spoken_via_stream()` then set — when
+that round is the actual final one. Caught by a new test that runs a real two-round scenario
+(streamed narration + tool_use, then a plain final round) rather than only single-round cases.
+
 **Accepted rough edge**: if the connection drops *after* some sentences were already spoken live,
 retrying via the non-streaming path will speak the *whole* reply again, repeating what already
 played — rare (a mid-response network drop) and bounded (a stutter, not silence or corruption),
@@ -331,7 +343,7 @@ capture-end to measure from).
 
 ## Tests
 
-`test_deepgram_voice.py` (89 tests, no real network — every `urlopen`/WebSocket call is mocked):
+`test_deepgram_voice.py` (90 tests, no real network — every `urlopen`/WebSocket call is mocked):
 everything in the first pass above (`jarvis_cache.CircuitBreaker`, `jarvis_latency`,
 `jarvis_stt_deepgram.transcribe`, `jarvis_tts_deepgram.synthesize`, the REST fallback cascades,
 circuit-breaker trip/recovery, sentence pipelining, the pipeline join timeout, the filler phrase,
