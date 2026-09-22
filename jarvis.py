@@ -5062,6 +5062,37 @@ async def _mcp_call_tool_async(server_name: str, tool_name: str, arguments: dict
     return await future
 
 
+# The MCP server's stdio connection itself succeeds (it doesn't need a valid Google token to
+# spawn and list tools) even when the underlying Google OAuth refresh token is dead, so this
+# surfaces only when an actual Gmail/Calendar API call is made — see _mcp_auth_error_hint.
+_MCP_GOOGLE_REAUTH_CMD = {
+    "gmail": "npx @gongrzhe/server-gmail-autoauth-mcp auth",
+    "calendar": "npx @cocal/google-calendar-mcp auth",
+}
+
+
+def _mcp_auth_error_hint(server_name: str, text: str) -> str | None:
+    """A Google OAuth app left in "Testing" publish status has refresh tokens that expire after
+    7 days, which then surfaces as invalid_grant on every call to that server — observed live,
+    repeatedly, on both the gmail and calendar servers. No code here can fix it: refreshing
+    requires an interactive browser consent screen, which a headless/background command can't
+    complete. This turns the raw error into the exact command to run instead of Jarvis (or a
+    background agent) retrying blindly or trying to shell out to `npx ... auth` itself, which
+    would just hang waiting for a browser click that never comes."""
+    if "invalid_grant" not in text.lower():
+        return None
+    cmd = _MCP_GOOGLE_REAUTH_CMD.get(server_name)
+    if not cmd:
+        return None
+    return (
+        f"The {server_name} MCP server's Google sign-in has expired or was revoked "
+        f"(invalid_grant) and needs to be renewed in a browser — this can't be done "
+        f"automatically. Run `{cmd}` and sign in again. If this keeps happening every ~7 days, "
+        "publish the Google Cloud OAuth consent screen to Production instead of Testing "
+        "(Testing-mode tokens expire weekly)."
+    )
+
+
 def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
     entry = _mcp_tool_index.get(exposed_name)
     if not entry:
@@ -5076,6 +5107,9 @@ def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
         return f"MCP tool call failed: {e}"
     parts = [b.text for b in (getattr(result, "content", None) or []) if getattr(b, "text", None)]
     text = " ".join(parts) or "(no output)"
+    hint = _mcp_auth_error_hint(server_name, text)
+    if hint:
+        return hint
     return f"MCP tool reported an error: {text}" if getattr(result, "is_error", False) else text
 
 

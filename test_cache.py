@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -771,3 +772,42 @@ def test_scheduled_skill_with_silent_flag_speaks_nothing_on_empty_reply(jarvis, 
 def test_prompt_asks_for_plain_english_progress_lines(jarvis):
     text = " ".join(b.get("text", "") for b in jarvis.build_system_blocks(""))
     assert "never name tools" in text
+
+
+# --- Google OAuth invalid_grant surfacing (MCP gmail/calendar) ---------------------------------
+class _FakeMcpResult:
+    def __init__(self, text: str, is_error: bool = False):
+        self.content = [SimpleNamespace(text=text)]
+        self.is_error = is_error
+
+
+def _fake_mcp_run_coro(result):
+    """execute_mcp_tool always builds the real coroutine before calling _mcp_run_coro; close it
+    here so faking the result doesn't leave it dangling (avoids a RuntimeWarning)."""
+    def run(coro, timeout=None):
+        coro.close()
+        return result
+    return run
+
+
+def test_gmail_invalid_grant_becomes_a_reauth_instruction(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_mcp_tool_index", {"mcp_gmail_search_emails": ("gmail", "search_emails")})
+    monkeypatch.setattr(jarvis, "_mcp_run_coro", _fake_mcp_run_coro(_FakeMcpResult("Error: invalid_grant")))
+    out = jarvis.execute_mcp_tool("mcp_gmail_search_emails", {"query": "is:unread"})
+    assert "npx @gongrzhe/server-gmail-autoauth-mcp auth" in out
+    assert "invalid_grant" not in out.lower().split("(")[0]  # human sentence, not the raw error dumped back
+
+
+def test_calendar_invalid_grant_embedded_in_json_still_gets_the_hint(jarvis, monkeypatch):
+    body = '{"accounts": [{"account_id": "normal", "status": "active", "error": "invalid_grant"}]}'
+    monkeypatch.setattr(jarvis, "_mcp_tool_index", {"mcp_calendar_manage-accounts": ("calendar", "manage-accounts")})
+    monkeypatch.setattr(jarvis, "_mcp_run_coro", _fake_mcp_run_coro(_FakeMcpResult(body)))
+    out = jarvis.execute_mcp_tool("mcp_calendar_manage-accounts", {"action": "list"})
+    assert "npx @cocal/google-calendar-mcp auth" in out
+
+
+def test_other_mcp_errors_are_unaffected_by_the_auth_hint(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_mcp_tool_index", {"mcp_browser_click": ("browser", "click")})
+    monkeypatch.setattr(jarvis, "_mcp_run_coro", _fake_mcp_run_coro(_FakeMcpResult("element not found", is_error=True)))
+    out = jarvis.execute_mcp_tool("mcp_browser_click", {})
+    assert out == "MCP tool reported an error: element not found"
