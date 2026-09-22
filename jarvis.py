@@ -78,6 +78,9 @@ import jarvis_guest_reminders as guest_reminders
 import jarvis_roblox as roblox
 import jarvis_vibes as vibes
 import jarvis_restart as restart_mod
+import jarvis_stt_deepgram as stt_deepgram
+import jarvis_tts_deepgram as tts_deepgram
+import jarvis_latency as latency
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
@@ -579,18 +582,55 @@ def _resample_to_16k(mono: np.ndarray, orig_sr: int) -> np.ndarray:
     return np.interp(target_idx, orig_idx, mono).astype(np.float32)
 
 
+# --- speech-to-text: Deepgram Nova-3 (cloud, primary when configured) with local Whisper as ---
+# the automatic offline/fallback (same "degrade the backend, never go silent" pattern as TTS
+# below). JARVIS_STT_BACKEND=deepgram|whisper|auto (default auto = deepgram if a key is set).
+_dg_stt_breaker = cache.CircuitBreaker(threshold=3, cooldown_s=120.0)
+
+
+def _use_deepgram_stt() -> bool:
+    backend = (os.environ.get("JARVIS_STT_BACKEND") or "auto").strip().lower()
+    if backend == "whisper":
+        return False
+    return bool(stt_deepgram.DEEPGRAM_API_KEY) and _dg_stt_breaker.allow()
+
+
 def transcribe_pcm(pcm: np.ndarray, sample_rate: int) -> str:
     if pcm.ndim > 1:
         mono = np.mean(pcm.astype(np.float64), axis=1).astype(np.float32)
     else:
         mono = pcm.astype(np.float32)
+    if mono.size < int(sample_rate * 0.2):
+        return ""
+
+    lat = latency.current()
+    if _use_deepgram_stt():
+        try:
+            text = stt_deepgram.transcribe(mono, sample_rate)
+        except Exception as e:
+            text = None
+            log.warning("Deepgram STT raised, falling back to Whisper: %s", e)
+        _dg_stt_breaker.record(text is not None)
+        if text is not None:
+            if lat:
+                lat.mark("stt")
+                lat.stt_backend = "deepgram"
+            return text
+
     mono16k = _resample_to_16k(mono, sample_rate)
     if mono16k.size < int(16000 * 0.2):
+        if lat:
+            lat.mark("stt")
+            lat.stt_backend = "whisper"
         return ""
     model = _get_whisper_model()
     language = (os.environ.get("WHISPER_LANGUAGE") or "en").strip() or None
     segments, _info = model.transcribe(mono16k, beam_size=1, language=language)
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    text = " ".join(seg.text.strip() for seg in segments).strip()
+    if lat:
+        lat.mark("stt")
+        lat.stt_backend = "whisper"
+    return text
 
 
 # --- text-to-speech: Fish Audio (cloud) primary, Piper (local/offline/free) fallback -------
@@ -743,64 +783,153 @@ def _sanitize_for_speech(text: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+# Deepgram Aura 2 (cloud) is the primary voice when DEEPGRAM_API_KEY is set; Fish Audio, then
+# Piper, remain the fallback chain exactly as before — a TTS-provider failure degrades the
+# *voice*, never into silence. JARVIS_TTS_BACKEND=deepgram|fish|piper|auto (default auto =
+# deepgram if a key is set).
+_dg_tts_breaker = cache.CircuitBreaker(threshold=3, cooldown_s=120.0)
+
+# Sentence-level streaming (Speed Upgrade Phase 2.1): a long reply is synthesized one sentence
+# at a time instead of as a single blob, so the first sentence starts playing without waiting for
+# synthesis of the whole reply, and the *next* sentence is synthesized in the background while
+# the current one plays — real overlap using only stdlib threading, no token-level streaming
+# from Claude needed (run_agent_loop still returns the full reply text; see SPEED.md for why
+# real SSE streaming of the Claude response itself was left out).
+SENTENCE_STREAM_MIN_CHARS = int(os.environ.get("JARVIS_TTS_SENTENCE_STREAM_MIN_CHARS") or 120)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(text) if p.strip()]
+    merged: list[str] = []
+    for p in parts:
+        if merged and len(merged[-1]) < 20:  # don't play a choppy 2-word "sentence" on its own
+            merged[-1] = f"{merged[-1]} {p}"
+        else:
+            merged.append(p)
+    return merged or ([text] if text else [])
+
+
+def _use_deepgram_tts() -> bool:
+    backend = (os.environ.get("JARVIS_TTS_BACKEND") or "auto").strip().lower()
+    if backend in ("fish", "piper"):
+        return False
+    return bool(tts_deepgram.DEEPGRAM_API_KEY) and _dg_tts_breaker.allow()
+
+
+def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
+    """Runs the Deepgram -> Fish -> Piper synth cascade (skipping engines that aren't
+    configured/enabled), using the on-disk TTS cache for short phrases — keyed per engine, so a
+    fallback clip is never stored under another engine's key and served in place of the real
+    voice; a cache hit for *any* configured engine is strictly better than synthesizing, so all
+    of them are checked before falling through to synthesis. Returns (pcm, sample_rate,
+    backend_name); backend_name is "" only if every engine failed (raw is empty too)."""
+    fish_prosody = sleep_mode.fish_audio_prosody_overrides()
+    piper_overrides = sleep_mode.tts_overrides()
+    use_cache = cache.enabled("tts") and len(text) <= TTS_CACHE_MAX_CHARS
+    keys: dict[str, str] = {}
+    if use_cache:
+        if _use_deepgram_tts():
+            keys["deepgram"] = cache.stable_hash("deepgram", tts_deepgram.DEEPGRAM_TTS_MODEL, text)
+        if FISH_AUDIO_API_KEY:
+            keys["fish"] = cache.stable_hash("fish", FISH_AUDIO_MODEL, FISH_AUDIO_VOICE_ID, text, fish_prosody)
+        keys["piper"] = cache.stable_hash("piper", PIPER_VOICE, text, piper_overrides)
+        for backend, key in keys.items():
+            hit = _tts_disk_cache.get(key)
+            if hit:
+                cache.record("tts", True, repr(text[:30]))
+                return hit[0], hit[1], backend
+        cache.record("tts", False, repr(text[:30]))
+
+    if _use_deepgram_tts():
+        try:
+            raw, sr = tts_deepgram.synthesize(text)
+            _dg_tts_breaker.record(True)
+            if raw:
+                if use_cache:
+                    _tts_disk_cache.put(keys["deepgram"], raw, sr)
+                return raw, sr, "deepgram"
+        except Exception as e:
+            _dg_tts_breaker.record(False)
+            log.warning("Deepgram TTS failed, falling back: %s", e)
+
+    if FISH_AUDIO_API_KEY:
+        try:
+            raw, sr = _fish_audio_synthesize(text, fish_prosody)
+            if raw:
+                if use_cache:
+                    _tts_disk_cache.put(keys["fish"], raw, sr)
+                return raw, sr, "fish"
+        except Exception as e:
+            log.warning("Fish Audio TTS failed, falling back to Piper: %s", e)
+
+    try:
+        raw, sr = _piper_synthesize(text, piper_overrides)
+        if raw and use_cache:
+            _tts_disk_cache.put(keys["piper"], raw, sr)
+        return raw, sr, "piper"
+    except Exception as e:
+        log.warning("Piper TTS failed: %s", e)
+        return b"", 0, ""
+
+
 def speak_text(text: str) -> None:
-    """Speak arbitrary dynamic text (voice-command replies). Fish Audio (cloud) is the primary
-    voice when FISH_AUDIO_API_KEY is set; Piper (local/offline/free) is the automatic fallback
-    if Fish Audio errors for any reason (no key, network down, rate limited, bad response) —
-    a TTS-provider failure degrades the *voice*, not into silence. Uses Sleep Mode's
-    calmer/slower voice settings (see jarvis_sleep_mode.tts_overrides/
-    fish_audio_prosody_overrides) when Sleep Mode is active."""
+    """Speak arbitrary dynamic text (voice-command replies). Deepgram Aura 2 (cloud) is the
+    primary voice when configured; Fish Audio, then Piper (local/offline/free), are the
+    automatic fallback if the previous engine errors for any reason (no key, network down, rate
+    limited, bad response). Uses Sleep Mode's calmer/slower voice settings (see
+    jarvis_sleep_mode.tts_overrides/fish_audio_prosody_overrides) when Sleep Mode is active.
+    Long text is split into sentences and pipelined (see _split_sentences) so playback of the
+    first sentence starts without waiting for the whole reply to be synthesized."""
     t = _sanitize_for_speech(text)
     if not t:
         return
 
-    # Disk cache (short phrases only — long one-off replies never repeat and would just churn
-    # the cache). Keyed per engine, so a Piper fallback clip is never stored under the Fish
-    # key and later served in place of the real voice; on a Fish outage the Fish key can still
-    # hit from earlier good audio, which is strictly better than falling back.
-    fish_prosody = sleep_mode.fish_audio_prosody_overrides()
-    piper_overrides = sleep_mode.tts_overrides()
-    use_cache = cache.enabled("tts") and len(t) <= TTS_CACHE_MAX_CHARS
-    fish_key = piper_key = None
-    if use_cache:
-        piper_key = cache.stable_hash("piper", PIPER_VOICE, t, piper_overrides)
-        if FISH_AUDIO_API_KEY:
-            fish_key = cache.stable_hash(
-                "fish", FISH_AUDIO_MODEL, FISH_AUDIO_VOICE_ID, t, fish_prosody
-            )
-        for key in (fish_key, piper_key):
-            hit = _tts_disk_cache.get(key) if key else None
-            if hit:
-                cache.record("tts", True, repr(t[:30]))
-                _play_pcm_bytes(*hit)
-                return
-        cache.record("tts", False, repr(t[:30]))
+    lat = latency.current()
+    sentences = _split_sentences(t) if len(t) > SENTENCE_STREAM_MIN_CHARS else [t]
+    pending: tuple[bytes, int, str] | None = None
+    for i, sentence in enumerate(sentences):
+        raw, sr, backend = pending if pending is not None else _synthesize_and_cache(sentence)
+        pending = None
+        if not raw:
+            log.warning("TTS returned empty audio%s.", "" if len(sentences) == 1 else " for one sentence")
+            continue
+        if lat and not lat.tts_backend:
+            lat.mark("tts_ttfa")
+            lat.tts_backend = backend
+        next_result: dict = {}
+        next_thread = None
+        if i + 1 < len(sentences):
+            next_sentence = sentences[i + 1]
 
-    raw, sample_rate = b"", 0
-    used_key = None
-    if FISH_AUDIO_API_KEY:
-        try:
-            raw, sample_rate = _fish_audio_synthesize(t, fish_prosody)
-            used_key = fish_key
-        except Exception as e:
-            log.warning("Fish Audio TTS failed, falling back to Piper: %s", e)
-            raw = b""
+            def _prep(store=next_result, txt=next_sentence) -> None:
+                store["audio"] = _synthesize_and_cache(txt)
 
-    if not raw:
-        try:
-            raw, sample_rate = _piper_synthesize(t, piper_overrides)
-            used_key = piper_key
-        except Exception as e:
-            log.warning("Piper TTS failed: %s", e)
-            return
+            next_thread = threading.Thread(target=_prep, daemon=True)
+            next_thread.start()
+        _play_pcm_bytes(raw, sr)
+        if next_thread is not None:
+            next_thread.join()
+            pending = next_result.get("audio")
 
-    if raw and used_key:
-        _tts_disk_cache.put(used_key, raw, sample_rate)
 
-    if not raw:
-        log.warning("TTS returned empty audio.")
-        return
-    _play_pcm_bytes(raw, sample_rate)
+# Filler phrase (Speed Upgrade Phase 3.2): if a command is still working after
+# JARVIS_TTS_FILLER_DELAY_S with nothing spoken yet, say one short line so a slow multi-tool
+# task doesn't feel like it hung. No cancellation/preemption logic needed: the phrase is short
+# enough (and TTS-cached after the first use) that it has almost always finished playing by the
+# time the real reply is ready; if the real reply *does* become ready first, filler_done is set
+# and the timer never fires at all.
+_FILLER_PHRASE = "One moment."
+
+
+def _speak_filler_if_slow(done: threading.Event) -> None:
+    delay = float(os.environ.get("JARVIS_TTS_FILLER_DELAY_S") or 2.5)
+    if done.wait(delay):
+        return  # the real reply was ready before the delay elapsed
+    try:
+        speak_text(_FILLER_PHRASE)
+    except Exception as e:
+        log.debug("Filler phrase failed (harmless): %s", e)
 
 
 def _open_uri(uri: str) -> None:
@@ -7320,7 +7449,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     system_blocks = build_system_blocks(tone_line)
     cached_tools = _cached_tools(tools)
 
-    for _ in range(MAX_AGENT_ITERATIONS):
+    lat = latency.current()
+    for iteration in range(MAX_AGENT_ITERATIONS):
         data = _claude_request(
             {
                 "model": CLAUDE_MODEL,
@@ -7331,6 +7461,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             },
             timeout=60,
         )
+        if lat and iteration == 0:
+            lat.mark("ttft")
         if data is None:
             reply = " ".join(reply_parts).strip() or _llm_unavailable_reply()
             if record_history:
@@ -7516,15 +7648,22 @@ def _handle_text_command_impl(
     dashboard.notify(
         {"type": "session_start", "data": {"id": session_id, "source": source, "transcript": transcript}}
     )
+    speaks_here = reply_sink is None or source == "dashboard"
+    filler_done = threading.Event() if speaks_here else None
+    if filler_done is not None:
+        threading.Thread(target=_speak_filler_if_slow, args=(filler_done,), daemon=True).start()
     try:
         # Narrate mid-task only where the reply will also be spoken here (not phone-only).
         reply = run_agent_loop(
-            transcript, tone=tone, narrate=(reply_sink is None or source == "dashboard")
+            transcript, tone=tone, narrate=speaks_here
         )
     except Exception:
         dashboard.end_session(session_id, "failed", None)
         dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
         raise
+    finally:
+        if filler_done is not None:
+            filler_done.set()
     shown = vibes.decorate(transcript, reply)  # text surfaces only; speech below uses `reply`
     dashboard.end_session(session_id, "done", shown)
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
@@ -7557,19 +7696,26 @@ def handle_voice_command(audio: np.ndarray, sample_rate: int) -> None:
 def _handle_voice_command_impl(audio: np.ndarray, sample_rate: int) -> None:
     if audio.size == 0:
         return
+    lat = latency.start()  # t0 = capture-end, right now
     try:
         transcript = transcribe_pcm(audio, sample_rate)
     except Exception as e:
         log.warning("Transcription failed: %s", e)
+        latency.end()
         return
     if not transcript:
         log.info("Push-to-talk: heard nothing.")
+        latency.end()
         return
+    lat.intent = latency.classify_intent(transcript)
     tone = voice_tone.analyze_tone(transcript, audio, sample_rate)
     if tone.get("tone") != "neutral":
         log.info("Voice tone: %s (confidence %.0f%%).", tone["tone"], tone["confidence"] * 100)
     log.info("Heard: %r", transcript)
-    handle_text_command(transcript, tone=tone, source="voice")
+    try:
+        handle_text_command(transcript, tone=tone, source="voice")
+    finally:
+        latency.end()
 
 
 _text_hotkey_popup_open = threading.Event()
@@ -7868,6 +8014,10 @@ def main() -> int:
     if CURSOR_OPEN_FULLSCREEN and sys.platform == "win32":
         log.info("Cursor will be sent F11 for fullscreen after focus/launch.")
     _preload_piper_async()
+    if stt_deepgram.DEEPGRAM_API_KEY:
+        threading.Thread(target=stt_deepgram.warm, daemon=True, name="deepgram-stt-warm").start()
+    if tts_deepgram.DEEPGRAM_API_KEY:
+        threading.Thread(target=tts_deepgram.warm, daemon=True, name="deepgram-tts-warm").start()
     if JARVIS_PTT_ENABLED:
         log.info(
             "Push-to-talk: hold '%s' and speak, release to run the command "

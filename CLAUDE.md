@@ -765,6 +765,55 @@ Rules:
   sections in a real browser, and a real end-to-end auto-acted calendar event. Follow "How to verify" in
   `AUTONOMY.md` (dry run first).
 
+## Speed Upgrade: Deepgram voice pipeline (2026-09-22)
+
+Full write-up: `SPEED.md` (env vars, backend order, how to measure a before/after). Off by default —
+no `DEEPGRAM_API_KEY` in `.env` means voice behaves exactly as before (local Whisper + Fish -> Piper).
+
+- **New modules**: `jarvis_stt_deepgram.py` (Nova-3, `POST /v1/listen`), `jarvis_tts_deepgram.py`
+  (Aura 2, `POST /v1/speak`), `jarvis_latency.py` (per-voice-command latency tracker + a small
+  deterministic intent classifier). Both Deepgram modules use stdlib `urllib` directly — same
+  pattern as jarvis.py's existing `_fish_audio_synthesize` — not the `deepgram-sdk` package, because
+  the installed/latest SDK (7.x) doesn't match the API the task's snippets assumed (3.x) and the
+  REST endpoints are simple enough not to need it. `requirements.txt` is unchanged.
+- **STT**: `jarvis.transcribe_pcm()` tries Deepgram first when `JARVIS_STT_BACKEND` allows it and a
+  key is set, falling back to local Whisper on any failure, exception, or a transcript below
+  `JARVIS_DEEPGRAM_STT_MIN_CONFIDENCE` (0.6). The push-to-talk capture path is untouched — the whole
+  hold-to-release buffer is still captured first, then sent to Deepgram's *pre-recorded* endpoint in
+  one shot (not a live WebSocket); true streaming STT would mean rewriting audio capture, which the
+  task said to preserve.
+- **TTS**: `jarvis.speak_text()` now cascades Deepgram Aura 2 -> Fish Audio -> Piper (was Fish ->
+  Piper). Each engine's audio is cached under its own key in the existing on-disk TTS cache, same as
+  before. A `jarvis_cache.CircuitBreaker` (new, shared helper) trips each backend after 3 consecutive
+  failures and cools down 120s, so an outage is skipped fast instead of a timeout on every command.
+- **Sentence-level TTS pipelining**: a reply over `JARVIS_TTS_SENTENCE_STREAM_MIN_CHARS` (120 chars)
+  is split into sentences (`jarvis._split_sentences`) and spoken one at a time; the *next* sentence
+  is synthesized on a background thread while the current one plays, so time-to-first-audio is
+  bounded by one sentence instead of the whole reply. No real token-level streaming from Claude was
+  added (`run_agent_loop` still returns the full reply text) — see SPEED.md for why that specific
+  piece was left out.
+- **Filler phrase**: if a voice/dashboard command hasn't spoken anything within
+  `JARVIS_TTS_FILLER_DELAY_S` (2.5s default), Jarvis says "One moment." once
+  (`jarvis._speak_filler_if_slow`); no cancellation logic needed since the phrase is short and gets
+  TTS-cached after first use.
+- **Latency logging**: every voice command logs one grep-able `latency stt=.. ttft=.. tts=.. e2e=..
+  stt_backend=.. tts_backend=.. intent=..` line (`jarvis_latency.py`); `latency.current()` is `None`
+  for text/dashboard/phone commands (no capture-end to measure from), and every call site handles
+  that. `jarvis_latency.classify_intent()` logs a cheap regex-based intent
+  (time/date/volume/open_app/timer_reminder/complex) but does **not** route to a different model —
+  `CLAUDE_MODEL` already defaults to Haiku 4.5, so there's no cheaper model left to route simple
+  intents to; this was a deliberate scope cut, not an oversight.
+- **Privacy**: with Deepgram enabled, microphone audio and spoken-reply text leave the machine for
+  Deepgram's API — same category of exposure as Fish Audio (already documented above), just a second
+  cloud vendor. Confidence gating and the circuit breaker are latency/quality safeguards only; they
+  never touch the confirmation gate or any tool permission.
+- Tests: `test_deepgram_voice.py` (31, no real network — every `urlopen` call is monkeypatched).
+  `test_cache.py`'s existing Fish/Piper tests were unaffected; its shared `jarvis` fixture now also
+  zeroes both Deepgram modules' `DEEPGRAM_API_KEY` so a real key in the dev machine's `.env` can't
+  change those pre-Deepgram tests' behavior. Full suite: 668 passed (the 4 pre-existing
+  urgent-email-monitor failures noted above are unrelated and untouched).
+- **Not verified live** (needs a real `DEEPGRAM_API_KEY` + microphone): actual Nova-3 transcription
+  accuracy/latency, actual Aura 2 audio quality, real end-to-end voice-in -> first-audio-out timing.
 
 ### Cost reporting
 
@@ -817,7 +866,8 @@ row there each phase rather than only stating the total in chat.
 | 27 (autonomy security audit: 20 findings fixed, human-only approvals, quarantine, sandbox hardening, 54 new tests) | Sonnet 5 | ~40 min | ~$2.20–$3.00 |
 | 28 (full-permission model + inbound perception, extraction, observability, direct calendar, skills, memory intervention; 40 new tests) | Sonnet 5 | ~75 min | ~$4.00–$5.50 |
 | 29 (audit fixes: confirmation semantics + TTL, wider gate, dashboard-wide Host/Origin guard, sensitive-path/http policy, delegation env allowlist, attended-only autonomy approvals; 70 new tests) | Sonnet 5 | ~45 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~933 min** | **~$42.65–$59.50** |
+| 30 (Deepgram speed upgrade: Nova-3 STT + Aura 2 TTS backends with circuit breakers, sentence-pipelined TTS, filler phrase, latency logging + intent classifier; 31 new tests) | Sonnet 5 | ~60 min | ~$3.20–$4.50 |
+| **Running total (final)** | | **~993 min** | **~$45.85–$64.00** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

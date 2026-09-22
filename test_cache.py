@@ -80,6 +80,11 @@ def jarvis(monkeypatch, tmp_path):
 
     monkeypatch.setattr(j, "LLM_SETTINGS_PATH", tmp_path / "llm_provider.json")  # never read the real switch
     monkeypatch.delenv("JARVIS_LLM_PROVIDER", raising=False)
+    # Deepgram off unless a test opts in — protects these pre-Deepgram tests from a real
+    # DEEPGRAM_API_KEY sitting in the developer's .env (module attrs are read once at import,
+    # so delenv alone wouldn't touch them).
+    monkeypatch.setattr(j.stt_deepgram, "DEEPGRAM_API_KEY", "")
+    monkeypatch.setattr(j.tts_deepgram, "DEEPGRAM_API_KEY", "")
     monkeypatch.setattr(j, "get_mcp_tool_schemas", lambda: [])
     monkeypatch.setattr(j, "_history_snapshot", lambda: [])
     monkeypatch.setattr(j, "_append_history", lambda *a, **k: None)

@@ -183,6 +183,34 @@ class TTSDiskCache:
                 pass
 
 
+# --- circuit breaker (used by the Deepgram STT/TTS backends) -------------------------------
+class CircuitBreaker:
+    """Trips after `threshold` consecutive failures and refuses calls for `cooldown_s`, so a
+    backend that's down (e.g. Deepgram unreachable) is skipped for a while instead of paying a
+    timeout on every single command. Any success resets it immediately."""
+
+    def __init__(self, threshold: int = 3, cooldown_s: float = 120.0):
+        self._threshold = threshold
+        self._cooldown_s = cooldown_s
+        self._fails = 0
+        self._tripped_until = 0.0
+        self._lock = threading.Lock()
+
+    def allow(self) -> bool:
+        with self._lock:
+            return time.monotonic() >= self._tripped_until
+
+    def record(self, ok: bool) -> None:
+        with self._lock:
+            if ok:
+                self._fails = 0
+                self._tripped_until = 0.0
+            else:
+                self._fails += 1
+                if self._fails >= self._threshold:
+                    self._tripped_until = time.monotonic() + self._cooldown_s
+
+
 # --- tiny SQLite key/value cache (long-lived, survives restarts) ---------------------------
 class SqliteKV:
     """key -> text value with a created_at timestamp; max_age_s is checked on read, and the
