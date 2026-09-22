@@ -858,10 +858,11 @@ no `DEEPGRAM_API_KEY` in `.env` means voice behaves exactly as before (local Whi
   bounded by one sentence instead of the whole reply. No real token-level streaming from Claude was
   added (`run_agent_loop` still returns the full reply text) — see SPEED.md for why that specific
   piece was left out.
-- **Filler phrase**: if a voice/dashboard command hasn't spoken anything within
-  `JARVIS_TTS_FILLER_DELAY_S` (2.5s default), Jarvis says "One moment." once
-  (`jarvis._speak_filler_if_slow`); no cancellation logic needed since the phrase is short and gets
-  TTS-cached after first use.
+- **Filler phrase: removed (2026-09-22, user request).** The "One moment." line spoke from a
+  second thread and kept colliding with/cutting off real replies despite two fix attempts; it and
+  its speak-signal plumbing (`_speak_filler_if_slow`, `JARVIS_TTS_FILLER_DELAY_S`) are gone.
+  Mid-task narration still gives feedback on slow multi-tool commands. Don't re-add it without
+  routing it through the same speech queue as the reply.
 - **Latency logging**: every voice command logs one grep-able `latency stt=.. ttft=.. tts=.. e2e=..
   stt_backend=.. tts_backend=.. intent=..` line (`jarvis_latency.py`); `latency.current()` is `None`
   for text/dashboard/phone commands (no capture-end to measure from), and every call site handles

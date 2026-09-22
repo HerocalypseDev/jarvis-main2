@@ -979,27 +979,8 @@ def test_speak_text_short_phrase_skips_live_stream(jarvis, monkeypatch):
     )
     played = []
     monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: played.append(sr))
-    jarvis.speak_text(jarvis._FILLER_PHRASE)
+    jarvis.speak_text("One moment.")
     assert played == [24000]
-
-
-def test_filler_phrase_skipped_when_event_set_quickly(jarvis, monkeypatch):
-    monkeypatch.setenv("JARVIS_TTS_FILLER_DELAY_S", "5")
-    spoken = []
-    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
-    done = __import__("threading").Event()
-    done.set()
-    jarvis._speak_filler_if_slow(done)
-    assert spoken == []
-
-
-def test_filler_phrase_speaks_when_slow(jarvis, monkeypatch):
-    monkeypatch.setenv("JARVIS_TTS_FILLER_DELAY_S", "0.01")
-    spoken = []
-    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
-    done = __import__("threading").Event()
-    jarvis._speak_filler_if_slow(done)
-    assert spoken == [jarvis._FILLER_PHRASE]
 
 
 def test_tts_cache_tag_bump_invalidates_pre_fix_stale_entries(jarvis, monkeypatch):
@@ -1148,49 +1129,6 @@ def test_tts_backend_reports_last_engine_used_not_first(jarvis, monkeypatch):
         latency.end()
 
 
-def test_filler_skipped_when_narration_already_spoke(jarvis, monkeypatch):
-    """Simulates run_agent_loop narrating (via speak_text, on the same thread) before the filler
-    delay elapses: the filler must not also speak afterwards."""
-    monkeypatch.setattr(jarvis, "FISH_AUDIO_API_KEY", "k")
-    monkeypatch.setattr(jarvis.tts_deepgram, "DEEPGRAM_API_KEY", "")
-    monkeypatch.setattr(jarvis, "_fish_audio_synthesize", lambda t, p=None: (b"\x01\x00" * 50, 24000))
-    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: None)
-    monkeypatch.setenv("JARVIS_TTS_FILLER_DELAY_S", "0.05")
-
-    done = threading.Event()
-    jarvis._set_speak_signal(done)
-    try:
-        filler_thread = threading.Thread(target=jarvis._speak_filler_if_slow, args=(done,))
-        filler_thread.start()
-        time.sleep(0.01)
-        jarvis.speak_text("Real narration already answered this.")  # sets the shared signal
-        filler_thread.join(2.0)
-        assert not filler_thread.is_alive()
-    finally:
-        jarvis._set_speak_signal(None)
-    # The filler's own speak_text call would have been a *second* real call; since none of the
-    # engines were monkeypatched to detect a second call by name, assert indirectly: the signal
-    # was observed set before the filler's delay elapsed.
-    assert done.is_set()
-
-
-def test_speak_signal_is_per_thread(jarvis):
-    assert jarvis._current_speak_signal() is None
-    ev = threading.Event()
-    jarvis._set_speak_signal(ev)
-    assert jarvis._current_speak_signal() is ev
-    seen = {}
-
-    def other_thread():
-        seen["signal"] = jarvis._current_speak_signal()
-
-    t = threading.Thread(target=other_thread)
-    t.start()
-    t.join()
-    assert seen["signal"] is None  # a different thread never sees another thread's signal
-    jarvis._set_speak_signal(None)
-
-
 def test_pipeline_join_timeout_recovers_without_hanging_or_dropping_content(jarvis, monkeypatch, caplog):
     """A background pre-synthesis that outlives PIPELINE_JOIN_TIMEOUT_S must not hang the
     command's thread. Nothing spoken is dropped — the abandoned prefetch is just discarded and
@@ -1280,24 +1218,17 @@ def test_deterministic_reply_skips_run_agent_loop_entirely(jarvis, monkeypatch):
 
 def test_greeting_command_skips_run_agent_loop_and_never_spawns_filler(jarvis, monkeypatch):
     """The exact reported bug: saying "Hi" must produce a clean full reply, never the filler
-    phrase and never a cut-off. Since the deterministic-reply branch is taken, jarvis.py never
-    reaches the line that starts the filler-phrase watcher thread at all — asserted here by
-    monkeypatching _speak_filler_if_slow to fail loudly if it's ever invoked."""
+    phrase and never a cut-off (the filler phrase has since been removed entirely)."""
 
     def boom(*a, **k):
         raise AssertionError("run_agent_loop must not be called for a greeting")
 
-    def filler_boom(*a, **k):
-        raise AssertionError("filler must never start for a deterministic-reply command")
-
     monkeypatch.setattr(jarvis, "run_agent_loop", boom)
-    monkeypatch.setattr(jarvis, "_speak_filler_if_slow", filler_boom)
     spoken = []
     monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
     monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
     jarvis.handle_text_command("Hi", source="voice")
-    assert spoken  # the real reply was spoken in full, not a filler
-    assert spoken[0] != jarvis._FILLER_PHRASE
+    assert spoken  # the real reply was spoken in full
 
 
 def test_volume_command_gets_reduced_tools(jarvis, monkeypatch):

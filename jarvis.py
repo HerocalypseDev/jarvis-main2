@@ -1085,7 +1085,6 @@ def speak_text(text: str) -> None:
         return
 
     lat = latency.current()
-    signal = _current_speak_signal()
     sentences = _split_sentences(t) if len(t) > SENTENCE_STREAM_MIN_CHARS else [t]
     pending: tuple[bytes, int, str] | None = None
     for i, sentence in enumerate(sentences):
@@ -1109,7 +1108,7 @@ def speak_text(text: str) -> None:
                 # REST/cache cascade. A live stream that drops mid-utterance leaves whatever
                 # already played as the final word (see _speak_streamed's docstring: replaying
                 # from the top would double-speak) — for a short phrase that reads as an audible
-                # cutoff, and the filler phrase ("One moment.") and short replies like "Hi, how
+                # cutoff, and short replies like "Hi, how
                 # can I help?" are exactly the case reported (2026-09-22 voice-bug pass). A short
                 # phrase's REST round trip is already fast, so streaming's time-to-first-audio
                 # win is smallest right where the truncation risk is most noticeable.
@@ -1118,8 +1117,6 @@ def speak_text(text: str) -> None:
                     def _mark_first_audio() -> None:
                         if lat:
                             lat.mark("tts_ttfa")
-                        if signal is not None:
-                            signal.set()
 
                     handled, s_raw, s_sr, s_backend, complete = _speak_streamed(
                         sentence, on_first_audio=_mark_first_audio
@@ -1140,8 +1137,6 @@ def speak_text(text: str) -> None:
             lat.mark("tts_ttfa")  # first successful sentence only (mark() is setdefault-based);
             # a no-op here when the streaming path's on_first_audio already marked it earlier
             lat.tts_backend = backend  # last successful sentence — what the reply actually used
-        if signal is not None:
-            signal.set()  # tells a waiting filler timer "something has already been spoken"
         next_result: dict = {}
         next_thread = None
         if i + 1 < len(sentences):
@@ -1168,41 +1163,6 @@ def speak_text(text: str) -> None:
                 log.warning("TTS pipeline pre-synthesis didn't finish in time; will re-synthesize that sentence fresh.")
             else:
                 pending = next_result.get("audio")
-
-
-# Filler phrase (Speed Upgrade Phase 3.2): if a command is still working after
-# JARVIS_TTS_FILLER_DELAY_S with nothing spoken yet, say one short line so a slow multi-tool
-# task doesn't feel like it hung. No cancellation/preemption logic needed: the phrase is short
-# enough (and TTS-cached after the first use) that it has almost always finished playing by the
-# time the real reply is ready.
-#
-# The same threading.Event does double duty as "something has already been spoken": it's set
-# both when run_agent_loop returns AND by speak_text() itself the moment any real audio (e.g. a
-# mid-task narration line) actually plays — so a command that narrates early then keeps working
-# past the delay never gets a stale "One moment." tacked on after real content already answered
-# the user. speak_text() looks the current command's event up via a thread-local (set on the
-# same thread that's running _handle_text_command_impl/run_agent_loop/narration — the filler's
-# own watcher thread holds its own direct reference, no thread-local lookup needed on that side).
-_FILLER_PHRASE = "One moment."
-_speak_signal_ctx = threading.local()
-
-
-def _set_speak_signal(event: threading.Event | None) -> None:
-    _speak_signal_ctx.event = event
-
-
-def _current_speak_signal() -> threading.Event | None:
-    return getattr(_speak_signal_ctx, "event", None)
-
-
-def _speak_filler_if_slow(done: threading.Event) -> None:
-    delay = float(os.environ.get("JARVIS_TTS_FILLER_DELAY_S") or 2.5)
-    if done.wait(delay):
-        return  # the real reply was ready, or something was already spoken, before the delay elapsed
-    try:
-        speak_text(_FILLER_PHRASE)
-    except Exception as e:
-        log.debug("Filler phrase failed (harmless): %s", e)
 
 
 def _open_uri(uri: str) -> None:
@@ -8304,10 +8264,6 @@ def _handle_text_command_impl(
     if deterministic_reply is not None:
         reply = deterministic_reply
     else:
-        filler_done = threading.Event() if speaks_here else None
-        if filler_done is not None:
-            _set_speak_signal(filler_done)
-            threading.Thread(target=_speak_filler_if_slow, args=(filler_done,), daemon=True).start()
         try:
             # Narrate mid-task only where the reply will also be spoken here (not phone-only).
             reply = run_agent_loop(
@@ -8317,10 +8273,6 @@ def _handle_text_command_impl(
             dashboard.end_session(session_id, "failed", None)
             dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
             raise
-        finally:
-            if filler_done is not None:
-                filler_done.set()
-                _set_speak_signal(None)
     shown = vibes.decorate(transcript, reply)  # text surfaces only; speech below uses `reply`
     dashboard.end_session(session_id, "done", shown)
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
