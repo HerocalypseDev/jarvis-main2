@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1790077337.377726,
-    "seen": 1790078035.1915085,
-    "ast_hash": "df3e8eee59a667e171d50e5c9dd29054",
+    "mtime": 1790116488.2113018,
+    "seen": 1790116559.985298,
+    "ast_hash": "6196ef1c9648301f00bd2b5abfbe2770",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -108,9 +108,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1790078009.7990794,
-    "seen": 1790078035.1917944,
-    "ast_hash": "2518ed134162db459503f6bb9c6d929e",
+    "mtime": 1790116521.2264476,
+    "seen": 1790116559.9855711,
+    "ast_hash": "72d56b8b65fd2621850eae7a25d2e655",
     "semantic_hash": ""
   },
   "README.md": {
@@ -156,9 +156,9 @@
     "semantic_hash": ""
   },
   "test_cache.py": {
-    "mtime": 1790066342.2728727,
-    "seen": 1790067054.1001093,
-    "ast_hash": "5eee6d543173106d7e76760985be4d22",
+    "mtime": 1790116223.8254285,
+    "seen": 1790116559.9855132,
+    "ast_hash": "9091bcf35fd7a2e1a8bf9a17c409dc38",
     "semantic_hash": ""
   },
   "jarvis_billing.py": {
@@ -168,9 +168,9 @@
     "semantic_hash": ""
   },
   "jarvis_gemini.py": {
-    "mtime": 1789794300.019348,
-    "seen": 1789795963.0515237,
-    "ast_hash": "47e617b405444a8bdb1f49649e5e7db9",
+    "mtime": 1790088426.3879788,
+    "seen": 1790116559.9853666,
+    "ast_hash": "e96fb0ca573cc002ef9a72ca0268fdd6",
     "semantic_hash": ""
   },
   "test_gemini.py": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   "jarvis_latency.py": {
-    "mtime": 1790065317.5920093,
-    "seen": 1790067054.0999603,
-    "ast_hash": "7fa7bcf338b27043c5a688f6f04ea6e2",
+    "mtime": 1790086927.7867432,
+    "seen": 1790087777.50597,
+    "ast_hash": "d16f518848d834cf4c800dda7edc4dbd",
     "semantic_hash": ""
   },
   "jarvis_stt_deepgram.py": {
@@ -648,15 +648,15 @@
     "semantic_hash": ""
   },
   "test_deepgram_voice.py": {
-    "mtime": 1790077639.6460922,
-    "seen": 1790078035.191745,
-    "ast_hash": "9bcbcd376ad06d1f38e49245c63fc171",
+    "mtime": 1790116521.2105658,
+    "seen": 1790116559.9855232,
+    "ast_hash": "423f0acc2c04b7fa8e1729cb8316c616",
     "semantic_hash": ""
   },
   "SPEED.md": {
-    "mtime": 1790077975.8693976,
-    "seen": 1790078035.1918092,
-    "ast_hash": "80e7c883bea639a447877bcff9aeb870",
+    "mtime": 1790087734.3687432,
+    "seen": 1790087777.5060728,
+    "ast_hash": "e7dc05ca644dd0aa02df5afe2038c6c7",
     "semantic_hash": ""
   },
   "DASHBOARD.md": {
