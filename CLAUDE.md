@@ -1013,6 +1013,22 @@ real gaps were built:
   `test_autonomy.py::test_summarization_extracts_guarded_facts`,
   `test_cache.py::test_relevant_memory_line_surfaces_older_facts_only`. Suite: 744 passed.
 
+## Smart-model routing (2026-09-22)
+
+- `run_agent_loop` sends hard commands to `SMART_MODEL` (`JARVIS_SMART_MODEL`, default
+  `claude-sonnet-5`; empty = off) with adaptive thinking and `output_config.effort`
+  (`JARVIS_SMART_MODEL_EFFORT`, default `medium`), `max_tokens` 8000 (thinking counts toward it).
+  Everything else stays on `CLAUDE_MODEL` (Haiku). "Hard" = `_HARD_TASK_RE` keywords (research, plan,
+  analyze, compare, explain why, debug, draft/write a..., review, summarize, ...) or >=
+  `JARVIS_SMART_MODEL_MIN_WORDS` (40) words. Only when the Claude brain is active and no
+  `tools_override` (simple intents) is set. Keyword heuristic, so misses just stay on Haiku.
+- Smart rounds never use the Phase C SSE streaming path: its parser doesn't rebuild thinking blocks
+  (with signatures) that the next round must echo back. Non-streamed rounds append `content`
+  wholesale, so thinking blocks round-trip unchanged (pinned by a test). Cost: Sonnet 5 is $2/$10 per
+  MTok vs Haiku's $1/$5, plus thinking tokens; separate prompt cache, so its first use per hour
+  writes the ~33k prefix (~$0.13). `PRICES` has `claude-sonnet-5`.
+- **Not verified live**: the API key had no credit balance (400 "credit balance is too low").
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,

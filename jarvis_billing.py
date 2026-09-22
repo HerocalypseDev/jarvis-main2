@@ -124,6 +124,7 @@ import time
 # to Haiku 4.5 rates and the summary flags the figure as approximate. Update when prices change.
 PRICES: dict[str, dict[str, float]] = {
     "claude-haiku-4-5": {"in": 1.00, "out": 5.00, "read": 0.10, "w5m": 1.25, "w1h": 2.00},
+    "claude-sonnet-5": {"in": 2.00, "out": 10.00, "read": 0.20, "w5m": 2.50, "w1h": 4.00},
     "claude-sonnet-4": {"in": 3.00, "out": 15.00, "read": 0.30, "w5m": 3.75, "w1h": 6.00},
     "claude-opus-4-5": {"in": 5.00, "out": 25.00, "read": 0.50, "w5m": 6.25, "w1h": 10.00},
     # Gemini paid-tier list prices (ai.google.dev/gemini-api/docs/pricing). Implicit caching has no

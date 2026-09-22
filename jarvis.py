@@ -105,6 +105,11 @@ WHISPER_MODEL_SIZE = (os.environ.get("WHISPER_MODEL_SIZE") or "base").strip() or
 CLAUDE_MODEL = (
     os.environ.get("CLAUDE_MODEL") or "claude-haiku-4-5-20251001"
 ).strip() or "claude-haiku-4-5-20251001"
+# Hard commands (research, planning, writing, debugging, long typed requests) go to a stronger
+# model; everything else stays on CLAUDE_MODEL. JARVIS_SMART_MODEL= (empty) turns routing off.
+SMART_MODEL = (os.environ.get("JARVIS_SMART_MODEL", "claude-sonnet-5") or "").strip()
+SMART_MODEL_EFFORT = (os.environ.get("JARVIS_SMART_MODEL_EFFORT") or "medium").strip()
+SMART_MODEL_MIN_WORDS = int(os.environ.get("JARVIS_SMART_MODEL_MIN_WORDS") or 40)
 
 # Typed commands: hold JARVIS_TEXT_HOTKEY_KEY for JARVIS_TEXT_HOTKEY_HOLD_S seconds to pop up
 # a small always-on-top text box; Enter sends the text through the same Claude tool loop as a
@@ -2749,6 +2754,27 @@ LLM_SETTINGS_PATH = Path(__file__).resolve().parent / "llm_provider.json"
 
 def _llm_provider() -> str:
     return gemini.get_provider(LLM_SETTINGS_PATH)
+
+
+# ponytail: keyword heuristic, not a classifier. Misses phrasings it doesn't list (they just stay
+# on the cheap model); widen the list or add a model-based router if that matters.
+_HARD_TASK_RE = re.compile(
+    r"\b(research|plan|planning|analy[sz]e|analysis|compare|comparison|explain why|figure out|debug|"
+    r"investigate|troubleshoot|draft|essay|write (me )?(a|an|the)\b|strategy|pros and cons|step by step|"
+    r"think (hard|carefully|it through)|in detail|deep dive|review|brainstorm|summari[sz]e)",
+    re.IGNORECASE,
+)
+
+
+def _pick_model(transcript: str) -> str:
+    """CLAUDE_MODEL unless the command looks hard and the Claude brain is active (the Gemini
+    path picks its own model)."""
+    if not SMART_MODEL or SMART_MODEL == CLAUDE_MODEL or _llm_provider() != "claude":
+        return CLAUDE_MODEL
+    t = transcript or ""
+    if _HARD_TASK_RE.search(t) or len(t.split()) >= SMART_MODEL_MIN_WORDS:
+        return SMART_MODEL
+    return CLAUDE_MODEL
 
 
 def _llm_configured() -> bool:
@@ -7987,21 +8013,32 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     cached_tools = _cached_tools(tools)
 
     lat = latency.current()
+    model = _pick_model(transcript) if tools_override is None else CLAUDE_MODEL
+    smart = model != CLAUDE_MODEL
+    if smart:
+        log.info("Routing to %s (effort %s): %r", model, SMART_MODEL_EFFORT, transcript[:80])
     for iteration in range(MAX_AGENT_ITERATIONS):
         request_body = {
-            "model": CLAUDE_MODEL,
+            "model": model,
             "max_tokens": 1536,
             "system": system_blocks,
             "messages": _messages_with_cache_breakpoint(messages),
             "tools": cached_tools,
         }
+        if smart:
+            # Thinking tokens count toward max_tokens, hence the larger cap. Thinking blocks come
+            # back in `content` and are echoed unchanged on the next round (appended wholesale below).
+            request_body.update(max_tokens=8000, thinking={"type": "adaptive"},
+                                output_config={"effort": SMART_MODEL_EFFORT})
         # LLM token streaming -> speech (Phase C): only the first round trip, and only when the
         # caller is actually going to speak the reply here (narrate=True, same condition the
         # existing mid-task narration already uses). See _claude_stream_first_round's docstring
         # for the full scoping rationale.
         streamed_this_round = False
         data = None
-        if iteration == 0 and narrate and _llm_tts_stream_enabled():
+        # Not for the smart model: the SSE parser doesn't rebuild thinking blocks (with their
+        # signatures), which the next round must echo back.
+        if iteration == 0 and narrate and not smart and _llm_tts_stream_enabled():
             def _on_first_token(_lat=lat):
                 if _lat:
                     _lat.mark("ttft")

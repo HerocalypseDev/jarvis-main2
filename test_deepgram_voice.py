@@ -1531,3 +1531,50 @@ def test_reply_already_spoken_flag_resets_between_commands(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
     jarvis.handle_text_command("second command", source="text")
     assert spoken == ["Second reply."]  # actually spoken, not wrongly suppressed by stale state
+
+
+def test_pick_model_routes_only_hard_commands_to_smart_model(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "SMART_MODEL", "claude-sonnet-5")
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    assert jarvis._pick_model("research the best gaming laptops under 1000") == "claude-sonnet-5"
+    assert jarvis._pick_model("explain why my wifi keeps dropping") == "claude-sonnet-5"
+    assert jarvis._pick_model(" ".join(["word"] * 45)) == "claude-sonnet-5"  # long typed request
+    assert jarvis._pick_model("open youtube") == jarvis.CLAUDE_MODEL
+    assert jarvis._pick_model("what's the weather") == jarvis.CLAUDE_MODEL
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "gemini")
+    assert jarvis._pick_model("research laptops") == jarvis.CLAUDE_MODEL  # Gemini picks its own model
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setattr(jarvis, "SMART_MODEL", "")
+    assert jarvis._pick_model("research laptops") == jarvis.CLAUDE_MODEL  # routing switched off
+
+
+def test_smart_model_request_has_thinking_and_skips_live_stream(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "SMART_MODEL", "claude-sonnet-5")
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setattr(jarvis, "_llm_tts_stream_enabled", lambda: True)
+
+    def no_stream(*a, **k):
+        raise AssertionError("smart-model rounds must not use the SSE path")
+
+    monkeypatch.setattr(jarvis, "_claude_stream_first_round", no_stream)
+    bodies = []
+    responses = [
+        {"content": [{"type": "thinking", "thinking": "", "signature": "sig"},
+                     {"type": "tool_use", "id": "t1", "name": "system_status", "input": {}}],
+         "stop_reason": "tool_use"},
+        {"content": [{"type": "text", "text": "Done researching."}], "stop_reason": "end_turn"},
+    ]
+
+    def fake_request(body, timeout):
+        bodies.append(__import__("copy").deepcopy(body))
+        return responses[len(bodies) - 1]
+
+    monkeypatch.setattr(jarvis, "_claude_request", fake_request)
+    monkeypatch.setattr(jarvis, "_execute_tool", lambda *a, **k: "CPU 10%")
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+    reply = jarvis.run_agent_loop("research my computer's performance", narrate=True, record_history=False)
+    assert reply == "Done researching."
+    assert bodies[0]["model"] == "claude-sonnet-5"
+    assert bodies[0]["thinking"] == {"type": "adaptive"} and bodies[0]["max_tokens"] >= 4000
+    # the thinking block (with its signature) is echoed back unchanged on the next round
+    assert bodies[1]["messages"][-2]["content"][0]["signature"] == "sig"
