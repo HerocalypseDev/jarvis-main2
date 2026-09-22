@@ -1081,6 +1081,15 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   ~0.002-0.007 RMS. **Not verified live with real speech** (needs someone talking): if follow-ups
   never trigger, lower `JARVIS_FOLLOWUP_MIN_RMS`; if a TV/others trigger it, raise it. Known limit:
   energy VAD, so any loud voice in the window starts a capture.
+- **Weather** (`jarvis_weather.py`, `weather` tool, cached 10 min): Open-Meteo forecast + geocoding
+  (free, no key). Location: named place > `JARVIS_WEATHER_LOCATION` > the PC's IP location (ipapi.co,
+  once per run; resolved to Lagos, Nigeria live). `JARVIS_WEATHER_UNITS=f` for Fahrenheit. Says
+  "degrees", not the symbol (TTS). Added as item (0) of `skills/morning_briefing.json`. Verified live.
+- **Selection hotkey** (`JARVIS_SELECTION_KEY`, default `right ctrl`, empty = off): hold it instead
+  of push-to-talk and speak; `_grab_selection` sends Ctrl+C to the focused app, reads the clipboard
+  (sentinel value detects "nothing selected"), restores the user's clipboard, and `_with_selection`
+  appends the text (<= 20k chars, framed as data, not instructions) to the transcript. Unit-tested
+  with faked keyboard/clipboard; **not tried live** (needs a real selection in a real app).
 - Logs: `_cleanup_old_logs()` at startup deletes project-folder `*.log` older than 14 days (never
   `jarvis_standalone.log`); `Jarvis.vbs` now rotates that log to `jarvis_standalone.old.log` at 5 MB
   instead of deleting it.

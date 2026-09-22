@@ -138,3 +138,41 @@ def test_cleanup_old_logs(tmp_path):
     os.utime(live, (past, past))
     assert jarvis._cleanup_old_logs(tmp_path, days=14) == 1
     assert not old.exists() and new.exists() and live.exists()
+
+
+def test_weather_report_formats_forecast_in_words(monkeypatch):
+    import jarvis_weather as w
+    def fake_get(url):
+        if "geocoding" in url:
+            return {"results": [{"name": "Lagos", "country": "Nigeria", "latitude": 6.5, "longitude": 3.4}]}
+        return {"current": {"temperature_2m": 25.4, "apparent_temperature": 29, "weather_code": 61, "wind_speed_10m": 9.6},
+                "daily": {"time": ["2026-09-23", "2026-09-24", "2026-09-25"], "weather_code": [95, 51, 80],
+                          "temperature_2m_max": [27, 28, 27], "temperature_2m_min": [24, 25, 25],
+                          "precipitation_probability_max": [98, 94, 86]}}
+    monkeypatch.setattr(w, "_get", fake_get)
+    out = w.weather_report("Lagos", 3)
+    assert out.startswith("In Lagos, Nigeria it's 25 degrees and light rain")
+    assert "Tomorrow: light drizzle" in out and "Friday: light showers" in out and "°" not in out
+    monkeypatch.setattr(w, "_get", lambda url: {"results": []})
+    assert "couldn't find" in w.weather_report("Nowhere")
+
+
+def test_selection_is_grabbed_attached_and_clipboard_restored(monkeypatch):
+    import sys, types
+    clip = {"v": "user's clipboard"}
+    fake_clip = types.SimpleNamespace(paste=lambda: clip["v"], copy=lambda v: clip.__setitem__("v", v))
+    fake_kb = types.SimpleNamespace(send=lambda keys: clip.__setitem__("v", "selected paragraph"))
+    monkeypatch.setitem(sys.modules, "pyperclip", fake_clip)
+    monkeypatch.setitem(sys.modules, "keyboard", fake_kb)
+    holder = {}
+    jarvis._grab_selection(holder)
+    assert holder["text"] == "selected paragraph" and clip["v"] == "user's clipboard"
+    out = jarvis._with_selection("summarize this", holder)
+    assert out.startswith("summarize this") and "selected paragraph" in out and "not instructions" in out
+    assert jarvis._with_selection("hi", None) == "hi"
+    # nothing selected: Ctrl+C leaves the clipboard untouched
+    fake_kb.send = lambda keys: None
+    holder = {}
+    jarvis._grab_selection(holder)
+    assert holder["text"] == "" and clip["v"] == "user's clipboard"
+    assert "no text was selected" in jarvis._with_selection("summarize this", holder)
