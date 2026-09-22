@@ -765,3 +765,24 @@ def test_other_mcp_errors_are_unaffected_by_the_auth_hint(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "_mcp_run_coro", _fake_mcp_run_coro(_FakeMcpResult("element not found", is_error=True)))
     out = jarvis.execute_mcp_tool("mcp_browser_click", {})
     assert out == "MCP tool reported an error: element not found"
+
+
+def test_relevant_memory_line_surfaces_older_facts_only(tmp_path, monkeypatch):
+    import sqlite3
+    import jarvis_memory_enhance as m
+    db = tmp_path / "mem.db"
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(db))
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE memory_facts (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT, key TEXT, "
+                 "content TEXT, created_at TEXT, superseded_at TEXT, superseded_by INTEGER)")
+    conn.executemany("INSERT INTO memory_facts (category, content, created_at, superseded_at) VALUES (?, ?, ?, ?)", [
+        ("relationship", "Hero's dad is Jacob.", "2020-01-01", None),
+        ("fact", "Hero's dad used to live in Lagos.", "2020-01-02", "2021-01-01"),  # superseded: never shown
+        ("fact", "Hero plays chess on weekends.", "2020-01-03", None),
+        ("fact", "Newest fact, already in the stable prompt: dad joke fan.", "2030-01-01", None),
+    ])
+    conn.commit()
+    conn.close()
+    line = m.relevant_memory_line("what's my dad's name", skip_newest=1)
+    assert "Jacob" in line and "Lagos" not in line and "Newest" not in line and "chess" not in line
+    assert m.relevant_memory_line("hello there", skip_newest=1) == ""  # nothing relevant -> nothing added

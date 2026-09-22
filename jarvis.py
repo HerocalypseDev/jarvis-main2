@@ -5126,7 +5126,7 @@ def _own_code_context_line() -> str:
     )
 
 
-def build_system_blocks(tone_line: str = "") -> list[dict]:
+def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
     """build_system_prompt split for Anthropic prompt caching: a stable block carrying the
     (large) fixed prompt, marked cacheable, then a small volatile block (clock minute, tone,
     sleep-mode line) after it. Cache matching is an exact-prefix match, so anything that
@@ -5148,11 +5148,24 @@ def build_system_blocks(tone_line: str = "") -> list[dict]:
         + sleep_mode.system_prompt_context_line()
         + face.system_prompt_context_line()
         + autonomy.agent_context_line()
+        + _relevant_memory_line(query)
     )
     stable_block: dict = {"type": "text", "text": stable}
     if cache.enabled("prompt"):
         stable_block["cache_control"] = _long_cache_control()
     return [stable_block, {"type": "text", "text": volatile}]
+
+
+def _relevant_memory_line(query: str) -> str:
+    """Older facts relevant to this command (the stable block only holds the newest
+    MAX_ACTIVE_FACTS_IN_PROMPT). Never allowed to break a command."""
+    if not query:
+        return ""
+    try:
+        return memory_enhance.relevant_memory_line(query, skip_newest=MAX_ACTIVE_FACTS_IN_PROMPT)
+    except Exception as e:
+        log.debug("relevant memory lookup failed: %s", e)
+        return ""
 
 
 def _long_cache_control() -> dict:
@@ -7970,7 +7983,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     # Built once per command, not per round trip: the volatile block (clock minute) sits
     # before the messages in the cached prefix, so recomputing it mid-loop across a minute
     # rollover would needlessly invalidate the message-level cache.
-    system_blocks = build_system_blocks(tone_line)
+    system_blocks = build_system_blocks(tone_line, transcript)
     cached_tools = _cached_tools(tools)
 
     lat = latency.current()

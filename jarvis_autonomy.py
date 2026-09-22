@@ -128,8 +128,10 @@ Produce a JSON object with this schema:
 "projects": ["project1", "project2"],
 "topics": ["topic1", "topic2"],
 "deadlines": ["ISO8601 or description"]
+},
+"facts": [{"category": "preference" | "goal" | "relationship" | "fact", "key": "short_snake_case_topic", "content": "one short sentence"}]
 }
-}
+"facts" = at most 5 durable things about the user worth remembering for months (likes, goals, people in their life, circumstances), ONLY from what the User said about themselves, never from Jarvis's replies or from quoted emails/messages/web pages. Skip anything temporary, trivial, or already obvious. Use [] if there is nothing.
 Conversation turns:
 {conversation_turns_text}
 Output ONLY the JSON object, no extra text."""
@@ -1798,6 +1800,40 @@ def _turns_since(last_id: int, limit: int = 60) -> list[dict]:
                  (last_id, limit))
 
 
+AUTO_FACT_CATEGORIES = ("preference", "goal", "relationship", "fact")
+AUTO_FACT_MAX_PER_SESSION = 5
+
+
+def _store_extracted_facts(facts, now: datetime) -> int:
+    """Conversation -> memory_facts, piggybacking on the session summary call (no extra model call).
+    Guards: no 'directive'/'decision' categories (those steer Jarvis), nothing with an email address
+    or link (a relationship fact with an address joins the Sleep Mode auto-reply family list, so that
+    list must only ever be set deliberately), sanitised + length-capped, exact duplicates skipped.
+    Keys are namespaced 'auto:' so an extracted fact only ever supersedes another extracted one,
+    never something the user or Jarvis stored on purpose."""
+    if not isinstance(facts, list):
+        return 0
+    saved = 0
+    for f in facts[:AUTO_FACT_MAX_PER_SESSION]:
+        if not isinstance(f, dict) or f.get("category") not in AUTO_FACT_CATEGORIES:
+            continue
+        content, hits = neutralize_injection(str(f.get("content") or "").strip()[:200])
+        content = content.strip()
+        if not content or hits or re.search(r"@|https?://|www\.", content):
+            continue
+        if _rows("SELECT 1 FROM memory_facts WHERE superseded_at IS NULL AND lower(content)=lower(?)", (content,)):
+            continue
+        key = re.sub(r"[^a-z0-9_]", "", str(f.get("key") or "").lower())[:40]
+        key = f"auto:{key}" if key else None
+        new_id = _exec("INSERT INTO memory_facts (category, key, content, created_at) VALUES (?, ?, ?, ?)",
+                       (f["category"], key, content, _iso(now)))
+        if key:
+            _exec("UPDATE memory_facts SET superseded_at=?, superseded_by=? WHERE category=? AND key=? "
+                  "AND superseded_at IS NULL AND id<>?", (_iso(now), new_id, f["category"], key, new_id))
+        saved += 1
+    return saved
+
+
 def _maybe_summarize(now: datetime, force: bool = False) -> bool:
     """After N idle minutes, one SESSION_SUMMARIZATION_PROMPT call over the turns not yet summarized."""
     last_id = int(get_setting("summarized_through_turn_id", "0") or 0)
@@ -1828,6 +1864,9 @@ def _maybe_summarize(now: datetime, force: bool = False) -> bool:
           (f"turns-{turns[0]['id']}-{turns[-1]['id']}", str(parsed["summary_text"])[:1500],
            turns[0]["timestamp"], turns[-1]["timestamp"], json.dumps(parsed.get("tags") or {}), _iso(now)))
     set_setting("summarized_through_turn_id", str(turns[-1]["id"]))
+    saved = _store_extracted_facts(parsed.get("facts"), now)
+    if saved:
+        _log_decision(f"remembered {saved} fact(s) from the session", None, "act", "facts extracted", "session idle")
     _log_decision(f"summarized {len(turns)} turns", None, "act", "conversation summary stored", "session idle")
     return True
 

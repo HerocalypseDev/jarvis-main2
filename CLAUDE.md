@@ -987,6 +987,32 @@ exact proven non-streaming/full-tool path on any failure.
   or autonomy tick thread; no API key or secret appears in any new log line. No catastrophic-gate,
   autonomy-permission, or fallback-removal changes were made. Full suite green afterward.
 
+## Layered memory, TencentDB-Agent-Memory style (2026-09-22)
+
+User asked to adopt https://github.com/TencentCloud/TencentDB-Agent-Memory's approach. Its Docker
+stack (Memory Core + Hub + Proxy, own LLM keys) was NOT installed: Jarvis already had the
+equivalent layers (L0 `memory_turns`, L1 `memory_facts`, L2 `conversation_summaries` + weekly
+digests + decisions/projects, auto-mined `autonomy_skills`, graphify as the CodeGraph). Only the two
+real gaps were built:
+- **Per-command retrieval** (`jarvis_memory_enhance.relevant_memory_line`, via
+  `_relevant_memory_line` in `build_system_blocks(tone_line, query)`): the stable block only holds
+  the newest `MAX_ACTIVE_FACTS_IN_PROMPT` (40) of ~124 active facts, so older ones (e.g. the family
+  email addresses) were invisible unless the model searched. Now the older facts are TF-IDF-ranked
+  against the command and up to 6 (900 chars, score >= 0.12, query stopwords dropped) go in the
+  **volatile** block — local, no model call, never in the cached prefix. No embeddings/vector search
+  (would need a new model or API); lexical ranking was enough on real data.
+- **Automatic fact extraction** (`jarvis_autonomy._store_extracted_facts`): the existing idle-session
+  summary call now also returns up to 5 durable `facts` (no extra model call; needs autonomy on).
+  Guards: only preference/goal/relationship/fact (never directive/decision, which steer Jarvis);
+  anything with `@`/a link is dropped (a relationship fact with an address would join the Sleep Mode
+  auto-reply family list — that list must stay deliberate); sanitised, 200-char cap, exact
+  duplicates skipped; keys are namespaced `auto:` so an extracted fact only supersedes another
+  extracted one, never a deliberately stored one. Only from what the User said, per the prompt
+  (prompt-level, not deterministic).
+- Not built: an L3 persona summary, vector + BM25 fusion, a separate memory service. Tests:
+  `test_autonomy.py::test_summarization_extracts_guarded_facts`,
+  `test_cache.py::test_relevant_memory_line_surfaces_older_facts_only`. Suite: 744 passed.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1046,7 +1072,9 @@ row there each phase rather than only stating the total in chat.
 | 35 (post-overhaul UX pass: detail-panel auto-open + audit click-through, denser Usage/Sleep/Home/Autonomy layouts, Usage token breakdown, Autonomy restructure, Home enrichment, 2 root-caused voice playback bugs; 2 new tests) | Sonnet 5 | ~70 min | ~$3.00–$4.20 |
 | 36 (post-overhaul audit-and-fix pass: found and fixed a playback-aborting odd-byte-chunk bug, a missing transcript column breaking Activity→session linking, and a mislabeled Home autonomy empty-state; 2 new tests) | Sonnet 5 | ~40 min | ~$1.70–$2.40 |
 | 37 (removed the buggy "One moment." filler phrase + its tests) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
-| **Running total (final)** | | **~1368 min** | **~$61.85–$86.50** |
+| 38 (browser automation switched to Opera GX, local config only) | Opus 5.5 | ~5 min | ~$0.20–$0.35 |
+| 39 (layered memory: per-command relevant-fact retrieval + guarded auto fact extraction; 2 new tests) | Opus 5.5 | ~20 min | ~$1.00–$1.50 |
+| **Running total (final)** | | **~1393 min** | **~$63.05–$88.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
