@@ -83,11 +83,13 @@ import jarvis_restart as restart_mod
 import jarvis_stt_deepgram as stt_deepgram
 import jarvis_tts_deepgram as tts_deepgram
 import jarvis_latency as latency
+import jarvis_followup
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100
 BLOCK_MS = 40
 CHANNELS = 1
+followup = jarvis_followup.FollowUpListener(SAMPLE_RATE)  # hands-free follow-up after a voice reply
 
 # Startup mic probe: if default input RMS stays below this, scan for a louder device.
 INPUT_PROBE_S = 0.5
@@ -184,6 +186,24 @@ jarvis_speaking = threading.Event()
 # overlapping voice commands all tried to speak their replies at the same moment). Every
 # actual playback call must hold this lock for its full sd.play()+sd.wait() duration.
 _playback_lock = threading.Lock()
+
+# Barge-in (QOL pass): pressing push-to-talk while Jarvis is talking cuts the audio off and
+# silences the rest of that command's speech (narration, final reply). Speech started after the
+# interrupt (the next command, a timer going off) plays normally.
+_speech_interrupted_at = [0.0]
+
+
+def _interrupt_speech() -> None:
+    _speech_interrupted_at[0] = time.monotonic()
+    try:
+        sd.stop()  # ends a blocking sd.play()/sd.wait() immediately
+    except Exception as e:
+        log.debug("sd.stop failed: %s", e)
+    log.info("Barge-in: speech interrupted.")
+
+
+def _speech_cancelled_since(t0: float) -> bool:
+    return _speech_interrupted_at[0] > t0
 
 # --- confirmation gate: one narrow tier of catastrophic, whole-machine action (shutdown/ ---
 # --- restart/sign-out, disk reformat, or recursively wiping an entire drive or user profile) ---
@@ -822,6 +842,7 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
             on_first_chunk()
         any_played = True
 
+    t0 = time.monotonic()
     with _playback_lock:
         jarvis_speaking.set()
         try:
@@ -832,6 +853,9 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
             # voice-bug pass). This trades a little more time-to-first-audio for not glitching.
             with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32", latency="high") as out:
                 for chunk in chunks:
+                    if _speech_cancelled_since(t0):
+                        out.abort()  # barge-in: drop what's buffered too
+                        break
                     buf = leftover + chunk
                     if len(buf) % 2:
                         leftover, buf = buf[-1:], buf[:-1]
@@ -1091,9 +1115,16 @@ def speak_text(text: str) -> None:
         return
 
     lat = latency.current()
+    # Barge-in: a command's speech counts from when the command started, so an interrupt also
+    # silences its later narration/final reply; other speech counts from this call.
+    since = getattr(_command_ctx, "started", None) or time.monotonic()
+    if _speech_cancelled_since(since):
+        return
     sentences = _split_sentences(t) if len(t) > SENTENCE_STREAM_MIN_CHARS else [t]
     pending: tuple[bytes, int, str] | None = None
     for i, sentence in enumerate(sentences):
+        if _speech_cancelled_since(since):
+            return
         already_played = False
         if pending is not None:
             raw, sr, backend = pending
@@ -8245,13 +8276,16 @@ def handle_text_command(
     transcript: str, reply_sink=None, tone: dict | None = None, source: str = "text"
 ) -> None:
     prev = getattr(_command_ctx, "source", None)
+    prev_started = getattr(_command_ctx, "started", None)
     _command_ctx.source = source
+    _command_ctx.started = time.monotonic()  # barge-in cutoff for this command's speech
     _inflight_enter()
     try:
         _handle_text_command_impl(transcript, reply_sink, tone, source)
     finally:
         _inflight_exit()
         _command_ctx.source = prev
+        _command_ctx.started = prev_started
 
 
 # --- simple-intent fast path (cloud-latency pass, Phase D) -------------------------------------
@@ -8691,10 +8725,13 @@ def _handle_voice_command_impl(
     if tone.get("tone") != "neutral":
         log.info("Voice tone: %s (confidence %.0f%%).", tone["tone"], tone["confidence"] * 100)
     log.info("Heard: %r", transcript)
+    started = time.monotonic()
     try:
         handle_text_command(transcript, tone=tone, source="voice")
     finally:
         latency.end()
+    if not _speech_cancelled_since(started):  # not after a barge-in: the user is already talking
+        followup.arm()
 
 
 _text_hotkey_popup_open = threading.Event()
@@ -9176,10 +9213,27 @@ def main() -> int:
 
                 if jarvis_speaking.is_set():
                     # Don't let the mic hear Jarvis's own voice and mistake it for a command.
+                    # Barge-in: the push-to-talk key cuts Jarvis off; still holding it then starts
+                    # listening on the next block, once playback has stopped.
+                    if JARVIS_PTT_ENABLED and not ptt_active and _keyboard_is_pressed(JARVIS_PTT_KEY):
+                        _interrupt_speech()
+                    followup.cancel()
                     continue
 
                 if JARVIS_PTT_ENABLED:
                     pressed = _keyboard_is_pressed(JARVIS_PTT_KEY)
+                    if not pressed and not ptt_active:
+                        utterance = followup.feed(data[:, 0] if data.ndim > 1 else data)
+                        if utterance is not None:
+                            log.info("Follow-up heard (%.2fs), transcribing...", len(utterance) / SAMPLE_RATE)
+                            threading.Thread(
+                                target=handle_voice_command,
+                                args=(utterance.reshape(-1, 1), SAMPLE_RATE),
+                                daemon=True,
+                            ).start()
+                        continue
+                    if followup.capturing:
+                        followup.cancel()  # push-to-talk wins over a half-captured follow-up
                     if pressed and not ptt_active:
                         ptt_active = True
                         ptt_buffer = []

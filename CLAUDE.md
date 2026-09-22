@@ -1068,6 +1068,19 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   "remind" in the text falls through to the agent loop). `undo` is not deterministic: the command
   is rewritten (`_undo_instruction`) to include the last 5 audit rows and run through the full agent
   loop (so >= 40 words -> Sonnet) to reverse the newest reversible one.
+- **Barge-in**: pressing push-to-talk while Jarvis is speaking calls `_interrupt_speech()`
+  (`sd.stop()` + a timestamp). `speak_text` drops anything from a command that started before the
+  interrupt (`_command_ctx.started`, set in `handle_text_command`), so its narration/final reply stay
+  silent; `_play_pcm_stream` aborts mid-stream. Speech started later (next command, timers) is
+  unaffected. Holding the key then starts listening once playback stops.
+- **Follow-up window** (`jarvis_followup.py`, `test_followup.py`): after a voice command's reply,
+  `followup.arm()` keeps the mic open `JARVIS_FOLLOWUP_S` (5s, 0 = off) without the key. Energy VAD
+  on the existing mic blocks: speech = RMS above max(`JARVIS_FOLLOWUP_MIN_RMS` 0.01, 3x learned
+  background), ends after 0.8s silence (max 15s), >= 0.3s voiced, 0.3s pre-roll. One follow-up per
+  window; its own reply re-arms it (a conversation chains). Measured this mic's background at
+  ~0.002-0.007 RMS. **Not verified live with real speech** (needs someone talking): if follow-ups
+  never trigger, lower `JARVIS_FOLLOWUP_MIN_RMS`; if a TV/others trigger it, raise it. Known limit:
+  energy VAD, so any loud voice in the window starts a capture.
 - Logs: `_cleanup_old_logs()` at startup deletes project-folder `*.log` older than 14 days (never
   `jarvis_standalone.log`); `Jarvis.vbs` now rotates that log to `jarvis_standalone.old.log` at 5 MB
   instead of deleting it.
