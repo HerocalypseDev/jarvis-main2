@@ -58,7 +58,7 @@ def test_static_index_served(client):
     assert r.status_code == 200
     assert "JARVIS" in r.text
     assert "metrics-strip" in r.text
-    assert "tab-audit" in r.text
+    assert "view-audit" in r.text  # UI overhaul (2026-09-22): routed views replaced tab panels
     assert "compose-form" in r.text
 
 

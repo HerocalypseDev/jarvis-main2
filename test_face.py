@@ -930,7 +930,8 @@ def test_frontend_has_the_identity_tab_wired_to_the_api():
 
     root = pathlib.Path(__file__).parent / "dashboard_static"
     html, js = (root / "index.html").read_text(encoding="utf-8"), (root / "app.js").read_text(encoding="utf-8")
-    assert 'data-tab="identity"' in html and 'id="tab-identity"' in html
+    # UI overhaul (2026-09-22): tabs -> hash-routed views; Identity is now its own route.
+    assert 'data-route="identity"' in html and 'id="view-identity"' in html
     for path in ("/api/faces", "/api/faces/events", "/api/faces/snapshots", "/api/faces/pause", "?confirm=true"):
         assert path in js
     assert 'event.type === "face_event"' in js  # live refresh

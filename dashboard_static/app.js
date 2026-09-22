@@ -1,5 +1,80 @@
 const state = { data: null, followedSessionId: null };
 
+// --- router ---------------------------------------------------------------------------------
+// Hash-based, single active <section class="view" id="view-NAME">. Kept deliberately simple:
+// no history API, no nested routes — this is a supervision dashboard, not a SPA framework demo.
+const ROUTES = [
+  "home", "sessions", "tasks", "autonomy", "identity", "sleep",
+  "usage", "activity", "audit", "victory", "daily",
+];
+const ROUTES_WITH_CONTEXT = new Set(["home", "sessions", "tasks"]);
+
+function currentRoute() {
+  const raw = (location.hash || "#/home").replace(/^#\/?/, "");
+  return ROUTES.includes(raw) ? raw : "home";
+}
+
+function isRouteActive(name) {
+  const view = document.getElementById("view-" + name);
+  return !!view && view.classList.contains("active");
+}
+
+function onRouteActivated(route) {
+  if (route === "home") renderHome();
+  if (route === "audit") fetchAuditResults();
+  if (route === "daily") fetchDailyItems();
+  if (route === "usage") fetchUsage();
+  if (route === "sleep") fetchSleep();
+  if (route === "identity") fetchIdentity();
+  if (route === "autonomy" && window.refreshAutonomy) window.refreshAutonomy();
+}
+
+function renderRoute() {
+  const route = currentRoute();
+  document.querySelectorAll(".nav-link").forEach((a) => a.classList.toggle("active", a.dataset.route === route));
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  const view = document.getElementById("view-" + route);
+  if (view) view.classList.add("active");
+  const ctx = document.getElementById("context");
+  if (ctx) ctx.classList.toggle("hidden", !ROUTES_WITH_CONTEXT.has(route));
+  onRouteActivated(route);
+}
+
+window.addEventListener("hashchange", renderRoute);
+if (!location.hash) location.hash = "#/home";
+
+// Sidebar collapse, remembered per browser (localStorage — a per-viewer UI convenience, safe to
+// wrap defensively since a private window or blocked storage must never break navigation).
+(function initSidebar() {
+  const appBody = document.querySelector(".app-body");
+  const btn = document.getElementById("sidebar-toggle-btn");
+  if (!appBody || !btn) return;
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem("jarvis-sidebar-collapsed") === "1";
+  } catch (e) { /* ignore */ }
+  appBody.classList.toggle("sidebar-collapsed", collapsed);
+  btn.addEventListener("click", () => {
+    collapsed = !appBody.classList.contains("sidebar-collapsed");
+    appBody.classList.toggle("sidebar-collapsed", collapsed);
+    try {
+      localStorage.setItem("jarvis-sidebar-collapsed", collapsed ? "1" : "0");
+    } catch (e) { /* ignore */ }
+  });
+})();
+
+// `/` focuses the nearest visible command box, unless the user is already typing somewhere.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.target.matches("input, textarea, select")) return;
+  const input = isRouteActive("sessions")
+    ? document.getElementById("compose-input")
+    : document.getElementById("home-compose-input");
+  if (input) {
+    e.preventDefault();
+    input.focus();
+  }
+});
+
 async function fetchState() {
   try {
     const res = await fetch("/api/state");
@@ -21,6 +96,7 @@ function render() {
   renderMetrics(d.metrics);
   populateToolNames(d.tool_names);
   renderInputMode(d.sessions);
+  if (isRouteActive("home")) renderHome();
 }
 
 function renderInputMode(sessions) {
@@ -161,6 +237,7 @@ function renderApproval(pending) {
 // even catastrophic-tier actions, on condition it only happens from this detail view.
 function showPendingDetail(pending) {
   state.followedSessionId = null;
+  location.hash = "#/sessions";
   const el = document.getElementById("detail-panel");
   el.innerHTML = `
     <div class="detail-card">
@@ -236,7 +313,7 @@ function renderSessions(sessions) {
     li.addEventListener("click", () => showDetail("session", s));
     el.appendChild(li);
   });
-  if (!sessions || !sessions.length) el.innerHTML = '<li class="muted">No sessions yet.</li>';
+  if (!sessions || !sessions.length) el.innerHTML = '<li class="empty-state">No sessions yet.</li>';
 }
 
 document.getElementById("clear-sessions-btn").addEventListener("click", async () => {
@@ -285,7 +362,7 @@ function renderTasks(tasks) {
     }
     el.appendChild(li);
   });
-  if (!tasks || !tasks.length) el.innerHTML = '<li class="muted">No tasks yet.</li>';
+  if (!tasks || !tasks.length) el.innerHTML = '<li class="empty-state">No tasks yet.</li>';
 }
 
 function renderActivity(audit) {
@@ -298,7 +375,7 @@ function renderActivity(audit) {
     li.addEventListener("click", () => showDetail("audit", a));
     el.appendChild(li);
   });
-  if (!audit || !audit.length) el.innerHTML = '<li class="muted">No activity yet.</li>';
+  if (!audit || !audit.length) el.innerHTML = '<li class="empty-state">No activity yet.</li>';
 }
 
 function renderVictory(victoryLog, counts) {
@@ -317,7 +394,7 @@ function renderVictory(victoryLog, counts) {
     li.innerHTML = `<span class="ts">${esc(v.timestamp || "")}</span>${esc(v.text)}`;
     el.appendChild(li);
   });
-  if (!victoryLog || !victoryLog.length) el.innerHTML = '<li class="muted">Nothing completed yet.</li>';
+  if (!victoryLog || !victoryLog.length) el.innerHTML = '<li class="empty-state">Nothing completed yet.</li>';
 }
 
 // Recursively renders a parsed JSON value as syntax-colored HTML text (not innerHTML on raw
@@ -362,6 +439,9 @@ function prettyCodeHtml(raw) {
 }
 
 function showDetail(kind, item) {
+  if (kind === "session" || kind === "task") {
+    location.hash = kind === "session" ? "#/sessions" : "#/tasks";
+  }
   const el = document.getElementById("detail-panel");
   if (kind === "session") {
     state.followedSessionId = item.id;
@@ -437,7 +517,7 @@ async function fetchAuditResults() {
     const data = await res.json();
     renderAuditResults(data.rows || []);
   } catch (e) {
-    el.innerHTML = '<li class="muted">Failed to load audit trail.</li>';
+    el.innerHTML = '<li class="empty-state">Failed to load audit trail.</li>';
   }
 }
 
@@ -451,15 +531,10 @@ function renderAuditResults(rows) {
     li.addEventListener("click", () => showDetail("audit", a));
     el.appendChild(li);
   });
-  if (!rows.length) el.innerHTML = '<li class="muted">No matching actions.</li>';
+  if (!rows.length) el.innerHTML = '<li class="empty-state">No matching actions.</li>';
 }
 
-function isAuditTabActive() {
-  const panel = document.getElementById("tab-audit");
-  return !!panel && panel.classList.contains("active");
-}
-
-// Recurring skills + recurring reminders — kept as its own tab rather than folded into Tasks,
+// Recurring skills + recurring reminders — kept as its own route rather than folded into Tasks,
 // since these are standing routines, not one-off/in-flight work.
 async function fetchDailyItems() {
   const el = document.getElementById("daily-list");
@@ -468,7 +543,7 @@ async function fetchDailyItems() {
     const data = await res.json();
     renderDailyItems(data.items || []);
   } catch (e) {
-    el.innerHTML = '<li class="muted">Failed to load daily items.</li>';
+    el.innerHTML = '<li class="empty-state">Failed to load daily items.</li>';
   }
 }
 
@@ -487,12 +562,14 @@ function renderDailyItems(items) {
       <div class="list-item-meta">${meta}</div>`;
     el.appendChild(li);
   });
-  if (!items.length) el.innerHTML = '<li class="muted">No recurring skills or reminders yet.</li>';
+  if (!items.length) el.innerHTML = '<li class="empty-state">No recurring skills or reminders yet.</li>';
 }
 
 // Local Claude-spend estimate (GET /api/usage): every API call's token usage x list price,
 // tracked by Jarvis itself — no admin key. Shown as a top-bar chip (refreshed every minute) and a
-// Usage tab (refreshed when opened and every 30s while it's the active tab).
+// Usage route (refreshed when opened and every 30s while it's the active route).
+let lastUsage = null;
+
 function fmtUsd(n) {
   n = Number(n) || 0;
   return "$" + (n < 1 ? n.toFixed(3) : n.toFixed(2));
@@ -502,6 +579,7 @@ async function fetchUsage() {
   try {
     const res = await fetch("/api/usage");
     const data = await res.json();
+    lastUsage = data.usage;
     renderUsage(data.usage);
   } catch (e) {
     /* leave the last render in place */
@@ -541,16 +619,11 @@ function renderUsage(u) {
         .map((m) => `<li class="list-item compact"><span class="tool">${esc(m.model)}</span>
           <span class="muted">${esc(fmtUsd(m.cost_usd))} this month &middot; ${esc(String(m.calls))} calls &middot; ${esc(Number(m.tokens || 0).toLocaleString())} tokens</span></li>`)
         .join("")
-    : '<li class="muted">No usage recorded yet.</li>';
+    : '<li class="empty-state">No usage recorded yet.</li>';
   const extra = u.unknown_price_models.length
     ? ` Approximate pricing used for: ${u.unknown_price_models.join(", ")}.`
     : "";
   document.getElementById("usage-note").textContent = u.estimate_note + extra;
-}
-
-function isUsageTabActive() {
-  const panel = document.getElementById("tab-usage");
-  return !!panel && panel.classList.contains("active");
 }
 
 // Brain switch (Claude <-> Gemini): the chip shows the active provider; clicking switches to the
@@ -603,24 +676,11 @@ fetchLlm();
 setInterval(fetchLlm, 60000);
 
 document.getElementById("spend-chip").addEventListener("click", () => {
-  document.querySelector('.tab-btn[data-tab="usage"]').click();
+  location.hash = "#/usage";
 });
 fetchUsage();
 setInterval(fetchUsage, 60000);
-setInterval(() => { if (isUsageTabActive()) fetchUsage(); }, 30000);
-
-document.querySelectorAll(".tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-    if (btn.dataset.tab === "audit") fetchAuditResults();
-    if (btn.dataset.tab === "daily") fetchDailyItems();
-    if (btn.dataset.tab === "usage") fetchUsage();
-    document.querySelector("footer.bottom").classList.toggle("tall", ["sleep", "identity", "autonomy"].includes(btn.dataset.tab));
-  });
-});
+setInterval(() => { if (isRouteActive("usage")) fetchUsage(); }, 30000);
 
 document.getElementById("audit-apply-btn").addEventListener("click", fetchAuditResults);
 document.getElementById("audit-clear-btn").addEventListener("click", () => {
@@ -637,29 +697,36 @@ document.getElementById("audit-q").addEventListener("keydown", (e) => {
 // Compose box: a dashboard-typed command is a 4th input surface alongside voice/text-hotkey/
 // phone. It goes through the exact same handle_text_command pipeline server-side (see
 // jarvis.py's main()), including the confirmation gate — this box has no special privileges.
-document.getElementById("compose-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const input = document.getElementById("compose-input");
-  const statusEl = document.getElementById("compose-status");
-  const text = input.value.trim();
-  if (!text) return;
-  input.disabled = true;
-  statusEl.textContent = "Sending…";
-  try {
-    const res = await fetch("/api/command", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    const data = await res.json();
-    statusEl.textContent = data.ok ? "Sent — watch Sessions for the reply." : (data.error || "Failed.");
-    if (data.ok) input.value = "";
-  } catch (err) {
-    statusEl.textContent = "Request failed: " + err;
-  }
-  input.disabled = false;
-  input.focus();
-});
+// Wired to both the Sessions route's form and the Home route's form (same endpoint, same code).
+function wireComposeForm(formId, inputId, statusId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById(inputId);
+    const statusEl = document.getElementById(statusId);
+    const text = input.value.trim();
+    if (!text) return;
+    input.disabled = true;
+    statusEl.textContent = "Sending…";
+    try {
+      const res = await fetch("/api/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      statusEl.textContent = data.ok ? "Sent — watch Sessions for the reply." : (data.error || "Failed.");
+      if (data.ok) input.value = "";
+    } catch (err) {
+      statusEl.textContent = "Request failed: " + err;
+    }
+    input.disabled = false;
+    input.focus();
+  });
+}
+wireComposeForm("compose-form", "compose-input", "compose-status");
+wireComposeForm("home-compose-form", "home-compose-input", "home-compose-status");
 
 function slugStatus(status) {
   return String(status || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -750,19 +817,20 @@ function connectWs() {
     if (event && event.type === "session_start") handleLiveEvent(event);
     await fetchState();
     if (event && event.type === "session_end") handleLiveEvent(event);
-    if (isAuditTabActive()) fetchAuditResults();
-    if (event && event.type === "face_event" && isIdentityTabActive()) fetchIdentity();
+    if (isRouteActive("audit")) fetchAuditResults();
+    if (event && event.type === "face_event" && isRouteActive("identity")) fetchIdentity();
     if (event && event.type === "autonomy_update" && window.refreshAutonomy) window.refreshAutonomy();
   };
 }
 
+renderRoute();
 fetchState();
 connectWs();
 setInterval(fetchState, 15000);
 
 
-// Sleep tab (GET /api/sleep): trends from Sleep Mode's own log. Week/Month toggle re-slices the
-// 90 days already fetched, no extra request.
+// Sleep route (GET /api/sleep): trends from Sleep Mode's own log. Week/Month toggle re-slices
+// the 90 days already fetched, no extra request.
 let sleepData = null;
 let sleepRange = 7;
 
@@ -890,7 +958,7 @@ function renderSleep() {
     ? u.digests
         .map((d) => `<li class="list-item compact"><span class="muted">${esc(d.ended_at.replace("T", " ").slice(0, 16))}</span> ${esc(d.digest)}</li>`)
         .join("")
-    : '<li class="muted">No wake-up recaps yet. One is saved each time Sleep Mode ends.</li>';
+    : '<li class="empty-state">No wake-up recaps yet. One is saved each time Sleep Mode ends.</li>';
   document.getElementById("sleep-note").textContent = u.note;
 }
 
@@ -904,19 +972,13 @@ document.querySelectorAll(".seg-btn").forEach((b) =>
 );
 fetchSleep();
 setInterval(fetchSleep, 60000);
-document.querySelector('.tab-btn[data-tab="sleep"]').addEventListener("click", fetchSleep);
 
 
-// Identity tab (GET /api/faces*): who the camera sees, the enrolled profile and its consent
+// Identity route (GET /api/faces*): who the camera sees, the enrolled profile and its consent
 // summary, pictures of unknown visitors, and the recognition event stream. Pictures are only put
-// in the page while this tab is open (an <img> loads the moment it is in the DOM), and the
+// in the page while this route is open (an <img> loads the moment it is in the DOM), and the
 // server never sends face vectors at all.
 let identityState = null;
-
-function isIdentityTabActive() {
-  const panel = document.getElementById("tab-identity");
-  return !!panel && panel.classList.contains("active");
-}
 
 const IDENTITY_KIND_LABELS = {
   owner_arrived: "arrived", owner_left: "left", unknown_seen: "unknown person", unknown_left: "unknown left",
@@ -957,7 +1019,7 @@ async function fetchIdentityEvents() {
               <span class="muted">${esc(r.ts.replace("T", " "))}${who}${conf}${detail}</span></li>`;
           })
           .join("")
-      : '<li class="muted">No recognition events yet.</li>';
+      : '<li class="empty-state">No recognition events yet.</li>';
   } catch (e) {
     /* keep last render */
   }
@@ -970,7 +1032,7 @@ async function fetchIdentitySnaps() {
     const box = document.getElementById("identity-snaps");
     document.getElementById("identity-snap-count").textContent = data.rows.length ? `(${data.rows.length})` : "";
     document.getElementById("identity-snap-delete").hidden = !data.rows.length;
-    if (!isIdentityTabActive()) return; // never load pictures into a hidden tab
+    if (!isRouteActive("identity")) return; // never load pictures into a hidden route
     box.innerHTML = data.rows.length
       ? data.rows
           .map(
@@ -1116,5 +1178,60 @@ document.getElementById("identity-away-btn").addEventListener("click", async () 
 });
 
 document.getElementById("identity-kind").addEventListener("change", fetchIdentityEvents);
-document.querySelector('.tab-btn[data-tab="identity"]').addEventListener("click", fetchIdentity);
-setInterval(() => { if (isIdentityTabActive()) fetchIdentity(); }, 10000);
+setInterval(() => { if (isRouteActive("identity")) fetchIdentity(); }, 10000);
+
+
+// --- Home (mission control) ------------------------------------------------------------------
+// Answers "healthy? need me? what just happened?" in one glance. Deliberately composed entirely
+// from data other routes already fetch (state.data via fetchState(), currentLlm, lastUsage) —
+// no new backend endpoint, per the "only add one if painfully chatty" guidance; it isn't.
+function renderHome() {
+  const d = state.data;
+  if (!d) return;
+
+  const alerts = [];
+  if (d.pending_action) {
+    alerts.push(`<div class="home-alert">Confirmation needed: <strong>${esc(d.pending_action.tool_name)}</strong> would ${esc(d.pending_action.reason)}. <a href="#/sessions" style="color:inherit">Review &rarr;</a></div>`);
+  }
+  const ramPct = d.metrics && d.metrics.memory ? d.metrics.memory.percent : null;
+  if (ramPct != null && ramPct >= 90) {
+    alerts.push(`<div class="home-alert warn">RAM is at ${Math.round(ramPct)}%.</div>`);
+  }
+  document.getElementById("home-alerts").innerHTML = alerts.join("");
+
+  const m = d.metrics || {};
+  const cpuPct = m.cpu ? m.cpu.overall_percent : null;
+  const uptimeH = m.system ? m.system.uptime_hours : null;
+  const healthCard = (label, value, danger) =>
+    `<div class="usage-card${danger ? " usage-card-danger" : ""}"><div class="usage-card-label">${esc(label)}</div><div class="usage-card-value">${esc(value)}</div></div>`;
+  const healthCards = [];
+  if (cpuPct != null) healthCards.push(healthCard("CPU", Math.round(cpuPct) + "%", cpuPct >= 90));
+  if (ramPct != null) healthCards.push(healthCard("RAM", Math.round(ramPct) + "%", ramPct >= 90));
+  if (m.disks && m.disks.length) healthCards.push(healthCard("Disk", Math.round(m.disks[0].percent) + "%", m.disks[0].percent >= 90));
+  if (uptimeH != null) healthCards.push(healthCard("Uptime", uptimeH.toFixed(1) + "h", false));
+  document.getElementById("home-health").innerHTML = healthCards.join("") || '<div class="empty-state">No metrics yet.</div>';
+
+  const needs = [];
+  if (d.pending_action) needs.push(`<li class="list-item compact"><span class="tool">Confirmation</span> <span class="muted">${esc(d.pending_action.tool_name)}</span></li>`);
+  (d.tasks || []).filter((t) => t.status === "failed").slice(0, 5).forEach((t) => {
+    needs.push(`<li class="list-item compact"><span class="tool">Failed task</span> <span class="muted">${esc(truncate(t.description, 60))}</span></li>`);
+  });
+  document.getElementById("home-needs").innerHTML = needs.length ? needs.join("") : '<li class="empty-state">Nothing needs you right now.</li>';
+
+  const now = [];
+  const latestSession = (d.sessions || [])[0];
+  if (latestSession) {
+    now.push(`<li class="list-item compact" data-home-session><span class="ts">${esc(latestSession.started_at || "")}</span>${badge(latestSession.source)} ${esc(truncate(latestSession.transcript, 60))}</li>`);
+  }
+  const runningTask = (d.tasks || []).find((t) => t.status === "running");
+  if (runningTask) now.push(`<li class="list-item compact"><span class="tool">Running</span> <span class="muted">${esc(truncate(runningTask.description, 60))}</span></li>`);
+  document.getElementById("home-now").innerHTML = now.length ? now.join("") : '<li class="empty-state">Nothing happening right now.</li>';
+  const homeNowSession = document.querySelector("#home-now [data-home-session]");
+  if (homeNowSession) homeNowSession.addEventListener("click", () => showDetail("session", latestSession));
+
+  const todayCards = [];
+  if (lastUsage) todayCards.push(healthCard("Spend today", fmtUsd(lastUsage.periods.today.cost_usd), false));
+  if (d.counts) todayCards.push(healthCard("Done today", String(d.counts.tasks_done_today ?? 0), false));
+  todayCards.push(healthCard("Sessions", String((d.sessions || []).length), false));
+  document.getElementById("home-today").innerHTML = todayCards.join("");
+}

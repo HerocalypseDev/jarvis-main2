@@ -8,6 +8,7 @@
 </head>
 <body>
 <header class="topbar">
+  <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" title="Collapse/expand sidebar" aria-label="Toggle sidebar">&#9776;</button>
   <div class="brand">JARVIS <span class="brand-sub">Supervision</span></div>
   <div id="approval-queue" class="approval-queue">
     <span class="approval-empty">No pending confirmations</span>
@@ -26,110 +27,166 @@
 
 <div id="metrics-strip" class="metrics-strip"></div>
 
-<main class="layout">
-  <section class="col col-sessions">
-    <div class="col-header">
-      <h2>Sessions</h2>
-      <button class="btn btn-ghost btn-small" id="clear-sessions-btn">Clear finished</button>
+<div class="app-body">
+  <aside class="sidebar" id="sidebar">
+    <nav class="nav" id="nav">
+      <a href="#/home" data-route="home" class="nav-link"><span class="nav-icon">&#8962;</span><span class="nav-label">Home</span></a>
+      <a href="#/sessions" data-route="sessions" class="nav-link"><span class="nav-icon">&#9679;</span><span class="nav-label">Sessions</span></a>
+      <a href="#/tasks" data-route="tasks" class="nav-link"><span class="nav-icon">&#9776;</span><span class="nav-label">Tasks</span></a>
+      <a href="#/autonomy" data-route="autonomy" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Autonomy</span></a>
+      <a href="#/identity" data-route="identity" class="nav-link"><span class="nav-icon">&#9788;</span><span class="nav-label">Identity</span></a>
+      <a href="#/sleep" data-route="sleep" class="nav-link"><span class="nav-icon">&#9789;</span><span class="nav-label">Sleep</span></a>
+      <a href="#/usage" data-route="usage" class="nav-link"><span class="nav-icon">$</span><span class="nav-label">Usage</span></a>
+      <a href="#/activity" data-route="activity" class="nav-link"><span class="nav-icon">&#9673;</span><span class="nav-label">Activity</span></a>
+      <a href="#/audit" data-route="audit" class="nav-link"><span class="nav-icon">&#128269;</span><span class="nav-label">Audit Trail</span></a>
+      <a href="#/victory" data-route="victory" class="nav-link"><span class="nav-icon">&#10003;</span><span class="nav-label">Victory Log</span></a>
+      <a href="#/daily" data-route="daily" class="nav-link"><span class="nav-icon">&#8635;</span><span class="nav-label">Daily</span></a>
+    </nav>
+  </aside>
+
+  <main id="view">
+    <section id="view-home" class="view">
+      <div class="view-head"><h1 class="view-title">Home</h1></div>
+      <div id="home-alerts" class="home-alerts"></div>
+      <div class="home-grid">
+        <div class="home-block">
+          <h3 class="block-title">Health</h3>
+          <div id="home-health" class="usage-cards"></div>
+        </div>
+        <div class="home-block">
+          <h3 class="block-title">Needs you</h3>
+          <ul id="home-needs" class="list compact"></ul>
+        </div>
+        <div class="home-block">
+          <h3 class="block-title">Now</h3>
+          <ul id="home-now" class="list compact"></ul>
+        </div>
+        <div class="home-block">
+          <h3 class="block-title">Today</h3>
+          <div id="home-today" class="usage-cards"></div>
+        </div>
+      </div>
+      <div class="home-block">
+        <h3 class="block-title">Send a command</h3>
+        <form id="home-compose-form" class="compose-form">
+          <input type="text" id="home-compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
+          <button class="btn" type="submit">Send</button>
+        </form>
+        <p id="home-compose-status" class="muted compose-status"></p>
+      </div>
+    </section>
+
+    <section id="view-sessions" class="view">
+      <div class="view-head">
+        <h1 class="view-title">Sessions</h1>
+        <button class="btn btn-ghost btn-small" id="clear-sessions-btn">Clear finished</button>
+      </div>
+      <form id="compose-form" class="compose-form">
+        <input type="text" id="compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
+        <button class="btn" type="submit">Send</button>
+      </form>
+      <p id="compose-status" class="muted compose-status"></p>
+      <ul id="sessions-list" class="list"></ul>
+    </section>
+
+    <section id="view-tasks" class="view">
+      <div class="view-head"><h1 class="view-title">Tasks</h1></div>
+      <ul id="tasks-list" class="list"></ul>
+    </section>
+
+    <section id="view-autonomy" class="view">
+      <div class="view-head"><h1 class="view-title">Autonomy</h1></div>
+      <div id="autonomy-root"><p class="muted">Loading...</p></div>
+    </section>
+
+    <section id="view-identity" class="view">
+      <div class="view-head"><h1 class="view-title">Identity</h1></div>
+      <div class="identity-head">
+        <span id="identity-status" class="muted"></span>
+        <button class="btn btn-small" id="identity-pause-btn" hidden>Pause camera</button>
+        <button class="btn btn-small" id="identity-away-btn" hidden title="Lock the computer if I can't see you for a while">Away mode: off</button>
+      </div>
+      <div id="identity-cards" class="usage-cards"></div>
+      <div id="identity-profile"></div>
+      <h4 class="sleep-sub">Unknown visitors <span id="identity-snap-count" class="muted"></span>
+        <button class="btn btn-small btn-danger" id="identity-snap-delete" hidden>Delete all pictures</button></h4>
+      <div id="identity-snaps" class="snap-grid"></div>
+      <h4 class="sleep-sub">Recognition events
+        <select id="identity-kind"><option value="">All events</option></select></h4>
+      <ul id="identity-events" class="list compact"></ul>
+      <p id="identity-note" class="muted"></p>
+    </section>
+
+    <section id="view-sleep" class="view">
+      <div class="view-head"><h1 class="view-title">Sleep</h1></div>
+      <div class="sleep-head">
+        <div class="seg" role="group" aria-label="Sleep range">
+          <button class="seg-btn active" data-range="7">Week</button>
+          <button class="seg-btn" data-range="30">Month</button>
+        </div>
+        <span id="sleep-current" class="muted"></span>
+      </div>
+      <div id="sleep-cards" class="usage-cards"></div>
+      <div class="sleep-charts">
+        <figure class="sleep-fig"><figcaption>Hours slept per night <span class="muted">(dashed = goal)</span> <span class="sleep-legend"><i class="sw sw-bed"></i>night <i class="sw sw-nap"></i>nap</span></figcaption><div id="sleep-hours"></div></figure>
+        <figure class="sleep-fig"><figcaption>Bedtime &amp; wake time
+          <span class="sleep-legend"><i class="sw sw-bed"></i>bedtime <i class="sw sw-wake"></i>wake</span></figcaption><div id="sleep-times"></div></figure>
+        <figure class="sleep-fig"><figcaption>Average by weekday <span class="muted">(last 90 days)</span></figcaption><div id="sleep-weekday"></div></figure>
+      </div>
+      <h4 class="sleep-sub">While you were asleep</h4>
+      <ul id="sleep-digests" class="list compact"></ul>
+      <p id="sleep-note" class="muted"></p>
+    </section>
+
+    <section id="view-usage" class="view">
+      <div class="view-head"><h1 class="view-title">Usage</h1></div>
+      <div id="usage-cards" class="usage-cards"></div>
+      <div class="usage-lower">
+        <div id="usage-chart" class="usage-chart" aria-label="Daily spend, last 14 days"></div>
+        <ul id="usage-models" class="list compact"></ul>
+      </div>
+      <p id="usage-note" class="muted"></p>
+    </section>
+
+    <section id="view-activity" class="view">
+      <div class="view-head"><h1 class="view-title">Activity</h1></div>
+      <ul id="activity-list" class="list compact"></ul>
+    </section>
+
+    <section id="view-audit" class="view">
+      <div class="view-head"><h1 class="view-title">Audit Trail</h1></div>
+      <div class="audit-filters">
+        <input type="date" id="audit-date-from" title="From date" />
+        <input type="date" id="audit-date-to" title="To date" />
+        <select id="audit-tool"><option value="">All tools</option></select>
+        <input type="text" id="audit-q" placeholder="Search input/result&hellip;" />
+        <button class="btn" id="audit-apply-btn">Filter</button>
+        <button class="btn btn-ghost" id="audit-clear-btn">Clear</button>
+      </div>
+      <ul id="audit-list" class="list compact"></ul>
+    </section>
+
+    <section id="view-victory" class="view">
+      <div class="view-head"><h1 class="view-title">Victory Log</h1></div>
+      <div id="victory-counts" class="victory-counts"></div>
+      <ul id="victory-list" class="list compact"></ul>
+    </section>
+
+    <section id="view-daily" class="view">
+      <div class="view-head"><h1 class="view-title">Daily</h1></div>
+      <ul id="daily-list" class="list compact"></ul>
+    </section>
+  </main>
+
+  <aside id="context" class="context-panel">
+    <div class="context-head">
+      <h2>Detail</h2>
     </div>
-    <ul id="sessions-list" class="list"></ul>
-  </section>
-  <section class="col col-tasks">
-    <h2>Tasks</h2>
-    <ul id="tasks-list" class="list"></ul>
-  </section>
-  <section class="col col-detail">
-    <h2>Detail</h2>
-    <form id="compose-form" class="compose-form">
-      <input type="text" id="compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
-      <button class="btn" type="submit">Send</button>
-    </form>
-    <p id="compose-status" class="muted compose-status"></p>
     <div id="detail-panel" class="detail-panel">
       <p class="muted">Select a session or task to see details.</p>
     </div>
-  </section>
-</main>
-
-<footer class="bottom">
-  <div class="bottom-tabs">
-    <button class="tab-btn active" data-tab="activity">Activity</button>
-    <button class="tab-btn" data-tab="daily">Daily</button>
-    <button class="tab-btn" data-tab="sleep">Sleep</button>
-    <button class="tab-btn" data-tab="identity">Identity</button>
-    <button class="tab-btn" data-tab="autonomy">Autonomy</button>
-    <button class="tab-btn" data-tab="usage">Usage</button>
-    <button class="tab-btn" data-tab="audit">Audit Trail</button>
-    <button class="tab-btn" data-tab="victory">Victory Log</button>
-  </div>
-  <div id="tab-activity" class="tab-panel active">
-    <ul id="activity-list" class="list compact"></ul>
-  </div>
-  <div id="tab-daily" class="tab-panel">
-    <ul id="daily-list" class="list compact"></ul>
-  </div>
-  <div id="tab-sleep" class="tab-panel">
-    <div class="sleep-head">
-      <div class="seg" role="group" aria-label="Sleep range">
-        <button class="seg-btn active" data-range="7">Week</button>
-        <button class="seg-btn" data-range="30">Month</button>
-      </div>
-      <span id="sleep-current" class="muted"></span>
-    </div>
-    <div id="sleep-cards" class="usage-cards"></div>
-    <div class="sleep-charts">
-      <figure class="sleep-fig"><figcaption>Hours slept per night <span class="muted">(dashed = goal)</span> <span class="sleep-legend"><i class="sw sw-bed"></i>night <i class="sw sw-nap"></i>nap</span></figcaption><div id="sleep-hours"></div></figure>
-      <figure class="sleep-fig"><figcaption>Bedtime &amp; wake time
-        <span class="sleep-legend"><i class="sw sw-bed"></i>bedtime <i class="sw sw-wake"></i>wake</span></figcaption><div id="sleep-times"></div></figure>
-      <figure class="sleep-fig"><figcaption>Average by weekday <span class="muted">(last 90 days)</span></figcaption><div id="sleep-weekday"></div></figure>
-    </div>
-    <h4 class="sleep-sub">While you were asleep</h4>
-    <ul id="sleep-digests" class="list compact"></ul>
-    <p id="sleep-note" class="muted"></p>
-  </div>
-  <div id="tab-identity" class="tab-panel">
-    <div class="identity-head">
-      <span id="identity-status" class="muted"></span>
-      <button class="btn btn-small" id="identity-pause-btn" hidden>Pause camera</button>
-      <button class="btn btn-small" id="identity-away-btn" hidden title="Lock the computer if I can't see you for a while">Away mode: off</button>
-    </div>
-    <div id="identity-cards" class="usage-cards"></div>
-    <div id="identity-profile"></div>
-    <h4 class="sleep-sub">Unknown visitors <span id="identity-snap-count" class="muted"></span>
-      <button class="btn btn-small btn-danger" id="identity-snap-delete" hidden>Delete all pictures</button></h4>
-    <div id="identity-snaps" class="snap-grid"></div>
-    <h4 class="sleep-sub">Recognition events
-      <select id="identity-kind"><option value="">All events</option></select></h4>
-    <ul id="identity-events" class="list compact"></ul>
-    <p id="identity-note" class="muted"></p>
-  </div>
-  <div id="tab-autonomy" class="tab-panel">
-    <div id="autonomy-root"><p class="muted">Loading...</p></div>
-  </div>
-  <div id="tab-usage" class="tab-panel">
-    <div id="usage-cards" class="usage-cards"></div>
-    <div class="usage-lower">
-      <div id="usage-chart" class="usage-chart" aria-label="Daily spend, last 14 days"></div>
-      <ul id="usage-models" class="list compact"></ul>
-    </div>
-    <p id="usage-note" class="muted"></p>
-  </div>
-  <div id="tab-audit" class="tab-panel">
-    <div class="audit-filters">
-      <input type="date" id="audit-date-from" title="From date" />
-      <input type="date" id="audit-date-to" title="To date" />
-      <select id="audit-tool"><option value="">All tools</option></select>
-      <input type="text" id="audit-q" placeholder="Search input/result&hellip;" />
-      <button class="btn" id="audit-apply-btn">Filter</button>
-      <button class="btn btn-ghost" id="audit-clear-btn">Clear</button>
-    </div>
-    <ul id="audit-list" class="list compact"></ul>
-  </div>
-  <div id="tab-victory" class="tab-panel">
-    <div id="victory-counts" class="victory-counts"></div>
-    <ul id="victory-list" class="list compact"></ul>
-  </div>
-</footer>
+  </aside>
+</div>
 
 <script src="app.js"></script>
 <script src="autonomy.js"></script>

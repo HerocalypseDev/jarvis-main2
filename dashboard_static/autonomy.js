@@ -2,7 +2,7 @@
 // projects, editable policy rules, recent decisions, and dynamic tools. Everything is built with
 // textContent (never innerHTML) because suggestion text can come from other people's email.
 (function () {
-  const panel = document.getElementById("tab-autonomy");
+  const panel = document.getElementById("view-autonomy");
   if (!panel) return;
   const root = document.getElementById("autonomy-root");
 
@@ -293,7 +293,9 @@
     } catch (e) { /* keep last render */ }
   }
 
+  // Router (app.js) calls window.refreshAutonomy() directly when the Autonomy route activates
+  // (renderRoute -> onRouteActivated), so no click listener is wired here anymore — there's no
+  // tab button left to attach one to.
   window.refreshAutonomy = () => { if (panel.classList.contains("active")) refresh(); };
-  document.querySelector('.tab-btn[data-tab="autonomy"]').addEventListener("click", refresh);
   setInterval(window.refreshAutonomy, 10000);
 })();

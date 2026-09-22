@@ -90,6 +90,34 @@ Rules:
   time from `scheduled_skill_runs`) and recurring reminders (`repeat_every_minutes` set) — kept
   as its own tab per explicit request, not folded into the Tasks column, since these are
   standing routines, not one-off/in-flight work.
+- **UI/UX overhaul (2026-09-22)**: replaced the three-column + bottom-tabs layout with a
+  sidebar-navigated, hash-routed shell (Home/Sessions/Tasks/Autonomy/Identity/Sleep/Usage/
+  Activity/Audit/Victory/Daily) plus a new Home "mission control" default view. Full write-up,
+  route table, and parity notes in `DASHBOARD.md`. Frontend-only — `jarvis_dashboard.py` was not
+  touched, so the Host/Origin guards, the localhost-only bind, and the confirmation gate's
+  Review-then-Approve path are all exactly as before (`actOnPending()` still calls the same
+  `POST /api/pending/approve|reject`, copied verbatim). No feature was dropped: every panel from
+  the old bottom-tabs (Autonomy's suggestions/commitments/campaigns/rules/log/organising/skills/
+  dynamic-tools, Identity's profiles/consent/pause/away/pictures/events, Sleep's charts/digests,
+  Usage, Audit filters, Victory, Daily) kept its existing element IDs and was re-parented into a
+  routed `<section>` rather than rewritten — `autonomy.js` needed exactly two line changes (its
+  panel lookup id, and removing a now-nonexistent tab-button click listener since the router
+  calls `window.refreshAutonomy()` directly on route activation). Home composes entirely from
+  data the other routes already fetch (`GET /api/state` + the existing usage/llm chip polling) —
+  confirmed during a Phase 0 inventory pass that no new backend endpoint was needed. This
+  **supersedes** the "Post-launch round 2" resizable-column note above: the three-column
+  `.layout`/`.col` grid no longer exists (Sessions and Tasks are now separate full-width routes),
+  so there's nothing left to drag-resize there; the bottom panel's `resize: vertical` is likewise
+  gone along with the bottom-tabs strip itself. Sidebar is collapsible (button in the top bar,
+  state remembered per-browser in `localStorage`). Verified: `test_dashboard.py` (30/30) and the
+  dashboard-relevant slice of `test_hardening.py` pass unchanged (one assertion updated for the
+  renamed `tab-audit` → `view-audit` element id); every route's backing API responds 200 against
+  a standalone preview instance (`jarvis_dashboard._build_app()`, see `DASHBOARD.md`); `node
+  --check` on both JS files; and `renderHome()` was executed against real fetched API data in a
+  headless Node harness (no jsdom, no browser automation tool available in this session) and
+  confirmed to run without error, including the RAM-danger styling and alert banner firing
+  correctly at 91%. **Not verified**: an actual rendered browser view (no claude-in-chrome/jsdom
+  available this session) — the user should eyeball it live before treating this as fully done.
 
 ## Speech shaping (2026-09-18)
 
@@ -975,7 +1003,8 @@ row there each phase rather than only stating the total in chat.
 | 31 (Deepgram speed-upgrade audit-and-fix pass: lazy Whisper preload, honest tts_backend logging, filler-vs-narration fix, bounded pipeline join timeout, breaker-recovery + timeout test coverage; 10 new tests) | Sonnet 5 | ~35 min | ~$1.60–$2.30 |
 | 32 (cloud-latency pass: streaming STT + TTS WebSockets, simple-intent fast path, Claude SSE token streaming to speech, all default-on; websocket-client dependency; 48 new tests) | Sonnet 5 | ~110 min | ~$4.50–$6.20 |
 | 33 (cloud-latency audit-and-fix pass: found and fixed a real double-speak bug in multi-round streamed narration, plus a stale comment; 1 new test) | Sonnet 5 | ~30 min | ~$1.30–$1.90 |
-| **Running total (final)** | | **~1168 min** | **~$53.25–$74.40** |
+| 34 (dashboard UI/UX overhaul: sidebar + hash-routed shell, Home mission-control view, full feature parity lift-and-shift, verified via headless harness + standalone preview server) | Sonnet 5 | ~85 min | ~$3.60–$5.00 |
+| **Running total (final)** | | **~1253 min** | **~$56.85–$79.40** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
