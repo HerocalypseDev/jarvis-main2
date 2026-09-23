@@ -710,3 +710,7 @@ p.consent-list { padding-left: 0; }
 .voice-record-val { color: var(--cyan); text-align: right; }
 .voice-note { font-size: 12px; margin-top: 8px; }
 @media (max-width: 700px) { .voice-day:nth-child(even) .usage-bar-label { visibility: hidden; } }
+
+/* Home: the command box sits at the top so it never needs a scroll */
+.home-compose { margin-bottom: 16px; }
+.home-compose .compose-status:empty { display: none; }

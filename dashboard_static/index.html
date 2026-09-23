@@ -52,6 +52,14 @@
     <section id="view-home" class="view">
       <div class="view-head"><h1 class="view-title">Home</h1></div>
       <div id="home-alerts" class="home-alerts"></div>
+      <div class="home-block home-compose">
+        <h3 class="block-title">Send a command</h3>
+        <form id="home-compose-form" class="compose-form">
+          <input type="text" id="home-compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
+          <button class="btn" type="submit">Send</button>
+        </form>
+        <p id="home-compose-status" class="muted compose-status"></p>
+      </div>
       <div class="home-block home-briefing">
         <div class="briefing-head">
           <h3 class="block-title">Briefing</h3>
@@ -100,14 +108,6 @@
           <h3 class="block-title">Presence</h3>
           <p id="home-presence" class="muted"></p>
         </div>
-      </div>
-      <div class="home-block">
-        <h3 class="block-title">Send a command</h3>
-        <form id="home-compose-form" class="compose-form">
-          <input type="text" id="home-compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
-          <button class="btn" type="submit">Send</button>
-        </form>
-        <p id="home-compose-status" class="muted compose-status"></p>
       </div>
     </section>
 
