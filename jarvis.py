@@ -9299,6 +9299,27 @@ def _shorter_reply() -> str:
     return (short or "").strip() or text
 
 
+def _media_reply(transcript: str) -> str:
+    """Play/pause/next/previous: Opera's sidebar player (or the current Windows media session) via
+    SMTC, falling back to the media keys. Success says nothing (the music is the feedback, and a
+    spoken reply would only duck/pause the music again)."""
+    low = transcript.lower()
+    action = ("next" if re.search(r"\b(?:next|skip)\b", low) else
+              "previous" if re.search(r"\b(?:previous|last|back)\b", low) else
+              "pause" if re.search(r"\b(?:pause|stop)\b", low) else "play")
+    try:
+        result = audio_duck.media_control(action)
+    except Exception as e:
+        log.info("Media session control unavailable (%s); using media keys.", e)
+        _run_system_action({"next": "media_next", "previous": "media_previous"}.get(action, "media_play_pause"))
+        return ""
+    if result == "none":
+        return "There's no music or video player open."
+    if result == "fail":
+        return f"The player wouldn't {'go to the ' + action + ' track' if action in ('next', 'previous') else action}."
+    return ""
+
+
 def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None:
     """Zero-LLM-call answers for the handful of intents that are pure local computation — no
     network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
@@ -9308,6 +9329,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
     if intent == "hush":
         _interrupt_speech()  # stop whatever is still playing, and say nothing back
         return ""
+    if intent == "media":
+        return _media_reply(transcript)
     if intent == "reply_style":
         style = chief.parse_reply_style(transcript) or "normal"
         settings.set_setting("JARVIS_REPLY_STYLE", style)

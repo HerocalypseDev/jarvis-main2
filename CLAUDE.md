@@ -1288,6 +1288,13 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   a seeded temp DB at 1440 and 390 px: no console errors, no horizontal scroll. No cost estimate shown on
   purpose (Deepgram/Fish prices aren't in the code; guessing them would be fake data).
 
+- **Voice media control (2026-09-23)**: intent `media` ("pause", "play", "next song", "skip", "previous
+  track", "stop the music"; whole short utterances only) answered with no LLM call by `_media_reply`:
+  `jarvis_audio_duck.media_control` drives the Windows media session (SMTC) via PowerShell, preferring a
+  `JARVIS_MEDIA_APP` match (default `Opera`, a Playing one first), else the current session; falls back
+  to the media keys. Success is silent (a spoken reply would duck/pause the music again). Tests in
+  `test_qol.py`. Not run live against a playing Opera sidebar (selection logic was, without acting).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,

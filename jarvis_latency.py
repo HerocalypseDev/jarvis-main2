@@ -97,6 +97,13 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
                             r"(?:,?\s*jarvis)?\W*\Z", re.I)),
     ("urgent", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:what(?:'s| is) urgent|anything urgent|what needs me|what needs my attention"
                           r"|what do i need to (?:know|do)(?: today| now)?)(?:,?\s*jarvis)?\W*\Z", re.I)),
+    # Media playback (2026-09-23): whole short utterances only; "play despacito" still reaches the agent.
+    ("media", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:please\s+)?(?:"
+                         r"(?:play|resume|unpause|pause)(?:\s+(?:the\s+)?(?:music|song|track|playback|media|it))?"
+                         r"|stop\s+(?:the\s+)?(?:music|song|track|playback)"
+                         r"|(?:(?:play|go to)\s+(?:the\s+)?)?(?:next|previous|last)\s+(?:song|track)"
+                         r"|skip(?:\s+(?:this|the|a))?(?:\s+(?:song|track))?|next|previous|go back a (?:song|track))"
+                         r"(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
     # Second wave (2026-09-23): "stop talking" says nothing back; a standing reply-length choice.
     ("hush", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:stop talking|stop|shut up|be quiet|quiet|hush|enough|silence|that's enough)"
                         r"(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),

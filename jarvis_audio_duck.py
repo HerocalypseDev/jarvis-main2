@@ -38,14 +38,16 @@ _timer: threading.Timer | None = None
 _paused: list[str] = []  # SMTC app ids we paused (touched only on the _media_worker thread)
 _media_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="duck-media")
 
-# Pause (Playing -> print id) or resume (only ids in JARVIS_DUCK_IDS that are still Paused).
-_SMTC_PS = r"""
+_SMTC_HEAD = r"""
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | ? { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
 function Await($op, $t) { $k = $asTask.MakeGenericMethod($t).Invoke($null, @($op)); $k.Wait(5000) | Out-Null; $k.Result }
 [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media.Control,ContentType=WindowsRuntime] | Out-Null
 $m = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
+"""
+# Pause (Playing -> print id) or resume (only ids in JARVIS_DUCK_IDS that are still Paused).
+_SMTC_PS = _SMTC_HEAD + r"""
 $ids = $env:JARVIS_DUCK_IDS -split "`n"
 foreach ($s in $m.GetSessions()) {
   $id = $s.SourceAppUserModelId; $st = [string]$s.GetPlaybackInfo().PlaybackStatus
@@ -97,6 +99,36 @@ def _real_media(action: str, ids: list[str]) -> list[str]:
 
 
 _media = _real_media  # swapped out by tests
+
+# Voice media control: prefer a session whose app id matches JARVIS_MEDIA_APP (Opera's sidebar
+# player by default; a Playing one first), else Windows' current media session. Prints ok|fail|none.
+_CONTROL_PS = _SMTC_HEAD + r"""
+$c = @($m.GetSessions() | ? { $env:JARVIS_MEDIA_RE -and $_.SourceAppUserModelId -match $env:JARVIS_MEDIA_RE })
+$s = $c | ? { [string]$_.GetPlaybackInfo().PlaybackStatus -eq 'Playing' } | select -First 1
+if (-not $s) { $s = $c | select -First 1 }
+if (-not $s) { $s = $m.GetCurrentSession() }
+if (-not $s) { 'none'; exit }
+$op = switch ($env:JARVIS_MEDIA_ACTION) { 'play' { $s.TryPlayAsync() } 'pause' { $s.TryPauseAsync() }
+  'next' { $s.TrySkipNextAsync() } 'previous' { $s.TrySkipPreviousAsync() } }
+if (Await $op ([bool])) { 'ok' } else { 'fail' }
+"""
+
+
+def media_control(action: str) -> str:
+    """play|pause|next|previous on the preferred media session. Returns 'ok', 'fail' or 'none';
+    raises if PowerShell/WinRT isn't usable (caller falls back to the media keys)."""
+    if sys.platform != "win32" or os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError("media session control unavailable")
+    env = dict(os.environ, JARVIS_MEDIA_ACTION=action,
+               JARVIS_MEDIA_RE=os.environ.get("JARVIS_MEDIA_APP", "Opera").strip())
+    out = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _CONTROL_PS],
+        env=env, capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    result = (out.stdout.strip().splitlines() or [""])[-1].strip()
+    if result not in ("ok", "fail", "none"):
+        raise RuntimeError(out.stderr.strip()[:200] or "no result")
+    return result
 
 
 def _pause_music() -> None:

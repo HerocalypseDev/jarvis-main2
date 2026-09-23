@@ -83,6 +83,30 @@ def test_new_intents(text, intent):
     assert latency.classify_intent(text) == intent
 
 
+@pytest.mark.parametrize("text,action", [
+    ("pause", "pause"), ("pause the music", "pause"), ("stop the music", "pause"), ("play", "play"),
+    ("resume the song please", "play"), ("next song", "next"), ("skip this track", "next"), ("next", "next"),
+    ("previous track", "previous"), ("play the last song", "previous"), ("go back a song", "previous"),
+])
+def test_media_voice_commands(monkeypatch, text, action):
+    assert latency.classify_intent(text) == "media"
+    calls = []
+    monkeypatch.setattr(jarvis.audio_duck, "media_control", lambda a: calls.append(a) or "ok")
+    assert jarvis._deterministic_intent_reply("media", text) == ""  # success is silent
+    assert calls == [action]
+
+
+def test_media_falls_back_to_media_keys_and_reports_no_player(monkeypatch):
+    keys = []
+    monkeypatch.setattr(jarvis, "_run_system_action", keys.append)
+    assert jarvis._media_reply("next song") == ""  # media_control raises under pytest -> keys
+    assert keys == ["media_next"]
+    monkeypatch.setattr(jarvis.audio_duck, "media_control", lambda a: "none")
+    assert "no music" in jarvis._media_reply("play")
+    for text in ("play despacito", "stop", "pause the camera", "what's the next step"):
+        assert latency.classify_intent(text) != "media"
+
+
 def test_timers_and_stopwatch(monkeypatch):
     fired = []
     monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda text, urgent=False, **k: fired.append((text, urgent)))

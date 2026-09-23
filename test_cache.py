@@ -628,6 +628,8 @@ def _gate_env(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent: False)
     monkeypatch.setattr(jarvis, "user_is_actively_working", lambda: True)
     monkeypatch.setattr(jarvis, "_is_preferred_work_hours", lambda now=None: True)
+    monkeypatch.setenv("JARVIS_QUIET_HOURS", "")  # the real .env's quiet hours must not leak in
+    monkeypatch.setattr(jarvis, "safe_mode_on", lambda: False)
     monkeypatch.setitem(jarvis._session_context, "pending_notifications", [])
     return spoken
 
