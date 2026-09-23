@@ -19,8 +19,10 @@ real machine's audio is never touched by tests; tests inject fake sessions via _
 from __future__ import annotations
 
 import atexit
+import base64
 import logging
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -101,17 +103,67 @@ def _real_media(action: str, ids: list[str]) -> list[str]:
 _media = _real_media  # swapped out by tests
 
 # Voice media control: prefer a session whose app id matches JARVIS_MEDIA_APP (Opera's sidebar
-# player by default; a Playing one first), else Windows' current media session. Prints ok|fail|none.
+# player by default; a Playing one first), else Windows' current media session. One long-lived
+# PowerShell reads an action per stdin line and prints ok|fail|none, so a voice "pause" costs a pipe
+# round trip (~tens of ms) instead of a fresh PowerShell + WinRT load (~0.6s measured) every time.
 _CONTROL_PS = _SMTC_HEAD + r"""
-$c = @($m.GetSessions() | ? { $env:JARVIS_MEDIA_RE -and $_.SourceAppUserModelId -match $env:JARVIS_MEDIA_RE })
-$s = $c | ? { [string]$_.GetPlaybackInfo().PlaybackStatus -eq 'Playing' } | select -First 1
-if (-not $s) { $s = $c | select -First 1 }
-if (-not $s) { $s = $m.GetCurrentSession() }
-if (-not $s) { 'none'; exit }
-$op = switch ($env:JARVIS_MEDIA_ACTION) { 'play' { $s.TryPlayAsync() } 'pause' { $s.TryPauseAsync() }
-  'next' { $s.TrySkipNextAsync() } 'previous' { $s.TrySkipPreviousAsync() } }
-if (Await $op ([bool])) { 'ok' } else { 'fail' }
+[Console]::Out.WriteLine('ready'); [Console]::Out.Flush()
+while ($null -ne ($a = [Console]::In.ReadLine())) {
+  try {
+    $c = @($m.GetSessions() | ? { $env:JARVIS_MEDIA_RE -and $_.SourceAppUserModelId -match $env:JARVIS_MEDIA_RE })
+    $s = $c | ? { [string]$_.GetPlaybackInfo().PlaybackStatus -eq 'Playing' } | select -First 1
+    if (-not $s) { $s = $c | select -First 1 }
+    if (-not $s) { $s = $m.GetCurrentSession() }
+    if (-not $s) { $r = 'none' } else {
+      $op = switch ($a) { 'play' { $s.TryPlayAsync() } 'pause' { $s.TryPauseAsync() }
+        'next' { $s.TrySkipNextAsync() } 'previous' { $s.TrySkipPreviousAsync() } }
+      $r = if (Await $op ([bool])) { 'ok' } else { 'fail' }
+    }
+  } catch { $r = 'err' }
+  [Console]::Out.WriteLine($r); [Console]::Out.Flush()
+}
 """
+_ctl_lock = threading.Lock()
+_ctl: tuple[subprocess.Popen, queue.Queue] | None = None
+
+
+def _ctl_read(stdout, lines: queue.Queue) -> None:
+    for line in stdout:
+        lines.put(line.strip())
+    lines.put(None)  # worker exited
+
+
+def _ctl_start() -> tuple[subprocess.Popen, queue.Queue]:
+    proc = subprocess.Popen(
+        ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand",
+         base64.b64encode(_CONTROL_PS.encode("utf-16-le")).decode()],
+        env=dict(os.environ, JARVIS_MEDIA_RE=os.environ.get("JARVIS_MEDIA_APP", "Opera").strip()),
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    lines: queue.Queue = queue.Queue()
+    threading.Thread(target=_ctl_read, args=(proc.stdout, lines), name="media-ctl-reader", daemon=True).start()
+    try:
+        ready = lines.get(timeout=15)
+    except queue.Empty:
+        ready = None
+    if ready != "ready":
+        proc.kill()
+        raise RuntimeError("media control worker did not start")
+    return proc, lines
+
+
+def warm_media_control() -> None:
+    """Start the worker ahead of the first voice command (call on a background thread)."""
+    if sys.platform != "win32" or os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    global _ctl
+    try:
+        with _ctl_lock:
+            if _ctl is None or _ctl[0].poll() is not None:
+                _ctl = _ctl_start()
+    except Exception as e:
+        log.info("Media control worker not pre-started: %s", e)
 
 
 def media_control(action: str) -> str:
@@ -119,16 +171,25 @@ def media_control(action: str) -> str:
     raises if PowerShell/WinRT isn't usable (caller falls back to the media keys)."""
     if sys.platform != "win32" or os.environ.get("PYTEST_CURRENT_TEST"):
         raise RuntimeError("media session control unavailable")
-    env = dict(os.environ, JARVIS_MEDIA_ACTION=action,
-               JARVIS_MEDIA_RE=os.environ.get("JARVIS_MEDIA_APP", "Opera").strip())
-    out = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _CONTROL_PS],
-        env=env, capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    result = (out.stdout.strip().splitlines() or [""])[-1].strip()
-    if result not in ("ok", "fail", "none"):
-        raise RuntimeError(out.stderr.strip()[:200] or "no result")
+    global _ctl
+    with _ctl_lock:
+        if _ctl is None or _ctl[0].poll() is not None:
+            _ctl = _ctl_start()
+        proc, lines = _ctl
+        try:
+            proc.stdin.write(action + "\n")
+            proc.stdin.flush()
+            result = lines.get(timeout=10)
+        except Exception:
+            result = None
+        if result not in ("ok", "fail", "none"):
+            proc.kill()  # stuck or broken: the next call starts a fresh one
+            _ctl = None
+            raise RuntimeError(f"media control worker gave {result!r}")
     return result
+
+
+atexit.register(lambda: _ctl and _ctl[0].kill())
 
 
 def _pause_music() -> None:

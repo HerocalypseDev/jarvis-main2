@@ -1242,7 +1242,9 @@ def test_volume_command_gets_reduced_tools(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "run_agent_loop", fake_run_agent_loop)
     monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
     monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
-    jarvis.handle_text_command("turn the volume up", source="text")
+    # "turn the volume up" is answered with no LLM call now (_volume_reply); a volume request it
+    # can't parse still gets the reduced tool list.
+    jarvis.handle_text_command("what is the volume at", source="text")
     assert seen["tools_override"] is not None
     assert [t["name"] for t in seen["tools_override"]] == ["system_action"]
 

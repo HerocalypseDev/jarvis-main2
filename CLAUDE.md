@@ -1294,6 +1294,12 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   `JARVIS_MEDIA_APP` match (default `Opera`, a Playing one first), else the current session; falls back
   to the media keys. Success is silent (a spoken reply would duck/pause the music again). Tests in
   `test_qol.py`. Not run live against a playing Opera sidebar (selection logic was, without acting).
+- **Snappy media/volume (2026-09-23)**: media commands go to ONE long-lived PowerShell worker
+  (`audio_duck.media_control`, pre-started from `main()`, stdin line per action; a stuck/broken one
+  is killed and replaced) — measured ~2-180 ms per command vs ~650 ms for a fresh PowerShell each
+  time. Short volume commands ("volume up", "turn it down", "mute", "volume 40") skip the LLM via
+  `_volume_reply` (pycaw exact level, ±`VOLUME_STEP` 10%; media-key fallback); anything it can't
+  parse ("what's the volume of a sphere") still takes the reduced-tools agent path.
 
 ### Cost reporting
 
@@ -1366,7 +1372,8 @@ row there each phase rather than only stating the total in chat.
 | 47 (P5 persistent named timers with restart restore; 10 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 48 (P6 voice knobs in Settings + second wave: reply style, stop talking, quiet hours, spend alert, meeting heads-up, voice speed, fuzzy palette, STT language; 10 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
 | 49 (Voice tab: TTS/STT usage tracking + stats page; 4 new tests, headless render check) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~1773 min** | **~$90.05–$126.25** |
+| 50 (snappy media/volume: persistent media worker, no-LLM volume; 2 new tests) | Opus 5.5 | ~20 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~1793 min** | **~$91.25–$127.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

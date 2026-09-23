@@ -9320,6 +9320,49 @@ def _media_reply(transcript: str) -> str:
     return ""
 
 
+VOLUME_STEP = 10  # percent per "volume up/down"
+
+
+def _volume_reply(transcript: str) -> str | None:
+    """Short, unambiguous volume commands ("volume up", "turn it down", "mute", "volume 40",
+    "set the volume to 30 percent") set the level directly, no LLM call. Anything else returns None
+    and takes the normal agent path (e.g. "what's the volume of a sphere")."""
+    low = transcript.lower().strip()
+    if len(low.split()) > 9 or re.search(r"\b(?:what|how|why|sphere|cube|cylinder)\b", low):
+        return None
+    num = re.search(r"\b(\d{1,3})\s*(?:%|percent)?\W*$", low)
+    if re.search(r"\bunmute\b", low):
+        target, mute = None, False
+    elif re.search(r"\bmute\b", low):
+        target, mute = None, True
+    elif num and "volume" in low and int(num.group(1)) <= 100:
+        target, mute = int(num.group(1)), None
+    elif re.search(r"\b(?:up|louder|raise|increase)\b", low):
+        target, mute = "+", None
+    elif re.search(r"\b(?:down|quieter|lower|decrease|reduce)\b", low):
+        target, mute = "-", None
+    else:
+        return None
+    if mute is not None:
+        if sleep_mode._endpoint_volume_call(lambda ev: ev.SetMute(1 if mute else 0, None) or True) is None:
+            _run_system_action("volume_mute")  # toggle: best effort without Core Audio
+        return "" if mute else "Unmuted."
+    current = sleep_mode._get_volume()
+    if current is None:  # no Core Audio: each key press is ~2%
+        key = "volume_up" if target == "+" else "volume_down" if target == "-" else None
+        if key is None:
+            return None  # an exact level needs Core Audio; let the agent handle it
+        for _ in range(VOLUME_STEP // 2):
+            _run_system_action(key)
+        return ""
+    level = (current * 100 + VOLUME_STEP if target == "+" else current * 100 - VOLUME_STEP if target == "-"
+             else target)
+    level = max(0, min(100, round(level)))
+    sleep_mode._set_volume(level / 100)
+    sleep_mode._endpoint_volume_call(lambda ev: ev.SetMute(0, None) or True)
+    return f"Volume {level} percent."
+
+
 def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None:
     """Zero-LLM-call answers for the handful of intents that are pure local computation — no
     network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
@@ -9331,6 +9374,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return ""
     if intent == "media":
         return _media_reply(transcript)
+    if intent == "volume":
+        return _volume_reply(transcript)
     if intent == "reply_style":
         style = chief.parse_reply_style(transcript) or "normal"
         settings.set_setting("JARVIS_REPLY_STYLE", style)
@@ -10025,6 +10070,7 @@ def main() -> int:
             log.warning("Dashboard failed to start; Jarvis continues without it: %s", e)
 
     _preload_mcp_async()
+    threading.Thread(target=audio_duck.warm_media_control, name="media-ctl-warm", daemon=True).start()
     start_prompt_cache_warmup()
     try:
         dyn_tools.configure({t["name"] for t in AGENT_TOOLS})

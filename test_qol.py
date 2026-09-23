@@ -107,6 +107,67 @@ def test_media_falls_back_to_media_keys_and_reports_no_player(monkeypatch):
         assert latency.classify_intent(text) != "media"
 
 
+def test_volume_commands_skip_the_llm(monkeypatch):
+    level = {"v": 0.5}
+    monkeypatch.setattr(jarvis.sleep_mode, "_get_volume", lambda: level["v"])
+    monkeypatch.setattr(jarvis.sleep_mode, "_set_volume", lambda v: level.update(v=v) or True)
+    monkeypatch.setattr(jarvis.sleep_mode, "_endpoint_volume_call", lambda fn: True)
+    keys = []
+    monkeypatch.setattr(jarvis, "_run_system_action", keys.append)
+    assert jarvis._deterministic_intent_reply("volume", "turn the volume up") == "Volume 60 percent."
+    assert jarvis._deterministic_intent_reply("volume", "volume down") == "Volume 50 percent."
+    assert jarvis._deterministic_intent_reply("volume", "set the volume to 30 percent") == "Volume 30 percent."
+    assert jarvis._deterministic_intent_reply("volume", "mute") == ""
+    for text in ("what's the volume of a sphere", "how loud is the volume", "volume"):
+        assert jarvis._deterministic_intent_reply("volume", text) is None
+    # Without Core Audio: relative key presses, and an exact level falls through to the agent.
+    monkeypatch.setattr(jarvis.sleep_mode, "_get_volume", lambda: None)
+    assert jarvis._deterministic_intent_reply("volume", "volume up") == ""
+    assert keys == ["volume_up"] * (jarvis.VOLUME_STEP // 2)
+    assert jarvis._deterministic_intent_reply("volume", "volume 40") is None
+
+
+def test_media_control_reuses_one_worker(monkeypatch):
+    """One PowerShell worker serves every media command; a broken one is replaced."""
+    import queue as q
+    duck = jarvis.audio_duck
+    started = []
+
+    class FakeProc:
+        def __init__(self):
+            self.lines, self.killed = q.Queue(), False
+            self.stdin = self
+
+        def poll(self):
+            return 1 if self.killed else None
+
+        def write(self, s):
+            self.lines.put("ok" if s.strip() in ("play", "next") else "err")
+
+        def flush(self):
+            pass
+
+        def kill(self):
+            self.killed = True
+
+    def fake_start():
+        p = FakeProc()
+        started.append(p)
+        return p, p.lines
+
+    monkeypatch.setattr(duck, "_ctl_start", fake_start)
+    monkeypatch.setattr(duck, "_ctl", None)
+    monkeypatch.setattr(duck.sys, "platform", "win32")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert duck.media_control("play") == "ok"
+    assert duck.media_control("next") == "ok"
+    assert len(started) == 1
+    with pytest.raises(RuntimeError):
+        duck.media_control("bogus")
+    assert started[0].killed and duck._ctl is None
+    assert duck.media_control("play") == "ok" and len(started) == 2
+
+
 def test_timers_and_stopwatch(monkeypatch):
     fired = []
     monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda text, urgent=False, **k: fired.append((text, urgent)))
