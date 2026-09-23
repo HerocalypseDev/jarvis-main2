@@ -83,6 +83,7 @@ import jarvis_restart as restart_mod
 import jarvis_stt_deepgram as stt_deepgram
 import jarvis_tts_deepgram as tts_deepgram
 import jarvis_latency as latency
+import jarvis_audio_duck as audio_duck
 import jarvis_followup
 import jarvis_weather as weather
 import jarvis_briefing as briefing
@@ -837,6 +838,7 @@ def _play_pcm_bytes(raw: bytes, sample_rate: int) -> None:
     pcm_f = pcm_i16.astype(np.float32) / 32768.0
     with _playback_lock:
         jarvis_speaking.set()
+        audio_duck.duck()
         try:
             sd.play(pcm_f, sample_rate)
             sd.wait()
@@ -844,6 +846,7 @@ def _play_pcm_bytes(raw: bytes, sample_rate: int) -> None:
             log.warning("Could not play audio: %s", e)
         finally:
             jarvis_speaking.clear()
+            audio_duck.release()
 
 
 # Jitter buffer (voice-bug follow-up, 2026-09-22): accumulate this many ms of real audio before
@@ -890,6 +893,7 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
     t0 = time.monotonic()
     with _playback_lock:
         jarvis_speaking.set()
+        audio_duck.duck()
         try:
             # latency="high" asks PortAudio for a bigger internal buffer: without it, a chunk
             # that arrives from the network a little late (Deepgram is a live WebSocket, not a
@@ -927,6 +931,7 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
             )
         finally:
             jarvis_speaking.clear()
+            audio_duck.release()
     return any_played
 
 
