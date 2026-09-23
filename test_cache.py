@@ -703,6 +703,40 @@ def test_tool_only_turn_falls_back_to_tool_result_by_default(jarvis, monkeypatch
     assert jarvis.run_agent_loop("x") == "noted: no reply needed"
 
 
+def test_truncated_tool_call_is_not_run_and_not_silent(jarvis, monkeypatch):
+    seen, ran = {}, []
+
+    def fake(body, timeout):
+        seen["max_tokens"], seen["timeout"] = body["max_tokens"], timeout
+        return {"stop_reason": "max_tokens", "usage": {},
+                "content": [{"type": "tool_use", "id": "t1", "name": "write_file", "input": {"path": "a.docx"}}]}
+
+    monkeypatch.setattr(jarvis, "_claude_request", fake)
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: ran.append(a) or "Wrote")
+    reply = jarvis.run_agent_loop("write me a long document")
+    assert ran == [] and "too long" in reply
+    assert seen["max_tokens"] >= 8000 and seen["timeout"] >= 120
+
+
+def test_write_file_docx_is_a_real_word_file(jarvis, tmp_path):
+    import docx
+
+    p = tmp_path / "shm.docx"
+    jarvis._write_file_tool(str(p), "# Questions\n\n1. What is SHM?\n- a bullet\n**Bold** text", False)
+    jarvis._write_file_tool(str(p), "## Answers\n1. Periodic motion.", True)
+    paras = [(x.style.name, x.text) for x in docx.Document(str(p)).paragraphs]
+    assert paras == [("Heading 1", "Questions"), ("Normal", "1. What is SHM?"), ("List Bullet", "a bullet"),
+                     ("Normal", "Bold text"), ("Heading 2", "Answers"), ("Normal", "1. Periodic motion.")]
+
+
+def test_workspace_name_prefix_is_not_nested(monkeypatch, tmp_path):
+    import jarvis_workspace
+
+    monkeypatch.setenv("JARVIS_WORKSPACE_DIR", str(tmp_path / "Jarvis_Workspace"))
+    p, _ = jarvis_workspace.resolve_write_path("Jarvis_Workspace/Notes/x.txt")
+    assert p == (tmp_path / "Jarvis_Workspace" / "Notes" / "x.txt").resolve()
+
+
 def test_tool_result_fallback_can_be_disabled(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "noted: no reply needed")
     _tool_only_claude(monkeypatch, jarvis)

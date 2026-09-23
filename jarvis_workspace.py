@@ -135,6 +135,8 @@ def resolve_write_path(path: str, content: str = "") -> tuple[Path | None, str]:
             return None, f"Refused: writes must stay inside {base} (JARVIS_WORKSPACE_STRICT is on)."
         return p, ""
     parts = Path(raw.replace("\\", "/")).parts
+    if len(parts) > 1 and parts[0].lower() == base.name.lower():
+        parts = parts[1:]  # "Jarvis_Workspace/Notes/x.txt" must not nest a second workspace inside
     if parts and parts[0].lower() in {s.lower() for s in SUBFOLDERS}:
         sub = next(s for s in SUBFOLDERS if s.lower() == parts[0].lower())
         rel = Path(sub, *parts[1:])

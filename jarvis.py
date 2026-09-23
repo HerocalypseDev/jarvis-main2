@@ -1265,6 +1265,11 @@ MAX_TOOL_CALLS_PER_TURN = 5  # cap on parallel tool calls Claude can request in 
 # compound multi-step instruction (search email, build a file, send it, confirm) could
 # exhaust and get cut off mid-task even with nothing going wrong.
 MAX_AGENT_ITERATIONS = 12
+# Output cap per agent-loop round. A whole document is written as one write_file call, so the old
+# 1536 cut such calls off mid-way (stop_reason max_tokens) and the command ended with no reply and
+# no file. Only generated tokens are billed, so a high cap costs nothing on short replies.
+AGENT_MAX_TOKENS = 16000
+AGENT_ROUND_TIMEOUT_S = 180  # a long document at ~100 tok/s needs well over the old 60s
 # Cap on round trips for a single set_plan step (jarvis.py _run_plan_step). Deliberately
 # small — a step is meant to be one focused sub-task, not a whole task in itself; if a step
 # needs more than this it should probably have been split into two steps in the plan.
@@ -1730,7 +1735,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "write_file",
-        "description": "Write (or append to) a text file, creating parent folders if needed. Default location is Jarvis_Workspace: give just a filename (or relative path) and it is filed automatically into Bugs, Code_Projects, Learning_Resources, Notes, Assets, Roblox_Projects or Temp by what it is. Only pass an absolute path when the user named an exact location.",
+        "description": "Write (or append to) a text file, creating parent folders if needed. For a Word document use a .docx name and write the content as simple Markdown (# headings, - bullets, 1. numbered lines); it is saved as a real Word file. For a long document, write it in parts: the first call, then append=true for each further part. Default location is Jarvis_Workspace: give just a filename (or relative path) and it is filed automatically into Bugs, Code_Projects, Learning_Resources, Notes, Assets, Roblox_Projects or Temp by what it is. Only pass an absolute path when the user named an exact location.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -7151,6 +7156,27 @@ def _read_file_tool(path: str) -> str:
     return data or "(file is empty)"
 
 
+def _write_docx(p: Path, content: str, append: bool) -> None:
+    """A real Word file from simple Markdown: # headings, - / * bullets, one paragraph per line.
+    Numbered lines stay plain text with their own numbers (Word's List Number style would run
+    one count through the whole file, e.g. answers 41-80 after questions 1-40). **bold** is dropped."""
+    import docx
+
+    doc = docx.Document(str(p)) if append and p.exists() else docx.Document()
+    for line in content.splitlines():
+        line = line.rstrip().replace("**", "")
+        if not line.strip():
+            continue
+        m = re.match(r"^(#{1,4})\s+(.*)", line)
+        if m:
+            doc.add_heading(m.group(2), level=len(m.group(1)))
+        elif re.match(r"^\s*[-*•]\s+", line):
+            doc.add_paragraph(re.sub(r"^\s*[-*•]\s+", "", line), style="List Bullet")
+        else:
+            doc.add_paragraph(line)
+    doc.save(str(p))
+
+
 def _write_file_tool(path: str, content: str, append: bool) -> str:
     if not path:
         return "No path given."
@@ -7159,6 +7185,9 @@ def _write_file_tool(path: str, content: str, append: bool) -> str:
         return refusal
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
+        if p.suffix.lower() == ".docx":
+            _write_docx(p, content or "", append)
+            return f"{'Appended' if append else 'Wrote'} a Word document ({len(content or '')} chars) to {p}."
         with open(p, "a" if append else "w", encoding="utf-8") as f:
             f.write(content or "")
         return f"{'Appended' if append else 'Wrote'} {len(content or '')} chars to {p}."
@@ -8735,7 +8764,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     for iteration in range(MAX_AGENT_ITERATIONS):
         request_body = {
             "model": model,
-            "max_tokens": 1536,
+            "max_tokens": AGENT_MAX_TOKENS,
             "system": system_blocks,
             "messages": _messages_with_cache_breakpoint(messages),
             "tools": cached_tools,
@@ -8743,7 +8772,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         if smart:
             # Thinking tokens count toward max_tokens, hence the larger cap. Thinking blocks come
             # back in `content` and are echoed unchanged on the next round (appended wholesale below).
-            request_body.update(max_tokens=8000, thinking={"type": "adaptive"},
+            request_body.update(max_tokens=AGENT_MAX_TOKENS, thinking={"type": "adaptive"},
                                 output_config={"effort": SMART_MODEL_EFFORT})
         # LLM token streaming -> speech (Phase C): only the first round trip, and only when the
         # caller is actually going to speak the reply here (narrate=True, same condition the
@@ -8759,13 +8788,13 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                     _lat.mark("ttft")
 
             data = _claude_stream_first_round(
-                request_body, 60,
+                request_body, AGENT_ROUND_TIMEOUT_S,
                 lambda s: speak_text(_collapse_paths_for_speech(s)),
                 on_first_token=_on_first_token,
             )
             streamed_this_round = data is not None
         if data is None:
-            data = _claude_request(request_body, timeout=60)
+            data = _claude_request(request_body, timeout=AGENT_ROUND_TIMEOUT_S)
         if lat and iteration == 0:
             lat.mark("ttft")  # no-op if the streaming path above already marked it earlier
         if data is None:
@@ -8809,6 +8838,11 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             reply_parts.extend(texts)
 
         if not going_on:
+            if data.get("stop_reason") == "max_tokens" and tool_uses:
+                # The tool call was cut off mid-input, so it never ran; never end in silence.
+                log.warning("Agent round hit max_tokens inside a %s call; it was not run.", tool_uses[-1].get("name"))
+                reply_parts.append("That was too long for me to write in one go, so nothing was saved. "
+                                   "Ask me for it in smaller parts and I'll append each one.")
             break
 
         # Every tool_use block above MUST get a matching tool_result, or Anthropic's API
