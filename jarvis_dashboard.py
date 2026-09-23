@@ -665,6 +665,10 @@ def _build_app(
     def api_health():
         return JSONResponse(_provider("health")(), headers={"Cache-Control": "no-store"})
 
+    @app.get("/api/network_devices")
+    def api_network_devices():
+        return JSONResponse(_provider("network_devices")(), headers={"Cache-Control": "no-store"})
+
     @app.post("/api/safe_mode")
     def api_safe_mode(payload: dict = Body(...)):
         return {"result": _provider("safe_mode")(bool(payload.get("on")))}

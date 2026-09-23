@@ -376,3 +376,33 @@ async function refreshLatency() {
 window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshLatency(); });
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshLatency();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshLatency(); }, 30000);
+
+// --- Home network devices: GET /api/network_devices (scanned server-side every 60s) --------------
+async function refreshNetwork() {
+  const list = document.getElementById("home-network");
+  const meta = document.getElementById("home-network-meta");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/network_devices", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const n = await res.json();
+    if (!n.ok) {
+      meta.textContent = "";
+      list.innerHTML = `<li class="muted">${n.pending ? (n.enabled === false ? "Network scan is off (JARVIS_NETSCAN_INTERVAL_S=0)." : "First scan runs within a minute of Jarvis starting&hellip;") : "Scan failed: " + esc(n.error || "unknown")}</li>`;
+      return;
+    }
+    const when = n.scanned_at ? new Date(n.scanned_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+    meta.textContent = `${n.devices.length} online · ${n.network} · ${when}`;
+    list.innerHTML = n.devices.map((d) => {
+      const tag = d.this_pc ? "this PC" : d.gateway ? "router" : d.private_mac ? "private MAC" : "";
+      const isNew = !d.this_pc && d.first_seen && Date.now() / 1000 - d.first_seen < 3600;
+      return `<li class="list-item compact"><span class="health-dot ok" aria-hidden="true"></span>
+        <span class="tool">${esc(d.hostname || d.ip)}</span> <span class="muted">${esc(d.ip)} · <code>${esc(d.mac)}</code>${tag ? " · " + tag : ""}</span>${isNew ? ' <span class="pill pill-running">new</span>' : ""}</li>`;
+    }).join("") || '<li class="muted">No devices found.</li>';
+  } catch (e) {
+    list.innerHTML = `<li class="muted">Couldn't load network devices: ${esc(String(e))}</li>`;
+  }
+}
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshNetwork(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshNetwork();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshNetwork(); }, 60000);

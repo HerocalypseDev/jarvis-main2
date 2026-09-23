@@ -89,6 +89,7 @@ import jarvis_weather as weather
 import jarvis_briefing as briefing
 import jarvis_chief as chief
 import jarvis_voice_usage as voice_usage
+import jarvis_netscan as netscan
 import jarvis_settings as settings
 
 settings.JARVIS_MODULE = sys.modules[__name__]
@@ -4888,6 +4889,7 @@ def _scheduler_loop() -> None:
             roblox.tick(queue_or_deliver_notification)
             autonomy.tick(now)
             _chief_tick(now)
+            _netscan_tick()
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -5077,6 +5079,44 @@ def _chief_tick(now: datetime) -> None:
         threading.Thread(target=_meeting_headsup, args=(now, mins), daemon=True, name="meeting-headsup").start()
 
 
+# --- Network devices (jarvis_netscan.py): Home card + "new device joined" notification -----------
+_netscan_state = {"check": 0.0, "running": False, "last": None}
+
+
+def _netscan_run() -> None:
+    try:
+        result = netscan.scan()
+        result["scanned_at"] = time.time()
+        new = netscan.record(_memory_db_connect, _memory_db_lock, result)
+        _netscan_state["last"] = result
+        for d in new:
+            text = f"New device on your network: {netscan.describe(d)}."
+            log.info(text)
+            send_windows_toast("Jarvis - new device on your network", text)
+            queue_or_deliver_notification(text)
+    except Exception as e:
+        log.warning("Network scan failed: %s", e)
+        _netscan_state["last"] = {"ok": False, "error": str(e), "devices": [], "scanned_at": time.time()}
+    finally:
+        _netscan_state["running"] = False
+
+
+def _netscan_tick() -> None:
+    interval = _env_float("JARVIS_NETSCAN_INTERVAL_S", 60)
+    t = time.monotonic()
+    if interval > 0 and t - _netscan_state["check"] >= interval and not _netscan_state["running"]:
+        _netscan_state["check"] = t
+        _netscan_state["running"] = True  # single flight
+        threading.Thread(target=_netscan_run, daemon=True, name="netscan").start()
+
+
+def network_devices_report() -> dict:
+    last = _netscan_state["last"]
+    if last is None:
+        return {"ok": False, "pending": True, "devices": [], "enabled": _env_float("JARVIS_NETSCAN_INTERVAL_S", 60) > 0}
+    return last
+
+
 # --- Morning briefing v2 / "what's urgent?" (jarvis_briefing.py) ---------------------------------
 def _briefing_fetchers(kind: str, now: datetime) -> dict:
     urgent = kind == "urgent"
@@ -5176,6 +5216,7 @@ def briefing_report(kind: str = "urgent") -> dict:
 
 dashboard.providers["briefing"] = briefing_report
 dashboard.providers["health"] = health_report
+dashboard.providers["network_devices"] = network_devices_report
 dashboard.providers["latency"] = lambda: latency.recent(20)
 dashboard.providers["voice_usage"] = lambda: voice_usage.summary(_memory_db_connect, _memory_db_lock)
 dashboard.providers["safe_mode"] = lambda on: set_safe_mode(on, "dashboard")

@@ -1301,6 +1301,19 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   `_volume_reply` (pycaw exact level, ±`VOLUME_STEP` 10%; media-key fallback); anything it can't
   parse ("what's the volume of a sphere") still takes the reduced-tools agent path.
 
+- **Network devices card (2026-09-23)** (`jarvis_netscan.py`, `test_netscan.py`): Home-only card listing
+  devices on the current LAN (IP, MAC, reverse-DNS name, router/this PC/private-MAC tags, "new" badge for
+  the first hour). Scheduler runs `_netscan_tick` -> a single-flight thread every
+  `JARVIS_NETSCAN_INTERVAL_S` (60, 0 = off): one empty UDP datagram to each address of this PC's subnet
+  (capped at a /24) to trigger ARP, then `arp -a -N <ip>`. `network_devices` table keyed by (gateway MAC,
+  device MAC); a network's first scan is a silent baseline, later unseen MACs trigger a Windows toast +
+  `queue_or_deliver_notification` (spoken; phone push only if `JARVIS_PHONE_PROACTIVE_NOTIFICATIONS`).
+  `GET /api/network_devices` (provider, read-only, serves the last scan; no scan per request). Limits:
+  sleeping phones can miss a scan (reappearing is not "new"); a phone with private Wi-Fi addresses that
+  rotates its MAC shows up as new again. Risk review: LAN-only traffic, ~254 tiny packets/min, MACs only
+  shown on the localhost dashboard. Verified live (scan found router + this PC; simulated new device fired
+  toast + notification against a temp DB). Not eyeballed in a real browser.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1373,7 +1386,8 @@ row there each phase rather than only stating the total in chat.
 | 48 (P6 voice knobs in Settings + second wave: reply style, stop talking, quiet hours, spend alert, meeting heads-up, voice speed, fuzzy palette, STT language; 10 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
 | 49 (Voice tab: TTS/STT usage tracking + stats page; 4 new tests, headless render check) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
 | 50 (snappy media/volume: persistent media worker, no-LLM volume; 2 new tests) | Opus 5.5 | ~20 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~1793 min** | **~$91.25–$127.95** |
+| 51 (Home network-devices card: LAN scan every 60s, MACs, new-device toast + notification; 3 new tests) | Opus 5.5 | ~20 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~1813 min** | **~$92.45–$129.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
