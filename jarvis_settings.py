@@ -51,6 +51,14 @@ SETTINGS: list[dict] = [
      "help": "Hold it alone and speak to act on selected text. Empty = off. Right Ctrl works (shortcuts like "
              "Ctrl+Win+Arrow are left alone); Shift/Alt/Win can't be used. A non-modifier key (e.g. f9) "
              "repeats into the focused app while held.", "live": ("jarvis", "JARVIS_SELECTION_KEY", str)},
+    {"key": "JARVIS_APPSHOT_KEY", "label": "Ask-about-this-window hotkey (appshot)", "kind": "text", "default": "",
+     "help": "Hold it alone and ask about the window in front of you; its title and a picture of it go to "
+             "the AI with your question. Empty = off. Suggested: right ctrl. Nothing is typed into any app.",
+     "live": ("jarvis", "JARVIS_APPSHOT_KEY", str)},
+    {"key": "JARVIS_DICTATION_KEY", "label": "Dictation hotkey", "kind": "text", "default": "",
+     "help": "Hold it alone and speak: the words are typed into the app you're in. Start with \"Jarvis,\" to "
+             "run it as a command instead. Empty = off. Use a different key from the other hotkeys.",
+     "live": ("jarvis", "JARVIS_DICTATION_KEY", str)},
     {"key": "JARVIS_WEATHER_LOCATION", "label": "Weather location", "kind": "text", "default": "",
      "help": "Town for weather. Empty = work it out from your internet connection.", "live": "env"},
     {"key": "JARVIS_WEATHER_UNITS", "label": "Temperature units", "kind": "choice", "default": "c", "choices": ["c", "f"],
@@ -71,6 +79,7 @@ SETTINGS: list[dict] = [
      "help": "Applies after a restart.", "live": None},
 ]
 _BY_KEY = {s["key"]: s for s in SETTINGS}
+_HOLD_KEYS = ("JARVIS_SELECTION_KEY", "JARVIS_APPSHOT_KEY", "JARVIS_DICTATION_KEY")
 
 
 def env_path() -> Path:
@@ -164,9 +173,15 @@ def set_setting(key: str, value: str) -> dict:
             float(value)
         except ValueError:
             return {"ok": False, "error": "That needs to be a number."}
-    if key == "JARVIS_SELECTION_KEY" and re.search(r"shift|alt|win|cmd|super|meta", value, re.I):
-        return {"ok": False, "error": "Shift, Alt and Win can't be the selection key (Jarvis presses Ctrl+C "
-                                      "with it held). Use a Ctrl key or a spare key like f9."}
+    if key in _HOLD_KEYS and value.strip():
+        if re.search(r"shift|alt|win|cmd|super|meta", value, re.I):
+            return {"ok": False, "error": "Shift, Alt and Win can't be a hold key (they open menus/Start or "
+                                          "change the keys Jarvis presses). Use a Ctrl key or a spare key like f9."}
+        v = value.strip().lower()
+        for other in _HOLD_KEYS + ("JARVIS_PTT_KEY",):
+            cur = (os.environ.get(other) or ("right shift" if other == "JARVIS_PTT_KEY" else "")).strip().lower()
+            if other != key and cur == v:
+                return {"ok": False, "error": f"{v!r} is already used by {_BY_KEY[other]['label'].lower()}."}
     if spec and spec["kind"] == "bool":
         value = "1" if _bool(value) else "0"
     with _lock:

@@ -1172,6 +1172,29 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   - Verified live (read-only) against the real DB + weather: real deadlines, a failed task, sleep, RAM.
     Not verified live: the calendar/Gmail sections (MCP servers weren't running in the test process).
 
+- **P1 Appshot + P2 Dictation** (hold modes, `test_hold_modes.py`): the PTT loop now has one generic
+  hold-mode path (`_hold_modes()`, `_HOLD_GRABBERS`, `hold={"mode","key"}` passed to
+  `handle_voice_command`) shared by selection, appshot and dictation. Every hold key goes through the
+  same solo-hold guard (`_wait_solo_hold`: held alone for 0.25s, no other key, **no mouse button** —
+  Ctrl+click looked like a solo Ctrl), the same Shift/Alt/Win/PTT-key refusal, and Settings refuses
+  two hold keys sharing a key. Both are **opt-in (empty key = off)**:
+  - *Appshot* (`JARVIS_APPSHOT_KEY`, suggested `right ctrl`): hold alone + ask. Captures the foreground
+    window's app/title and a JPEG of just that window (DWM extended frame bounds, physical pixels;
+    never written to disk), then runs the normal `handle_text_command` pipeline (gate intact, never
+    `skip_confirmation`). The picture rides on the first user message only via
+    `_command_ctx.attach_image` (consumed once, never in history), and such a turn is **never
+    reply-cached**. Title is sanitised + framed as data; `APPSHOT_TAG` forces the full agent loop.
+    Audited as `appshot` (app, title, image yes/no; never the image). Injects no keys. Sends window
+    content to the active LLM (same exposure as `read_screen`). Verified live: capture of the focused
+    window (97 KB JPEG).
+  - *Dictation* (`JARVIS_DICTATION_KEY`): hold alone + speak -> `keyboard.write(text, exact=True,
+    restore_state_after=False)` (Unicode events: no modifier presses, clipboard untouched). It waits up
+    to 3s for all keys to be released first (`write` releases held keys, the Ctrl+Win+Arrow bug class),
+    and only types into the window that was in front at press time; otherwise the text goes to the
+    clipboard and Jarvis says so. "Jarvis, ..." at the start runs the rest as a normal command. Audited
+    as `dictation` with char count + app only (never the words). Capped at 5000 chars.
+  - Not verified live: typing into a real app, a real appshot question end to end.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1237,7 +1260,8 @@ row there each phase rather than only stating the total in chat.
 | 41 (QOL pass: Gemini failover, self-check, timers, repeat/shorter, last actions/undo, log cleanup, barge-in, follow-up window, weather, selection hotkey, dashboard Settings + Ctrl+K palette; 31 new tests) | Opus 5.5 | ~110 min | ~$6.50–$9.00 |
 | 42 (selection hotkey default off + palette Alt+K, then QOL audit-and-fix: 16 findings fixed, 13 new tests) | Opus 5.5 | ~45 min | ~$3.50–$5.00 |
 | 43 (P0 briefing v2 + what's urgent: voice, tool, Home card, calendar-helper fix; 15 new tests) | Opus 5.5 | ~40 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~1618 min** | **~$77.85–$109.15** |
+| 44 (P1 appshot + P2 dictation: generic hold-mode path, mouse-click guard, image-in-agent-loop, settings; 7 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
+| **Running total (final)** | | **~1653 min** | **~$80.65–$113.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

@@ -178,6 +178,7 @@ def _fake_selection_env(monkeypatch, key="f9", held=("f9",), clipboard="user's c
     monkeypatch.setattr(jarvis, "SELECTION_SOLO_HOLD_S", 0.05)
     monkeypatch.setattr(jarvis, "_keyboard_is_pressed", lambda k: k in held)
     monkeypatch.setattr(jarvis, "_clipboard_has_non_text", lambda: False)
+    monkeypatch.setattr(jarvis, "_mouse_button_down", lambda: False)
     return clip, sent
 
 
