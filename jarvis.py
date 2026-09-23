@@ -86,6 +86,7 @@ import jarvis_latency as latency
 import jarvis_followup
 import jarvis_weather as weather
 import jarvis_briefing as briefing
+import jarvis_chief as chief
 import jarvis_settings as settings
 
 settings.JARVIS_MODULE = sys.modules[__name__]
@@ -3849,6 +3850,16 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Held non-urgent notification (safe mode): %r", text)
         return
+    if not urgent and chief.in_quiet_hours(os.environ.get("JARVIS_QUIET_HOURS"), datetime.now()):
+        # Delivered the next time the user talks to Jarvis (flush_pending_notifications), like the
+        # busy-hours queue: someone talking to Jarvis at night is awake.
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds")}
+            )
+            _save_session_context_locked()
+        log.info("Queued non-urgent notification (quiet hours): %r", text)
+        return
     if is_reminder and _reminders_held_now(urgent):
         forwarded = guest_reminders.should_forward()
         with _session_context_lock:
@@ -4823,6 +4834,7 @@ def _scheduler_loop() -> None:
             focus_mode.tick(_launch_focus_app, queue_or_deliver_notification)
             roblox.tick(queue_or_deliver_notification)
             autonomy.tick(now)
+            _chief_tick(now)
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -4940,6 +4952,78 @@ def health_report() -> dict:
     return {"safe_mode": safe_mode_on(), "items": items}
 
 
+# --- Chief-of-staff second wave: daily spend alert, meeting heads-up (jarvis_chief.py) -------------
+_chief_state = {"budget_check": 0.0, "meeting_check": 0.0, "meeting_running": False}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return default
+
+
+def _budget_check(now: datetime) -> None:
+    budget = _env_float("JARVIS_DAILY_BUDGET_USD", 5.0)
+    spent = billing.local_summary(_memory_db_connect, _memory_db_lock)["periods"]["today"]["cost_usd"]
+    today = now.date().isoformat()
+    with _session_context_lock:
+        alerted = _session_context.get("budget_alerted_on")
+    text = chief.budget_alert(spent, budget, alerted, today)
+    if text:
+        with _session_context_lock:
+            _session_context["budget_alerted_on"] = today
+            _save_session_context_locked()
+        queue_or_deliver_notification(text)
+
+
+def _meeting_headsup(now: datetime, within_min: float) -> None:
+    """Once per event: "In 10 minutes: Standup with Sam. Recent mail: Sam: Budget draft." Uses the
+    same Calendar/Gmail MCP tools as the briefing; non-urgent, so every quiet rule applies."""
+    try:
+        raw = _calendar_events_raw(now, now + timedelta(minutes=within_min + 1))
+        if not raw:
+            return
+        own = sleep_mail.own_addresses()
+        with _session_context_lock:
+            seen = dict(_session_context.get("meeting_headsup") or {})
+        cutoff = (now - timedelta(days=1)).isoformat()
+        seen = {k: v for k, v in seen.items() if v >= cutoff}
+        for m in chief.meetings_starting(raw, now, within_min, own):
+            if m["id"] in seen:
+                continue
+            seen[m["id"]] = now.isoformat(timespec="seconds")
+            mail = []
+            if "mcp_gmail_search_emails" in _mcp_tool_index:
+                for name, email in m["attendees"][:2]:
+                    found = _sleep_mail_mcp("search_emails", {"query": f"from:{email} newer_than:14d", "maxResults": 2})
+                    if not sleep_mail.looks_like_error(found):
+                        mail += [f"{name}: {x['subject'][:60]}" for x in sleep_mail.parse_search(found)[:1]]
+            queue_or_deliver_notification(chief.headsup_text(m, now, mail))
+        with _session_context_lock:
+            _session_context["meeting_headsup"] = seen
+            _save_session_context_locked()
+    except Exception as e:
+        log.warning("Meeting heads-up failed: %s", e)
+    finally:
+        _chief_state["meeting_running"] = False
+
+
+def _chief_tick(now: datetime) -> None:
+    t = time.monotonic()
+    if t - _chief_state["budget_check"] >= 300:
+        _chief_state["budget_check"] = t
+        try:
+            _budget_check(now)
+        except Exception as e:
+            log.warning("Budget check failed: %s", e)
+    mins = _env_float("JARVIS_MEETING_HEADSUP_MIN", 10)
+    if mins > 0 and t - _chief_state["meeting_check"] >= 120 and not _chief_state["meeting_running"]:
+        _chief_state["meeting_check"] = t
+        _chief_state["meeting_running"] = True  # single flight: MCP calls never pile up
+        threading.Thread(target=_meeting_headsup, args=(now, mins), daemon=True, name="meeting-headsup").start()
+
+
 # --- Morning briefing v2 / "what's urgent?" (jarvis_briefing.py) ---------------------------------
 def _briefing_fetchers(kind: str, now: datetime) -> dict:
     urgent = kind == "urgent"
@@ -5039,6 +5123,7 @@ def briefing_report(kind: str = "urgent") -> dict:
 
 dashboard.providers["briefing"] = briefing_report
 dashboard.providers["health"] = health_report
+dashboard.providers["latency"] = lambda: latency.recent(20)
 dashboard.providers["safe_mode"] = lambda on: set_safe_mode(on, "dashboard")
 dashboard.providers["memory"] = {
     "list": list_memory, "add": remember_fact, "edit": edit_fact, "forget": forget_fact,
@@ -5627,6 +5712,7 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
         + sleep_mode.system_prompt_context_line()
         + face.system_prompt_context_line()
         + autonomy.agent_context_line()
+        + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
         + _relevant_memory_line(query)
     )
     stable_block: dict = {"type": "text", "text": stable}
@@ -8610,7 +8696,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     if record_history and not image and cache.enabled("reply") and cache.is_self_contained(transcript):
         reply_key = cache.stable_hash(
             cache.normalize_text(transcript),
-            sleep_mode.system_prompt_context_line() + face.system_prompt_context_line(),
+            sleep_mode.system_prompt_context_line() + face.system_prompt_context_line()
+            + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE")),
         )
         cached_reply = _reply_cache.get(reply_key)
         cache.record("reply", cached_reply is not cache.MISS, repr(transcript[:40]))
@@ -9135,6 +9222,14 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
     None for every other intent (caller falls through to the normal agent loop)."""
     if intent in ("briefing", "urgent"):
         return briefing_report("morning" if intent == "briefing" else "urgent")["speech"]
+    if intent == "hush":
+        _interrupt_speech()  # stop whatever is still playing, and say nothing back
+        return ""
+    if intent == "reply_style":
+        style = chief.parse_reply_style(transcript) or "normal"
+        settings.set_setting("JARVIS_REPLY_STYLE", style)
+        return {"brief": "Okay, short answers from now on.", "detailed": "Okay, I'll give fuller answers from now on.",
+                "normal": "Okay, back to normal-length answers."}[style]
     if intent == "safe_mode":
         low = transcript.lower()
         if re.search(r"\bstatus\b|\bis safe mode on\b", low):

@@ -37,6 +37,8 @@ log = logging.getLogger("jarvis")
 
 DEEPGRAM_API_KEY = (os.environ.get("DEEPGRAM_API_KEY") or "").strip()
 DEEPGRAM_STT_MODEL = (os.environ.get("JARVIS_DEEPGRAM_STT_MODEL") or "nova-3").strip() or "nova-3"
+# "en" (default), another language code, or "multi" (Nova-3's code-switching mode for mixed speech).
+DEEPGRAM_LANGUAGE = (os.environ.get("JARVIS_DEEPGRAM_LANGUAGE") or "en").strip() or "en"
 DEEPGRAM_STT_TIMEOUT_S = float(os.environ.get("JARVIS_DEEPGRAM_STT_TIMEOUT_S") or 8.0)
 CONFIDENCE_MIN = float(os.environ.get("JARVIS_DEEPGRAM_STT_MIN_CONFIDENCE") or 0.6)
 
@@ -80,7 +82,7 @@ def transcribe(mono_f32: np.ndarray, sample_rate: int, timeout_s: float | None =
         return ""
     pcm16 = np.clip(mono_f32 * 32768.0, -32768, 32767).astype(np.int16).tobytes()
     url = (
-        f"{_LISTEN_URL}?model={DEEPGRAM_STT_MODEL}&language=en&smart_format=true"
+        f"{_LISTEN_URL}?model={DEEPGRAM_STT_MODEL}&language={DEEPGRAM_LANGUAGE}&smart_format=true"
         f"&punctuate=true&encoding=linear16&sample_rate={int(sample_rate)}&channels=1"
     )
     req = urllib.request.Request(
@@ -154,7 +156,7 @@ class StreamingSession:
             self._start_done.set()
             return False
         url = (
-            f"{_LISTEN_WS_URL}?model={DEEPGRAM_STT_MODEL}&language=en&smart_format=true"
+            f"{_LISTEN_WS_URL}?model={DEEPGRAM_STT_MODEL}&language={DEEPGRAM_LANGUAGE}&smart_format=true"
             f"&punctuate=true&encoding=linear16&sample_rate={self.sample_rate}&channels=1"
             f"&interim_results=true&endpointing=300"
         )

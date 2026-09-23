@@ -1236,6 +1236,36 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   off while Jarvis was down is announced once ("went off at 3:05 PM while I wasn't running") and
   closed. Still urgent notifications, still capped at 24 h and 20 active.
 
+- **P6 Voice polish**: nothing new was needed: the "One moment." filler is already gone (phase 37), and
+  short lines already skip the live stream (`JARVIS_TTS_LIVE_STREAM_MIN_CHARS`, 40) and streamed audio
+  already has a jitter buffer (`JARVIS_TTS_JITTER_BUFFER_MS`, 120). Both are now on the Settings page
+  (live). Barge-in / hands-free-can't-confirm behaviour unchanged.
+- **Second wave** (`jarvis_chief.py` pure helpers, `test_chief.py`):
+  - *Sticky reply length*: "be brief from now on" / "more detailed answers" / "go back to normal answers"
+    (intent `reply_style`, deterministic) -> `JARVIS_REPLY_STYLE` (.env, Settings). A line in the
+    **volatile** system block (never the cached prefix) and part of the reply-cache key.
+  - *"Stop talking"* (intent `hush`: "stop", "stop talking", "be quiet"...; whole utterance only, so
+    "stop the music" still reaches the agent): `_interrupt_speech()` and no reply. Other in-flight
+    commands keep running; only their remaining speech is dropped (barge-in semantics).
+  - *Quiet hours* `JARVIS_QUIET_HOURS` ("22:00-07:00", wraps midnight; empty = off): non-urgent
+    proactive speech is queued and delivered when the user next talks to Jarvis; urgent still speaks.
+  - *Daily spend alert* `JARVIS_DAILY_BUDGET_USD` (default 5, 0 = off): checked every 5 min from the
+    scheduler tick against the local `api_usage` estimate; once per day (`budget_alerted_on` in
+    session state, so a restart doesn't repeat it).
+  - *Meeting heads-up* `JARVIS_MEETING_HEADSUP_MIN` (default 10, 0 = off): every 2 min (single-flight
+    thread) the calendar is checked; once per event (ids kept a day in session state): "In 10 minutes:
+    Standup with Sam. Recent mail: Sam: <subject>" (Gmail `from:<attendee> newer_than:14d`, first 2
+    attendees). Skips declined/cancelled events and resource rooms. Non-urgent, so sleep/focus/quiet/
+    group-safe/safe-mode rules all apply. Not verified live against a real calendar.
+  - *Voice speed* on Home (`GET /api/latency`, last 20 from `jarvis_latency.recent`, in memory only).
+  - *Palette fuzzy search*: letters-in-order match ("wthr tmrw"), substring matches ranked first.
+  - *STT language* `JARVIS_DEEPGRAM_LANGUAGE` (default `en`; `multi` = Nova-3 mixed-language), live.
+  - **Not built (on purpose)**: draft-only outbound email by default (conflicts with the standing
+    2026-09-20 full-auto-act decision; `JARVIS_AUTONOMY_EMAIL_AUTO_ALLOW` already exists as the opt-in),
+    wake word, drag-drop file upload to the dashboard (new upload surface needs its own risk review),
+    saved window layouts, evening wind-down, crash-recovery line, weekly git changelog, a separate
+    deadline radar (autonomy already intervenes at 24 h / 2 h / overdue, and the briefing lists them).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1305,7 +1335,8 @@ row there each phase rather than only stating the total in chat.
 | 45 (P3 editable memory: Memory route, edit/forget/profile APIs, attended-only forget_fact; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 46 (P4 safe mode + Home health card, provider registry reload fix; 4 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 47 (P5 persistent named timers with restart restore; 10 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~1713 min** | **~$85.45–$119.85** |
+| 48 (P6 voice knobs in Settings + second wave: reply style, stop talking, quiet hours, spend alert, meeting heads-up, voice speed, fuzzy palette, STT language; 10 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
+| **Running total (final)** | | **~1748 min** | **~$88.25–$123.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

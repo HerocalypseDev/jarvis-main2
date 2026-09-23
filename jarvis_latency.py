@@ -97,6 +97,13 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
                             r"(?:,?\s*jarvis)?\W*\Z", re.I)),
     ("urgent", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:what(?:'s| is) urgent|anything urgent|what needs me|what needs my attention"
                           r"|what do i need to (?:know|do)(?: today| now)?)(?:,?\s*jarvis)?\W*\Z", re.I)),
+    # Second wave (2026-09-23): "stop talking" says nothing back; a standing reply-length choice.
+    ("hush", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:stop talking|stop|shut up|be quiet|quiet|hush|enough|silence|that's enough)"
+                        r"(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
+    ("reply_style", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:please\s+)?(?:(?:be|keep (?:it|answers|replies|them))\s+(?:brief|short|concise|terse)"
+                               r"|(?:give me |use )?(?:shorter|brief|short|concise|longer|detailed|more detailed|normal|regular|default) (?:answers|replies)"
+                               r"|be more (?:detailed|thorough)|go back to normal (?:answers|replies|length))"
+                               r"(?:\s+from now on)?(?:,?\s*please)?\W*\Z", re.I)),
     ("safe_mode", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:(?:turn|switch|put)\s+(?:on|off|me in|into)?\s*safe mode(?:\s+(?:on|off))?"
                              r"|(?:enable|disable|start|stop|exit|leave|enter)\s+safe mode|safe mode(?:\s+(?:on|off|status))?"
                              r"|is safe mode on)\W*\Z", re.I)),

@@ -653,6 +653,10 @@ def _build_app(
         ok = _provider("memory")["profile_delete"](key)
         return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 
+    @app.get("/api/latency")
+    def api_latency():
+        return {"recent": _provider("latency")()}
+
     @app.get("/api/health")
     def api_health():
         return JSONResponse(_provider("health")(), headers={"Cache-Control": "no-store"})

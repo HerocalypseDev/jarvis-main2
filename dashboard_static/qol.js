@@ -137,13 +137,28 @@ function buildPalette() {
   });
 }
 
+// "wthr tmrw" finds "what's the weather tomorrow": letters in order, bonus for a plain substring
+// and for letters close together. 0 = no match.
+function fuzzyScore(text, q) {
+  if (text.includes(q)) return 1000 - text.indexOf(q);
+  let ti = 0, gaps = 0, last = -1;
+  for (const ch of q.replace(/\s+/g, "")) {
+    const at = text.indexOf(ch, ti);
+    if (at < 0) return 0;
+    if (last >= 0) gaps += at - last - 1;
+    last = at; ti = at + 1;
+  }
+  return Math.max(1, 500 - gaps);
+}
+
 function renderPalette(resetSel = true) {
   const q = palette.input.value.trim().toLowerCase();
   const pins = loadPins();
   const seen = new Set();
   const all = [...pins.map((t) => ({ text: t, pinned: true })), ...palette.recent.map((r) => ({ text: r.text, pinned: false }))]
     .filter((c) => !seen.has(c.text) && seen.add(c.text));
-  palette.items = all.filter((c) => !q || c.text.toLowerCase().includes(q)).slice(0, 40);
+  palette.items = (q ? all.map((c) => ({ c, s: fuzzyScore(c.text.toLowerCase(), q) })).filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s).map((x) => x.c) : all).slice(0, 40);
   if (q && !palette.items.some((c) => c.text.toLowerCase() === q)) palette.items.unshift({ text: palette.input.value.trim(), fresh: true });
   if (resetSel) palette.sel = 0;
   palette.list.innerHTML = palette.items.map((c, i) => `
@@ -341,3 +356,23 @@ document.getElementById("safe-mode-btn")?.addEventListener("click", async () => 
 window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshHealth(); });
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshHealth();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshHealth(); }, 30000);
+
+// --- Home voice speed (second wave): last 20 voice commands from jarvis_latency.recent ------------
+async function refreshLatency() {
+  const el = document.getElementById("home-latency");
+  if (!el) return;
+  try {
+    const rows = ((await (await fetch("/api/latency", { cache: "no-store" })).json()).recent || []).filter((r) => r.e2e_ms != null);
+    if (!rows.length) { el.textContent = "No voice commands since Jarvis started."; return; }
+    const sorted = rows.map((r) => r.e2e_ms).sort((a, b) => a - b);
+    const med = sorted[Math.floor(sorted.length / 2)];
+    const ttfa = rows.map((r) => r.tts_ttfa_ms).filter((v) => v != null).sort((a, b) => a - b);
+    const last = rows.slice(-5).reverse().map((r) => (r.e2e_ms / 1000).toFixed(1) + "s").join(", ");
+    el.textContent = `Median ${(med / 1000).toFixed(1)}s end to end` +
+      (ttfa.length ? `, first words after ${(ttfa[Math.floor(ttfa.length / 2)] / 1000).toFixed(1)}s` : "") +
+      ` (last ${rows.length}). Latest: ${last}.`;
+  } catch (e) { el.textContent = "Couldn't load voice timings."; }
+}
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshLatency(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshLatency();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshLatency(); }, 30000);
