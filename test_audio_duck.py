@@ -37,3 +37,32 @@ def test_off_switch(monkeypatch):
     duck.duck()
     assert music.muted == 0
     duck.release(delay=0)
+
+
+def test_opera_gx_music_is_paused_and_resumed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(duck, "_sessions", lambda fn: fn([]))
+    monkeypatch.setattr(duck, "_media", lambda action, ids: calls.append((action, ids)) or (
+        ["OperaSoftware.OperaGXWebBrowser.1"] if action == "pause" else []))
+    monkeypatch.setenv("JARVIS_DUCK_OTHER_AUDIO", "1")
+    monkeypatch.setenv("JARVIS_DUCK_PAUSE_APPS", "OperaGX")
+
+    duck.duck()
+    duck.duck()  # nested playback pauses only once
+    duck.release(delay=0)
+    duck.release(delay=0)
+    duck._media_worker.submit(lambda: None).result()  # drain the FIFO worker
+    assert calls == [("pause", []), ("resume", ["OperaSoftware.OperaGXWebBrowser.1"])]
+    assert duck._paused == []
+
+
+def test_music_pause_off_when_pattern_empty(monkeypatch):
+    calls = []
+    monkeypatch.setattr(duck, "_sessions", lambda fn: fn([]))
+    monkeypatch.setattr(duck, "_media", lambda action, ids: calls.append(action) or [])
+    monkeypatch.setenv("JARVIS_DUCK_OTHER_AUDIO", "1")
+    monkeypatch.setenv("JARVIS_DUCK_PAUSE_APPS", "")
+    duck.duck()
+    duck.release(delay=0)
+    duck._media_worker.submit(lambda: None).result()
+    assert calls == []
