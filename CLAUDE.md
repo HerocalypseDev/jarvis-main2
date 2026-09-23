@@ -1085,7 +1085,7 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   (free, no key). Location: named place > `JARVIS_WEATHER_LOCATION` > the PC's IP location (ipapi.co,
   once per run; resolved to Lagos, Nigeria live). `JARVIS_WEATHER_UNITS=f` for Fahrenheit. Says
   "degrees", not the symbol (TTS). Added as item (0) of `skills/morning_briefing.json`. Verified live.
-- **Selection hotkey** (`JARVIS_SELECTION_KEY`, default off since 2026-09-23 — `right ctrl` broke Ctrl+Win+Arrow: the injected Ctrl+C released Ctrl mid-chord, leaving Win+Arrow (window snap). Use a non-modifier key): hold it instead
+- **Selection hotkey** (`JARVIS_SELECTION_KEY`, default off since 2026-09-23 — `right ctrl` broke Ctrl+Win+Arrow: the injected Ctrl+C released Ctrl mid-chord, leaving Win+Arrow (window snap); fixed in the audit pass below, so Right Ctrl is safe to enable again): hold it instead
   of push-to-talk and speak; `_grab_selection` sends Ctrl+C to the focused app, reads the clipboard
   (sentinel value detects "nothing selected"), restores the user's clipboard, and `_with_selection`
   appends the text (<= 20k chars, framed as data, not instructions) to the transcript. Unit-tested
@@ -1112,6 +1112,38 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
 - Logs: `_cleanup_old_logs()` at startup deletes project-folder `*.log` older than 14 days (never
   `jarvis_standalone.log`); `Jarvis.vbs` now rotates that log to `jarvis_standalone.old.log` at 5 MB
   instead of deleting it.
+- **QOL audit-and-fix pass (2026-09-23)** — rules to keep (tests in `test_qol.py`/`test_followup.py`/
+  `test_dashboard.py`):
+  - *Hands-free "yes" never confirms*: a follow-up-window capture is marked `hands_free`
+    (`_command_ctx.hands_free`); the gate keeps the action staged and says to use push-to-talk. Energy
+    VAD can't tell the user from a TV. This tightens the gate; never relax it.
+  - *Follow-up*: at most `JARVIS_FOLLOWUP_MAX_CHAIN` (3) hands-free turns in a row, then the window
+    stays shut until push-to-talk is used (a talking TV could otherwise chain forever); background
+    level is learned from every block outside the window (steady TV/fan raises the threshold); a
+    cough/click no longer uses up the window.
+  - *Barge-in*: re-checked right before a REST fallback and before playback (an interrupt before a
+    live stream's first chunk used to replay the sentence over REST), and fires while a capture is
+    already running (key pressed in the gap between two sentences).
+  - *Selection hotkey*: nothing is injected until the key has been held **alone** for
+    `SELECTION_SOLO_HOLD_S` (0.25s); any other key/modifier down = aborted, nothing sent, the capture
+    is dropped. With a Ctrl key only "c" is sent (Ctrl is already down, so Jarvis never releases it).
+    Shift/Alt/Win (and the PTT key) are refused as the key, in the loop and in Settings. A clipboard
+    holding a picture/files is left untouched; the clipboard is restored in `finally`. Residual:
+    Windows clipboard history (Win+V) still records the copies; a non-modifier key (f9) auto-repeats
+    into the focused app while held.
+  - *Routing*: a transcript with selected text (`SELECTION_TAG`) always takes the full agent loop.
+    self_check/last_actions are anchored to whole short utterances; `timer` only for <= 12 words and
+    not coding questions; "cancel/stop" must precede "timer"; timers capped at 24 h (longer goes to the
+    agent as a reminder) and 20 active.
+  - *Undo*: the audit rows are sanitised (`jarvis_untrusted.neutralize_injection`) and framed as an
+    `ACTION_LOG` (tool results can hold email/web text).
+  - *Failover*: `_for_claude` strips private `_...` keys (Gemini's `_thought_signature`) from message
+    content blocks before any Claude request, so a loop that failed over and came back doesn't 400 every
+    round; `_claude_in_cooldown()` is shared by the streaming and non-streaming paths.
+  - *Settings*: `TOPIC`/`CHAT_ID` keys (ntfy topic, Telegram chat) are write-only like secrets; the
+    temp file is `.env.tmp` (gitignored). Palette: Esc closes from anywhere, failed sends alert.
+    `Jarvis.vbs` log rotation can't pop an error dialog when the log is in use.
+  - Not verified live: follow-up/barge-in/selection with a real mic, keyboard and apps.
 - Test-isolation lesson: a test calling `_execute_tool_impl`/`handle_text_command` with a bare
   `import jarvis` writes to the REAL `jarvis_memory.db` (audit, sessions, autonomy). Always set
   `JARVIS_MEMORY_DB_PATH` to a tmp path and stub `_log_action_audit`/`autonomy.after_turn`. Found and
@@ -1180,7 +1212,8 @@ row there each phase rather than only stating the total in chat.
 | 39 (layered memory: per-command relevant-fact retrieval + guarded auto fact extraction; 2 new tests) | Opus 5.5 | ~20 min | ~$1.00–$1.50 |
 | 40 (Sonnet 5 routing for hard commands, Context7 + Windows-MCP (UI-only whitelist), catastrophic gate extended to MCP tools; 3 new tests) | Opus 5.5 | ~30 min | ~$1.80–$2.60 |
 | 41 (QOL pass: Gemini failover, self-check, timers, repeat/shorter, last actions/undo, log cleanup, barge-in, follow-up window, weather, selection hotkey, dashboard Settings + Ctrl+K palette; 31 new tests) | Opus 5.5 | ~110 min | ~$6.50–$9.00 |
-| **Running total (final)** | | **~1533 min** | **~$71.35–$99.95** |
+| 42 (selection hotkey default off + palette Alt+K, then QOL audit-and-fix: 16 findings fixed, 13 new tests) | Opus 5.5 | ~45 min | ~$3.50–$5.00 |
+| **Running total (final)** | | **~1578 min** | **~$74.85–$104.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

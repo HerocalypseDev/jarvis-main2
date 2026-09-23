@@ -54,6 +54,28 @@ def test_disabled_with_zero_window():
     assert _run(ls, _blocks(0.002, 1.0) + _blocks(0.1, 1.0) + _blocks(0.002, 1.2)) == []
 
 
+def test_cough_keeps_the_window_and_chain_limit_closes_it():
+    ls = fu.FollowUpListener(SR, window_s=5)
+    ls.arm(now=0.0)
+    # a 0.12 s click is dropped, and the window stays open for real speech after it
+    assert len(_run(ls, _blocks(0.002, 1.0) + _blocks(0.1, 0.12) + _blocks(0.002, 1.0)
+                    + _blocks(0.1, 1.0) + _blocks(0.002, 1.2))) == 1
+    for _ in range(fu.MAX_CHAIN - 1):
+        ls.arm(now=0.0, chained=True)
+        assert ls._deadline > 0
+    ls.arm(now=0.0, chained=True)  # one hands-free turn too many: the key is needed again
+    assert ls._deadline == 0.0
+    ls.arm(now=0.0)  # a push-to-talk reply resets the chain
+    assert ls._deadline == 5.0
+
+
+def test_steady_noise_outside_the_window_raises_the_threshold():
+    ls = fu.FollowUpListener(SR, window_s=5)
+    _run(ls, _blocks(0.03, 4.0))  # a TV at 0.03 before the window opens is learned as background
+    ls.arm(now=100.0)
+    assert _run(ls, _blocks(0.03, 3.0), t0=100.0) == []
+
+
 def test_barge_in_silences_the_interrupted_commands_later_speech(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "t.db"))
     import time
@@ -71,3 +93,28 @@ def test_barge_in_silences_the_interrupted_commands_later_speech(monkeypatch, tm
     finally:
         jarvis._command_ctx.started = None
     assert jarvis._speech_cancelled_since(time.monotonic()) is False  # later speech is unaffected
+
+
+def test_barge_in_before_the_first_streamed_chunk_is_not_replayed_over_rest(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "t.db"))
+    import time
+    import jarvis
+    played = []
+    monkeypatch.setattr(jarvis, "_sanitize_for_speech", lambda t: t)
+    monkeypatch.setattr(jarvis, "_tts_cache_peek", lambda s: None)
+    monkeypatch.setattr(jarvis, "_use_deepgram_tts_stream", lambda: True)
+
+    def stream(sentence, on_first_audio=None):
+        jarvis._interrupt_speech()  # the user pressed the key before any audio arrived
+        return False, b"", 0, "", False
+
+    monkeypatch.setattr(jarvis, "_speak_streamed", stream)
+    monkeypatch.setattr(jarvis, "_synthesize_and_cache", lambda s: (b"x", 16000, "rest"))
+    monkeypatch.setattr(jarvis, "_play_pcm_bytes", lambda raw, sr: played.append(raw))
+    monkeypatch.setattr(jarvis.sd, "stop", lambda: None)
+    jarvis._command_ctx.started = time.monotonic()
+    try:
+        jarvis.speak_text("A reply that is long enough to use the live streaming path here.")
+    finally:
+        jarvis._command_ctx.started = None
+    assert played == []

@@ -93,12 +93,21 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("greeting", re.compile(r"\A\s*(?:hi|hey|hello|hiya|yo)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
     ("thanks", re.compile(r"\A\s*(?:thanks|thank you|thx|ty)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
     # QOL pass (2026-09-23): handled in jarvis.py without (or with a rewritten) LLM call.
-    ("self_check", re.compile(r"\bself[- ]?check\b|\bdiagnostics?\b|\bhealth ?check\b|\bcheck yourself\b|\bare you (?:ok|okay|working)\b", re.I)),
+    # Anchored (audit 2026-09-23): "run diagnostics on my network" or "are you working on the
+    # report?" are real requests, not a self-check.
+    ("self_check", re.compile(r"\bself[- ]?check\b|\bcheck yourself\b"
+                              r"|\A\s*(?:jarvis,?\s*)?(?:(?:run|do)\s+(?:a\s+)?)?(?:diagnostics?|health ?check)(?: on yourself)?\W*\Z"
+                              r"|\A\s*(?:jarvis,?\s*)?are you (?:ok|okay|alright|working)(?:,?\s*jarvis)?\W*\Z", re.I)),
     ("repeat", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:repeat that|say that again|what did you say|come again|repeat)\W*\Z", re.I)),
     ("shorter", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:say that shorter|shorter|tl;?dr|summari[sz]e that|give me the short version|shorter please)\W*\Z", re.I)),
-    ("last_actions", re.compile(r"\bwhat (?:did|have) you (?:just )?(?:do|done)\b|\bwhat was the last thing you did\b", re.I)),
+    ("last_actions", re.compile(r"\A\s*(?:jarvis,?\s*)?what (?:did|have) you (?:just )?(?:do|done)"
+                                r"(?: just now| recently| lately| last| so far| today)?\W*\Z"
+                                r"|\bwhat was the last thing you did\b", re.I)),
     ("undo", re.compile(r"\A\s*(?:jarvis,?\s*)?undo(?: that| it| the last (?:thing|action)| what you (?:just )?did)?\W*\Z", re.I)),
-    ("timer", re.compile(r"\btimers?\b|\bstopwatch\b", re.I)),
+    # Short (<= 12 words) and not a coding question: "how do I write a python timer that stops
+    # after 5 seconds" must reach the agent loop, not set or cancel a real timer.
+    ("timer", re.compile(r"\A(?=(?:\S+\s+){0,11}\S+\s*\Z)(?!.*\b(?:how (?:do|to|does|can|would)|code|python|"
+                         r"script|function|program|write|explain)\b).*\b(?:timers?|stopwatch)\b", re.I)),
     ("time", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?time\b|\bcurrent time\b", re.I)),
     ("date", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?date\b|\bwhat day is it\b", re.I)),
     ("volume", re.compile(r"\bvolume\b|\b(?:mute|unmute)\b|\bturn (?:it |the sound )?(?:up|down)\b", re.I)),

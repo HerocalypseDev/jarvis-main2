@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from datetime import date
 
-log =logging.getLogger("jarvis.weather")
+log = logging.getLogger("jarvis.weather")
 
 TIMEOUT_S = 10
 _ip_location: dict | None = None
@@ -67,7 +67,10 @@ def _fmt_temp(c: float, unit: str) -> str:
 
 def weather_report(place: str = "", days: int = 1) -> str:
     unit = (os.environ.get("JARVIS_WEATHER_UNITS") or "c").strip().lower()[:1]
-    days = max(1, min(int(days or 1), 7))
+    try:
+        days = max(1, min(int(days or 1), 7))
+    except (TypeError, ValueError):
+        days = 1
     try:
         loc = resolve_location(place)
         if not loc:
@@ -81,17 +84,21 @@ def weather_report(place: str = "", days: int = 1) -> str:
     except Exception as e:
         log.warning("Weather lookup failed: %s", e)
         return f"I couldn't get the weather right now ({type(e).__name__})."
-    cur, daily = d.get("current") or {}, d.get("daily") or {}
-    parts = [f"In {loc['label']} it's {_fmt_temp(cur.get('temperature_2m', 0), unit)} and "
-             f"{_CODES.get(cur.get('weather_code'), 'unsettled')}, feels like "
-             f"{_fmt_temp(cur.get('apparent_temperature', 0), unit)}, wind {round(cur.get('wind_speed_10m', 0))} km/h."]
-    for i, day in enumerate((daily.get("time") or [])[:days]):
-        name = "Today" if i == 0 else ("Tomorrow" if i == 1 else date.fromisoformat(day).strftime("%A"))
-        rain = (daily.get("precipitation_probability_max") or [None] * days)[i]
-        parts.append(f"{name}: {_CODES.get(daily['weather_code'][i], 'mixed')}, "
-                     f"high {_fmt_temp(daily['temperature_2m_max'][i], unit)}, low {_fmt_temp(daily['temperature_2m_min'][i], unit)}"
-                     + (f", {rain}% chance of rain." if rain is not None else "."))
-    return " ".join(parts)
+    try:
+        cur, daily = d.get("current") or {}, d.get("daily") or {}
+        parts = [f"In {loc['label']} it's {_fmt_temp(cur.get('temperature_2m', 0), unit)} and "
+                 f"{_CODES.get(cur.get('weather_code'), 'unsettled')}, feels like "
+                 f"{_fmt_temp(cur.get('apparent_temperature', 0), unit)}, wind {round(cur.get('wind_speed_10m', 0))} km/h."]
+        for i, day in enumerate((daily.get("time") or [])[:days]):
+            name = "Today" if i == 0 else ("Tomorrow" if i == 1 else date.fromisoformat(day).strftime("%A"))
+            rain = (daily.get("precipitation_probability_max") or [None] * days)[i]
+            parts.append(f"{name}: {_CODES.get(daily['weather_code'][i], 'mixed')}, "
+                         f"high {_fmt_temp(daily['temperature_2m_max'][i], unit)}, low {_fmt_temp(daily['temperature_2m_min'][i], unit)}"
+                         + (f", {rain}% chance of rain." if rain is not None else "."))
+        return " ".join(parts)
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
+        log.warning("Unexpected weather response: %r", e)  # partial/changed API answer
+        return "The weather service sent back something I couldn't read."
 
 
 if __name__ == "__main__":

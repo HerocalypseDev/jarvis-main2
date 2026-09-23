@@ -20,7 +20,9 @@ log = logging.getLogger("jarvis.settings")
 
 _TRUE = ("1", "true", "yes", "on")
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
-_SECRET_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSCODE|PIN\b|_PIN|CREDENTIAL|COOKIE", re.I)
+# TOPIC/CHAT_ID: the ntfy topic name works like a password (anyone who knows it can send Jarvis
+# commands), and the Telegram chat id is only a little less sensitive.
+_SECRET_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSCODE|PIN\b|_PIN|CREDENTIAL|COOKIE|TOPIC|CHAT_ID", re.I)
 _lock = threading.Lock()
 JARVIS_MODULE = None  # set by jarvis.py at import
 
@@ -46,7 +48,9 @@ SETTINGS: list[dict] = [
      "help": "Lower if follow-ups never trigger; raise if background noise triggers them.",
      "live": ("jarvis_followup", "MIN_RMS", float)},
     {"key": "JARVIS_SELECTION_KEY", "label": "Selected-text hotkey", "kind": "text", "default": "",
-     "help": "Hold it and speak to act on selected text. Empty = off. Avoid Ctrl/Win/Alt/Shift: Jarvis sends Ctrl+C, which breaks chords like Ctrl+Win+Arrow.", "live": ("jarvis", "JARVIS_SELECTION_KEY", str)},
+     "help": "Hold it alone and speak to act on selected text. Empty = off. Right Ctrl works (shortcuts like "
+             "Ctrl+Win+Arrow are left alone); Shift/Alt/Win can't be used. A non-modifier key (e.g. f9) "
+             "repeats into the focused app while held.", "live": ("jarvis", "JARVIS_SELECTION_KEY", str)},
     {"key": "JARVIS_WEATHER_LOCATION", "label": "Weather location", "kind": "text", "default": "",
      "help": "Town for weather. Empty = work it out from your internet connection.", "live": "env"},
     {"key": "JARVIS_WEATHER_UNITS", "label": "Temperature units", "kind": "choice", "default": "c", "choices": ["c", "f"],
@@ -118,7 +122,7 @@ def _write_env_value(key: str, value: str) -> None:
             break
     else:
         lines.append(new_line)
-    tmp = path.with_suffix(".env.tmp")
+    tmp = path.with_name(path.name + ".tmp")  # .env.tmp, gitignored like .env
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
@@ -160,6 +164,9 @@ def set_setting(key: str, value: str) -> dict:
             float(value)
         except ValueError:
             return {"ok": False, "error": "That needs to be a number."}
+    if key == "JARVIS_SELECTION_KEY" and re.search(r"shift|alt|win|cmd|super|meta", value, re.I):
+        return {"ok": False, "error": "Shift, Alt and Win can't be the selection key (Jarvis presses Ctrl+C "
+                                      "with it held). Use a Ctrl key or a spare key like f9."}
     if spec and spec["kind"] == "bool":
         value = "1" if _bool(value) else "0"
     with _lock:

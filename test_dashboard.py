@@ -493,6 +493,17 @@ def test_settings_live_apply_updates_module_value(monkeypatch, tmp_path):
     monkeypatch.delenv("JARVIS_FOLLOWUP_S", raising=False)
 
 
+def test_settings_hide_phone_topics_and_refuse_modifier_selection_keys(client, monkeypatch, tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("NTFY_TOPIC=my-private-topic\nTELEGRAM_CHAT_ID=12345\n", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(env))
+    assert "my-private-topic" not in str(client.get("/api/settings").json())
+    assert "12345" not in str(client.get("/api/settings").json())
+    for bad in ("right shift", "left alt", "windows"):
+        assert client.post("/api/settings", json={"key": "JARVIS_SELECTION_KEY", "value": bad}).status_code == 400
+    assert not (tmp_path / ".env.tmp").exists()
+
+
 def test_settings_post_requires_local_origin(client, monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_ENV_PATH", str(tmp_path / ".env"))
     r = client.post("/api/settings", json={"key": "X_Y", "value": "1"}, headers={"Origin": "https://evil.example"})

@@ -124,7 +124,6 @@ function buildPalette() {
     if (e.key === "ArrowDown") { palette.sel = Math.min(palette.sel + 1, palette.items.length - 1); renderPalette(false); e.preventDefault(); }
     else if (e.key === "ArrowUp") { palette.sel = Math.max(palette.sel - 1, 0); renderPalette(false); e.preventDefault(); }
     else if (e.key === "Enter") { e.preventDefault(); runPalette(palette.items[palette.sel]?.text ?? palette.input.value); }
-    else if (e.key === "Escape") closePalette();
   });
   palette.list.addEventListener("click", (e) => {
     const li = e.target.closest("li");
@@ -173,11 +172,14 @@ async function runPalette(text) {
   if (!text) return;
   closePalette();
   try {
-    await fetch("/api/command", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    const res = await fetch("/api/command", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    if (!res.ok) alert(`Couldn't send the command (HTTP ${res.status}).`);
   } catch (e) { alert("Couldn't send the command: " + e); }
 }
 
 document.addEventListener("keydown", (e) => {
+  // Esc closes it wherever focus is (e.g. after clicking a pin button, focus leaves the input).
+  if (e.key === "Escape" && palette.el && !palette.el.classList.contains("hidden")) { closePalette(); return; }
   if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "k") {
     e.preventDefault();
     palette.el && !palette.el.classList.contains("hidden") ? closePalette() : openPalette();

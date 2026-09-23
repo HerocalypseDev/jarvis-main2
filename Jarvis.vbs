@@ -16,8 +16,10 @@ logPath = dir & "\jarvis_standalone.log"
 If fso.FileExists(logPath) Then
     If fso.GetFile(logPath).Size > 5242880 Then   ' keep the log from growing forever, but keep one old copy
         oldPath = dir & "\jarvis_standalone.old.log"
+        On Error Resume Next   ' log in use (Jarvis already running): skip rotating, no error popup
         If fso.FileExists(oldPath) Then fso.DeleteFile oldPath
         fso.MoveFile logPath, oldPath
+        On Error GoTo 0
     End If
 End If
 cmd = "cmd /c cd /d """ & dir & """ && """ & py & """ -u jarvis.py >> """ & logPath & """ 2>&1"
