@@ -664,3 +664,10 @@ p.consent-list { padding-left: 0; }
 .memory-actions { display: flex; gap: 6px; }
 .memory-old { opacity: .55; }
 .memory-edit-input { width: 100%; }
+
+/* Home health status (P4) */
+.health-status { margin-top: 10px; }
+.health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.health-dot.ok { background: var(--ok); }
+.health-dot.bad { background: var(--danger); }
+#safe-mode-btn.active { border-color: var(--warn); color: var(--warn); }

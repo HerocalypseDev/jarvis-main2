@@ -423,7 +423,9 @@ def set_setting(key: str, value: str) -> None:
 
 
 def hard_disabled() -> bool:
-    return _truthy(os.environ.get("JARVIS_AUTONOMY_DISABLED"))
+    # Safe mode (jarvis.py) pauses autonomy through this same kill switch, without touching the
+    # stored on/off setting: leaving safe mode resumes whatever that setting already was.
+    return _truthy(os.environ.get("JARVIS_AUTONOMY_DISABLED")) or _truthy(os.environ.get("JARVIS_SAFE_MODE"))
 
 
 def enabled() -> bool:

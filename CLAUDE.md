@@ -1213,6 +1213,20 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   because relationship facts with an email build the Sleep Mode family auto-reply list). Face data is a
   separate encrypted store and is never served here.
 
+- **P4 Safe mode + Home health** (`test_safe_mode.py`): `JARVIS_SAFE_MODE` (stored in `.env` via the
+  Settings code, so it survives restarts and shows on the Settings page). On = autonomy paused
+  **through its own kill switch** (`jarvis_autonomy.hard_disabled()` also reads `JARVIS_SAFE_MODE`; its
+  stored on/off setting is untouched, so leaving safe mode never "turns autonomy on" in the
+  dashboard-only sense), no follow-up window, non-urgent proactive speech held (`safe_mode: True` in
+  `pending_notifications`, released when it ends); urgent messages, PTT/typed/dashboard commands and the
+  catastrophic gate are unchanged. Voice: "safe mode on/off", "is safe mode on" (deterministic, works
+  with both brains down) + `safe_mode` tool. ON from anywhere; OFF only from voice/typed/dashboard.
+  Home Health block: `GET /api/health` (`health_report()`: brain/failover cooldown, Deepgram breakers,
+  disk, camera, autonomy state, held messages, pending confirmation, timers) polled every 30s on Home,
+  and a Safe mode button (`POST /api/safe_mode`, confirm dialog to turn on). `health_report` is on the
+  face gate-isolation allowlist (read-only). `jarvis_dashboard.providers` now survives
+  `importlib.reload` (test fixtures reload the module).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1280,7 +1294,8 @@ row there each phase rather than only stating the total in chat.
 | 43 (P0 briefing v2 + what's urgent: voice, tool, Home card, calendar-helper fix; 15 new tests) | Opus 5.5 | ~40 min | ~$3.00–$4.20 |
 | 44 (P1 appshot + P2 dictation: generic hold-mode path, mouse-click guard, image-in-agent-loop, settings; 7 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
 | 45 (P3 editable memory: Memory route, edit/forget/profile APIs, attended-only forget_fact; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
-| **Running total (final)** | | **~1673 min** | **~$82.25–$115.35** |
+| 46 (P4 safe mode + Home health card, provider registry reload fix; 4 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~1698 min** | **~$84.25–$118.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

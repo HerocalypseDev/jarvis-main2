@@ -38,7 +38,7 @@ DEFAULT_PORT = 8765
 # Callables jarvis.py registers for newer routes (briefing, memory, safe mode, timers...), looked up
 # at request time, so each new feature doesn't add another parameter to start()/_build_app().
 # A route whose provider isn't registered answers 501.
-providers: dict[str, Callable] = {}
+providers: dict[str, Callable] = globals().get("providers", {})  # kept across importlib.reload
 
 
 def _provider(name: str):
@@ -652,6 +652,14 @@ def _build_app(
     def api_profile_delete(key: str):
         ok = _provider("memory")["profile_delete"](key)
         return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+    @app.get("/api/health")
+    def api_health():
+        return JSONResponse(_provider("health")(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/safe_mode")
+    def api_safe_mode(payload: dict = Body(...)):
+        return {"result": _provider("safe_mode")(bool(payload.get("on")))}
 
     @app.get("/api/briefing")
     def api_briefing(kind: str = "urgent"):

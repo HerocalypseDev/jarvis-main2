@@ -1526,6 +1526,15 @@ AGENT_TOOLS = [
         },
     },
     {
+        "name": "safe_mode",
+        "description": (
+            "Safe mode: pauses autonomy, turns off the hands-free follow-up window and holds non-urgent "
+            "announcements; commands keep working. action on/off/status. Turning it off only works from the PC."
+        ),
+        "input_schema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["on", "off", "status"]}},
+                         "required": ["action"]},
+    },
+    {
         "name": "briefing",
         "description": (
             "The user's briefing, composed from real data (calendar, important unread mail, deadlines, "
@@ -3832,6 +3841,14 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Queued non-urgent notification (Sleep Mode active): %r", text)
         return
+    if safe_mode_on() and not urgent:
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds"), "safe_mode": True}
+            )
+            _save_session_context_locked()
+        log.info("Held non-urgent notification (safe mode): %r", text)
+        return
     if is_reminder and _reminders_held_now(urgent):
         forwarded = guest_reminders.should_forward()
         with _session_context_lock:
@@ -3882,9 +3899,12 @@ def flush_pending_notifications() -> None:
             keep_held and not guest_reminders.reminders_allowed()
         )
 
+        in_safe_mode = safe_mode_on()
+
         def _stays(i: dict) -> bool:
             return bool(
-                i.get("during_sleep")
+                (in_safe_mode and i.get("safe_mode"))
+                or i.get("during_sleep")
                 or (keep_held and i.get("group_safe"))
                 or (hold_reminders and i.get("reminder_hold"))
             )
@@ -4847,6 +4867,79 @@ def _autonomy_calendar_events(hours: int) -> str:
     return _calendar_events_raw(now, now + timedelta(hours=hours)) or ""
 
 
+# --- Safe mode (P4, 2026-09-23) -------------------------------------------------------------------
+# One switch for "something's off, calm everything down": autonomy paused (through its own kill
+# switch, jarvis_autonomy.hard_disabled), no hands-free follow-up window, and non-urgent proactive
+# speech held until safe mode ends. Push-to-talk, typed and dashboard commands work as normal, and
+# the catastrophic confirmation gate is exactly the same. Stored in .env (JARVIS_SAFE_MODE) through
+# the Settings code, so it survives a restart and shows on the Settings page.
+def safe_mode_on() -> bool:
+    return (os.environ.get("JARVIS_SAFE_MODE") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def safe_mode_status() -> str:
+    if not safe_mode_on():
+        return "Safe mode is off."
+    return ("Safe mode is on: autonomy is paused, the follow-up window is off and non-urgent "
+            "announcements are held. Commands work as normal.")
+
+
+def set_safe_mode(on: bool, source: str | None = None) -> str:
+    if not on and source not in ("voice", "text", "dashboard"):
+        return "Safe mode can only be turned off from the PC (voice, typed or the dashboard)."
+    if on == safe_mode_on():
+        return safe_mode_status()
+    res = settings.set_setting("JARVIS_SAFE_MODE", "1" if on else "0")
+    if not res.get("ok"):
+        return f"Couldn't change safe mode: {res.get('error')}"
+    if on:
+        followup.cancel()
+    dashboard.notify({"type": "safe_mode", "data": {"on": on}})
+    log.info("Safe mode %s (from %s).", "ON" if on else "OFF", source)
+    if not on:
+        threading.Thread(target=flush_pending_notifications, daemon=True).start()  # what was held
+        return "Safe mode is off. Autonomy and the follow-up window are back to their normal settings."
+    return safe_mode_status()
+
+
+def health_report() -> dict:
+    """Home health card: the moving parts that fail quietly (dashboard GET /api/health)."""
+    items: list[dict] = []
+
+    def add(name, ok, detail):
+        items.append({"name": name, "ok": bool(ok), "detail": detail})
+
+    provider = _llm_provider()
+    cool = _claude_in_cooldown()
+    add("Brain", not cool, f"{provider}" + (f", Claude skipped: {_llm_failover['last_reason']}" if cool else
+                                           (f", last failover: {_llm_failover['last_reason']}" if _llm_failover["last_reason"] else "")))
+    if stt_deepgram.DEEPGRAM_API_KEY or tts_deepgram.DEEPGRAM_API_KEY:
+        stt_ok, tts_ok = _dg_stt_breaker.allow(), _dg_tts_breaker.allow()
+        add("Deepgram", stt_ok and tts_ok, "ok" if stt_ok and tts_ok else
+            f"{'speech-to-text' if not stt_ok else 'voice'} paused after repeated failures (auto-retries in 2 min)")
+    try:
+        du = shutil.disk_usage(Path.home().anchor or "C:\\")
+        free = du.free * 100 // du.total
+        add("Disk", free >= 10, f"{free}% free")
+    except OSError:
+        pass
+    if face.enabled():
+        prob = face.health_problem()
+        add("Camera", not prob, prob or "ok")
+    add("Autonomy", True, ("paused (safe mode)" if safe_mode_on() else
+                           "on" + (" (dry run)" if autonomy.dry_run() else "") if autonomy.enabled() else "off"))
+    with _session_context_lock:
+        held = len(_session_context.get("pending_notifications") or [])
+    add("Held messages", held == 0, f"{held} waiting")
+    pending = _dashboard_get_pending()
+    add("Confirmation", pending is None, f"waiting: {pending.get('tool_name')}" if pending else "none")
+    with _timers_lock:
+        n_timers = len(_timers)
+    if n_timers:
+        add("Timers", True, f"{n_timers} running")
+    return {"safe_mode": safe_mode_on(), "items": items}
+
+
 # --- Morning briefing v2 / "what's urgent?" (jarvis_briefing.py) ---------------------------------
 def _briefing_fetchers(kind: str, now: datetime) -> dict:
     urgent = kind == "urgent"
@@ -4945,6 +5038,8 @@ def briefing_report(kind: str = "urgent") -> dict:
 
 
 dashboard.providers["briefing"] = briefing_report
+dashboard.providers["health"] = health_report
+dashboard.providers["safe_mode"] = lambda on: set_safe_mode(on, "dashboard")
 dashboard.providers["memory"] = {
     "list": list_memory, "add": remember_fact, "edit": edit_fact, "forget": forget_fact,
     "profile_set": set_user_profile_fact, "profile_delete": delete_profile_field,
@@ -7799,6 +7894,9 @@ def _execute_tool_impl(
                 result = "No text given."
         elif tool_name == "system_status":
             result = system_status() or "Couldn't read system status."
+        elif tool_name == "safe_mode":
+            act = str(inp.get("action") or "status").lower()
+            result = safe_mode_status() if act == "status" else set_safe_mode(act == "on", _current_command_source())
         elif tool_name == "briefing":
             result = briefing_report("morning" if inp.get("kind") == "morning" else "urgent")["speech"]
         elif tool_name == "self_check":
@@ -8952,6 +9050,12 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
     None for every other intent (caller falls through to the normal agent loop)."""
     if intent in ("briefing", "urgent"):
         return briefing_report("morning" if intent == "briefing" else "urgent")["speech"]
+    if intent == "safe_mode":
+        low = transcript.lower()
+        if re.search(r"\bstatus\b|\bis safe mode on\b", low):
+            return safe_mode_status()
+        off = bool(re.search(r"\b(off|disable|stop|exit|leave)\b", low))
+        return set_safe_mode(not off, _current_command_source())
     if intent == "self_check":
         return self_check_report()
     if intent == "repeat":
@@ -9210,7 +9314,7 @@ def _handle_voice_command_impl(
         _command_ctx.hands_free = False
         _command_ctx.attach_image = None
         latency.end()
-    if not _speech_cancelled_since(started):  # not after a barge-in: the user is already talking
+    if not _speech_cancelled_since(started) and not safe_mode_on():  # not after a barge-in / in safe mode
         followup.arm(chained=hands_free)
 
 

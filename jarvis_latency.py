@@ -97,6 +97,9 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
                             r"(?:,?\s*jarvis)?\W*\Z", re.I)),
     ("urgent", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:what(?:'s| is) urgent|anything urgent|what needs me|what needs my attention"
                           r"|what do i need to (?:know|do)(?: today| now)?)(?:,?\s*jarvis)?\W*\Z", re.I)),
+    ("safe_mode", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:(?:turn|switch|put)\s+(?:on|off|me in|into)?\s*safe mode(?:\s+(?:on|off))?"
+                             r"|(?:enable|disable|start|stop|exit|leave|enter)\s+safe mode|safe mode(?:\s+(?:on|off|status))?"
+                             r"|is safe mode on)\W*\Z", re.I)),
     # QOL pass (2026-09-23): handled in jarvis.py without (or with a rewritten) LLM call.
     # Anchored (audit 2026-09-23): "run diagnostics on my network" or "are you working on the
     # report?" are real requests, not a self-check.

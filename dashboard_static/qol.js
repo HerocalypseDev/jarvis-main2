@@ -309,3 +309,35 @@ document.getElementById("memory-search")?.addEventListener("input", renderMemory
 document.getElementById("memory-history")?.addEventListener("change", refreshMemory);
 window.refreshMemory = refreshMemory;
 if (typeof currentRoute === "function" && currentRoute() === "memory") refreshMemory();
+
+// --- Home health status + safe mode (P4): GET /api/health, POST /api/safe_mode -------------------
+let healthSafe = false;
+async function refreshHealth() {
+  const list = document.getElementById("home-health-status");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/health", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const h = await res.json();
+    healthSafe = !!h.safe_mode;
+    const btn = document.getElementById("safe-mode-btn");
+    btn.textContent = `Safe mode: ${healthSafe ? "on" : "off"}`;
+    btn.setAttribute("aria-pressed", String(healthSafe));
+    btn.classList.toggle("active", healthSafe);
+    list.innerHTML = h.items.map((i) => `<li class="list-item compact"><span class="health-dot ${i.ok ? "ok" : "bad"}" aria-hidden="true"></span>
+      <span class="tool">${esc(i.name)}</span> <span class="muted">${esc(i.detail)}</span></li>`).join("");
+  } catch (e) {
+    list.innerHTML = `<li class="muted">Couldn't load health: ${esc(String(e))}</li>`;
+  }
+}
+document.getElementById("safe-mode-btn")?.addEventListener("click", async () => {
+  const turnOn = !healthSafe;
+  if (turnOn && !confirm("Turn on safe mode? Autonomy pauses, the follow-up window turns off and non-urgent announcements are held. Commands still work.")) return;
+  try {
+    await fetch("/api/safe_mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: turnOn }) });
+  } catch (e) { alert("Couldn't change safe mode: " + e); }
+  refreshHealth();
+});
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshHealth(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshHealth();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshHealth(); }, 30000);
