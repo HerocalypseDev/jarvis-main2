@@ -603,3 +603,46 @@ p.consent-list { padding-left: 0; }
 .auto-card { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
 .auto-form { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .auto-form input, .auto-form select { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
+
+/* Settings view (QOL pass) */
+.settings-h { font-size: 0.95em; color: var(--text-muted); margin: 18px 0 6px; font-weight: 600; }
+.settings-list { display: flex; flex-direction: column; gap: 6px; }
+.setting-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 240px) 150px; gap: 12px; align-items: center;
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; background: var(--bg-panel); }
+.setting-label { color: var(--text); }
+.setting-help { color: var(--text-muted); font-size: 0.82em; margin-top: 2px; }
+.setting-applies { opacity: 0.8; }
+.setting-control input[type=text], .setting-control input[type=number], .setting-control input[type=password],
+.setting-control select, .settings-add input {
+  width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; }
+.setting-control input:focus-visible, .setting-control select:focus-visible, .settings-add input:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: 1px; }
+.setting-status { font-size: 0.82em; color: var(--text-muted); }
+.setting-status.ok { color: var(--ok); }
+.setting-status.err { color: var(--danger); }
+.settings-add { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+.settings-add input { width: auto; flex: 1 1 180px; }
+.mono { font-family: ui-monospace, Consolas, monospace; }
+.switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; background: var(--border); border-radius: 22px; cursor: pointer; transition: background 0.15s; }
+.switch span::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: var(--text); border-radius: 50%; transition: transform 0.15s; }
+.switch input:checked + span { background: var(--cyan-dim); }
+.switch input:checked + span::before { transform: translateX(18px); background: var(--cyan); }
+.switch input:focus-visible + span { outline: 2px solid var(--cyan); outline-offset: 2px; }
+@media (max-width: 700px) { .setting-row { grid-template-columns: 1fr; } }
+
+/* Command palette (Ctrl+K) */
+.palette-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; justify-content: center;
+  align-items: flex-start; padding-top: 12vh; z-index: 1000; }
+.palette-backdrop.hidden { display: none; }
+.palette { width: min(640px, calc(100vw - 32px)); background: var(--bg-panel); border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius); box-shadow: var(--glow); overflow: hidden; }
+.palette-input { width: 100%; background: var(--bg); color: var(--text); border: 0; border-bottom: 1px solid var(--border);
+  padding: 12px 14px; font-size: 1em; outline: none; }
+.palette-list { list-style: none; margin: 0; padding: 4px 0; max-height: 50vh; overflow-y: auto; }
+.palette-list li { display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; }
+.palette-list li.sel { background: var(--bg-panel-alt); box-shadow: inset 2px 0 0 var(--cyan); }
+.palette-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-list .pin { background: none; border: 0; color: var(--warn); cursor: pointer; font-size: 1em; }
+.palette-foot { padding: 6px 14px; border-top: 1px solid var(--border); }

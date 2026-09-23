@@ -85,6 +85,9 @@ import jarvis_tts_deepgram as tts_deepgram
 import jarvis_latency as latency
 import jarvis_followup
 import jarvis_weather as weather
+import jarvis_settings as settings
+
+settings.JARVIS_MODULE = sys.modules[__name__]
 
 # --- tuning knobs -----------------------------------------------------------
 SAMPLE_RATE = 44100

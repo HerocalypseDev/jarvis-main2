@@ -17,6 +17,7 @@
   <div id="llm-chip" class="input-mode-chip llm-chip" title="Which AI brain answers — click to switch">brain: &hellip;</div>
   <div id="spend-chip" class="input-mode-chip spend-chip" title="Estimated Claude spend today (Jarvis only) — click for details">$&ndash; today</div>
   <div class="services-dropdown">
+    <button class="btn btn-ghost" id="palette-btn" title="Command palette (Ctrl+K)">&#8984; Ctrl+K</button>
     <button class="btn btn-ghost" id="services-toggle-btn">Services &#9662;</button>
     <div id="services-panel" class="services-panel hidden">
       <p class="muted">Loading&hellip;</p>
@@ -41,6 +42,7 @@
       <a href="#/audit" data-route="audit" class="nav-link"><span class="nav-icon">&#128269;</span><span class="nav-label">Audit Trail</span></a>
       <a href="#/victory" data-route="victory" class="nav-link"><span class="nav-icon">&#10003;</span><span class="nav-label">Victory Log</span></a>
       <a href="#/daily" data-route="daily" class="nav-link"><span class="nav-icon">&#8635;</span><span class="nav-label">Daily</span></a>
+      <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></a>
     </nav>
   </aside>
 
@@ -190,6 +192,21 @@
       <div class="view-head"><h1 class="view-title">Daily</h1></div>
       <ul id="daily-list" class="list compact"></ul>
     </section>
+
+    <section id="view-settings" class="view">
+      <div class="view-head"><h1 class="view-title">Settings</h1></div>
+      <p class="muted">Changes are saved to <span class="mono">.env</span>. Most apply immediately; the rest say "restart".</p>
+      <h2 class="settings-h">Common</h2>
+      <div id="settings-known" class="settings-list"></div>
+      <h2 class="settings-h">Everything else in .env</h2>
+      <div id="settings-other" class="settings-list"></div>
+      <form id="settings-add-form" class="settings-add">
+        <input id="settings-add-key" placeholder="NEW_SETTING_NAME" autocomplete="off" required aria-label="Setting name">
+        <input id="settings-add-value" placeholder="value" autocomplete="off" aria-label="Setting value">
+        <button class="btn" type="submit">Add / update</button>
+        <span id="settings-add-status" class="muted" aria-live="polite"></span>
+      </form>
+    </section>
   </main>
 
   <aside id="context" class="context-panel">
@@ -204,5 +221,6 @@
 
 <script src="app.js"></script>
 <script src="autonomy.js"></script>
+<script src="qol.js"></script>
 </body>
 </html>

@@ -104,6 +104,25 @@ def start_session(source: str, transcript: str) -> int | None:
         return None
 
 
+def recent_commands(limit: int = 50) -> list[dict]:
+    """Distinct past commands, most recent first, for the command palette (Ctrl+K)."""
+    try:
+        with _db_lock:
+            conn = _connect()
+            try:
+                rows = conn.execute(
+                    "SELECT transcript, COUNT(*) AS n, MAX(started_at) AS last FROM dashboard_sessions "
+                    "WHERE length(transcript) <= 300 GROUP BY transcript ORDER BY last DESC LIMIT ?",
+                    (max(1, min(int(limit), 200)),),
+                ).fetchall()
+            finally:
+                conn.close()
+    except sqlite3.Error as e:
+        log.warning("recent_commands failed: %s", e)
+        return []
+    return [{"text": t, "count": n, "last": last} for t, n, last in rows]
+
+
 def clear_finished_sessions() -> int:
     """Deletes every session that isn't currently 'active' — the dashboard's "Clear finished"
     button. Returns how many rows were removed."""
@@ -580,6 +599,22 @@ def _build_app(
             log.warning("Audit query failed: %s", e)
             rows = []
         return {"rows": rows, "limit": limit, "offset": offset}
+
+    @app.get("/api/commands/recent")
+    def api_recent_commands(limit: int = 50) -> dict:
+        return {"commands": recent_commands(limit)}
+
+    @app.get("/api/settings")
+    def api_settings():
+        import jarvis_settings
+        return JSONResponse(jarvis_settings.list_settings(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/settings")
+    def api_set_setting(payload: dict = Body(...)):
+        # Writes .env + applies live where possible. Secret values are write-only (never echoed).
+        import jarvis_settings
+        res = jarvis_settings.set_setting(str((payload or {}).get("key") or ""), (payload or {}).get("value"))
+        return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
     @app.get("/api/services")
     def api_services() -> dict:

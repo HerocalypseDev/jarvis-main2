@@ -5,7 +5,7 @@ const state = { data: null, followedSessionId: null };
 // no history API, no nested routes — this is a supervision dashboard, not a SPA framework demo.
 const ROUTES = [
   "home", "sessions", "tasks", "autonomy", "identity", "sleep",
-  "usage", "activity", "audit", "victory", "daily",
+  "usage", "activity", "audit", "victory", "daily", "settings",
 ];
 // Routes that have somewhere to click *into* more detail — Autonomy/Identity/Sleep/Usage/
 // Victory/Daily each already show everything inline and want the full width instead (see
@@ -31,6 +31,7 @@ function onRouteActivated(route) {
   if (route === "sleep") fetchSleep();
   if (route === "identity") fetchIdentity();
   if (route === "autonomy" && window.refreshAutonomy) window.refreshAutonomy();
+  if (route === "settings" && window.refreshSettings) window.refreshSettings();
   syncContextVisibility();
 }
 

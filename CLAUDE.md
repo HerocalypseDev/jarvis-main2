@@ -1090,6 +1090,25 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   (sentinel value detects "nothing selected"), restores the user's clipboard, and `_with_selection`
   appends the text (<= 20k chars, framed as data, not instructions) to the transcript. Unit-tested
   with faked keyboard/clipboard; **not tried live** (needs a real selection in a real app).
+- **Dashboard Settings route** (`#/settings`, `dashboard_static/qol.js`, `jarvis_settings.py`,
+  `GET/POST /api/settings`): a curated list of common options (smart model/effort, failover,
+  follow-up window/sensitivity, selection hotkey, weather, phone push, voice/STT engine, LLM speech
+  streaming, hotkeys, face) plus every other `.env` key. Writes go to `.env` (atomic replace, other
+  lines untouched) and `os.environ`; settings held in a module variable are pushed into it so they
+  apply immediately (`jarvis_settings.JARVIS_MODULE` is set by jarvis.py itself, because it runs as
+  `__main__`); the rest say "restart". Secret-looking keys (KEY/TOKEN/SECRET/PASSWORD/PIN...) are
+  write-only: the browser only ever sees "set / not set". Risk review (double-check protocol):
+  security - covered by the existing Host/Origin middleware (POST from another site -> 403, tested),
+  single-line values only (no `
+` injection of extra keys); cost - none; data exposure - no secret
+  values leave the server; irreversibility - edits `.env` in place, no backup (a wrong value is fixed
+  by editing it again); performance - none. Any key may be written, by the user's full-permission
+  decision.
+- **Command palette** (Ctrl+K, or the top-bar button): `GET /api/commands/recent` (distinct past
+  transcripts from `dashboard_sessions`, most recent first, with counts); Enter runs through the
+  existing `POST /api/command` (same pipeline and gate as the compose box); pins are per-browser
+  `localStorage`. Verified in headless Chromium against a preview server: settings render, a change
+  saves to the file, the palette lists and filters, no console errors, no horizontal scroll at 390px.
 - Logs: `_cleanup_old_logs()` at startup deletes project-folder `*.log` older than 14 days (never
   `jarvis_standalone.log`); `Jarvis.vbs` now rotates that log to `jarvis_standalone.old.log` at 5 MB
   instead of deleting it.
@@ -1160,7 +1179,8 @@ row there each phase rather than only stating the total in chat.
 | 38 (browser automation switched to Opera GX, local config only) | Opus 5.5 | ~5 min | ~$0.20–$0.35 |
 | 39 (layered memory: per-command relevant-fact retrieval + guarded auto fact extraction; 2 new tests) | Opus 5.5 | ~20 min | ~$1.00–$1.50 |
 | 40 (Sonnet 5 routing for hard commands, Context7 + Windows-MCP (UI-only whitelist), catastrophic gate extended to MCP tools; 3 new tests) | Opus 5.5 | ~30 min | ~$1.80–$2.60 |
-| **Running total (final)** | | **~1423 min** | **~$64.85–$90.95** |
+| 41 (QOL pass: Gemini failover, self-check, timers, repeat/shorter, last actions/undo, log cleanup, barge-in, follow-up window, weather, selection hotkey, dashboard Settings + Ctrl+K palette; 31 new tests) | Opus 5.5 | ~110 min | ~$6.50–$9.00 |
+| **Running total (final)** | | **~1533 min** | **~$71.35–$99.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

@@ -443,3 +443,65 @@ def test_sleep_endpoint_empty_wired_and_exception_safe(client, dashboard):
     with TestClient(dashboard._build_app(get_sleep=boom), base_url="http://127.0.0.1:8765") as c:
         r = c.get("/api/sleep")
         assert r.status_code == 200 and r.json() == {"sleep": None}
+
+
+# --- QOL pass (2026-09-23): Settings + command palette ------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _private_environ(monkeypatch):
+    # set_setting writes os.environ directly; give each test a throwaway copy so nothing leaks
+    # into later tests (a leaked JARVIS_WEATHER_UNITS=f broke test_qol's weather test once).
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+
+
+def test_settings_list_masks_secrets_and_set_writes_env(client, monkeypatch, tmp_path):
+    import jarvis_settings
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=sk-real-secret\nJARVIS_WEATHER_UNITS=c\nMY_FLAG=hello\n", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(env))
+    monkeypatch.delenv("JARVIS_WEATHER_UNITS", raising=False)
+    monkeypatch.delenv("MY_FLAG", raising=False)
+    data = client.get("/api/settings").json()
+    assert "sk-real-secret" not in str(data)  # secrets are never sent to the browser
+    other = {o["key"]: o for o in data["other"]}
+    assert other["ANTHROPIC_API_KEY"] == {"key": "ANTHROPIC_API_KEY", "secret": True, "set": True, "value": None}
+    assert other["MY_FLAG"]["value"] == "hello"
+    r = client.post("/api/settings", json={"key": "JARVIS_WEATHER_UNITS", "value": "f"})
+    assert r.status_code == 200 and r.json()["applies"] == "now"
+    assert "JARVIS_WEATHER_UNITS=f" in env.read_text() and os.environ["JARVIS_WEATHER_UNITS"] == "f"
+    assert "ANTHROPIC_API_KEY=sk-real-secret" in env.read_text()  # other lines untouched
+    assert client.post("/api/settings", json={"key": "JARVIS_WEATHER_UNITS", "value": "kelvin"}).status_code == 400
+    assert client.post("/api/settings", json={"key": "bad key", "value": "x"}).status_code == 400
+    assert client.post("/api/settings", json={"key": "MY_FLAG", "value": "a\nEVIL=1"}).status_code == 400
+    r = client.post("/api/settings", json={"key": "NEW_THING", "value": "42"})
+    assert r.json()["applies"] == "restart" and "NEW_THING=42" in env.read_text()
+    monkeypatch.delenv("NEW_THING", raising=False)
+
+
+def test_settings_live_apply_updates_module_value(monkeypatch, tmp_path):
+    import types
+    import jarvis_settings
+    env = tmp_path / ".env"
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(env))
+    fake = types.SimpleNamespace(SMART_MODEL="claude-sonnet-5", followup=types.SimpleNamespace(window_s=5.0))
+    monkeypatch.setattr(jarvis_settings, "JARVIS_MODULE", fake)
+    assert jarvis_settings.set_setting("JARVIS_SMART_MODEL", "")["applies"] == "now"
+    assert fake.SMART_MODEL == ""
+    jarvis_settings.set_setting("JARVIS_FOLLOWUP_S", "0")
+    assert fake.followup.window_s == 0.0
+    monkeypatch.delenv("JARVIS_SMART_MODEL", raising=False)
+    monkeypatch.delenv("JARVIS_FOLLOWUP_S", raising=False)
+
+
+def test_settings_post_requires_local_origin(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(tmp_path / ".env"))
+    r = client.post("/api/settings", json={"key": "X_Y", "value": "1"}, headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+
+
+def test_recent_commands_for_palette(client, dashboard):
+    for t in ("what's the weather", "open youtube", "what's the weather"):
+        dashboard.start_session("text", t)
+    cmds = client.get("/api/commands/recent").json()["commands"]
+    assert [c["text"] for c in cmds][:2] == ["what's the weather", "open youtube"]
+    assert cmds[0]["count"] == 2
