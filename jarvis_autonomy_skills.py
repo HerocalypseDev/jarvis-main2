@@ -38,7 +38,7 @@ FORBIDDEN_TOOLS = frozenset({"autonomy_skill"})           # no recursion / self-
 # PIN), sends messages, writes files, calls arbitrary HTTP (auth headers), or changes Jarvis itself.
 NEVER_MINED = frozenset({
     "run_shell", "run_python", "system_action", "set_plan", "type_text", "click_at", "drag_and_drop", "scroll_screen",
-    "read_clipboard", "http_request", "send_whatsapp_message", "write_file", "set_llm_provider", "enroll_face",
+    "read_clipboard", "http_request", "write_file", "set_llm_provider", "enroll_face",
     "delete_face", "face_privacy", "restart_jarvis", "change_jarvis_code", "delegate_to_claude_code",
     "delegate_research", "save_skill", "remember_fact", "create_tool", "manage_dynamic_tool",
 })

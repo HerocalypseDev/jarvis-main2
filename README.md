@@ -112,7 +112,7 @@ Named tools (more reliable — Claude prefers these when one fits):
 | "drag from 100, 100 to 400, 400" | Drag-and-drop (`drag_and_drop`) — fires immediately, no confirmation |
 | "scroll down" | Scroll at cursor or explicit coordinates (`scroll_screen`) |
 | "focus the notepad window" | Brings a window forward by title substring (`focus_window`) |
-| "send a whatsapp message to X saying Y" | WhatsApp Desktop UI automation (`send_whatsapp_message`) — **fires immediately, no confirmation.** See warning below. |
+| "send a whatsapp message to X saying Y" | Driven through the Windows-MCP UI tools (search, snapshot, verify the chat header matches, then send). The old fixed-coordinate `send_whatsapp_message` tool was removed after it sent a message to the wrong contact. |
 | "find large files" | Recursive, **read-only** disk scan (`scan_large_files`) |
 
 General-purpose tools (the escape hatch for anything not covered above — **full system access, no sandbox, no confirmation except the catastrophic tier above**):
@@ -126,8 +126,6 @@ General-purpose tools (the escape hatch for anything not covered above — **ful
 | `http_request` | Makes an arbitrary HTTP request to any URL |
 
 **A note on `click_at`/`drag_and_drop`:** a click is not reversible or inert — it's the same as you clicking that spot yourself, so it can trigger anything under the cursor (a "Delete" button, a dialog, a link). Use with that in mind, especially with `MIN_RMS`/transcription accuracy in a noisy room.
-
-**A stronger warning on `send_whatsapp_message`:** the riskiest named tool. It uses fixed-coordinate UI automation (`WHATSAPP_SEARCH_POS`/`WHATSAPP_FIRST_RESULT_POS`/`WHATSAPP_MESSAGE_BOX_POS` in `jarvis.py`, calibrated for a maximized window on a 1920x1080 display) to search WhatsApp Desktop's contact list by name and click the *first* search result — there's no way to verify that's actually the contact you meant, and unlike `type_text`, a sent message can't be un-sent. Only use it when you're confident about both the contact name and the exact message.
 
 **Audit log:** every tool call — successful, failed, or staged for confirmation — is recorded to an `action_audit` table in `jarvis_memory.db` (timestamp, transcript, tool name, input, result). Nothing reads it back automatically yet; query it directly with `sqlite3 jarvis_memory.db "select * from action_audit order by id desc limit 20"` if you want to see what Jarvis has actually done.
 

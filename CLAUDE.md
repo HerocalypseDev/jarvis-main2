@@ -1047,6 +1047,11 @@ Both live in the gitignored local `mcp_servers.json`, installed pinned (not `@la
   (open Run box, type something harmless-looking, press Enter) is not caught. With full auto-act
   autonomy, a prompt-injected email could drive these UI tools; accepted by the user when asking for it.
   Test: `test_hardening.py::test_mcp_tool_text_goes_through_catastrophic_gate`.
+- **`send_whatsapp_message` removed (2026-09-23, user request)**: it clicked fixed screen coordinates
+  after fixed sleeps and sent "Hi" to the wrong contact when search results were slow. WhatsApp now
+  goes through the Windows-MCP tools; the stable system prompt tells the model to Wait/Snapshot after
+  searching, click the result that matches by name, and check the chat header before typing (stop if
+  it doesn't match). Prompt-level, so not deterministic — **not verified live**.
 
 ## QOL pass (2026-09-23)
 
