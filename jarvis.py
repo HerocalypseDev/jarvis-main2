@@ -3152,6 +3152,21 @@ def _collapse_paths_for_speech(text: str) -> str:
     return collapsed
 
 
+_FULL_SPEECH_RE = re.compile(
+    r"\b(?:in (?:full |great )?detail|in depth|detailed|thorough(?:ly)?|step by step|full (?:answer|explanation|version)"
+    r"|explain (?:it |this |that )?(?:fully|properly|everything|all of it)|(?:read|say) (?:it|the whole thing|everything|all of it)"
+    r"|(?:don't|do not|no) summar(?:i[sz]e|y))\b", re.I)
+
+
+def _wants_full_speech(transcript: str) -> bool:
+    """Read the whole reply aloud instead of the one-or-two-sentence spoken summary: when the user asks
+    for detail in this command ("explain X in detail", "don't summarize"), or chose detailed replies
+    ("be more detailed from now on" -> JARVIS_REPLY_STYLE=detailed)."""
+    if (os.environ.get("JARVIS_REPLY_STYLE") or "").strip().lower() == "detailed":
+        return True
+    return bool(_FULL_SPEECH_RE.search((transcript or "").split(SELECTION_TAG)[0].split(APPSHOT_TAG)[0]))
+
+
 def _summarize_for_speech(text: str) -> str:
     """Shortens a reply for Piper to speak — the dashboard still shows `text` in full via
     action_audit/dashboard_sessions, this only affects what comes out of the speakers. Skipped
@@ -9487,7 +9502,8 @@ def _handle_text_command_impl(
             if not reply_already_spoken_via_stream():
                 # The briefing's speech is already composed and length-capped for listening;
                 # summarizing it again would cut it to a sentence.
-                spoken = reply if intent in ("briefing", "urgent") else _summarize_for_speech(reply)
+                spoken = (reply if intent in ("briefing", "urgent") or _wants_full_speech(transcript)
+                          else _summarize_for_speech(reply))
                 speak_text(_collapse_paths_for_speech(spoken))
 
 

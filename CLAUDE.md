@@ -1266,6 +1266,11 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
     saved window layouts, evening wind-down, crash-recovery line, weekly git changelog, a separate
     deadline radar (autonomy already intervenes at 24 h / 2 h / overdue, and the briefing lists them).
 
+- **Full spoken answers on request (2026-09-23)**: `_wants_full_speech(transcript)` skips
+  `_summarize_for_speech` (which otherwise cuts any reply over 220 chars to 1-2 spoken sentences) when
+  the command asks for detail ("in detail", "in depth", "step by step", "explain it fully", "read it
+  all", "don't summarize"...) or `JARVIS_REPLY_STYLE=detailed` ("be more detailed from now on").
+  Test in `test_chief.py`.
 - **Voice tab (2026-09-23)** (`jarvis_voice_usage.py`, `dashboard_static/voice.js`, `test_voice_usage.py`):
   sidebar route `#/voice` showing how much text Jarvis speaks (TTS) and how much of your speech it
   transcribes (STT). New `voice_usage` table (ts, kind tts|stt, engine, chars, words, audio_s, cached;

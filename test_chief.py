@@ -131,3 +131,23 @@ def test_latency_route(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.latency, "recent", lambda n=20: [{"e2e_ms": 900}])
     client = TestClient(jarvis.dashboard._build_app(), base_url="http://127.0.0.1:8765")
     assert client.get("/api/latency").json() == {"recent": [{"e2e_ms": 900}]}
+
+
+def test_asking_for_detail_reads_the_whole_reply(jarvis, monkeypatch):
+    spoken = []
+    long_reply = "Here is everything the search found. " * 20
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: spoken.append(t))
+    monkeypatch.setattr(jarvis, "_summarize_for_speech", lambda t: "short summary")
+    monkeypatch.setattr(jarvis, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis, "_append_history", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis.autonomy, "after_turn", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis.autonomy, "enabled", lambda: False)
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+    monkeypatch.setattr(jarvis, "run_agent_loop", lambda *a, **k: long_reply)
+    jarvis.handle_text_command("look up black holes", source="text")
+    jarvis.handle_text_command("explain black holes in detail", source="text")
+    jarvis.handle_text_command("search for black holes and don't summarize", source="text")
+    assert spoken == ["short summary", long_reply, long_reply]
+    monkeypatch.setenv("JARVIS_REPLY_STYLE", "detailed")  # "be more detailed from now on"
+    jarvis.handle_text_command("look up black holes", source="text")
+    assert spoken[-1] == long_reply
