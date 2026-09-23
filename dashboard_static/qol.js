@@ -186,3 +186,35 @@ document.addEventListener("keydown", (e) => {
   }
 });
 document.getElementById("palette-btn")?.addEventListener("click", openPalette);
+
+// --- Home briefing card (briefing v2): GET /api/briefing, composed server-side from real data ---
+let briefingKind = "urgent";
+let briefingBusy = false;
+async function refreshBriefing() {
+  const el = document.getElementById("home-briefing");
+  if (!el || briefingBusy) return;
+  briefingBusy = true;
+  try {
+    const res = await fetch(`/api/briefing?kind=${briefingKind}`, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const b = await res.json();
+    el.innerHTML = b.sections.length
+      ? b.sections.map((s) => `<div class="briefing-section"><div class="briefing-title">${esc(s.title)}</div>
+          <ul class="list compact">${s.items.map((i) => `<li class="list-item compact">${esc(i)}</li>`).join("")}</ul></div>`).join("")
+        + `<p class="muted briefing-time">Updated ${esc(b.generated_at.slice(11, 16))}</p>`
+      : `<p class="empty-state">Nothing needs you right now.</p>`;
+  } catch (e) {
+    el.innerHTML = `<p class="muted">Couldn't load the briefing: ${esc(String(e))}</p>`;
+  } finally {
+    briefingBusy = false;
+  }
+}
+document.querySelectorAll(".briefing-kind").forEach((btn) => btn.addEventListener("click", () => {
+  document.querySelectorAll(".briefing-kind").forEach((b) => b.classList.toggle("active", b === btn));
+  briefingKind = btn.dataset.kind;
+  refreshBriefing();
+}));
+document.getElementById("briefing-refresh")?.addEventListener("click", refreshBriefing);
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshBriefing(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshBriefing();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshBriefing(); }, 10 * 60 * 1000);

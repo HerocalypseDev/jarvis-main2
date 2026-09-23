@@ -516,3 +516,15 @@ def test_recent_commands_for_palette(client, dashboard):
     cmds = client.get("/api/commands/recent").json()["commands"]
     assert [c["text"] for c in cmds][:2] == ["what's the weather", "open youtube"]
     assert cmds[0]["count"] == 2
+
+
+def test_briefing_route_uses_registered_provider(client, monkeypatch):
+    import jarvis_dashboard
+    monkeypatch.setattr(jarvis_dashboard, "providers", {})
+    assert client.get("/api/briefing").status_code == 501
+    seen = []
+    monkeypatch.setitem(jarvis_dashboard.providers, "briefing",
+                        lambda kind: seen.append(kind) or {"kind": kind, "sections": [], "speech": "ok"})
+    assert client.get("/api/briefing?kind=morning").json()["kind"] == "morning"
+    assert client.get("/api/briefing?kind=anything").json()["kind"] == "urgent"
+    assert client.get("/api/briefing", headers={"Host": "evil.example"}).status_code == 403

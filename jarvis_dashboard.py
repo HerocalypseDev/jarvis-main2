@@ -34,6 +34,19 @@ from typing import Callable
 log = logging.getLogger("jarvis.dashboard")
 
 DEFAULT_PORT = 8765
+
+# Callables jarvis.py registers for newer routes (briefing, memory, safe mode, timers...), looked up
+# at request time, so each new feature doesn't add another parameter to start()/_build_app().
+# A route whose provider isn't registered answers 501.
+providers: dict[str, Callable] = {}
+
+
+def _provider(name: str):
+    fn = providers.get(name)
+    if fn is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=501, detail=f"{name} is not available")
+    return fn
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
 
 _db_lock = threading.Lock()
@@ -599,6 +612,12 @@ def _build_app(
             log.warning("Audit query failed: %s", e)
             rows = []
         return {"rows": rows, "limit": limit, "offset": offset}
+
+    @app.get("/api/briefing")
+    def api_briefing(kind: str = "urgent"):
+        # Read-only; fetches calendar/mail through the same MCP tools the agent uses.
+        return JSONResponse(_provider("briefing")("morning" if kind == "morning" else "urgent"),
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/api/commands/recent")
     def api_recent_commands(limit: int = 50) -> dict:

@@ -50,6 +50,17 @@
     <section id="view-home" class="view">
       <div class="view-head"><h1 class="view-title">Home</h1></div>
       <div id="home-alerts" class="home-alerts"></div>
+      <div class="home-block home-briefing">
+        <div class="briefing-head">
+          <h3 class="block-title">Briefing</h3>
+          <div class="briefing-controls">
+            <button class="btn btn-ghost briefing-kind active" data-kind="urgent" type="button">What's urgent</button>
+            <button class="btn btn-ghost briefing-kind" data-kind="morning" type="button">Full briefing</button>
+            <button class="btn btn-ghost" id="briefing-refresh" type="button" title="Refresh">&#8635;</button>
+          </div>
+        </div>
+        <div id="home-briefing" aria-live="polite"><p class="muted">Loading&hellip;</p></div>
+      </div>
       <div class="home-grid">
         <div class="home-block">
           <h3 class="block-title">Health</h3>

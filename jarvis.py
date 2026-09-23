@@ -85,6 +85,7 @@ import jarvis_tts_deepgram as tts_deepgram
 import jarvis_latency as latency
 import jarvis_followup
 import jarvis_weather as weather
+import jarvis_briefing as briefing
 import jarvis_settings as settings
 
 settings.JARVIS_MODULE = sys.modules[__name__]
@@ -1504,6 +1505,15 @@ AGENT_TOOLS = [
                 "days": {"type": "integer", "minimum": 1, "maximum": 7},
             },
         },
+    },
+    {
+        "name": "briefing",
+        "description": (
+            "The user's briefing, composed from real data (calendar, important unread mail, deadlines, "
+            "reminders, autonomy items, pending confirmation, failed tasks, weather, sleep). kind='morning' "
+            "for the full daily briefing, 'urgent' for only what needs them now. Read it back as given."
+        ),
+        "input_schema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["morning", "urgent"]}}},
     },
     {
         "name": "self_check",
@@ -4724,14 +4734,124 @@ def _autonomy_run_agent(instruction: str) -> str:
         _set_scheduled_task_running(False)
 
 
+def _calendar_events_raw(start: datetime, end: datetime) -> str | None:
+    """Calendar MCP list-events between two local times, or None when no calendar tool is connected
+    or the call failed. The tool is `list-events` (hyphen) and requires calendarId; an earlier lookup
+    for "list_events" with no calendarId never matched, so autonomy never actually saw the calendar."""
+    name = next((n for n in _mcp_tool_index if n.startswith("mcp_calendar")
+                 and n.replace("-", "_").endswith("list_events")), None)
+    if not name:
+        return None
+    res = execute_mcp_tool(name, {"calendarId": "primary",
+                                  "timeMin": start.astimezone().isoformat(timespec="seconds"),
+                                  "timeMax": end.astimezone().isoformat(timespec="seconds")})
+    return None if _looks_failed(res) else res
+
+
 def _autonomy_calendar_events(hours: int) -> str:
     """Best effort: the next `hours` of calendar via whatever Calendar MCP list tool is connected."""
-    name = next((n for n in _mcp_tool_index if "calendar" in n and "list_events" in n), None)
-    if not name:
-        return ""
-    now = datetime.now().astimezone()
-    res = execute_mcp_tool(name, {"timeMin": now.isoformat(), "timeMax": (now + timedelta(hours=hours)).isoformat()})
-    return "" if _looks_failed(res) else res
+    now = datetime.now()
+    return _calendar_events_raw(now, now + timedelta(hours=hours)) or ""
+
+
+# --- Morning briefing v2 / "what's urgent?" (jarvis_briefing.py) ---------------------------------
+def _briefing_fetchers(kind: str, now: datetime) -> dict:
+    urgent = kind == "urgent"
+
+    def pending():
+        p = _dashboard_get_pending()
+        return [f"{p.get('tool_name')} would {p.get('reason')}; say yes to confirm"] if p else []
+
+    def weather_():
+        return [weather.weather_report("", 1)]
+
+    def calendar():
+        end = now + timedelta(hours=3) if urgent else datetime.combine(now.date(), datetime.max.time())
+        raw = _calendar_events_raw(now, end)
+        return briefing.calendar_items(raw, now, end) if raw else None
+
+    def mail():
+        if "mcp_gmail_search_emails" not in _mcp_tool_index:
+            return None
+        found = _sleep_mail_mcp("search_emails", {"query": "is:unread is:important newer_than:1d", "maxResults": 10})
+        if sleep_mail.looks_like_error(found):
+            return None
+        own = sleep_mail.own_addresses()
+        return briefing.mail_items([m for m in sleep_mail.parse_search(found) if m.get("sender") not in own])
+
+    def deadlines():
+        if not autonomy.enabled():
+            return []
+        rows = [c for c in autonomy.status()["commitments"] if not c.get("quarantined")]
+        return briefing.deadline_items(rows, now, 24)
+
+    def needs_you():
+        if not autonomy.enabled():
+            return []
+        cards = autonomy.list_suggestions("pending", 10)
+        return [(c.get("title") or "")[:80] for c in cards]
+
+    def reminders():
+        end = now + timedelta(hours=2) if urgent else datetime.combine(now.date(), datetime.max.time())
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                rows = conn.execute(
+                    "SELECT text, due_at FROM reminders WHERE delivered_at IS NULL AND cancelled_at IS NULL "
+                    "AND due_at <= ? ORDER BY due_at LIMIT 10", (end.isoformat(timespec="seconds"),)).fetchall()
+            finally:
+                conn.close()
+        out = []
+        for text, due in rows:
+            d = briefing._when(due)
+            out.append(f"{'overdue' if d and d < now else briefing._hm(d) if d else ''} {text[:80]}".strip())
+        return out
+
+    def failed():
+        since = (now - timedelta(hours=24)).isoformat(timespec="seconds")
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                rows = conn.execute("SELECT task FROM background_tasks WHERE status = 'failed' AND "
+                                    "COALESCE(finished_at, started_at) >= ? ORDER BY id DESC LIMIT 5",
+                                    (since,)).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            finally:
+                conn.close()
+        return [r[0][:80] for r in rows]
+
+    def system():
+        import psutil
+        out = []
+        ram = psutil.virtual_memory().percent
+        if ram >= 90:
+            out.append(f"RAM is at {ram:.0f}%")
+        try:
+            du = shutil.disk_usage(Path.home().anchor or "C:\\")
+            if du.free * 100 // du.total < 10:
+                out.append(f"the system disk is almost full ({du.free * 100 // du.total}% free)")
+        except OSError:
+            pass
+        if _llm_failover["last_reason"] and _claude_in_cooldown():
+            out.append(f"Claude is unavailable ({_llm_failover['last_reason']}), using Gemini")
+        return out
+
+    fetchers = {"pending": pending, "calendar": calendar, "mail": mail, "deadlines": deadlines,
+                "needs_you": needs_you, "reminders": reminders, "failed": failed, "system": system}
+    if not urgent:
+        fetchers["weather"] = weather_
+        fetchers["sleep"] = lambda: briefing.sleep_items(sleep_mode.stats_summary(now), now)
+    return fetchers
+
+
+def briefing_report(kind: str = "urgent") -> dict:
+    """Morning briefing ("morning") or needs-you summary ("urgent"): {"sections": [...], "speech": str}."""
+    now = datetime.now()
+    return briefing.compose(kind, _briefing_fetchers(kind, now), now)
+
+
+dashboard.providers["briefing"] = briefing_report
 
 
 def _autonomy_callbacks() -> dict:
@@ -7416,6 +7536,7 @@ def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result:
 READONLY_TOOL_TTLS: dict[str, float] = {
     "system_status": 20,
     "weather": 600,
+    "briefing": 60,
     "api_spend": 300,
     "list_reminders": 30,
     "list_task_queue": 30,
@@ -7544,6 +7665,8 @@ def _execute_tool_impl(
                 result = "No text given."
         elif tool_name == "system_status":
             result = system_status() or "Couldn't read system status."
+        elif tool_name == "briefing":
+            result = briefing_report("morning" if inp.get("kind") == "morning" else "urgent")["speech"]
         elif tool_name == "self_check":
             result = self_check_report()
         elif tool_name == "weather":
@@ -8683,6 +8806,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
     """Zero-LLM-call answers for the handful of intents that are pure local computation — no
     network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
     None for every other intent (caller falls through to the normal agent loop)."""
+    if intent in ("briefing", "urgent"):
+        return briefing_report("morning" if intent == "briefing" else "urgent")["speech"]
     if intent == "self_check":
         return self_check_report()
     if intent == "repeat":
@@ -8868,7 +8993,10 @@ def _handle_text_command_impl(
             # whole thing then read it" cost in the first place, which is the problem
             # summarization exists to soften, so there's nothing left for it to solve here.
             if not reply_already_spoken_via_stream():
-                speak_text(_collapse_paths_for_speech(_summarize_for_speech(reply)))
+                # The briefing's speech is already composed and length-capped for listening;
+                # summarizing it again would cut it to a sentence.
+                spoken = reply if intent in ("briefing", "urgent") else _summarize_for_speech(reply)
+                speak_text(_collapse_paths_for_speech(spoken))
 
 
 def handle_voice_command(

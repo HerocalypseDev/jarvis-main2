@@ -92,6 +92,11 @@ def recent(n: int = 20) -> list[dict]:
 _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("greeting", re.compile(r"\A\s*(?:hi|hey|hello|hiya|yo)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
     ("thanks", re.compile(r"\A\s*(?:thanks|thank you|thx|ty)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
+    # Briefing v2 (2026-09-23): composed from local data by jarvis_briefing, no LLM call.
+    ("briefing", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:good morning|(?:give me |what'?s )?(?:my |the )?(?:morning )?briefing|brief me)"
+                            r"(?:,?\s*jarvis)?\W*\Z", re.I)),
+    ("urgent", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:what(?:'s| is) urgent|anything urgent|what needs me|what needs my attention"
+                          r"|what do i need to (?:know|do)(?: today| now)?)(?:,?\s*jarvis)?\W*\Z", re.I)),
     # QOL pass (2026-09-23): handled in jarvis.py without (or with a rewritten) LLM call.
     # Anchored (audit 2026-09-23): "run diagnostics on my network" or "are you working on the
     # report?" are real requests, not a self-check.

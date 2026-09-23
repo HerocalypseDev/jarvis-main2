@@ -1149,6 +1149,29 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   `JARVIS_MEMORY_DB_PATH` to a tmp path and stub `_log_action_audit`/`autonomy.after_turn`. Found and
   cleaned (6 audit rows, 3 sessions, 1 autonomy row) during this pass.
 
+## Chief-of-staff batch (2026-09-23)
+
+- **P0 Briefing v2 / "what's urgent?"** (`jarvis_briefing.py`, `test_briefing.py`): one composition,
+  `briefing_report(kind)` in jarvis.py, used by voice (intents `briefing`: "good morning", "morning
+  briefing", "brief me"; `urgent`: "what's urgent", "what needs me"...; no LLM call), the `briefing`
+  agent tool (cached 60s), and the dashboard Home "Briefing" card (`GET /api/briefing?kind=urgent|morning`).
+  Sources, all existing data: pending confirmation, Calendar MCP `list-events` (JSON, parsed; overlaps
+  flagged), Gmail `is:unread is:important newer_than:1d`, autonomy commitments due in 24h/overdue (not
+  quarantined) and pending cards, reminders (2h for urgent / rest of today for morning), failed
+  background tasks (24h), RAM >= 90% / disk < 10% / Claude failover, plus weather and sleep (last night,
+  week debt) for morning. Fetchers run in parallel with a 15s cap; a failed/slow/empty source is left
+  out, never guessed. Speech <= ~700 chars, 3 items per section, and is **not** re-summarized by
+  `_summarize_for_speech`. Voice "morning briefing" now uses this; the 8:00 `morning_briefing` skill
+  (with anime news and the saved note) is unchanged. No extra scheduled tick was added (that skill covers it).
+  - **Bug fixed on the way**: `_autonomy_calendar_events` looked for `list_events` but the tool is
+    `list-events`, and sent no required `calendarId`, so autonomy never saw the calendar. Both now use
+    `_calendar_events_raw` (`calendarId: "primary"`).
+  - Dashboard routes added from now on are looked up in `jarvis_dashboard.providers` (a dict jarvis.py
+    fills at import), 501 when missing, so start()/_build_app() don't grow a parameter per feature.
+    They sit behind the same Host/Origin middleware as every `/api/*` route.
+  - Verified live (read-only) against the real DB + weather: real deadlines, a failed task, sleep, RAM.
+    Not verified live: the calendar/Gmail sections (MCP servers weren't running in the test process).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1213,7 +1236,8 @@ row there each phase rather than only stating the total in chat.
 | 40 (Sonnet 5 routing for hard commands, Context7 + Windows-MCP (UI-only whitelist), catastrophic gate extended to MCP tools; 3 new tests) | Opus 5.5 | ~30 min | ~$1.80–$2.60 |
 | 41 (QOL pass: Gemini failover, self-check, timers, repeat/shorter, last actions/undo, log cleanup, barge-in, follow-up window, weather, selection hotkey, dashboard Settings + Ctrl+K palette; 31 new tests) | Opus 5.5 | ~110 min | ~$6.50–$9.00 |
 | 42 (selection hotkey default off + palette Alt+K, then QOL audit-and-fix: 16 findings fixed, 13 new tests) | Opus 5.5 | ~45 min | ~$3.50–$5.00 |
-| **Running total (final)** | | **~1578 min** | **~$74.85–$104.95** |
+| 43 (P0 briefing v2 + what's urgent: voice, tool, Home card, calendar-helper fix; 15 new tests) | Opus 5.5 | ~40 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~1618 min** | **~$77.85–$109.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
