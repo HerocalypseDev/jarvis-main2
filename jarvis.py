@@ -120,7 +120,7 @@ SMART_MODEL_MIN_WORDS = int(os.environ.get("JARVIS_SMART_MODEL_MIN_WORDS") or 40
 
 # Selection hotkey (QOL pass): select text anywhere, hold this key and speak ("summarize this",
 # "reply to this") — works like push-to-talk with the selected text attached. Empty disables.
-JARVIS_SELECTION_KEY = (os.environ.get("JARVIS_SELECTION_KEY", "right ctrl") or "").strip()
+JARVIS_SELECTION_KEY = (os.environ.get("JARVIS_SELECTION_KEY", "") or "").strip()
 SELECTION_MAX_CHARS = 20000
 
 # Typed commands: hold JARVIS_TEXT_HOTKEY_KEY for JARVIS_TEXT_HOTKEY_HOLD_S seconds to pop up

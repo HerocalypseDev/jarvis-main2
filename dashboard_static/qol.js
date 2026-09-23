@@ -1,4 +1,4 @@
-// QOL pass (2026-09-23): Settings route + Ctrl+K command palette. Plain JS, no framework, same
+// QOL pass (2026-09-23): Settings route + Alt+K command palette. Plain JS, no framework, same
 // conventions as app.js (esc() from app.js for escaping).
 
 // --- Settings -------------------------------------------------------------------------------
@@ -94,7 +94,7 @@ window.refreshSettings = refreshSettings;
 // app.js activates the initial route before this file loads, so cover a direct #/settings load.
 if (typeof currentRoute === "function" && currentRoute() === "settings") refreshSettings();
 
-// --- Command palette (Ctrl+K) ---------------------------------------------------------------
+// --- Command palette (Alt+K) ---------------------------------------------------------------
 const PIN_KEY = "jarvis.palette.pins";
 function loadPins() {
   try { return JSON.parse(localStorage.getItem(PIN_KEY) || "[]"); } catch { return []; }
@@ -178,7 +178,7 @@ async function runPalette(text) {
 }
 
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+  if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "k") {
     e.preventDefault();
     palette.el && !palette.el.classList.contains("hidden") ? closePalette() : openPalette();
   }

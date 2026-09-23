@@ -1085,7 +1085,7 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   (free, no key). Location: named place > `JARVIS_WEATHER_LOCATION` > the PC's IP location (ipapi.co,
   once per run; resolved to Lagos, Nigeria live). `JARVIS_WEATHER_UNITS=f` for Fahrenheit. Says
   "degrees", not the symbol (TTS). Added as item (0) of `skills/morning_briefing.json`. Verified live.
-- **Selection hotkey** (`JARVIS_SELECTION_KEY`, default `right ctrl`, empty = off): hold it instead
+- **Selection hotkey** (`JARVIS_SELECTION_KEY`, default off since 2026-09-23 — `right ctrl` broke Ctrl+Win+Arrow: the injected Ctrl+C released Ctrl mid-chord, leaving Win+Arrow (window snap). Use a non-modifier key): hold it instead
   of push-to-talk and speak; `_grab_selection` sends Ctrl+C to the focused app, reads the clipboard
   (sentinel value detects "nothing selected"), restores the user's clipboard, and `_with_selection`
   appends the text (<= 20k chars, framed as data, not instructions) to the transcript. Unit-tested
@@ -1104,7 +1104,7 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   values leave the server; irreversibility - edits `.env` in place, no backup (a wrong value is fixed
   by editing it again); performance - none. Any key may be written, by the user's full-permission
   decision.
-- **Command palette** (Ctrl+K, or the top-bar button): `GET /api/commands/recent` (distinct past
+- **Command palette** (Alt+K, was Ctrl+K; or the top-bar button): `GET /api/commands/recent` (distinct past
   transcripts from `dashboard_sessions`, most recent first, with counts); Enter runs through the
   existing `POST /api/command` (same pipeline and gate as the compose box); pins are per-browser
   `localStorage`. Verified in headless Chromium against a preview server: settings render, a change
