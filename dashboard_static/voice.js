@@ -37,15 +37,17 @@ function renderVoiceCards(v) {
   }
   document.getElementById("voice-cards").innerHTML = cards.join("");
 
-  const m = p.month, all = p.all_time;
-  const cachedPct = m.tts.chars ? Math.round(100 * (m.tts.chars - m.tts.billed_chars) / m.tts.chars) : 0;
-  const talk = m.tts.audio_s + m.stt.audio_s;
-  const jarvisShare = talk ? Math.round(100 * m.tts.audio_s / talk) : 0;
+  const m = p.month;
+  const sentCard = (label, d) => {
+    const cachedPct = d.tts.chars ? Math.round(100 * (d.tts.chars - d.tts.billed_chars) / d.tts.chars) : 0;
+    return voiceCard(`Characters sent to TTS engines (${label})`, vNum(d.tts.billed_chars),
+      `${cachedPct}% served free from the voice cache`, "usage-card-good");
+  };
   document.getElementById("voice-highlights").innerHTML = [
-    voiceCard("Characters sent to TTS engines (month)", vNum(m.tts.billed_chars), `${cachedPct}% served free from the voice cache`, "usage-card-good"),
-    voiceCard("Voice commands (month)", vNum(m.stt.events), `${vNum(all.stt.events)} all time`),
+    sentCard("today", p.today),
+    sentCard("month", m),
+    sentCard("all time", p.all_time),
     voiceCard("Sentences spoken (month)", vNum(m.tts.events), `${vNum(m.tts.cached_events)} straight from cache`),
-    voiceCard("Who talks more (month)", talk ? `Jarvis ${jarvisShare}%` : "–", talk ? `you ${100 - jarvisShare}% of ${vDur(talk)}` : "no voice yet"),
   ].join("");
 }
 
