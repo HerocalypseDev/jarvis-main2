@@ -28,6 +28,7 @@ def test_summary_counts_lengths_engines_days_and_cache(tmp_path):
     assert s["periods"]["today"]["stt"]["chars"] == 18 and s["periods"]["week"]["stt"]["events"] == 2
     assert [e["engine"] for e in s["engines"]["stt"]] == ["deepgram_stream", "whisper"]
     assert s["daily"][-1]["tts_chars"] == 28 and s["daily"][-4]["stt_audio_s"] == 0.5
+    assert s["daily"][-1]["tts_billed_chars"] == 25  # the cached "Hi." was never sent to an engine
     assert s["records"]["tts"]["max_chars"] == 25 and s["busiest_day"]["date"] == s["daily"][-1]["date"]
     assert sum(h["tts"] + h["stt"] for h in s["hours"]) == 4
 

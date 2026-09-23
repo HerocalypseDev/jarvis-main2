@@ -1280,7 +1280,8 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   `speak_text`'s cache peek. Under pytest it records nothing unless `JARVIS_MEMORY_DB_PATH` is set
   (never the real DB). `GET /api/voice_usage` (provider `voice_usage`, read-only). Tab: 8 period cards
   (spoke/said x today/7d/month/all), highlights (characters actually sent to TTS engines today/month/
-  all time, each with its cache-served %, and sentences spoken this month), per-day charts (one per direction, own scale), engine
+  all time, each with its cache-served %, and sentences spoken this month), per-day charts (one per direction, own scale; the TTS one counts only characters actually sent to an
+  engine, `daily[].tts_billed_chars`, not cache replays), engine
   share bars, hour-of-day heat strip, weekday bars, records (longest/average, speaking pace, busiest
   day), response-speed histogram (`/api/latency`) and a month split panel. Double-check protocol:
   read-only route + counts-only table, zero risk on every axis. Verified in headless Chromium against

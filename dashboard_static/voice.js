@@ -55,12 +55,14 @@ function renderVoiceCards(v) {
 // commands, so a shared scale flattened the "you said" bars to nothing.
 function renderVoiceDaily(v) {
   for (const kind of ["tts", "stt"]) {
-    const key = `${kind}_chars`;
+    const key = kind === "tts" ? "tts_billed_chars" : "stt_chars";  // TTS: characters actually sent to an engine
     const max = Math.max(1, ...v.daily.map((d) => d[key]));
     document.getElementById(`voice-daily-${kind}-max`).textContent = `peak ${vNum(max)} chars/day`;
     document.getElementById(`voice-daily-${kind}`).innerHTML = v.daily.map((d) => {
       const h = d[key] ? Math.max(3, Math.round((d[key] / max) * 100)) : 0;
-      return `<div class="voice-day" title="${esc(d.date)}: ${vNum(d[key])} chars, ${vDur(d[`${kind}_audio_s`])} of audio">
+      const tip = kind === "tts" ? `${vNum(d.tts_billed_chars)} chars sent to TTS engines (${vNum(d.tts_chars)} spoken incl. cache)`
+        : `${vNum(d.stt_chars)} chars, ${vDur(d.stt_audio_s)} of audio`;
+      return `<div class="voice-day" title="${esc(d.date)}: ${tip}">
         <div class="voice-day-bars"><div class="voice-bar voice-bar-${kind}" style="height:${h}%"></div></div>
         <div class="usage-bar-label">${esc(d.date.slice(8))}</div></div>`;
     }).join("");

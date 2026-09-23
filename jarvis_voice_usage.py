@@ -67,7 +67,7 @@ def summary(connect: Callable[[], sqlite3.Connection], lock, now: float | None =
                                "SELECT engine, COUNT(*), SUM(chars), SUM(audio_s), SUM(cached) FROM voice_usage "
                                "WHERE kind=? AND ts>=? GROUP BY engine ORDER BY SUM(chars) DESC", (k, since))]
                        for k in ("tts", "stt")}
-            rows = conn.execute("SELECT ts, kind, chars, audio_s FROM voice_usage WHERE ts>=?", (since,)).fetchall()
+            rows = conn.execute("SELECT ts, kind, chars, audio_s, cached FROM voice_usage WHERE ts>=?", (since,)).fetchall()
             extremes = {k: conn.execute(
                 "SELECT MAX(chars), MAX(audio_s), AVG(chars), AVG(audio_s) FROM voice_usage WHERE kind=? AND ts>=?",
                 (k, since)).fetchone() for k in ("tts", "stt")}
@@ -78,14 +78,16 @@ def summary(connect: Callable[[], sqlite3.Connection], lock, now: float | None =
     for i in range(days - 1, -1, -1):
         day_start = midnight - i * 86400
         daily.append({"date": time.strftime("%Y-%m-%d", time.localtime(day_start + 3600)),
-                      "tts_chars": 0, "stt_chars": 0, "tts_audio_s": 0.0, "stt_audio_s": 0.0})
+                      "tts_chars": 0, "tts_billed_chars": 0, "stt_chars": 0, "tts_audio_s": 0.0, "stt_audio_s": 0.0})
     hours = [{"tts": 0, "stt": 0} for _ in range(24)]
     weekdays = [{"tts": 0, "stt": 0} for _ in range(7)]
-    for ts, kind, chars, audio_s in rows:
+    for ts, kind, chars, audio_s, cached in rows:
         idx = int((ts - (midnight - (days - 1) * 86400)) // 86400)
         if 0 <= idx < days:
             daily[idx][f"{kind}_chars"] += chars
             daily[idx][f"{kind}_audio_s"] += audio_s
+            if kind == "tts" and not cached:
+                daily[idx]["tts_billed_chars"] += chars  # actually sent to an engine (not a cache replay)
         t = time.localtime(ts)
         hours[t.tm_hour][kind] += 1
         weekdays[t.tm_wday][kind] += 1
