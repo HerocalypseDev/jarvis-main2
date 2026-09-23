@@ -87,6 +87,7 @@ import jarvis_followup
 import jarvis_weather as weather
 import jarvis_briefing as briefing
 import jarvis_chief as chief
+import jarvis_voice_usage as voice_usage
 import jarvis_settings as settings
 
 settings.JARVIS_MODULE = sys.modules[__name__]
@@ -652,6 +653,25 @@ def _stt_stream_enabled() -> bool:
     return _use_deepgram_stt() and stt_deepgram.STREAM_ENABLED
 
 
+def _record_voice(kind: str, engine: str, text: str, audio_s: float, cached: bool = False) -> None:
+    """Voice tab stats (jarvis_voice_usage): lengths only, never the text. Own thread, like
+    _record_api_usage, so a busy DB never delays speech or transcription."""
+    threading.Thread(target=_record_voice_now, args=(kind, engine, text, audio_s, cached), daemon=True).start()
+
+
+def _record_voice_now(kind, engine, text, audio_s, cached) -> None:
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("JARVIS_MEMORY_DB_PATH"):
+        return  # a test without a temp DB must never add rows to the real jarvis_memory.db
+    try:
+        voice_usage.record(_memory_db_connect, _memory_db_lock, kind, engine, text, audio_s, cached)
+    except Exception as e:
+        log.debug("Voice usage not recorded: %s", e)
+
+
+def _pcm_seconds(raw: bytes, sr: int) -> float:
+    return len(raw) / (2 * sr) if raw and sr else 0.0  # 16-bit mono PCM
+
+
 def transcribe_pcm(
     pcm: np.ndarray, sample_rate: int, stream_session: "stt_deepgram.StreamingSession | None" = None
 ) -> str:
@@ -677,6 +697,7 @@ def transcribe_pcm(
             if lat:
                 lat.mark("stt")
                 lat.stt_backend = "deepgram_stream"
+            _record_voice("stt", "deepgram_stream", text, mono.size / sample_rate)
             return text
         log.info("Deepgram streaming STT unavailable this turn; falling back to REST.")
 
@@ -691,6 +712,7 @@ def transcribe_pcm(
             if lat:
                 lat.mark("stt")
                 lat.stt_backend = "deepgram"
+            _record_voice("stt", "deepgram", text, mono.size / sample_rate)
             return text
 
     mono16k = _resample_to_16k(mono, sample_rate)
@@ -706,6 +728,7 @@ def transcribe_pcm(
     if lat:
         lat.mark("stt")
         lat.stt_backend = "whisper"
+    _record_voice("stt", "whisper", text, mono.size / sample_rate)
     return text
 
 
@@ -1050,6 +1073,7 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
             hit = _tts_disk_cache.get(key)
             if hit:
                 cache.record("tts", True, repr(text[:30]))
+                _record_voice("tts", backend, text, _pcm_seconds(hit[0], hit[1]), cached=True)
                 return hit[0], hit[1], backend
         cache.record("tts", False, repr(text[:30]))
 
@@ -1060,6 +1084,7 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
             if raw:
                 if use_cache:
                     _tts_disk_cache.put(keys["deepgram"], raw, sr)
+                _record_voice("tts", "deepgram", text, _pcm_seconds(raw, sr))
                 return raw, sr, "deepgram"
         except Exception as e:
             _dg_tts_breaker.record(False)
@@ -1071,6 +1096,7 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
             if raw:
                 if use_cache:
                     _tts_disk_cache.put(keys["fish"], raw, sr)
+                _record_voice("tts", "fish", text, _pcm_seconds(raw, sr))
                 return raw, sr, "fish"
         except Exception as e:
             log.warning("Fish Audio TTS failed, falling back to Piper: %s", e)
@@ -1079,6 +1105,8 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
         raw, sr = _piper_synthesize(text, piper_overrides)
         if raw and use_cache:
             _tts_disk_cache.put(keys["piper"], raw, sr)
+        if raw:
+            _record_voice("tts", "piper", text, _pcm_seconds(raw, sr))
         return raw, sr, "piper"
     except Exception as e:
         log.warning("Piper TTS failed: %s", e)
@@ -1161,6 +1189,7 @@ def speak_text(text: str) -> None:
             if cache_hit is not None:
                 cache.record("tts", True, repr(sentence[:30]))
                 raw, sr, backend = cache_hit
+                _record_voice("tts", backend, sentence, _pcm_seconds(raw, sr), cached=True)
             else:
                 raw, sr, backend = b"", 0, ""
                 # Below TTS_LIVE_STREAM_MIN_CHARS, skip the live WebSocket and go straight to the
@@ -1183,6 +1212,7 @@ def speak_text(text: str) -> None:
                     if handled:
                         already_played = True
                         raw, sr, backend = s_raw, s_sr, s_backend
+                        _record_voice("tts", s_backend, sentence, _pcm_seconds(s_raw, s_sr))
                         if complete and raw and cache.enabled("tts") and len(sentence) <= TTS_CACHE_MAX_CHARS:
                             key = cache.stable_hash(_TTS_DEEPGRAM_CACHE_TAG, tts_deepgram.DEEPGRAM_TTS_MODEL, sentence)
                             _tts_disk_cache.put(key, raw, sr)
@@ -5127,6 +5157,7 @@ def briefing_report(kind: str = "urgent") -> dict:
 dashboard.providers["briefing"] = briefing_report
 dashboard.providers["health"] = health_report
 dashboard.providers["latency"] = lambda: latency.recent(20)
+dashboard.providers["voice_usage"] = lambda: voice_usage.summary(_memory_db_connect, _memory_db_lock)
 dashboard.providers["safe_mode"] = lambda on: set_safe_mode(on, "dashboard")
 dashboard.providers["memory"] = {
     "list": list_memory, "add": remember_fact, "edit": edit_fact, "forget": forget_fact,

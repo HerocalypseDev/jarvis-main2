@@ -1266,6 +1266,22 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
     saved window layouts, evening wind-down, crash-recovery line, weekly git changelog, a separate
     deadline radar (autonomy already intervenes at 24 h / 2 h / overdue, and the briefing lists them).
 
+- **Voice tab (2026-09-23)** (`jarvis_voice_usage.py`, `dashboard_static/voice.js`, `test_voice_usage.py`):
+  sidebar route `#/voice` showing how much text Jarvis speaks (TTS) and how much of your speech it
+  transcribes (STT). New `voice_usage` table (ts, kind tts|stt, engine, chars, words, audio_s, cached;
+  **lengths only, never the text**, pruned after 400 days) filled by `_record_voice` (own thread) at the
+  real engine call sites: `transcribe_pcm` (deepgram_stream / deepgram / whisper, audio seconds of the
+  hold), `_synthesize_and_cache` (deepgram / fish / piper, cache hits flagged), the live stream and
+  `speak_text`'s cache peek. Under pytest it records nothing unless `JARVIS_MEMORY_DB_PATH` is set
+  (never the real DB). `GET /api/voice_usage` (provider `voice_usage`, read-only). Tab: 8 period cards
+  (spoke/said x today/7d/month/all), month highlights (characters actually sent to TTS engines vs
+  cache, commands, sentences, talk-time share), per-day charts (one per direction, own scale), engine
+  share bars, hour-of-day heat strip, weekday bars, records (longest/average, speaking pace, busiest
+  day), response-speed histogram (`/api/latency`) and a month split panel. Double-check protocol:
+  read-only route + counts-only table, zero risk on every axis. Verified in headless Chromium against
+  a seeded temp DB at 1440 and 390 px: no console errors, no horizontal scroll. No cost estimate shown on
+  purpose (Deepgram/Fish prices aren't in the code; guessing them would be fake data).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1336,7 +1352,8 @@ row there each phase rather than only stating the total in chat.
 | 46 (P4 safe mode + Home health card, provider registry reload fix; 4 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 47 (P5 persistent named timers with restart restore; 10 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 48 (P6 voice knobs in Settings + second wave: reply style, stop talking, quiet hours, spend alert, meeting heads-up, voice speed, fuzzy palette, STT language; 10 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
-| **Running total (final)** | | **~1748 min** | **~$88.25–$123.75** |
+| 49 (Voice tab: TTS/STT usage tracking + stats page; 4 new tests, headless render check) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~1773 min** | **~$90.05–$126.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

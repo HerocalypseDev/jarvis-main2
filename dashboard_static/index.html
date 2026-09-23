@@ -42,6 +42,7 @@
       <a href="#/audit" data-route="audit" class="nav-link"><span class="nav-icon">&#128269;</span><span class="nav-label">Audit Trail</span></a>
       <a href="#/victory" data-route="victory" class="nav-link"><span class="nav-icon">&#10003;</span><span class="nav-label">Victory Log</span></a>
       <a href="#/daily" data-route="daily" class="nav-link"><span class="nav-icon">&#8635;</span><span class="nav-label">Daily</span></a>
+      <a href="#/voice" data-route="voice" class="nav-link"><span class="nav-icon">&#127908;</span><span class="nav-label">Voice</span></a>
       <a href="#/memory" data-route="memory" class="nav-link"><span class="nav-icon">&#10070;</span><span class="nav-label">Memory</span></a>
       <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></a>
     </nav>
@@ -213,6 +214,32 @@
       <ul id="daily-list" class="list compact"></ul>
     </section>
 
+    <section id="view-voice" class="view">
+      <div class="view-head"><h1 class="view-title">Voice</h1></div>
+      <p class="muted">How much Jarvis says out loud (text-to-speech) and how much of what you say it transcribes
+        (speech-to-text). Only lengths are counted, never the words. Cached sentences replay saved audio and
+        cost the engine nothing.</p>
+      <div id="voice-cards" class="usage-cards voice-cards"></div>
+      <div id="voice-highlights" class="usage-cards voice-cards"></div>
+      <div class="home-block voice-block">
+        <h3 class="block-title">Characters per day, last 30 days</h3>
+        <div class="voice-chart-head"><span><i class="voice-swatch voice-bar-tts"></i>Jarvis spoke (text-to-speech)</span><span id="voice-daily-tts-max" class="muted"></span></div>
+        <div id="voice-daily-tts" class="voice-daily" role="img" aria-label="Characters Jarvis spoke per day"></div>
+        <div class="voice-chart-head"><span><i class="voice-swatch voice-bar-stt"></i>You said (speech-to-text)</span><span id="voice-daily-stt-max" class="muted"></span></div>
+        <div id="voice-daily-stt" class="voice-daily" role="img" aria-label="Characters you said per day"></div>
+      </div>
+      <div class="voice-grid">
+        <div class="home-block"><h3 class="block-title">Text-to-speech engines (30 days)</h3><div id="voice-engines-tts"></div></div>
+        <div class="home-block"><h3 class="block-title">Speech-to-text engines (30 days)</h3><div id="voice-engines-stt"></div></div>
+        <div class="home-block"><h3 class="block-title">When you use voice (hour of day)</h3>
+          <div id="voice-hours" class="voice-hours" role="img" aria-label="Voice activity by hour of day"></div>
+          <h3 class="block-title voice-sub">By weekday</h3><div id="voice-weekdays"></div></div>
+        <div class="home-block"><h3 class="block-title">Records</h3><ul id="voice-records" class="list compact"></ul></div>
+        <div class="home-block"><h3 class="block-title">Response speed</h3><div id="voice-latency"></div></div>
+        <div class="home-block"><h3 class="block-title">This month's split</h3><div id="voice-split"></div></div>
+      </div>
+    </section>
+
     <section id="view-memory" class="view">
       <div class="view-head"><h1 class="view-title">Memory</h1></div>
       <p class="muted">What Jarvis remembers about you. Editing keeps the old wording as history; Forget deletes a fact and its older versions for good.
@@ -267,5 +294,6 @@
 <script src="app.js"></script>
 <script src="autonomy.js"></script>
 <script src="qol.js"></script>
+<script src="voice.js"></script>
 </body>
 </html>
