@@ -4583,8 +4583,6 @@ def _read_skills_from_disk() -> list[dict]:
                 skill: dict = {"name": name, "description": description, "instructions": instructions}
                 if isinstance(schedule, dict):
                     skill["schedule"] = schedule
-                if data.get("silent_when_empty") is True:
-                    skill["silent_when_empty"] = True
                 skills.append(skill)
             else:
                 log.warning("Skipping skill file %s: missing name/instructions.", path)
@@ -4711,6 +4709,9 @@ def _skill_is_due(skill: dict, now: datetime) -> bool:
     return False
 
 
+_BARE_ACK_RE = re.compile(r"^\W*(ok(ay)?|done|noted|nothing( new| important)?( here)?|all (good|clear)|no (reply|response) needed)\W*$", re.I)
+
+
 def _run_scheduled_skill(skill: dict) -> None:
     log.info("Running scheduled skill %r.", skill["name"])
     # Session context: mark a scheduled task as in-flight so anything checking
@@ -4723,13 +4724,10 @@ def _run_scheduled_skill(skill: dict) -> None:
         f"didn't just ask for this out loud, act on the schedule instead.) {skill['instructions']}"
     )
     try:
-        # A skill that opts in with "silent_when_empty" must stay quiet when the model gives no
-        # text; otherwise the last tool's result (e.g. a memory ack) would be spoken instead.
-        reply = run_agent_loop(
-            synthetic_transcript,
-            tool_result_fallback=not skill.get("silent_when_empty"),
-        )
-        if reply:
+        # An unprompted run must stay quiet when the model gives no text: never fall back to the
+        # last tool's result (e.g. a remember_fact ack), and treat a bare "OK"/"Done." as silence.
+        reply = run_agent_loop(synthetic_transcript, tool_result_fallback=False)
+        if reply and not _BARE_ACK_RE.match(reply):
             # Route through the interrupt gate instead of speaking immediately — a scheduled
             # skill is exactly the kind of unprompted interrupt session context exists for.
             queue_or_deliver_notification(reply)

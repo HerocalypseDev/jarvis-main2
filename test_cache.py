@@ -709,18 +709,19 @@ def test_tool_result_fallback_can_be_disabled(jarvis, monkeypatch):
     assert jarvis.run_agent_loop("x", tool_result_fallback=False) == ""
 
 
-def test_scheduled_skill_with_silent_flag_speaks_nothing_on_empty_reply(jarvis, monkeypatch):
-    seen = {}
+def test_scheduled_skill_never_speaks_tool_ack_or_bare_ok(jarvis, monkeypatch):
+    seen, delivered, replies = {}, [], iter(["", "OK", "Okay.", "Nothing important.", "Alice emailed about rent."])
 
     def fake_loop(transcript, **kw):
         seen.update(kw)
-        return ""
+        return next(replies)
 
-    delivered = []
     monkeypatch.setattr(jarvis, "run_agent_loop", fake_loop)
     monkeypatch.setattr(jarvis, "queue_or_deliver_notification", delivered.append)
-    jarvis._run_scheduled_skill({"name": "s", "instructions": "i", "silent_when_empty": True})
-    assert seen["tool_result_fallback"] is False and delivered == []
+    for _ in range(5):
+        jarvis._run_scheduled_skill({"name": "s", "instructions": "i"})
+    assert seen["tool_result_fallback"] is False
+    assert delivered == ["Alice emailed about rent."]
 
 
 def test_prompt_asks_for_plain_english_progress_lines(jarvis):
