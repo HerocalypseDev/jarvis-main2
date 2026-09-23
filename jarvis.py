@@ -8914,12 +8914,17 @@ _WORD_NUMS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five"
 _DURATION_RE = re.compile(
     r"(\d+(?:\.\d+)?|half an?|forty-five|" + "|".join(k for k in _WORD_NUMS if " " not in k and k != "forty-five")
     + r")\s*-?\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b", re.I)
-_timers: dict[int, dict] = {}
-_timer_ids = iter(range(1, 10**9))
+_timers: dict[int, dict] = {}  # id (timers table row) -> {"label", "name", "ends" (datetime), "timer"}
 _timers_lock = threading.Lock()
 _stopwatch = {"started": None}
 TIMER_MAX_S = 24 * 3600  # one Timer thread per timer; anything longer is a reminder's job
 TIMER_MAX_ACTIVE = 20
+# Words that can sit right before "timer" without being its name ("a 10 minute timer", "all timers").
+_TIMER_NAME_STOP = {"a", "an", "the", "my", "this", "that", "all", "any", "every", "set", "start", "new", "each",
+                    "your", "of", "off", "long", "many", "cancel", "stop", "clear", "delete", "kill", "check", "running",
+                    "minute", "minutes", "second", "seconds", "hour", "hours", "min", "mins", "sec", "secs", "hr",
+                    "hrs", "half", "another", "other", "quick", "what", "which", "how", "these", "those", "are", "is",
+                    "current", "active", "remaining", "left", "list", "show", "and", "or", "no"} | set(_WORD_NUMS)
 
 
 def _parse_duration_s(text: str) -> float:
@@ -8939,16 +8944,89 @@ def _say_duration(seconds: float) -> str:
     return " ".join(parts) or "0 seconds"
 
 
+def _timer_name(low: str) -> str | None:
+    """"pasta" from "set a pasta timer for 10 minutes" / "a timer called pasta" / "10 minutes for pasta"."""
+    m = re.search(r"\b(?:called|named|labell?ed)\s+([a-z][a-z'-]*)", low)
+    if m:
+        return m.group(1)
+    for m in re.finditer(r"\b([a-z][a-z'-]*)\s+timers?\b", low):
+        if m.group(1) not in _TIMER_NAME_STOP:
+            return m.group(1)
+    m = re.search(r"\bfor\s+(?:the\s+|my\s+)?([a-z][a-z'-]*)\s*[.!?]?\s*$", low)
+    return m.group(1) if m and m.group(1) not in _TIMER_NAME_STOP else None
+
+
+def _timers_db(sql: str, params: tuple = ()) -> list[tuple]:
+    """Timers persist in jarvis_memory.db so a restart doesn't lose them."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            conn.execute("CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, "
+                         "label TEXT NOT NULL, ends_at TEXT NOT NULL, created_at TEXT NOT NULL, "
+                         "status TEXT NOT NULL DEFAULT 'running')")
+            cur = conn.execute(sql, params)
+            rows = cur.fetchall()
+            conn.commit()
+            return rows if rows else ([(cur.lastrowid,)] if sql.lstrip().upper().startswith("INSERT") else [])
+        finally:
+            conn.close()
+
+
+def _schedule_timer(tid: int, label: str, name: str | None, ends: datetime) -> None:
+    timer = threading.Timer(max(0.0, (ends - datetime.now()).total_seconds()), _timer_fired, args=(tid,))
+    timer.daemon = True
+    with _timers_lock:
+        _timers[tid] = {"label": label, "name": name, "ends": ends, "timer": timer}
+    timer.start()
+
+
 def _timer_fired(tid: int) -> None:
     with _timers_lock:
         t = _timers.pop(tid, None)
     if t:
+        _timers_db("UPDATE timers SET status = 'done' WHERE id = ?", (tid,))
         queue_or_deliver_notification(f"Your {t['label']} timer is done.", urgent=True)
+
+
+def _restore_timers() -> None:
+    """Startup: re-arm timers that were running when Jarvis stopped; one that went off in the
+    meantime is announced once (urgent, like any timer) and closed."""
+    try:
+        rows = _timers_db("SELECT id, name, label, ends_at FROM timers WHERE status = 'running'")
+    except sqlite3.Error as e:
+        log.warning("Couldn't restore timers: %s", e)
+        return
+    now = datetime.now()
+    for tid, name, label, ends_at in rows:
+        try:
+            ends = datetime.fromisoformat(ends_at)
+        except ValueError:
+            continue
+        if ends > now:
+            _schedule_timer(tid, label, name, ends)
+        else:
+            _timers_db("UPDATE timers SET status = 'done' WHERE id = ?", (tid,))
+            queue_or_deliver_notification(
+                f"Your {label} timer went off at {ends.strftime('%I:%M %p').lstrip('0')} while I wasn't running.",
+                urgent=True)
+    if rows:
+        log.info("Restored %d timer(s).", len(rows))
+
+
+def _cancel_timers(tids: list[int]) -> None:
+    with _timers_lock:
+        for tid in tids:
+            t = _timers.pop(tid, None)
+            if t:
+                t["timer"].cancel()
+    for tid in tids:
+        _timers_db("UPDATE timers SET status = 'cancelled' WHERE id = ?", (tid,))
 
 
 def _timer_reply(transcript: str) -> str | None:
     """Local handling for timers and the stopwatch; None = let the agent loop handle it
-    (e.g. "set a timer to remind me to call mom", which needs a reminder, not a timer)."""
+    (e.g. "set a timer to remind me to call mom", which needs a reminder, not a timer).
+    Timers can be named ("pasta timer"), listed, checked and cancelled by name, and persist."""
     low = (transcript or "").lower()
     if "remind" in low:
         return None
@@ -8964,34 +9042,41 @@ def _timer_reply(transcript: str) -> str | None:
             _stopwatch["started"] = None
             return f"Stopped at {_say_duration(now - started)}."
         return f"{_say_duration(now - started)} so far."
+    name = _timer_name(low)
+    with _timers_lock:
+        active = sorted(_timers.items(), key=lambda kv: kv[1]["ends"])
+    named = [(tid, t) for tid, t in active if name and t.get("name") == name]
     # The verb must come before "timer": "set a 10 minute timer and stop the music" sets one.
     if re.search(r"\b(cancel|stop|clear|delete|kill|turn off)\b.*\btimers?\b", low):
-        with _timers_lock:
-            n = len(_timers)
-            for t in _timers.values():
-                t["timer"].cancel()
-            _timers.clear()
+        if name:
+            if not named:
+                return f"There's no {name} timer."
+            _cancel_timers([tid for tid, _ in named])
+            return f"Cancelled the {name} timer."
+        _cancel_timers([tid for tid, _ in active])
+        n = len(active)
         return f"Cancelled {n} timer{'s' if n != 1 else ''}." if n else "There are no timers running."
     seconds = _parse_duration_s(low)
     if seconds <= 0:
-        with _timers_lock:
-            active = sorted(_timers.values(), key=lambda t: t["ends"])
-        if not active:
-            return "There are no timers running." if re.search(r"\b(how|left|remaining|status|check)\b", low) else None
-        return "; ".join(f"{t['label']} timer: {_say_duration(t['ends'] - now)} left" for t in active) + "."
+        shown = named if name else active
+        if name and not named:
+            return f"There's no {name} timer."
+        if not shown:
+            return "There are no timers running." if re.search(r"\b(how|left|remaining|status|check|what|list|any)\b", low) else None
+        wall = datetime.now()
+        return "; ".join(f"{t['label']} timer: {_say_duration((t['ends'] - wall).total_seconds())} left"
+                         for _, t in shown) + "."
     if seconds > TIMER_MAX_S:
         return None  # longer than a day: let the agent loop set a reminder instead
     with _timers_lock:
         if len(_timers) >= TIMER_MAX_ACTIVE:
             return f"You already have {len(_timers)} timers running; cancel some first."
-    label = _say_duration(seconds)
-    tid = next(_timer_ids)
-    timer = threading.Timer(seconds, _timer_fired, args=(tid,))
-    timer.daemon = True
-    with _timers_lock:
-        _timers[tid] = {"label": label, "ends": now + seconds, "timer": timer}
-    timer.start()
-    return f"Timer set for {label}."
+    label = name or _say_duration(seconds)
+    ends = datetime.now() + timedelta(seconds=seconds)
+    tid = _timers_db("INSERT INTO timers (name, label, ends_at, created_at) VALUES (?, ?, ?, ?)",
+                     (name, label, ends.isoformat(timespec="seconds"), datetime.now().isoformat(timespec="seconds")))[0][0]
+    _schedule_timer(tid, label, name, ends)
+    return f"{name.capitalize()} timer set for {_say_duration(seconds)}." if name else f"Timer set for {label}."
 
 
 def _recent_actions(limit: int = 5) -> list[tuple]:
@@ -9630,6 +9715,7 @@ def main() -> int:
     if CURSOR_OPEN_FULLSCREEN and sys.platform == "win32":
         log.info("Cursor will be sent F11 for fullscreen after focus/launch.")
     _cleanup_old_logs()
+    threading.Thread(target=_restore_timers, daemon=True, name="restore-timers").start()
     _preload_piper_async()
     if stt_deepgram.DEEPGRAM_API_KEY:
         threading.Thread(target=stt_deepgram.warm, daemon=True, name="deepgram-stt-warm").start()

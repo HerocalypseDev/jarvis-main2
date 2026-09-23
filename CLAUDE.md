@@ -1227,6 +1227,15 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   face gate-isolation allowlist (read-only). `jarvis_dashboard.providers` now survives
   `importlib.reload` (test fixtures reload the module).
 
+- **P5 Persistent named timers** (`test_timers.py`): timers live in a `timers` table in
+  `jarvis_memory.db` (id, name, label, ends_at wall time, status running|done|cancelled), created
+  lazily by `_timers_db`. Names come from "a pasta timer", "a timer called pasta", "... for tea"
+  (`_timer_name`, with a stop-word list so "a 10 minute timer" / "what timers" aren't names). List,
+  "how long is left on the pasta timer", "cancel the pasta timer" (only that one; "cancel all timers"
+  still clears all). `_restore_timers()` runs at startup: running timers are re-armed; one that went
+  off while Jarvis was down is announced once ("went off at 3:05 PM while I wasn't running") and
+  closed. Still urgent notifications, still capped at 24 h and 20 active.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1295,7 +1304,8 @@ row there each phase rather than only stating the total in chat.
 | 44 (P1 appshot + P2 dictation: generic hold-mode path, mouse-click guard, image-in-agent-loop, settings; 7 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
 | 45 (P3 editable memory: Memory route, edit/forget/profile APIs, attended-only forget_fact; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 46 (P4 safe mode + Home health card, provider registry reload fix; 4 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~1698 min** | **~$84.25–$118.15** |
+| 47 (P5 persistent named timers with restart restore; 10 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~1713 min** | **~$85.45–$119.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
