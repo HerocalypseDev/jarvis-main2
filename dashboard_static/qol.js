@@ -218,3 +218,94 @@ document.getElementById("briefing-refresh")?.addEventListener("click", refreshBr
 window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshBriefing(); });
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshBriefing();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshBriefing(); }, 10 * 60 * 1000);
+
+// --- Memory route (P3): facts + "about me" profile fields, editable -------------------------------
+let memoryData = null;
+async function refreshMemory() {
+  const hist = document.getElementById("memory-history")?.checked;
+  try {
+    const res = await fetch(`/api/memory?include_superseded=${hist ? "true" : "false"}`, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    memoryData = await res.json();
+  } catch (e) {
+    document.getElementById("memory-facts").innerHTML = `<li class="muted">Couldn't load memory: ${esc(String(e))}</li>`;
+    return;
+  }
+  const sel = document.getElementById("memory-add-category");
+  if (!sel.options.length) sel.innerHTML = memoryData.categories.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  document.getElementById("memory-profile").innerHTML = memoryData.profile.length
+    ? memoryData.profile.map((p) => `<div class="setting-row"><div class="setting-text"><div class="setting-label mono">${esc(p.key)}</div>
+        <div class="setting-help">${esc(p.value)}</div></div>
+        <div class="setting-control"><button class="btn btn-ghost" data-profile-del="${esc(p.key)}" type="button">Delete</button></div></div>`).join("")
+    : `<p class="muted">No profile fields yet.</p>`;
+  renderMemoryFacts();
+}
+
+function renderMemoryFacts() {
+  if (!memoryData) return;
+  const q = (document.getElementById("memory-search").value || "").trim().toLowerCase();
+  const facts = memoryData.facts.filter((f) => !q || `${f.content} ${f.key || ""} ${f.category}`.toLowerCase().includes(q));
+  document.getElementById("memory-facts").innerHTML = facts.length ? facts.map((f) => `
+    <li class="list-item memory-fact${f.superseded_at ? " memory-old" : ""}" data-id="${f.id}">
+      <div class="memory-main"><span class="src-badge">${esc(f.category)}</span> <span class="memory-text">${esc(f.content)}</span></div>
+      <div class="memory-meta muted">#${f.id} · ${esc((f.created_at || "").replace("T", " ").slice(0, 16))} ·
+        ${f.source === "auto" ? "picked up from conversation" : "remembered"}${f.key ? " · " + esc(f.key) : ""}
+        ${f.superseded_at ? " · replaced by #" + esc(String(f.superseded_by || "")) : ""}</div>
+      ${f.superseded_at ? "" : `<div class="memory-actions"><button class="btn btn-ghost" data-edit="${f.id}" type="button">Edit</button>
+        <button class="btn btn-ghost" data-forget="${f.id}" type="button">Forget</button></div>`}
+    </li>`).join("") : `<li class="empty-state">${q ? "No matching facts." : "Nothing remembered yet."}</li>`;
+}
+
+async function memoryCall(url, method, body) {
+  const status = document.getElementById("memory-status");
+  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  status.textContent = res.ok ? (data.result || "Saved.") : (data.error || data.result || `Failed (HTTP ${res.status})`);
+  await refreshMemory();
+  return res.ok;
+}
+
+document.getElementById("memory-facts")?.addEventListener("click", async (e) => {
+  const edit = e.target.closest("[data-edit]");
+  const forget = e.target.closest("[data-forget]");
+  const save = e.target.closest("[data-save]");
+  if (forget) {
+    const f = memoryData.facts.find((x) => x.id === +forget.dataset.forget);
+    if (f && confirm(`Forget this for good?\n\n${f.content}`)) memoryCall(`/api/memory/facts/${f.id}`, "DELETE");
+  } else if (edit) {
+    const li = edit.closest("li");
+    const f = memoryData.facts.find((x) => x.id === +edit.dataset.edit);
+    li.querySelector(".memory-main").innerHTML = `<input class="memory-edit-input" maxlength="1000" value="${esc(f.content)}" aria-label="Edit fact">`;
+    li.querySelector(".memory-actions").innerHTML = `<button class="btn" data-save="${f.id}" type="button">Save</button>
+      <button class="btn btn-ghost" data-cancel type="button">Cancel</button>`;
+    li.querySelector(".memory-edit-input").focus();
+  } else if (save) {
+    const input = save.closest("li").querySelector(".memory-edit-input");
+    memoryCall(`/api/memory/facts/${save.dataset.save}`, "POST", { content: input.value });
+  } else if (e.target.closest("[data-cancel]")) {
+    renderMemoryFacts();
+  }
+});
+document.getElementById("memory-profile")?.addEventListener("click", (e) => {
+  const del = e.target.closest("[data-profile-del]");
+  if (del && confirm(`Delete "${del.dataset.profileDel}"?`)) memoryCall(`/api/memory/profile/${encodeURIComponent(del.dataset.profileDel)}`, "DELETE");
+});
+document.getElementById("memory-add-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const ok = await memoryCall("/api/memory/facts", "POST", {
+    category: document.getElementById("memory-add-category").value,
+    content: document.getElementById("memory-add-content").value,
+  });
+  if (ok) document.getElementById("memory-add-content").value = "";
+});
+document.getElementById("memory-profile-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const ok = await memoryCall("/api/memory/profile", "POST", {
+    key: document.getElementById("memory-profile-key").value, value: document.getElementById("memory-profile-value").value,
+  });
+  if (ok) e.target.reset();
+});
+document.getElementById("memory-search")?.addEventListener("input", renderMemoryFacts);
+document.getElementById("memory-history")?.addEventListener("change", refreshMemory);
+window.refreshMemory = refreshMemory;
+if (typeof currentRoute === "function" && currentRoute() === "memory") refreshMemory();

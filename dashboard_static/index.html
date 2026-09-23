@@ -42,6 +42,7 @@
       <a href="#/audit" data-route="audit" class="nav-link"><span class="nav-icon">&#128269;</span><span class="nav-label">Audit Trail</span></a>
       <a href="#/victory" data-route="victory" class="nav-link"><span class="nav-icon">&#10003;</span><span class="nav-label">Victory Log</span></a>
       <a href="#/daily" data-route="daily" class="nav-link"><span class="nav-icon">&#8635;</span><span class="nav-label">Daily</span></a>
+      <a href="#/memory" data-route="memory" class="nav-link"><span class="nav-icon">&#10070;</span><span class="nav-label">Memory</span></a>
       <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></a>
     </nav>
   </aside>
@@ -202,6 +203,31 @@
     <section id="view-daily" class="view">
       <div class="view-head"><h1 class="view-title">Daily</h1></div>
       <ul id="daily-list" class="list compact"></ul>
+    </section>
+
+    <section id="view-memory" class="view">
+      <div class="view-head"><h1 class="view-title">Memory</h1></div>
+      <p class="muted">What Jarvis remembers about you. Editing keeps the old wording as history; Forget deletes a fact and its older versions for good.
+        Relationship facts with an email address also decide who Sleep Mode answers.</p>
+      <h2 class="settings-h">About me</h2>
+      <div id="memory-profile" class="settings-list"></div>
+      <form id="memory-profile-form" class="settings-add">
+        <input id="memory-profile-key" placeholder="name, e.g. home_town" maxlength="60" required aria-label="Profile field name">
+        <input id="memory-profile-value" placeholder="value" maxlength="500" required aria-label="Profile field value">
+        <button class="btn" type="submit">Save</button>
+      </form>
+      <h2 class="settings-h">Facts</h2>
+      <form id="memory-add-form" class="settings-add">
+        <select id="memory-add-category" aria-label="Category"></select>
+        <input id="memory-add-content" placeholder="Something Jarvis should remember" maxlength="1000" required aria-label="New fact">
+        <button class="btn" type="submit">Remember</button>
+        <span id="memory-status" class="muted" aria-live="polite"></span>
+      </form>
+      <div class="memory-filter">
+        <input id="memory-search" type="search" placeholder="Search facts" aria-label="Search facts">
+        <label class="muted"><input type="checkbox" id="memory-history"> Show replaced versions</label>
+      </div>
+      <ul id="memory-facts" class="list"></ul>
     </section>
 
     <section id="view-settings" class="view">

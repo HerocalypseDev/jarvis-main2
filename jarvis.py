@@ -1862,6 +1862,14 @@ AGENT_TOOLS = [
         },
     },
     {
+        "name": "forget_fact",
+        "description": (
+            "Permanently delete one remembered fact when the user says to forget it. Find its #id with "
+            "recall_facts first; if several match, ask which one. Only works when the user is at the PC."
+        ),
+        "input_schema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+    },
+    {
         "name": "recall_facts",
         "description": (
             "Search remembered facts about the user beyond what's already listed in your "
@@ -3430,7 +3438,7 @@ def recall_facts(query: str = "", include_superseded: bool = False, limit: int =
         clauses.append("(content LIKE ? OR key LIKE ?)")
         like = f"%{q}%"
         params.extend([like, like])
-    sql = "SELECT category, key, content, created_at, superseded_at FROM memory_facts"
+    sql = "SELECT id, category, key, content, created_at, superseded_at FROM memory_facts"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY created_at DESC LIMIT ?"
@@ -3444,11 +3452,93 @@ def recall_facts(query: str = "", include_superseded: bool = False, limit: int =
     if not rows:
         return "No matching facts found."
     lines = []
-    for cat, key, content, created_at, superseded_at in rows:
-        tag = f"[{cat}]" + (f" ({key})" if key else "")
+    for fid, cat, key, content, created_at, superseded_at in rows:
+        tag = f"#{fid} [{cat}]" + (f" ({key})" if key else "")
         status = " [superseded]" if superseded_at else ""
         lines.append(f"{tag} {created_at}: {content}{status}")
     return "\n".join(lines)
+
+
+# --- Editable memory (P3, 2026-09-23): dashboard Memory route + forget_fact tool ------------------
+def list_memory(include_superseded: bool = False) -> dict:
+    """Everything Jarvis remembers about the user, for the dashboard: facts (with where they came
+    from: "auto" = extracted from conversation, keys prefixed "auto:") and user_profile fields."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            facts = conn.execute(
+                "SELECT id, category, key, content, created_at, superseded_at, superseded_by FROM memory_facts"
+                + ("" if include_superseded else " WHERE superseded_at IS NULL") + " ORDER BY id DESC LIMIT 1000"
+            ).fetchall()
+            profile = conn.execute("SELECT key, value FROM user_profile ORDER BY key").fetchall()
+        finally:
+            conn.close()
+    return {
+        "categories": list(MEMORY_FACT_CATEGORIES),
+        "facts": [{"id": i, "category": c, "key": k, "content": t, "created_at": ca, "superseded_at": sa,
+                   "superseded_by": sb, "source": "auto" if (k or "").startswith("auto:") else "remembered"}
+                  for i, c, k, t, ca, sa, sb in facts],
+        "profile": [{"key": k, "value": v} for k, v in profile],
+    }
+
+
+def edit_fact(fact_id: int, content: str, category: str | None = None) -> str:
+    """Replaces an active fact with new wording. The old row is kept as superseded (the same history
+    remember_fact keeps), so the change stays explainable."""
+    content = (content or "").strip()
+    if not content:
+        return "No content given."
+    now = datetime.now().isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            row = conn.execute("SELECT category, key FROM memory_facts WHERE id = ? AND superseded_at IS NULL",
+                               (int(fact_id),)).fetchone()
+            if not row:
+                return f"No current fact #{fact_id}."
+            cat = category if category in MEMORY_FACT_CATEGORIES else row[0]
+            new_id = conn.execute("INSERT INTO memory_facts (category, key, content, created_at) VALUES (?, ?, ?, ?)",
+                                  (cat, row[1], content, now)).lastrowid
+            conn.execute("UPDATE memory_facts SET superseded_at = ?, superseded_by = ? WHERE id = ?",
+                         (now, new_id, int(fact_id)))
+            conn.commit()
+        finally:
+            conn.close()
+    return f"Updated #{fact_id} -> #{new_id}: {content}"
+
+
+def forget_fact(fact_id: int) -> str:
+    """Deletes a fact for good, together with the older versions it replaced (forgetting should not
+    leave the previous wording behind)."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            row = conn.execute("SELECT content FROM memory_facts WHERE id = ?", (int(fact_id),)).fetchone()
+            if not row:
+                return f"There's no fact #{fact_id}."
+            ids, frontier = {int(fact_id)}, [int(fact_id)]
+            while frontier:  # walk back through what this fact superseded
+                older = [r[0] for r in conn.execute(
+                    f"SELECT id FROM memory_facts WHERE superseded_by IN ({','.join('?' * len(frontier))})",
+                    frontier).fetchall() if r[0] not in ids]
+                ids.update(older)
+                frontier = older
+            conn.execute(f"DELETE FROM memory_facts WHERE id IN ({','.join('?' * len(ids))})", list(ids))
+            conn.commit()
+        finally:
+            conn.close()
+    return f"Forgot: {row[0]}" + (f" (and {len(ids) - 1} older version(s))" if len(ids) > 1 else "")
+
+
+def delete_profile_field(key: str) -> bool:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            n = conn.execute("DELETE FROM user_profile WHERE key = ?", ((key or "").strip(),)).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+    return n > 0
 
 
 def get_active_facts_context() -> str:
@@ -4855,6 +4945,10 @@ def briefing_report(kind: str = "urgent") -> dict:
 
 
 dashboard.providers["briefing"] = briefing_report
+dashboard.providers["memory"] = {
+    "list": list_memory, "add": remember_fact, "edit": edit_fact, "forget": forget_fact,
+    "profile_set": set_user_profile_fact, "profile_delete": delete_profile_field,
+}
 
 
 def _autonomy_callbacks() -> dict:
@@ -7939,6 +8033,16 @@ def _execute_tool_impl(
                 str(inp.get("content") or ""),
                 inp.get("key"),
             )
+        elif tool_name == "forget_fact":
+            # Attended only: a phone message or an injected email must not erase what Jarvis knows
+            # (e.g. the relationship facts the Sleep Mode family list is built from).
+            if _current_command_source() not in ("voice", "text", "dashboard") or getattr(_command_ctx, "autonomous", False):
+                result = "Forgetting a fact only works when you ask from the PC (voice, typed or the dashboard)."
+            else:
+                try:
+                    result = forget_fact(int(inp.get("id")))
+                except (TypeError, ValueError):
+                    result = "Give the fact's #id (from recall_facts)."
         elif tool_name == "recall_facts":
             result = recall_facts(
                 str(inp.get("query") or ""), bool(inp.get("include_superseded"))

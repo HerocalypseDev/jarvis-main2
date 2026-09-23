@@ -1200,6 +1200,19 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
     as `dictation` with char count + app only (never the words). Capped at 5000 chars.
   - Not verified live: typing into a real app, a real appshot question end to end.
 
+- **P3 Editable memory** (`test_memory_edit.py`): dashboard **Memory** route (`#/memory`, in `qol.js`)
+  lists `memory_facts` (id, category, date, "remembered" vs "picked up from conversation" = `auto:` key,
+  optional replaced versions) and `user_profile` fields, with add / inline edit / forget / search.
+  Backend in jarvis.py: `list_memory`, `edit_fact` (inserts the new wording and marks the old row
+  superseded, same history model as `remember_fact`), `forget_fact` (hard delete of the fact **and**
+  every older version it replaced), `delete_profile_field`. Routes: `GET /api/memory`,
+  `POST /api/memory/facts[/{id}]`, `DELETE /api/memory/facts/{id}`, `POST|DELETE /api/memory/profile`
+  (provider `memory`; Host/Origin middleware covers them, tested for DELETE). Voice: "remember that..."
+  (existing `remember_fact`), "what do you know about me" (`recall_facts`, now shows `#id`), "forget
+  that..." (new `forget_fact` tool, **attended-only**: refused from phone, autonomy and unattended runs,
+  because relationship facts with an email build the Sleep Mode family auto-reply list). Face data is a
+  separate encrypted store and is never served here.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1266,7 +1279,8 @@ row there each phase rather than only stating the total in chat.
 | 42 (selection hotkey default off + palette Alt+K, then QOL audit-and-fix: 16 findings fixed, 13 new tests) | Opus 5.5 | ~45 min | ~$3.50–$5.00 |
 | 43 (P0 briefing v2 + what's urgent: voice, tool, Home card, calendar-helper fix; 15 new tests) | Opus 5.5 | ~40 min | ~$3.00–$4.20 |
 | 44 (P1 appshot + P2 dictation: generic hold-mode path, mouse-click guard, image-in-agent-loop, settings; 7 new tests) | Opus 5.5 | ~35 min | ~$2.80–$3.90 |
-| **Running total (final)** | | **~1653 min** | **~$80.65–$113.05** |
+| 45 (P3 editable memory: Memory route, edit/forget/profile APIs, attended-only forget_fact; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
+| **Running total (final)** | | **~1673 min** | **~$82.25–$115.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

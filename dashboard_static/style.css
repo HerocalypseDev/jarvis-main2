@@ -655,3 +655,12 @@ p.consent-list { padding-left: 0; }
 .briefing-section { margin-top: 10px; }
 .briefing-title { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; opacity: .75; margin-bottom: 4px; }
 .briefing-time { margin-top: 8px; font-size: 12px; }
+
+/* Memory route (P3) */
+.memory-filter { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 10px 0; }
+.memory-filter input[type=search] { flex: 1 1 220px; }
+.memory-fact { display: flex; flex-direction: column; gap: 4px; }
+.memory-meta { font-size: 12px; }
+.memory-actions { display: flex; gap: 6px; }
+.memory-old { opacity: .55; }
+.memory-edit-input { width: 100%; }

@@ -613,6 +613,46 @@ def _build_app(
             rows = []
         return {"rows": rows, "limit": limit, "offset": offset}
 
+    # --- Memory (P3): what Jarvis knows about the user, editable. Facts + user_profile only; face
+    # data lives in its own encrypted store and is never served here.
+    @app.get("/api/memory")
+    def api_memory(include_superseded: bool = False):
+        return JSONResponse(_provider("memory")["list"](include_superseded), headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/memory/facts")
+    def api_memory_add(payload: dict = Body(...)):
+        text = str(payload.get("content") or "").strip()
+        if not text or len(text) > 1000:
+            return JSONResponse({"ok": False, "error": "Write the fact (up to 1000 characters)."}, status_code=400)
+        return {"ok": True, "result": _provider("memory")["add"](str(payload.get("category") or "fact"), text,
+                                                                  str(payload.get("key") or "") or None)}
+
+    @app.post("/api/memory/facts/{fact_id}")
+    def api_memory_edit(fact_id: int, payload: dict = Body(...)):
+        text = str(payload.get("content") or "").strip()
+        if not text or len(text) > 1000:
+            return JSONResponse({"ok": False, "error": "Write the fact (up to 1000 characters)."}, status_code=400)
+        res = _provider("memory")["edit"](fact_id, text, payload.get("category"))
+        return JSONResponse({"ok": res.startswith("Updated"), "result": res}, status_code=200 if res.startswith("Updated") else 404)
+
+    @app.delete("/api/memory/facts/{fact_id}")
+    def api_memory_forget(fact_id: int):
+        res = _provider("memory")["forget"](fact_id)
+        return JSONResponse({"ok": res.startswith("Forgot"), "result": res}, status_code=200 if res.startswith("Forgot") else 404)
+
+    @app.post("/api/memory/profile")
+    def api_profile_set(payload: dict = Body(...)):
+        key, value = str(payload.get("key") or "").strip(), str(payload.get("value") or "").strip()
+        if not key or not value or len(key) > 60 or len(value) > 500:
+            return JSONResponse({"ok": False, "error": "Needs a name (60) and a value (500 characters max)."}, status_code=400)
+        _provider("memory")["profile_set"](key, value)
+        return {"ok": True}
+
+    @app.delete("/api/memory/profile/{key}")
+    def api_profile_delete(key: str):
+        ok = _provider("memory")["profile_delete"](key)
+        return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
     @app.get("/api/briefing")
     def api_briefing(kind: str = "urgent"):
         # Read-only; fetches calendar/mail through the same MCP tools the agent uses.
