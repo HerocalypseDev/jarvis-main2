@@ -108,9 +108,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1790221400.2773232,
-    "seen": 1790221427.1896024,
-    "ast_hash": "1d2ec2c12fa42fa8f8a858e81066390f",
+    "mtime": 1790221445.9943244,
+    "seen": 1790221718.8969164,
+    "ast_hash": "72a4d44ae2c8a5fbf5bde2590f817804",
     "semantic_hash": ""
   },
   "README.md": {
@@ -678,9 +678,9 @@
     "semantic_hash": ""
   },
   "jarvis_settings.py": {
-    "mtime": 1790145962.385208,
-    "seen": 1790146273.3324556,
-    "ast_hash": "6a2555b69d1789fcb04307c87e98bfa5",
+    "mtime": 1790221679.761255,
+    "seen": 1790221718.896805,
+    "ast_hash": "753a2106fc2725e80dd001b644d026cd",
     "semantic_hash": ""
   },
   "jarvis_weather.py": {

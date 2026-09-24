@@ -3604,7 +3604,7 @@
       "file_type": "code",
       "norm_label": "_apply_live()",
       "source_file": "jarvis_settings.py",
-      "source_location": "L160"
+      "source_location": "L163"
     },
     {
       "id": "jarvis_settings_bool",
@@ -3628,7 +3628,7 @@
       "file_type": "code",
       "norm_label": "env_path()",
       "source_file": "jarvis_settings.py",
-      "source_location": "L106"
+      "source_location": "L109"
     },
     {
       "id": "jarvis_settings_is_secret",
@@ -3640,7 +3640,7 @@
       "file_type": "code",
       "norm_label": "is_secret()",
       "source_file": "jarvis_settings.py",
-      "source_location": "L122"
+      "source_location": "L125"
     },
     {
       "id": "jarvis_settings_list_settings",
@@ -3652,7 +3652,7 @@
       "file_type": "code",
       "norm_label": "list_settings()",
       "source_file": "jarvis_settings.py",
-      "source_location": "L126"
+      "source_location": "L129"
     },
     {
       "id": "jarvis_settings_parse_env",
@@ -3664,7 +3664,7 @@
       "file_type": "code",
       "norm_label": "_parse_env()",
       "source_file": "jarvis_settings.py",
-      "source_location": "L110"
+      "source_location": "L113"
     },
     {
       "id": "jarvis_settings_set_setting",
@@ -3676,7 +3676,7 @@
       "file_type": "code",
       "norm_label": "set_setting()",
       "source_file": "jarvis_settings.py",
-      "source_location": "L182"
+      "source_location": "L185"
     },
     {
       "id": "jarvis_settings_write_env_value",
@@ -3688,7 +3688,7 @@
       "file_type": "code",
       "norm_label": "_write_env_value()",
       "source_file": "jarvis_settings.py",
-      "source_location": "L141"
+      "source_location": "L144"
     },
     {
       "id": "jarvis_dashboard_build_app_loopback_only",
@@ -34822,7 +34822,7 @@
       "node_kind": "heading",
       "norm_label": "audit hardening (2026-09-21)",
       "source_file": "CLAUDE.md",
-      "source_location": "L1405"
+      "source_location": "L1406"
     },
     {
       "id": "claude_chief_of_staff_batch_2026_09_23",
@@ -66029,7 +66029,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L107",
+      "source_location": "L110",
       "weight": 1.0
     },
     {
@@ -66041,7 +66041,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L128",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -66053,7 +66053,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L128",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -66065,7 +66065,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L136",
+      "source_location": "L139",
       "weight": 1.0
     },
     {
@@ -66077,7 +66077,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L207",
+      "source_location": "L210",
       "weight": 1.0
     },
     {
@@ -66089,7 +66089,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L209",
+      "source_location": "L212",
       "weight": 1.0
     },
     {
@@ -66101,7 +66101,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L211",
+      "source_location": "L214",
       "weight": 1.0
     },
     {
@@ -66113,7 +66113,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_settings.py",
-      "source_location": "L142",
+      "source_location": "L145",
       "weight": 1.0
     },
     {
@@ -89767,7 +89767,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L1405",
+      "source_location": "L1406",
       "weight": 1.0
     },
     {
@@ -100866,7 +100866,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_settings.py",
-      "source_location": "L106",
+      "source_location": "L109",
       "weight": 1.0
     },
     {
@@ -100877,7 +100877,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_settings.py",
-      "source_location": "L110",
+      "source_location": "L113",
       "weight": 1.0
     },
     {
@@ -100888,7 +100888,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_settings.py",
-      "source_location": "L122",
+      "source_location": "L125",
       "weight": 1.0
     },
     {
@@ -100899,7 +100899,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_settings.py",
-      "source_location": "L126",
+      "source_location": "L129",
       "weight": 1.0
     },
     {
@@ -100910,7 +100910,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_settings.py",
-      "source_location": "L141",
+      "source_location": "L144",
       "weight": 1.0
     },
     {
@@ -100921,7 +100921,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_settings.py",
-      "source_location": "L160",
+      "source_location": "L163",
       "weight": 1.0
     },
     {
@@ -100932,7 +100932,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_settings.py",
-      "source_location": "L182",
+      "source_location": "L185",
       "weight": 1.0
     },
     {
@@ -125762,7 +125762,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "jarvis_settings.py",
-      "source_location": "L79",
+      "source_location": "L82",
       "weight": 1.0
     },
     {
@@ -125803,5 +125803,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "1e5021cca4c6497e81b8ee5b6b6fb5a802cdca4d"
+  "built_at_commit": "841e842245ab642611bc419142c2640e3cf128c7"
 }

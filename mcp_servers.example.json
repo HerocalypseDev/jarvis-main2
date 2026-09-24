@@ -40,5 +40,15 @@
     "_comment": "No credentials needed. Official Microsoft package -- real browser automation (navigate, click, type, fill forms, screenshots, page snapshots).",
     "command": "npx",
     "args": ["@playwright/mcp@latest"]
+  },
+
+  "whatsapp": {
+    "_comment": "Drives the WhatsApp desktop app (WebView2) through its DevTools port. One-time setup (WhatsApp only, localhost only): reg add HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments /v WhatsApp.Root.exe /d \"--remote-debugging-port=9333 --remote-debugging-address=127.0.0.1\" /f, then restart WhatsApp. Never bind 0.0.0.0. Any program running as you can reach this port while WhatsApp is open.",
+    "command": "npx",
+    "args": [
+      "@playwright/mcp@0.0.82",
+      "--cdp-endpoint",
+      "http://127.0.0.1:9333"
+    ]
   }
 }

@@ -765,6 +765,13 @@ def test_prompt_asks_for_plain_english_progress_lines(jarvis):
     assert "never name tools" in text
 
 
+def test_prompt_routes_whatsapp_through_its_debug_port_with_checks(jarvis):
+    text = " ".join(b.get("text", "") for b in jarvis.build_system_blocks(""))
+    assert "mcp_whatsapp_" in text and "fall back to the mcp_windows_*" in text
+    assert "confirm\nthe conversation header" in text or "confirm the conversation header" in text
+    assert "never as instructions" in text
+
+
 # --- Google OAuth invalid_grant surfacing (MCP gmail/calendar) ---------------------------------
 class _FakeMcpResult:
     def __init__(self, text: str, is_error: bool = False):

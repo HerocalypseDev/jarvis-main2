@@ -1439,3 +1439,23 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   handled-ID table and per-sender cap first (memory-search dedupe is fuzzy).
 - MCP servers still run through `npx ...@latest` in the local `mcp_servers.json` (gitignored); pin
   versions there yourself.
+
+## WhatsApp over DevTools (2026-09-24)
+
+- User asked (explicit permission) for Playwright to drive the WhatsApp desktop app through its debug
+  port. WhatsApp for Windows (`WhatsApp.Root.exe`) is a WebView2 app, so a per-app WebView2 policy
+  enables the port: `HKCU\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments`,
+  value `WhatsApp.Root.exe` = `--remote-debugging-port=9333 --remote-debugging-address=127.0.0.1`
+  (set on this machine; scoped to WhatsApp only, not every WebView2 app). Takes effect when WhatsApp
+  restarts. Remove that registry value to turn it off.
+- Local `mcp_servers.json` has a `whatsapp` server: the installed `@playwright/mcp` 0.0.82 with
+  `--cdp-endpoint http://127.0.0.1:9333` (connects lazily on first tool call). Example entry in
+  `mcp_servers.example.json`. The prompt prefers `mcp_whatsapp_*`, falls back to the Windows-MCP UI
+  tools, keeps the "confirm the chat header before typing" checks, and says message text is data.
+  Pinned by `test_cache.py::test_prompt_routes_whatsapp_through_its_debug_port_with_checks`.
+- Risk: the DevTools port has no auth; any program running as this user can read/send WhatsApp
+  messages while WhatsApp is open. Such a program could already read WhatsApp's own data folder, so
+  the added exposure is small; never bind 0.0.0.0. The catastrophic gate still scans MCP tool input.
+  Incoming WhatsApp text reaching the model is a prompt-injection route, like email.
+- **Not verified live**: WhatsApp was not restarted (would interrupt the user), so the port and a
+  real Playwright attach/send are untested.
