@@ -55,7 +55,8 @@ SETTINGS: list[dict] = [
     {"key": "JARVIS_LLM_FAILOVER", "label": "Fall back to Gemini when Claude fails", "kind": "bool", "default": "1",
      "help": "Credit, key or outage problems are answered by Gemini instead.", "live": "env"},
     {"key": "JARVIS_GEMINI_MODEL", "label": "Gemini model", "kind": "text", "default": "gemini-3.1-flash-lite",
-     "help": "e.g. gemini-3.1-flash-lite, gemini-3.5-flash. If its daily free quota runs out, the next one is used.",
+     "options_from": "gemini",
+     "help": "Pick from the models your key can use, or type one. If its daily free quota runs out, the next one is used.",
      "live": "env"},
     {"key": "JARVIS_FOLLOWUP_S", "label": "Follow-up listening window (seconds)", "kind": "number", "default": "5",
      "help": "Keep listening this long after a spoken reply. 0 = off.", "live": ("jarvis", "followup.window_s", float)},
@@ -134,8 +135,12 @@ def list_settings() -> dict:
     known = []
     for s in SETTINGS:
         cur = os.environ.get(s["key"], file_vals.get(s["key"], s["default"]))
-        known.append({k: v for k, v in s.items() if k != "live"} | {
-            "value": cur, "applies": "restart" if s["live"] is None else "now"})
+        row = {k: v for k, v in s.items() if k not in ("live", "options_from")} | {
+            "value": cur, "applies": "restart" if s["live"] is None else "now"}
+        if s.get("options_from") == "gemini":
+            import jarvis_gemini
+            row["options"] = jarvis_gemini.list_models()
+        known.append(row)
     other = [{"key": k, "secret": is_secret(k), "set": bool(v), "value": None if is_secret(k) else v}
              for k, v in sorted(file_vals.items()) if k not in _BY_KEY]
     return {"known": known, "other": other}

@@ -52,6 +52,12 @@ function settingControl(s) {
     return `<select class="setting-input" data-kind="choice">${s.choices.map((c) =>
       `<option value="${esc(c)}" ${c === s.value ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
   }
+  if (s.options && s.options.length) {
+    // dropdown of live options; keeps the current value even if it's not in the list
+    const opts = s.options.includes(s.value) ? s.options : [s.value, ...s.options];
+    return `<select class="setting-input" data-kind="choice">${opts.map((c) =>
+      `<option value="${esc(c)}" ${c === s.value ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+  }
   return `<input class="setting-input" data-kind="${s.kind}" type="${s.kind === "number" ? "number" : "text"}"
     step="any" value="${esc(s.value ?? "")}" autocomplete="off">`;
 }

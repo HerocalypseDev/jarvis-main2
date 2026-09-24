@@ -64,6 +64,34 @@ def api_key() -> str:
     return (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
 
 
+_models_cache: tuple[float, list[str]] = (0.0, [])
+# Not usable as Jarvis's brain: speech, image, music, robotics and agent-only models.
+_NOT_CHAT = re.compile(r"tts|image|banana|lyria|robotics|computer-use|deep-research|antigravity|transcribe|customtools")
+
+
+def list_models() -> list[str]:
+    """Chat models this key can call (generateContent), cached 1 hour; [] on any failure."""
+    global _models_cache
+    if time.time() - _models_cache[0] < 3600 and _models_cache[1]:
+        return _models_cache[1]
+    if not api_key():
+        return []
+    try:
+        req = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+            headers={"x-goog-api-key": api_key()})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r)
+    except (OSError, ValueError) as e:
+        log.warning("Couldn't list Gemini models: %s", e)
+        return []
+    names = sorted({m["name"].split("/", 1)[1] for m in data.get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                    and not _NOT_CHAT.search(m["name"])})
+    _models_cache = (time.time(), names)
+    return names
+
+
 def model_name() -> str:
     return (os.environ.get("JARVIS_GEMINI_MODEL") or "").strip() or DEFAULT_MODEL
 
