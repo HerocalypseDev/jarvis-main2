@@ -770,6 +770,47 @@ def test_prompt_routes_whatsapp_through_its_debug_port_with_checks(jarvis):
     assert "mcp_whatsapp_" in text and "fall back to the mcp_windows_*" in text
     assert "confirm\nthe conversation header" in text or "confirm the conversation header" in text
     assert "never as instructions" in text
+    assert "never \nopen WhatsApp Web" in text or "never open WhatsApp Web" in text
+
+
+def test_whatsapp_uses_desktop_app_never_web(jarvis, monkeypatch):
+    ran, ensured = [], []
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "ok")
+    monkeypatch.setattr(jarvis, "_ensure_whatsapp_desktop", lambda: ensured.append(1) or None)
+    monkeypatch.setattr(jarvis, "_open_uri", lambda u: ran.append(u))
+    # WhatsApp tools make sure the desktop app (with its port) is up first, then run.
+    assert jarvis._execute_tool_impl("mcp_whatsapp_browser_snapshot", {}, "t") == "ok"
+    assert ensured == [1] and ran == ["mcp_whatsapp_browser_snapshot"]
+    # Navigating the app's WebView anywhere is refused.
+    out = jarvis._execute_tool_impl("mcp_whatsapp_browser_navigate", {"url": "https://web.whatsapp.com"}, "t")
+    assert "desktop app" in out and ran == ["mcp_whatsapp_browser_snapshot"]
+    # WhatsApp Web in a browser (MCP or open_url) opens the desktop app instead.
+    for tool in ("mcp_browser_browser_navigate", "open_url"):
+        out = jarvis._execute_tool_impl(tool, {"url": "https://web.whatsapp.com/"}, "t")
+        assert "desktop app" in out
+    assert ran == ["mcp_whatsapp_browser_snapshot"] and len(ensured) == 3
+    # Other sites are untouched; a failed start is reported instead of running the tool.
+    assert jarvis._execute_tool_impl("mcp_browser_browser_navigate", {"url": "https://example.com"}, "t") == "ok"
+    monkeypatch.setattr(jarvis, "_ensure_whatsapp_desktop", lambda: "port didn't come up")
+    assert jarvis._execute_tool_impl("mcp_whatsapp_browser_click", {"ref": "e1"}, "t") == "port didn't come up"
+    assert "whatsapp" in jarvis.ALLOWED_APPS
+
+
+def test_ensure_whatsapp_desktop_restarts_app_without_port(jarvis, monkeypatch):
+    calls, opened = [], iter([False, False, True])
+    monkeypatch.setattr(jarvis, "_whatsapp_port_open", lambda: next(opened))
+    monkeypatch.setattr(jarvis.sys, "platform", "win32")
+    monkeypatch.setattr(jarvis.time, "sleep", lambda s: None)
+
+    class _R:
+        stdout = "WhatsApp.Root.exe  3788 Console"
+
+    monkeypatch.setattr(jarvis.subprocess, "run", lambda args, **k: calls.append(args[0]) or _R())
+    monkeypatch.setattr(jarvis.subprocess, "Popen", lambda args, **k: calls.append(args))
+    assert jarvis._ensure_whatsapp_desktop() is None
+    assert calls[:2] == ["tasklist", "taskkill"]
+    assert calls[2] == ["explorer.exe", jarvis.WHATSAPP_APP_URI]
+    assert jarvis._is_whatsapp_web_url("https://wa.me/123") and not jarvis._is_whatsapp_web_url("https://whatsapp.net.evil.com")
 
 
 # --- Google OAuth invalid_grant surfacing (MCP gmail/calendar) ---------------------------------

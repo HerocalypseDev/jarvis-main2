@@ -1457,5 +1457,13 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   messages while WhatsApp is open. Such a program could already read WhatsApp's own data folder, so
   the added exposure is small; never bind 0.0.0.0. The catastrophic gate still scans MCP tool input.
   Incoming WhatsApp text reaching the model is a prompt-injection route, like email.
-- **Not verified live**: WhatsApp was not restarted (would interrupt the user), so the port and a
-  real Playwright attach/send are untested.
+- **Desktop app, never WhatsApp Web (code-level, 2026-09-24)**: `_ensure_whatsapp_desktop()` runs
+  before every `mcp_whatsapp_*` call and for "open whatsapp" (`whatsapp` is in `ALLOWED_APPS`): if
+  port 9333 is closed it force-restarts `WhatsApp.Root.exe` when running (started before the policy),
+  launches `WHATSAPP_APP_URI` (`shell:AppsFolder\...WhatsAppDesktop...!App`), waits up to 20s for the
+  port. `mcp_whatsapp_*_navigate` is refused; `open_url`/`play_media`/`mcp_browser_*` with a
+  web.whatsapp.com / wa.me / api.whatsapp.com URL open the desktop app instead. The catastrophic
+  gate still runs first. Tests: `test_cache.py::test_whatsapp_uses_desktop_app_never_web`,
+  `test_ensure_whatsapp_desktop_restarts_app_without_port`.
+- **Not verified live**: the first restart (WhatsApp was running without the port at build time)
+  and a real Playwright attach/send are untested.
