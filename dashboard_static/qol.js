@@ -30,7 +30,18 @@ async function refreshSettings() {
         value="${s.secret ? "" : esc(s.value || "")}" placeholder="${s.secret ? "new value" : ""}" autocomplete="off"></div>
       <div class="setting-status" aria-live="polite"></div>
     </div>`).join("") : `<p class="muted">No other settings in .env.</p>`;
+  filterSettings();
 }
+
+// Hides setting rows (both lists) whose name/label/help doesn't contain every typed word.
+function filterSettings() {
+  const words = (document.getElementById("settings-search")?.value || "").toLowerCase().split(/\s+/).filter(Boolean);
+  document.querySelectorAll("#view-settings .setting-row").forEach((row) => {
+    const text = (row.dataset.key + " " + row.querySelector(".setting-text").textContent).toLowerCase();
+    row.hidden = !words.every((w) => text.includes(w));
+  });
+}
+document.getElementById("settings-search")?.addEventListener("input", filterSettings);
 
 function settingControl(s) {
   if (s.kind === "bool") {

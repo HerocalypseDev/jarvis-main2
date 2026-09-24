@@ -178,6 +178,24 @@ def test_call_does_not_wait_for_a_long_quota_reset(gem_env):
     assert slept == []  # a daily-quota 429 fails fast instead of hanging the command
 
 
+def test_daily_quota_429_switches_to_next_model(gem_env, monkeypatch):
+    monkeypatch.setattr(g, "_exhausted", {})
+    urls = []
+
+    def http(req, timeout):
+        urls.append(req.full_url)
+        if len(urls) == 1:
+            raise _http_error(429, '{"error":{"details":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}}')
+        return _ok()
+
+    first = g.model_name()
+    assert g.call({"messages": []}, 5, http) is not None
+    assert first in urls[0] and first not in urls[1]
+    urls.clear()
+    assert g.call({"messages": []}, 5, http) is not None
+    assert first not in urls[0]  # the exhausted model is skipped for the rest of the day
+
+
 def test_call_retries_once_without_thinking_config_on_400(gem_env):
     payloads = []
 

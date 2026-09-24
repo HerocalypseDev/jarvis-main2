@@ -26,7 +26,18 @@ from typing import Callable
 log = logging.getLogger("jarvis")
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+# 2026-09-22: bumped from gemini-3.1-flash-lite — confirmed live against
+# generativelanguage.googleapis.com/v1beta/models that 3.1 is still listed but Google's error
+# responses for nearby dated models point at 3.6+ as current; gemini-3.5-flash-lite was chosen
+# over the newer 3.6/3.7/3.8 lines because it already has a jarvis_billing.PRICES entry (keeps
+# local cost tracking exact instead of falling back to the "approximate" Haiku-rate guess) and
+# is confirmed live (not 404) on this key. Update PRICES too if this is bumped again.
+# 2026-09-24: 3.5-flash-lite's free tier is 500 requests/day and ran out, so Gemini went dead
+# until the reset. Default is back to 3.1-flash-lite (confirmed working live), and a daily-quota
+# 429 now moves on to the next model in FALLBACK_MODELS (free-tier quotas are per model).
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
+FALLBACK_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash-lite")
+_exhausted: dict[str, str] = {}  # model -> date its daily quota ran out (in memory, per run)
 PROVIDERS = ("claude", "gemini")
 MAX_RETRY_WAIT_S = 30.0  # longest 429 "retry after" Jarvis will sit through mid-command
 
@@ -205,6 +216,16 @@ def retry_delay_s(error_body: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def _next_model(current: str) -> str | None:
+    """First model not out of daily quota today, after marking `current` exhausted."""
+    today = time.strftime("%Y-%m-%d")
+    _exhausted[current] = today
+    for m in (model_name(),) + FALLBACK_MODELS:
+        if _exhausted.get(m) != today:
+            return m
+    return None
+
+
 def call(
     body: dict,
     timeout: int,
@@ -217,6 +238,9 @@ def call(
     waiting the server-advised delay (capped) instead of failing a multi-step command outright;
     drops thinkingConfig once if the model rejects it."""
     key, model = api_key(), model_name()
+    today = time.strftime("%Y-%m-%d")
+    if _exhausted.get(model) == today:
+        model = next((m for m in FALLBACK_MODELS if _exhausted.get(m) != today), model)
     if not key:
         log.warning("Set GEMINI_API_KEY in .env to use Gemini.")
         return None
@@ -238,6 +262,12 @@ def call(
             if e.code == 400 and think and "thinking" in detail.lower():
                 think = False
                 continue
+            if e.code == 429 and "PerDay" in detail:
+                nxt = _next_model(model)
+                if nxt:
+                    log.warning("Gemini %s daily quota used up, switching to %s.", model, nxt)
+                    model = nxt
+                    continue
             if e.code == 429 and attempt < max_attempts:
                 wait = retry_delay_s(detail)
                 if wait is not None and wait <= MAX_RETRY_WAIT_S:

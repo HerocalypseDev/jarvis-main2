@@ -620,6 +620,8 @@ p.consent-list { padding-left: 0; }
 .setting-status { font-size: 0.82em; color: var(--text-muted); }
 .setting-status.ok { color: var(--ok); }
 .setting-status.err { color: var(--danger); }
+.setting-row[hidden] { display: none; }
+.settings-search { width: 100%; max-width: 420px; margin: 4px 0 8px; }
 .settings-add { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
 .settings-add input { width: auto; flex: 1 1 180px; }
 .mono { font-family: ui-monospace, Consolas, monospace; }

@@ -350,6 +350,11 @@ Rules:
   `JARVIS_GEMINI_MODEL` (default `gemini-3.1-flash-lite`); `JARVIS_GEMINI_THINKING` (default
   `minimal` — thinking tokens bill as output and count toward free-tier limits; `default` leaves
   the model's own).
+- **Model fallback (2026-09-24)**: `gemini-3.5-flash-lite`'s free tier (500 requests/day) ran out and
+  Gemini went dead, so the default is back to `gemini-3.1-flash-lite` (verified live), and a 429 whose
+  body says `PerDay` moves to the next model in `jarvis_gemini.FALLBACK_MODELS` (free quotas are per
+  model); an exhausted model is skipped until the date changes (in memory only). Each switch uses one
+  of the call's 3 attempts. Dashboard Settings also got a search box (filters both lists, client-side).
 - Gemini 3 needs each function call's `thoughtSignature` echoed back: `from_response` stores it on
   the tool_use block as `_thought_signature` and `convert_messages` sends it back. Tool schemas go
   via `parametersJsonSchema` (MCP schemas pass through untouched); empty-property tools omit it.
