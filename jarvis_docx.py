@@ -3,7 +3,9 @@
 Supported: # to #### headings, - / * bullets (indent 2+ spaces to nest), numbered lines (kept as
 plain text with their own numbers, so a list restarting at 1 never runs on from an earlier one),
 **bold**, *italic*, `code` inline, | tables | (a |---| line under the first row makes it a header),
-> quotes, ``` code blocks ```, and a line of just --- for a page break."""
+> quotes, ``` code blocks ```, a line of just --- for a page break, and LaTeX math ($inline$, or a
+line of just $$display$$) as native Word equations: fractions, roots, powers/subscripts, \\left( \\right),
+upright trig/log names, Greek letters and common symbols."""
 import re
 
 import docx
@@ -12,7 +14,20 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Inches
 
-_INLINE = re.compile(r"(\*\*[^*]+\*\*|\*[^*\s][^*]*\*|`[^`]+`)")
+# $math$ must hug its dollars and not be followed by a digit, so "$5 and $10" stays plain text.
+_INLINE = re.compile(r"(\$\$[^$]+\$\$|\$(?!\s)[^$\n]+?(?<!\s)\$(?!\d)|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|`[^`]+`)")
+_DISPLAY = re.compile(r"\s*\$\$(.+)\$\$\s*")
+_TOK = re.compile(r"\\[A-Za-z]+|\\.|\s+|\d+(?:\.\d+)?|.")
+_FUNCS = {"sin", "cos", "tan", "sec", "csc", "cot", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh",
+          "log", "ln", "exp", "lim", "max", "min"}
+_SYMBOLS = {"theta": "θ", "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "Delta": "Δ", "phi": "φ",
+            "pi": "π", "omega": "ω", "lambda": "λ", "mu": "μ", "sigma": "σ", "cdot": "·", "times": "×",
+            "div": "÷", "pm": "±", "mp": "∓", "le": "≤", "leq": "≤", "ge": "≥", "geq": "≥", "ne": "≠",
+            "neq": "≠", "approx": "≈", "implies": "⟹", "Rightarrow": "⇒", "iff": "⟺", "to": "→",
+            "rightarrow": "→", "infty": "∞", "circ": "°", "in": "∈", "therefore": "∴", "ldots": "…",
+            "cdots": "⋯", "dots": "…", "quad": " ", "qquad": "  ", ",": " ",
+            ";": " ", ":": " ", "!": "", "{": "{", "}": "}", "%": "%", "|": "‖"}
+_DELIMS = {".": "", "\\{": "{", "\\}": "}", "\\|": "‖", "\\langle": "⟨", "\\rangle": "⟩"}
 _TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 
 
@@ -36,11 +51,155 @@ def _base_styles(doc) -> None:
         h.paragraph_format.keep_with_next = True
 
 
+def _m(tag, *children, **attrs):
+    el = OxmlElement(f"m:{tag}")
+    for k, v in attrs.items():
+        el.set(qn(f"m:{k}"), v)
+    for c in children:
+        el.append(c)
+    return el
+
+
+def _mr(text: str, plain: bool = False):
+    r = _m("r")
+    if plain:
+        r.append(_m("rPr", _m("sty", val="p")))
+    t = _m("t")
+    t.text = text
+    t.set(qn("xml:space"), "preserve")
+    r.append(t)
+    return r
+
+
+class _Latex:
+    """Tiny LaTeX-math -> Word equation (OMML) parser for the notation an assistant writes in notes.
+    Unknown commands degrade to their name as upright text instead of failing."""
+
+    def __init__(self, src: str):
+        self.toks = _TOK.findall(src)
+        self.i = 0
+        self.func = False
+
+    def _peek(self):
+        while self.i < len(self.toks) and self.toks[self.i].isspace():
+            self.i += 1
+        return self.toks[self.i] if self.i < len(self.toks) else None
+
+    def _take(self):
+        t = self._peek()
+        self.i += 1
+        return t
+
+    def seq(self, stop=("}",)):
+        out = []
+        while (t := self._peek()) is not None and t not in stop and t != "\\right":
+            out.extend(self.scripted())
+        return out
+
+    def group(self):
+        if self._peek() == "{":
+            self.i += 1
+            out = self.seq()
+            if self._peek() == "}":
+                self.i += 1
+            return out
+        return self.atom() if self._peek() is not None else []
+
+    def scripted(self):
+        base = self.atom()
+        func = self.func
+        sub = sup = None
+        while self._peek() in ("^", "_"):
+            op = self._take()
+            if op == "^" and self._peek() == "\\circ":  # 75^\circ -> 75°, not a raised ring
+                self.i += 1
+                base.append(_mr("°"))
+                continue
+            g = self.group()
+            sup, sub = (g, sub) if op == "^" else (sup, g)
+        if sup is not None and sub is not None:
+            base = [_m("sSubSup", _m("e", *base), _m("sub", *sub), _m("sup", *sup))]
+        elif sup is not None:
+            base = [_m("sSup", _m("e", *base), _m("sup", *sup))]
+        elif sub is not None:
+            base = [_m("sSub", _m("e", *base), _m("sub", *sub))]
+        nxt = self._peek()
+        if func and nxt and nxt not in ("\\left", "\\right") and (nxt[0].isalnum() or nxt.startswith("\\")):
+            base.append(_mr(" "))  # "sin x", not "sinx"
+        return base
+
+    def _delim(self):
+        t = self._take() or ""
+        return _DELIMS.get(t, t)
+
+    def _raw_group(self) -> str:
+        if self._peek() != "{":
+            return self._take() or ""
+        self.i += 1
+        depth, text = 1, []
+        while self.i < len(self.toks):
+            t = self.toks[self.i]
+            self.i += 1
+            depth += (t == "{") - (t == "}")
+            if depth == 0:
+                break
+            text.append(t)
+        return "".join(text)
+
+    def atom(self):
+        self.func = False
+        t = self._take()
+        if t == "{":
+            self.i -= 1
+            return self.group()
+        if t in ("\\frac", "\\dfrac", "\\tfrac"):
+            num = self.group()
+            return [_m("f", _m("num", *num), _m("den", *self.group()))]
+        if t == "\\sqrt":
+            deg = []
+            if self._peek() == "[":
+                self.i += 1
+                deg = self.seq(stop=("]",))
+                if self._peek() == "]":
+                    self.i += 1
+            pr = _m("radPr") if deg else _m("radPr", _m("degHide", val="1"))
+            return [_m("rad", pr, _m("deg", *deg), _m("e", *self.group()))]
+        if t == "\\left":
+            beg = self._delim()
+            body = self.seq()
+            end = ""
+            if self._peek() == "\\right":
+                self.i += 1
+                end = self._delim()
+            return [_m("d", _m("dPr", _m("begChr", val=beg), _m("endChr", val=end)), _m("e", *body))]
+        if t in ("\\text", "\\mathrm", "\\textrm", "\\operatorname"):
+            return [_mr(self._raw_group(), plain=True)]
+        if t.startswith("\\"):
+            name = t[1:]
+            if name in _FUNCS:
+                self.func = True
+                return [_mr(name, plain=True)]
+            return [_mr(_SYMBOLS[name])] if name in _SYMBOLS else [_mr(name, plain=True)]
+        return [_mr({"-": "−", "*": "·"}.get(t, t))]
+
+
+def _omath(src: str):
+    p = _Latex(src)
+    out = []
+    while p._peek() is not None:
+        out.extend(p.seq())
+        if p._peek() is not None:  # stray } or \right: skip it
+            p.i += 1
+    return _m("oMath", *out)
+
+
 def _add_inline(par, text: str) -> None:
     for part in _INLINE.split(text):
         if not part:
             continue
-        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+        if part.startswith("$") and part.endswith("$") and len(part) > 2:
+            par._p.append(_omath(part.strip("$")))
+        elif part.startswith("**") and part.endswith("**") and len(part) > 4:
             par.add_run(part[2:-2]).bold = True
         elif part.startswith("`") and part.endswith("`") and len(part) > 2:
             par.add_run(part[1:-1]).font.name = "Consolas"
@@ -113,6 +272,10 @@ def write(path, content: str, append: bool = False) -> None:
             continue
         elif not line.strip():
             pass
+        elif m := _DISPLAY.fullmatch(line):
+            par = doc.add_paragraph()
+            par.paragraph_format.left_indent = Inches(0.35 if line[:1].isspace() else 0)
+            par._p.append(_m("oMathPara", _omath(m.group(1))))
         elif re.fullmatch(r"\s*(-{3,}|\*{3,}|_{3,})\s*", line):
             doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
         elif m := re.match(r"^(#{1,4})\s+(.*)", line):

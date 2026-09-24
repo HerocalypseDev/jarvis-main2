@@ -1393,7 +1393,8 @@ row there each phase rather than only stating the total in chat.
 | 50 (snappy media/volume: persistent media worker, no-LLM volume; 2 new tests) | Opus 5.5 | ~20 min | ~$1.20–$1.70 |
 | 51 (Home network-devices card: LAN scan every 60s, MACs, new-device toast + notification; 3 new tests) | Opus 5.5 | ~20 min | ~$1.20–$1.70 |
 | 52 (Gemini default 3.1-flash-lite + daily-quota model fallback, Settings search; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~1823 min** | **~$93.05–$130.55** |
+| 53 (.docx writer: LaTeX $…$/$$…$$ -> native Word equations; trig practice note regenerated; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
+| **Running total (final)** | | **~1838 min** | **~$94.05–$131.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

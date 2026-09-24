@@ -750,6 +750,22 @@ def test_write_file_docx_formatting(jarvis, tmp_path):
     assert d.paragraphs[-1].runs[0].text == "x = 1"
 
 
+def test_write_file_docx_latex_becomes_word_equations(jarvis, tmp_path):
+    import docx
+
+    p = tmp_path / "trig.docx"
+    jarvis._write_file_tool(str(p), "Prove $\\sin^2\\theta + \\cos^2\\theta = 1$ now.\n"
+                            "   $$\\sqrt{\\frac{1 + \\cos(30^\\circ)}{2}} = \\left(\\frac{\\pi}{6}\\right)$$\n"
+                            "Costs $5 and $10 today.", False)
+    d = docx.Document(str(p))
+    inline, display, money = (x._p.xml for x in d.paragraphs)
+    assert "<m:oMath>" in inline and "$" not in d.paragraphs[0].text and "\\sin" not in inline
+    assert inline.count("<m:sSup>") == 2 and ">sin<" in inline and "θ" in inline
+    assert "<m:oMathPara>" in display and "<m:f>" in display and "<m:rad>" in display
+    assert "°" in display and 'm:begChr m:val="("' in display and "\\" not in display
+    assert "oMath" not in money and d.paragraphs[2].text == "Costs $5 and $10 today."
+
+
 def test_workspace_name_prefix_is_not_nested(monkeypatch, tmp_path):
     import jarvis_workspace
 
