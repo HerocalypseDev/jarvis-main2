@@ -731,6 +731,25 @@ def test_write_file_docx_is_a_real_word_file(jarvis, tmp_path):
                      ("Normal", "Bold text"), ("Heading 2", "Answers"), ("Normal", "1. Periodic motion.")]
 
 
+def test_write_file_docx_formatting(jarvis, tmp_path):
+    import docx
+
+    p = tmp_path / "report.docx"
+    jarvis._write_file_tool(str(p), "# Report\nSome **key** and *soft* `code` words.\n- top\n  - nested\n"
+                            "> a quote\n| Name | Score |\n|---|---|\n| Ann | 9 |\n---\n```\nx = 1\n```", False)
+    d = docx.Document(str(p))
+    assert d.styles["Normal"].font.name == "Calibri"
+    runs = {r.text: r for r in d.paragraphs[1].runs}
+    assert runs["key"].bold and runs["soft"].italic and runs["code"].font.name == "Consolas"
+    styles = [x.style.name for x in d.paragraphs]
+    assert "List Bullet 2" in styles and "Quote" in styles
+    t = d.tables[0]
+    assert [[c.text for c in r.cells] for r in t.rows] == [["Name", "Score"], ["Ann", "9"]]
+    assert t.rows[0].cells[0].paragraphs[0].runs[0].bold
+    assert any("w:br" in x._p.xml and 'w:type="page"' in x._p.xml for x in d.paragraphs)
+    assert d.paragraphs[-1].runs[0].text == "x = 1"
+
+
 def test_workspace_name_prefix_is_not_nested(monkeypatch, tmp_path):
     import jarvis_workspace
 

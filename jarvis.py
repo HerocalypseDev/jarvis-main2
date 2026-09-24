@@ -1779,7 +1779,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "write_file",
-        "description": "Write (or append to) a text file, creating parent folders if needed. For a Word document use a .docx name and write the content as simple Markdown (# headings, - bullets, 1. numbered lines); it is saved as a real Word file. For a long document, write it in parts: the first call, then append=true for each further part. Default location is Jarvis_Workspace: give just a filename (or relative path) and it is filed automatically into Bugs, Code_Projects, Learning_Resources, Notes, Assets, Roblox_Projects or Temp by what it is. Only pass an absolute path when the user named an exact location.",
+        "description": "Write (or append to) a text file, creating parent folders if needed. For a Word document use a .docx name and write the content as simple Markdown: # to #### headings, - bullets (indent 2 spaces to nest), 1. numbered lines, **bold**, *italic*, `code`, | tables | with a |---| line under the header row, > quotes, ``` code blocks, and a line of just --- for a page break; it is saved as a neatly styled Word file (Calibri, spaced headings, shaded table headers). For a long document, write it in parts: the first call, then append=true for each further part. Default location is Jarvis_Workspace: give just a filename (or relative path) and it is filed automatically into Bugs, Code_Projects, Learning_Resources, Notes, Assets, Roblox_Projects or Temp by what it is. Only pass an absolute path when the user named an exact location.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -7316,24 +7316,10 @@ def _read_file_tool(path: str) -> str:
 
 
 def _write_docx(p: Path, content: str, append: bool) -> None:
-    """A real Word file from simple Markdown: # headings, - / * bullets, one paragraph per line.
-    Numbered lines stay plain text with their own numbers (Word's List Number style would run
-    one count through the whole file, e.g. answers 41-80 after questions 1-40). **bold** is dropped."""
-    import docx
+    """A well-formatted Word file from simple Markdown; see jarvis_docx for what is supported."""
+    import jarvis_docx
 
-    doc = docx.Document(str(p)) if append and p.exists() else docx.Document()
-    for line in content.splitlines():
-        line = line.rstrip().replace("**", "")
-        if not line.strip():
-            continue
-        m = re.match(r"^(#{1,4})\s+(.*)", line)
-        if m:
-            doc.add_heading(m.group(2), level=len(m.group(1)))
-        elif re.match(r"^\s*[-*•]\s+", line):
-            doc.add_paragraph(re.sub(r"^\s*[-*•]\s+", "", line), style="List Bullet")
-        else:
-            doc.add_paragraph(line)
-    doc.save(str(p))
+    jarvis_docx.write(p, content, append)
 
 
 def _write_file_tool(path: str, content: str, append: bool) -> str:
