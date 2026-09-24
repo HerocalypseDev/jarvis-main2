@@ -69,8 +69,22 @@ _models_cache: tuple[float, list[str]] = (0.0, [])
 _NOT_CHAT = re.compile(r"tts|image|banana|lyria|robotics|computer-use|deep-research|antigravity|transcribe|customtools")
 
 
+def _answers(model: str) -> bool:
+    """One tiny prompt; True only if the model replies right now (not 404/429/503/500/timeout)."""
+    body = {"contents": [{"parts": [{"text": "Reply with just: OK"}]}],
+            "generationConfig": {"maxOutputTokens": 16}}
+    req = urllib.request.Request(GEMINI_URL.format(model=model), data=json.dumps(body).encode(),
+                                 headers={"x-goog-api-key": api_key(), "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status == 200
+    except (OSError, ValueError):
+        return False
+
+
 def list_models() -> list[str]:
-    """Chat models this key can call (generateContent), cached 1 hour; [] on any failure."""
+    """Chat models that answered a test prompt just now, cached 1 hour; [] on any failure.
+    Each refresh spends one small request per candidate model (~20) of the free daily quota."""
     global _models_cache
     if time.time() - _models_cache[0] < 3600 and _models_cache[1]:
         return _models_cache[1]
@@ -88,6 +102,9 @@ def list_models() -> list[str]:
     names = sorted({m["name"].split("/", 1)[1] for m in data.get("models", [])
                     if "generateContent" in m.get("supportedGenerationMethods", [])
                     and not _NOT_CHAT.search(m["name"])})
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(10) as ex:
+        names = [n for n, ok in zip(names, ex.map(_answers, names)) if ok]
     _models_cache = (time.time(), names)
     return names
 
