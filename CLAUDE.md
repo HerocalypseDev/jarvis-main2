@@ -1394,7 +1394,8 @@ row there each phase rather than only stating the total in chat.
 | 51 (Home network-devices card: LAN scan every 60s, MACs, new-device toast + notification; 3 new tests) | Opus 5.5 | ~20 min | ~$1.20–$1.70 |
 | 52 (Gemini default 3.1-flash-lite + daily-quota model fallback, Settings search; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 53 (.docx writer: LaTeX $…$/$$…$$ -> native Word equations; trig practice note regenerated; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
-| **Running total (final)** | | **~1838 min** | **~$94.05–$131.95** |
+| 54 (hand-off guard: nudge unbacked "handed off to James" replies, no reply-caching of task status; 3 new tests) | Opus 5.5 | ~10 min | ~$0.70–$1.00 |
+| **Running total (final)** | | **~1848 min** | **~$94.75–$132.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1468,3 +1469,16 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   `test_ensure_whatsapp_desktop_restarts_app_without_port`.
 - **Not verified live**: the first restart (WhatsApp was running without the port at build time)
   and a real Playwright attach/send are untested.
+
+## Hand-off guard (2026-09-25)
+
+- **Found live**: on Gemini flash-lite, Jarvis replied "I'll hand that off to James" four times
+  (voice, dashboard, Telegram) with no delegation tool call, so no task ever ran. Same class as
+  the shutdown-staging bug; this is the code-level guard that note asked for. In `run_agent_loop`,
+  a final reply matching `_HANDOFF_CLAIM_RE` with no `_DELEGATION_TOOLS` call (and no
+  `list_background_tasks`, so status reports aren't nudged) gets one extra round with
+  `_HANDOFF_NUDGE`; the unbacked claim is dropped from the reply. If the model still doesn't
+  call it, the reply ends with an explicit "I did not actually start a background task" line.
+- The reply cache no longer stores turns that used `list_background_tasks` or mention James
+  (a cached "James is working on it" was replayed after the task list said nothing ran).
+- Tests: 3 in `test_cache.py`. Not verified live against Gemini.

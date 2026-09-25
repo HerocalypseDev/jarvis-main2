@@ -906,3 +906,36 @@ def test_relevant_memory_line_surfaces_older_facts_only(tmp_path, monkeypatch):
     line = m.relevant_memory_line("what's my dad's name", skip_newest=1)
     assert "Jacob" in line and "Lagos" not in line and "Newest" not in line and "chess" not in line
     assert m.relevant_memory_line("hello there", skip_newest=1) == ""  # nothing relevant -> nothing added
+
+
+def test_handoff_claim_without_delegation_gets_nudged_into_the_call(jarvis, monkeypatch):
+    # Live 2026-09-25: "I'll hand that off to James" with no tool call, so nothing ran.
+    ran = []
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda name, *a, **k: ran.append(name) or "Handed this off to James (background task #9)")
+    replies = iter([
+        {"stop_reason": "end_turn", "content": [{"type": "text", "text": "I'll hand that off to James right away."}]},
+        {"stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "t1", "name": "delegate_to_claude_code", "input": {"task": "quiz"}}]},
+        {"stop_reason": "end_turn", "content": [{"type": "text", "text": "James is on it, task nine."}]},
+    ])
+    seen = []
+    monkeypatch.setattr(jarvis, "_claude_request", lambda body, timeout: seen.append(body["messages"]) or next(replies))
+    reply = jarvis.run_agent_loop("make a quiz from my questions")
+    assert ran == ["delegate_to_claude_code"]
+    assert reply == "James is on it, task nine."  # the false promise is not repeated
+    assert "no delegation tool was called" in str(seen[1][-1]["content"])
+
+
+def test_handoff_claim_still_unbacked_after_nudge_is_corrected(jarvis, monkeypatch):
+    calls = _scripted_claude(monkeypatch, jarvis, None, "I'll have James get right on that.")
+    reply = jarvis.run_agent_loop("make a quiz from my questions")
+    assert calls["n"] == 2  # one nudge only
+    assert "did not actually start a background task" in reply
+
+
+def test_background_task_status_is_never_reply_cached(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "No background tasks running.")
+    calls = _scripted_claude(monkeypatch, jarvis, "list_background_tasks", "Nothing is running.")
+    jarvis.run_agent_loop("do i have any background tasks")
+    n = calls["n"]
+    jarvis.run_agent_loop("do i have any background tasks")
+    assert calls["n"] > n

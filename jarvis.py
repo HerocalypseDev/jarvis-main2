@@ -8043,6 +8043,22 @@ READONLY_TOOL_TTLS: dict[str, float] = {
 _TRANSCRIPT_KEYED_TOOLS = {"web_search"}
 _tool_result_cache = cache.TTLCache(256)
 _reply_cache = cache.TTLCache(128)
+_DELEGATION_TOOLS = {"delegate_to_claude_code", "change_jarvis_code", "delegate_research"}
+# A reply promising background work: "hand(ed) that off to James", "have James ...",
+# "James is on it / working on ...", "started a background task".
+_HANDOFF_CLAIM_RE = re.compile(
+    r"\b(?:hand(?:ed|ing)?|pass(?:ed|ing)?|send(?:ing)?|sent|giv(?:e|ing)|gave)\b[^.!?]{0,30}\bto James\b"
+    r"|\bhave James\b|\bJames(?:'s| is| will|'ll)\s+(?:\w+\s+){0,2}?(?:on it|working|get|take|start|build|diving)"
+    r"|\bstart(?:ed|ing)? (?:a |the )?background (?:task|research)",
+    re.IGNORECASE,
+)
+_HANDOFF_NUDGE = (
+    "[system check] Your reply says the work was handed off to James or started in the background, "
+    "but no delegation tool was called this turn, so nothing is running. If the user wants that work "
+    "done, call delegate_to_claude_code (with repo_path for a folder outside Jarvis's code), "
+    "change_jarvis_code, or delegate_research now. If you were only reporting on existing work, "
+    "reply again without claiming a new hand-off."
+)
 _FAILED_RESULT_PREFIXES = ("couldn't", "could not", "no results", "unrecognized", "error", "failed", "skipped")
 
 
@@ -8899,6 +8915,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     narrated = 0
     used_tool_names: list[str] = []
     any_tool_failed = False
+    handoff_nudged = False
     # tools_override (Speed Upgrade cloud-latency pass, Phase D): a handful of simple intents
     # (see _reduced_tools_for_intent) pass a small hand-picked list here instead of the full
     # ~100+ tool schema set, cutting the prompt Claude has to read for a trivial command. This
@@ -8996,6 +9013,20 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             reply_parts.extend(texts)
 
         if not going_on:
+            # Found live (2026-09-25, Gemini flash-lite): the model said "I'll hand that off to
+            # James" four times with no delegation call, so nothing ever ran. Give it one more
+            # round to make the call; if it still doesn't, say so instead of a false promise.
+            claim = " ".join(texts)
+            if (_HANDOFF_CLAIM_RE.search(claim) and not handoff_nudged
+                    and not set(used_tool_names) & (_DELEGATION_TOOLS | {"list_background_tasks"})
+                    and iteration < MAX_AGENT_ITERATIONS - 1):
+                handoff_nudged = True
+                log.warning("Reply claims a hand-off but no delegation tool was called; nudging: %r", claim[:120])
+                del reply_parts[len(reply_parts) - len(texts):]
+                messages.append({"role": "user", "content": _HANDOFF_NUDGE})
+                continue
+            if handoff_nudged and not set(used_tool_names) & _DELEGATION_TOOLS and _HANDOFF_CLAIM_RE.search(claim):
+                reply_parts.append("Correction: I did not actually start a background task for that. Ask me again to start it.")
             if data.get("stop_reason") == "max_tokens" and tool_uses:
                 # The tool call was cut off mid-input, so it never ran; never end in silence.
                 log.warning("Agent round hit max_tokens inside a %s call; it was not run.", tool_uses[-1].get("name"))
@@ -9028,6 +9059,10 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         and used_tool_names
         and not any_tool_failed
         and all(n in READONLY_TOOL_TTLS for n in used_tool_names)
+        # Background-task status changes every few seconds; a cached "James is working on it"
+        # was replayed live after the task list said nothing was running.
+        and "list_background_tasks" not in used_tool_names
+        and "james" not in reply.lower()
     ):
         _reply_cache.put(reply_key, reply, min(READONLY_TOOL_TTLS[n] for n in used_tool_names))
     if not reply and last_tool_result_text and tool_result_fallback:
