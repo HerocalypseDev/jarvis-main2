@@ -350,11 +350,10 @@ Rules:
   `JARVIS_GEMINI_MODEL` (default `gemini-3.1-flash-lite`); `JARVIS_GEMINI_THINKING` (default
   `minimal` — thinking tokens bill as output and count toward free-tier limits; `default` leaves
   the model's own).
-- **Model fallback (2026-09-24)**: `gemini-3.5-flash-lite`'s free tier (500 requests/day) ran out and
-  Gemini went dead, so the default is back to `gemini-3.1-flash-lite` (verified live), and a 429 whose
-  body says `PerDay` moves to the next model in `jarvis_gemini.FALLBACK_MODELS` (free quotas are per
-  model); an exhausted model is skipped until the date changes (in memory only). Each switch uses one
-  of the call's 3 attempts. Dashboard Settings also got a search box (filters both lists, client-side).
+- **Model (2026-09-24/25)**: default is `gemini-3.1-flash-lite` (3.5-flash-lite's 500/day free tier ran
+  out). The automatic daily-quota model fallback was **removed 2026-09-25 at the user's request**: the user
+  changes the model themselves in Settings; a daily-quota 429 now just fails fast.
+  Dashboard Settings also got a search box (filters both lists, client-side).
 - Gemini 3 needs each function call's `thoughtSignature` echoed back: `from_response` stores it on
   the tool_use block as `_thought_signature` and `convert_messages` sends it back. Tool schemas go
   via `parametersJsonSchema` (MCP schemas pass through untouched); empty-property tools omit it.
@@ -1395,7 +1394,8 @@ row there each phase rather than only stating the total in chat.
 | 52 (Gemini default 3.1-flash-lite + daily-quota model fallback, Settings search; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 53 (.docx writer: LaTeX $…$/$$…$$ -> native Word equations; trig practice note regenerated; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
 | 54 (hand-off guard: nudge unbacked "handed off to James" replies, no reply-caching of task status; 3 new tests) | Opus 5.5 | ~10 min | ~$0.70–$1.00 |
-| **Running total (final)** | | **~1848 min** | **~$94.75–$132.95** |
+| 55 (removed Gemini daily-quota model fallback; 1 test removed) | Opus 5.5 | ~3 min | ~$0.20–$0.30 |
+| **Running total (final)** | | **~1851 min** | **~$94.95–$133.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

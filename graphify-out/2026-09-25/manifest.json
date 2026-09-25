@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1790247199.2557864,
-    "seen": 1790247257.9037592,
-    "ast_hash": "98224cb7050473997f7ec87762b82613",
+    "mtime": 1790307861.1938028,
+    "seen": 1790308109.3053224,
+    "ast_hash": "62219078ae4cc8c04479e0530b7555fb",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -108,9 +108,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1790249001.9810543,
-    "seen": 1790249025.305637,
-    "ast_hash": "609e62ebc069c1c5ec0a7da73a81db55",
+    "mtime": 1790308086.4548287,
+    "seen": 1790308109.3057714,
+    "ast_hash": "79a49242a7db7384ae8382ec93759baa",
     "semantic_hash": ""
   },
   "README.md": {
@@ -156,9 +156,9 @@
     "semantic_hash": ""
   },
   "test_cache.py": {
-    "mtime": 1790248889.9155257,
-    "seen": 1790249025.3055854,
-    "ast_hash": "db8adc487f222b674b76cef56c535d8b",
+    "mtime": 1790307872.9566653,
+    "seen": 1790308109.305668,
+    "ast_hash": "170ef6af9528d9cbf2f79a430f39483f",
     "semantic_hash": ""
   },
   "jarvis_billing.py": {
