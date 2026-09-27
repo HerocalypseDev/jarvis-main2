@@ -285,3 +285,112 @@ document.getElementById("tb-email-form")?.addEventListener("submit", async (e) =
   status.textContent = "";
   document.getElementById("tb-email-drafts").textContent = r.result || "";
 });
+
+// --- Background agents (C1) --------------------------------------------------------------------
+let agentTools = [];
+const AGENT_CONFIG_HINTS = {
+  interval: '{"every_min": 60}', daily: '{"at": "08:00", "days": "mon,tue,wed,thu,fri"}',
+  mail_match: '{"query": "from:someone@example.com"}', file_event: '{"ext": "pdf", "name_contains": "invoice"}', manual: "{}",
+};
+
+function agentStepRow(step) {
+  const opts = agentTools.map((t) => `<option ${step && step.tool === t ? "selected" : ""}>${esc(t)}</option>`).join("");
+  return `<div class="macro-step">
+    <select class="macro-step-tool" aria-label="Tool">${opts}</select>
+    <input class="macro-step-input mono" aria-label="Tool input as JSON" value="${escAttr(step ? JSON.stringify(step.input || {}) : "{}")}">
+    <button class="btn btn-ghost" type="button" data-step-remove>&times;</button></div>`;
+}
+
+async function refreshAgents() {
+  const list = document.getElementById("tb-agent-list");
+  if (!list) return;
+  const data = await featureGet("agents");
+  agentTools = data.tools || [];
+  const steps = document.getElementById("tb-agent-steps");
+  if (!steps.children.length) steps.innerHTML = agentStepRow(null);
+  const running = new Set(data.running || []);
+  list.innerHTML = (data.agents || []).length ? data.agents.map((a) => `
+    <li class="list-item">
+      <div><span class="tool">${esc(a.name)}</span> ${a.enabled ? "" : '<span class="pill">off</span>'}
+        ${running.has(a.id) ? '<span class="pill pill-running">running</span>' : ""}
+        <span class="muted">${esc(a.trigger_type)} <code>${esc(JSON.stringify(a.trigger_config))}</code> &rarr; ${a.steps.map((s) => esc(s.tool)).join(" &rarr; ")}</span></div>
+      <div class="muted">${a.last_run ? `Last run ${fmtWhen(a.last_run)} (${a.last_ok ? "ok" : "failed"}): ${esc(String(a.last_result || "").slice(0, 200))}` : "Not run yet."}
+        · ${a.runs_day === new Date().toISOString().slice(0, 10) ? a.runs_today : 0}/${a.max_runs_per_day} today</div>
+      <div class="memory-actions">
+        <button class="btn btn-ghost" type="button" data-agent="${escAttr(a.name)}" data-verb="run">Run now</button>
+        <button class="btn btn-ghost" type="button" data-agent="${escAttr(a.name)}" data-verb="${a.enabled ? "disable" : "enable"}">${a.enabled ? "Turn off" : "Turn on"}</button>
+        <button class="btn btn-ghost" type="button" data-agent="${escAttr(a.name)}" data-verb="delete">Delete</button>
+      </div></li>`).join("") : `<li class="empty-state">No background agents yet.</li>`;
+}
+TOOLBOX_PANELS.push(refreshAgents);
+
+document.getElementById("tb-agent-trigger")?.addEventListener("change", (e) => {
+  document.getElementById("tb-agent-config").value = AGENT_CONFIG_HINTS[e.target.value] || "{}";
+});
+document.getElementById("tb-agent-add-step")?.addEventListener("click", () => {
+  document.getElementById("tb-agent-steps").insertAdjacentHTML("beforeend", agentStepRow(null));
+});
+document.getElementById("tb-agent-steps")?.addEventListener("click", (e) => {
+  if (e.target.dataset.stepRemove !== undefined) e.target.closest(".macro-step").remove();
+});
+document.getElementById("tb-agent-list")?.addEventListener("click", async (e) => {
+  const name = e.target.dataset.agent, verb = e.target.dataset.verb;
+  if (!name) return;
+  if (verb === "delete" && !confirm(`Delete the background agent "${name}"?`)) return;
+  const r = await featurePost("agents", verb, { name }).catch((err) => ({ result: String(err) }));
+  document.getElementById("tb-agent-status").textContent = r.result || "";
+  setTimeout(() => refreshAgents().catch(() => {}), 500);
+});
+document.getElementById("tb-agent-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = document.getElementById("tb-agent-status");
+  let config;
+  const steps = [];
+  try {
+    config = JSON.parse(document.getElementById("tb-agent-config").value || "{}");
+    for (const row of document.querySelectorAll("#tb-agent-steps .macro-step")) {
+      steps.push({ tool: row.querySelector(".macro-step-tool").value, input: JSON.parse(row.querySelector(".macro-step-input").value || "{}") });
+    }
+  } catch (err) { status.textContent = "The trigger settings or a step input isn't valid JSON."; return; }
+  const r = await featurePost("agents", "create", {
+    name: document.getElementById("tb-agent-name").value, trigger_type: document.getElementById("tb-agent-trigger").value,
+    trigger_config: config, steps, max_runs_per_day: Number(document.getElementById("tb-agent-max").value || 24),
+  }).catch((err) => ({ result: String(err) }));
+  status.textContent = r.result || "";
+  refreshAgents();
+});
+
+// --- Notification priority (C6) ----------------------------------------------------------------
+async function refreshNotifyStats() {
+  const list = document.getElementById("tb-notify-list");
+  if (!list) return;
+  const data = await featureGet("notifications");
+  const rows = Object.entries(data.stats || {});
+  list.innerHTML = rows.length ? rows.map(([k, s]) => `<li class="list-item compact"><span class="tool">${esc(k)}</span>
+    <span class="muted">${s.delivered} spoken · ${s.acted} followed up · ${s.dismissed} cut off · ${s.score == null ? "still learning" : "score " + s.score.toFixed(2)}</span>
+    ${s.batched ? '<span class="pill">hourly digest</span>' : ""}</li>`).join("") : `<li class="empty-state">No announcements counted yet.</li>`;
+  document.getElementById("tb-notify-digest").textContent = (data.digest || []).length
+    ? `${data.digest.length} message(s) waiting for the next digest.` : "";
+}
+TOOLBOX_PANELS.push(refreshNotifyStats);
+document.getElementById("tb-notify-reset")?.addEventListener("click", async () => {
+  if (!confirm("Forget what Jarvis learned about which announcements you want?")) return;
+  await featurePost("notifications", "reset").catch(() => {});
+  refreshNotifyStats();
+});
+
+// --- Knowledge graph (C5) ----------------------------------------------------------------------
+document.getElementById("tb-graph-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const out = document.getElementById("tb-graph-out");
+  const r = await featurePost("graph", "query", { name: document.getElementById("tb-graph-q").value }).catch(() => null);
+  if (!r) { out.innerHTML = '<li class="muted">Lookup failed.</li>'; return; }
+  if (!r.matches.length) { out.innerHTML = '<li class="empty-state">Nothing by that name.</li>'; return; }
+  out.innerHTML = r.edges.length ? r.edges.map((x) => `<li class="list-item compact">${esc(x.a)} <span class="muted">(${esc(x.at)})</span>
+    <span class="src-badge">${esc(x.rel.replace(/_/g, " "))}</span> ${esc(x.b)} <span class="muted">(${esc(x.bt)})</span></li>`).join("")
+    : `<li class="muted">Found ${r.matches.map((m) => esc(m.name)).join(", ")}, nothing linked yet.</li>`;
+});
+document.getElementById("tb-graph-sync")?.addEventListener("click", async () => {
+  const r = await featurePost("graph", "sync").catch(() => null);
+  document.getElementById("tb-graph-out").innerHTML = r ? `<li class="muted">Refreshed: ${Object.entries(r.counts).map(([k, n]) => `${n} ${esc(k)}`).join(", ")}</li>` : "";
+});

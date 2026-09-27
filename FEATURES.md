@@ -125,3 +125,59 @@ Gemini's free tier Google may use them); a meeting participant could try prompt 
 speech (framed as data, action items use the third-party bar). The AI file tagger sends the start of
 new documents to the active AI; set `JARVIS_FILE_TAG_LLM_PER_HOUR=0` for rules only. App shortcut
 `keys` can be any key combination the user saves (e.g. alt+f4); they only fire for the saved app.
+
+## Phase C
+
+| Feature | Code | Default | Settings |
+|---|---|---|---|
+| C1 Background agents | `jarvis_agents.py`, tool `background_agents` | on (none until you make one) | - |
+| C2 Code review | `jarvis_code_tools.review`, tool `review_code` | on demand | uses `JARVIS_SMART_MODEL` on Claude |
+| C3 Code search | `jarvis_code_tools.search`, tool `code_search` | on demand | `JARVIS_RG_PATH`, `JARVIS_CODE_ROOTS` |
+| C4 Memory full-text search | `jarvis_memory_search.py`, tool `memory_search` | on | - |
+| C5 Lite knowledge graph | `jarvis_kg.py`, tool `knowledge_graph` | on (syncs every 30 min) | - |
+| C6 Announcement priority | `jarvis_notify_priority.py` | on | `JARVIS_NOTIFY_SMART` (1), `JARVIS_NOTIFY_DIGEST_MIN` (60) |
+
+**C1 Background agents.** `agents` table. Triggers: `interval` (>= 5 min), `daily` (HH:MM, optional
+weekdays; runs once if the PC is on within 6 h after the slot), `mail_match` (a Gmail search every 10
+min; the first check is a silent baseline; each new message runs the steps once with sanitised
+`{subject}`/`{sender}`), `file_event` (fed by the file watcher; `{path}`), `manual`. Steps are
+existing tools only (not `background_agents`/`macros`), each through `_execute_tool` (audited with
+transcript `(background agent NAME)`, catastrophic gate intact; a staged step stops the run), plus an
+`agent_run` audit row. Runs on worker threads from the 60 s scheduler tick, single flight per agent,
+never a process per agent. `max_runs_per_day` (default 24, max 288). A failure is announced once
+until a run succeeds; hitting the budget is announced. Paused in safe mode and on a critical battery.
+Creating/changing agents needs voice/typed/dashboard.
+
+**C2 review_code.** A file (<= 60k chars, line-numbered, refused for `.env`/keys/Jarvis DBs via
+`sensitive_reason`) or a repo folder's `git diff HEAD`. ONE model call (the smart model on Claude),
+code framed as data, JSON findings (severity, line, issue, fix). Never edits anything.
+
+**C3 code_search.** ripgrep (`rg` on PATH / `JARVIS_RG_PATH`, skips `.env*`, `*.pem`, `*.key`), else
+`git grep` in a repo, else a bounded scan (5000 files, vendor folders skipped). Needs a folder (or
+`JARVIS_CODE_ROOTS`); never the whole disk. Hits in files `sensitive_reason` refuses are dropped.
+`JARVIS_CODE_INDEX` (embeddings) is **not built**; see Later.md.
+
+**C4 memory_search.** FTS5 table `memory_fts` over active facts, conversation turns and summaries,
+filled incrementally at search time (no triggers in the owning modules). BM25 + a fact bonus + a
+recency bonus. Rows deleted or replaced at the source are filtered out and purged from the index.
+Falls back to the existing TF-IDF `semantic_recall` when no fact matched. No re-ranker API.
+Measured on a copy of the real DB: first search (indexing ~3k rows) 0.17 s, later ones ~0.04 s.
+
+**C5 knowledge graph.** `kg_nodes`/`kg_edges`, derived every 30 min (0.05 s on the real DB) from
+relationship facts with an email (person), autonomy projects, commitments (task, `part_of` project,
+`asked_for` from the sending person) and meetings; derived nodes whose source is gone are removed.
+User-stated links via `knowledge_graph action=relate` (attended only). `query` walks up to 2 hops.
+
+**C6 Announcement priority.** Each proactive announcement gets a kind (inferred from its text:
+network, deadline, autonomy, battery, meeting, agent, file, health, other; reminders are `reminder`).
+Cutting it off (push-to-talk barge-in or "stop") counts as dismissed; talking to Jarvis within 2 min
+without cutting it off counts as acted. After 5 outcomes, a kind with an act rate under 0.35 goes to
+a digest spoken once every `JARVIS_NOTIFY_DIGEST_MIN` minutes. Urgent messages, reminders, battery
+and meeting notices, and anything with `bypass_busy_gate` are never batched. Table
+`notification_stats`; Toolbox shows the counts and has a reset.
+
+Residual risks (Phase C): a `mail_match` agent acts on third-party mail (subjects/senders are
+sanitised, the catastrophic gate still applies, but an agent that e.g. writes files with `{subject}`
+in the name takes attacker-chosen text); keep agent steps simple. `review_code` sends the file or diff
+to the active AI. The digest learns from a weak signal (barge-in) and can batch a kind the user
+actually wanted; reset it in the Toolbox.

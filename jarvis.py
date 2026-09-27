@@ -99,6 +99,11 @@ import jarvis_meeting_capture as meeting
 import jarvis_file_index as file_index
 import jarvis_app_shortcuts as app_shortcuts
 import jarvis_email_templates as email_templates
+import jarvis_agents as agents
+import jarvis_code_tools as code_tools
+import jarvis_memory_search as memory_search
+import jarvis_kg as kg
+import jarvis_notify_priority as notify_priority
 
 settings.JARVIS_MODULE = sys.modules[__name__]
 
@@ -228,6 +233,10 @@ _speech_interrupted_at = [0.0]
 
 def _interrupt_speech() -> None:
     _speech_interrupted_at[0] = time.monotonic()
+    try:
+        notify_priority.on_interrupt(_memory_db_connect, _memory_db_lock)  # C6: cut off = dismissed
+    except Exception as e:
+        log.debug("notification stats failed: %s", e)
     try:
         sd.stop()  # ends a blocking sd.play()/sd.wait() immediately
     except Exception as e:
@@ -2945,6 +2954,61 @@ BATCH_TOOLS = [
             "name": {"type": "string"}, "body": {"type": "string"}, "subject": {"type": "string"},
             "tags": {"type": "string"}, "values": {"type": "object"}}, "required": ["action"]},
     },
+    {
+        "name": "background_agents",
+        "description": (
+            "Standing background jobs that run fixed tool steps on a trigger. action=list, log (name), run "
+            "(name), enable/disable/delete (name), create (name, trigger_type interval {every_min>=5} | daily "
+            "{at 'HH:MM', days 'mon,tue'} | mail_match {query: Gmail search} | file_event {ext, name_contains} | "
+            "manual, steps [{tool, input}] using existing tools; {subject}/{sender}/{path} fill in from the "
+            "trigger; max_runs_per_day). Changing agents only works from the PC."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "log", "run", "enable", "disable", "delete", "create"]},
+            "name": {"type": "string"}, "trigger_type": {"type": "string"}, "trigger_config": {"type": "object"},
+            "steps": {"type": "array", "items": {"type": "object"}}, "max_runs_per_day": {"type": "integer"}},
+            "required": ["action"]},
+    },
+    {
+        "name": "review_code",
+        "description": (
+            "Code review on request: `path` = a file, or a repo folder to review its uncommitted git diff. "
+            "Returns findings (severity, line, issue, fix). Changes nothing; apply a fix only if the user asks."
+        ),
+        "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "focus": {"type": "string"}},
+                         "required": ["path"]},
+    },
+    {
+        "name": "code_search",
+        "description": (
+            "Search inside code/text files of a folder or repo (ripgrep, git grep, or a bounded scan). `path` = "
+            "the folder; `glob` e.g. '*.py'; regex=true for a pattern. For file NAMES anywhere, use quick_search."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "query": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"},
+            "regex": {"type": "boolean"}}, "required": ["query"]},
+    },
+    {
+        "name": "memory_search",
+        "description": (
+            "Full-text search over everything remembered: facts, past conversation, and summaries, ranked by "
+            "relevance and recency (offline). Use for 'what did I say about X', 'when did we talk about Y'."
+        ),
+        "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                         "required": ["query"]},
+    },
+    {
+        "name": "knowledge_graph",
+        "description": (
+            "Links between people, projects, tasks and meetings Jarvis knows about. action=query (name: who/what "
+            "is linked to it, 2 hops), relate (a, rel e.g. works_on, b, optional a_type/b_type person|project|"
+            "task|thing) when the user states a relation, sync (refresh)."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["query", "relate", "sync"]}, "name": {"type": "string"},
+            "a": {"type": "string"}, "rel": {"type": "string"}, "b": {"type": "string"},
+            "a_type": {"type": "string"}, "b_type": {"type": "string"}, "depth": {"type": "integer"}}},
+    },
 ]
 AGENT_TOOLS.extend(BATCH_TOOLS)
 
@@ -4071,7 +4135,21 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Queued non-urgent notification (unrecognized person in view): %r", text)
         return
+    kind = "reminder" if is_reminder else notify_priority.infer_kind(text)
+    if not (urgent or bypass_busy_gate or is_reminder) and _env_on("JARVIS_NOTIFY_SMART", True) and \
+            notify_priority.should_batch(_memory_db_connect, _memory_db_lock, kind):
+        # C6: a kind the user keeps cutting off waits for the hourly digest instead of interrupting.
+        with _session_context_lock:
+            _session_context.setdefault("notification_digest", []).append(
+                {"text": text, "kind": kind, "queued_at": datetime.now().isoformat(timespec="seconds")})
+            _save_session_context_locked()
+        log.info("Batched low-priority notification (%s) for the digest: %r", kind, text)
+        return
     if urgent or bypass_busy_gate or not (user_is_actively_working() and _is_preferred_work_hours()):
+        try:
+            notify_priority.delivered(_memory_db_connect, _memory_db_lock, kind)
+        except Exception as e:
+            log.debug("notification stats failed: %s", e)
         _speak_shaped(text)
         return
     with _session_context_lock:
@@ -5021,6 +5099,9 @@ def _scheduler_loop() -> None:
             _chief_tick(now)
             _netscan_tick()
             _meeting_tick()
+            _agents_tick(now)
+            _kg_sync_tick()
+            _digest_tick()
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -5662,6 +5743,245 @@ def _feature_email(action: str, payload: dict):
         res = _email_reply_tool(dict(payload or {}, action=action))
         _log_action_audit("email_reply", {"action": action, "name": payload.get("name")}, "(dashboard)", res[:500])
         return {"result": res}
+    return None
+
+
+# --- Feature batch 2026-09-27 (FEATURES.md): Phase C wiring ---------------------------------------
+_agent_store = agents.Store(_memory_db_connect, _memory_db_lock)
+_agents_running: set = set()
+_agents_lock = threading.Lock()
+_AGENT_FORBIDDEN_TOOLS = {"background_agents", "macros"}
+_kg_state = {"last": 0.0}
+_digest_state = {"last": time.monotonic()}
+
+
+def _agent_known_tools() -> set[str]:
+    return _macro_known_tools()
+
+
+def _agent_run_async(a: dict, events: list[dict] | None = None) -> bool:
+    """Runs an agent's steps once per queued event (or once) on a worker thread. Single flight per agent."""
+    with _agents_lock:
+        if a["id"] in _agents_running:
+            return False
+        _agents_running.add(a["id"])
+
+    def work():
+        try:
+            for fields in (events or [{}]):
+                current = _agent_store.get(a["name"]) or a
+                if not agents.budget_left(current, datetime.now()):
+                    break
+                summary = agents.run(_agent_store, current,
+                                     lambda tool, inp: _execute_tool(tool, inp, f"(background agent {a['name']})"),
+                                     _looks_staged, lambda text: queue_or_deliver_notification(text), fields=fields)
+                _log_action_audit("agent_run", {"agent": a["name"], "trigger": a["trigger_type"]},
+                                  f"(background agent {a['name']})", summary)
+        except Exception as e:
+            log.warning("Background agent %s failed: %s", a["name"], e)
+        finally:
+            with _agents_lock:
+                _agents_running.discard(a["id"])
+
+    threading.Thread(target=work, daemon=True, name=f"agent-{a['id']}").start()
+    return True
+
+
+def _agent_mail_check(a: dict, now: datetime) -> None:
+    """mail_match: one Gmail search per MAIL_CHECK_MIN; each unseen message becomes one run."""
+    try:
+        found = _sleep_mail_mcp("search_emails", {"query": f"{a['trigger_config']['query']} newer_than:2d",
+                                                  "maxResults": 10})
+        if sleep_mail.looks_like_error(found):
+            return
+        seen = set(a["seen"])
+        new = [m for m in sleep_mail.parse_search(found) if m.get("id") and m["id"] not in seen]
+        _agent_store.set(a["id"], seen=(a["seen"] + [m["id"] for m in new])[-300:])
+        if not a["seen"] and not a.get("last_run"):
+            return  # first check is a baseline: mail that was already there doesn't fire
+        events = [{"subject": jarvis_untrusted.neutralize_injection(m.get("subject") or "")[0][:200],
+                   "sender": jarvis_untrusted.neutralize_injection(m.get("sender") or "")[0][:200]} for m in new]
+        if events:
+            _agent_run_async(a, events)
+    except Exception as e:
+        log.warning("Agent %s mail check failed: %s", a["name"], e)
+
+
+def _agents_tick(now: datetime) -> None:
+    if safe_mode_on() or battery.current() == "critical":
+        return
+    for a in _agent_store.all():
+        if not a["enabled"]:
+            continue
+        if a["trigger_type"] == "mail_match":
+            last = a.get("last_check")
+            if ("mcp_gmail_search_emails" in _mcp_tool_index and agents.budget_left(a, now) and
+                    (not last or now - datetime.fromisoformat(last) >= timedelta(minutes=agents.MAIL_CHECK_MIN))):
+                _agent_store.set(a["id"], last_check=now.isoformat(timespec="seconds"))
+                threading.Thread(target=_agent_mail_check, args=(a, now), daemon=True, name="agent-mail").start()
+            continue
+        if agents.due(a, now):
+            pending = a.get("pending") or []
+            if a["trigger_type"] == "file_event":
+                _agent_store.set(a["id"], pending=[])
+            _agent_run_async(a, pending or None)
+
+
+def _agents_on_file_event(event: dict) -> None:
+    for a in _agent_store.all():
+        if agents.file_event_matches(a, event):
+            name = event["path"].replace("\\", "/").rsplit("/", 1)[-1]
+            _agent_store.set(a["id"], pending=(a["pending"] + [{"path": event["path"], "subject": name}])[-20:])
+
+
+def _background_agents_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "list").lower()
+    if action in ("create", "delete", "enable", "disable") and not _attended():
+        return "Background agents can only be changed from the PC (voice, typed or dashboard)."
+    name = str(inp.get("name") or "").strip()
+    if action == "create":
+        return agents.create(_agent_store, name, str(inp.get("trigger_type") or ""), inp.get("trigger_config") or {},
+                             inp.get("steps") or [], _agent_known_tools(), _AGENT_FORBIDDEN_TOOLS,
+                             inp.get("max_runs_per_day") or 24)
+    a = _agent_store.get(name) if name else None
+    if action in ("delete", "enable", "disable", "run", "log") and not a:
+        return "No background agent by that name."
+    if action == "delete":
+        _agent_store.q("DELETE FROM agents WHERE id=?", (a["id"],), write=True)
+        return f"Deleted agent {name!r}."
+    if action in ("enable", "disable"):
+        _agent_store.set(a["id"], enabled=int(action == "enable"), fail_notified=0)
+        return f"Agent {name!r} {'on' if action == 'enable' else 'off'}."
+    if action == "run":
+        if not agents.budget_left(a, datetime.now()):
+            return f"Agent {name!r} already used its {a['max_runs_per_day']} runs today."
+        return f"Running agent {name!r} now." if _agent_run_async(a) else f"Agent {name!r} is already running."
+    if action == "log":
+        return f"Last run {a.get('last_run') or 'never'} ({'ok' if a.get('last_ok') else 'failed' if a.get('last_ok') == 0 else '-'}): {a.get('last_result') or ''}"
+    rows = _agent_store.all()
+    return "\n".join(f"- {r['name']}{'' if r['enabled'] else ' (off)'}: {r['trigger_type']} {json.dumps(r['trigger_config'])}"
+                     f" -> {', '.join(s['tool'] for s in r['steps'])}; last run {r.get('last_run') or 'never'}"
+                     for r in rows) or "No background agents yet."
+
+
+def _review_code_tool(inp: dict) -> str:
+    model = SMART_MODEL if _llm_provider() == "claude" and SMART_MODEL else CLAUDE_MODEL
+
+    def llm(prompt: str) -> str | None:
+        data = _claude_request({"model": model, "max_tokens": 3000, "system": "You are a careful code reviewer.",
+                                "messages": [{"role": "user", "content": prompt}]}, timeout=90)
+        return _claude_text(data) if data is not None else None
+
+    return code_tools.format_review(code_tools.review(str(inp.get("path") or ""), llm,
+                                                      lambda p: jarvis_workspace.sensitive_reason(p, write=False),
+                                                      str(inp.get("focus") or "")))
+
+
+def _code_search_tool(inp: dict) -> str:
+    return code_tools.format_search(code_tools.search(
+        str(inp.get("query") or ""), str(inp.get("path") or ""), str(inp.get("glob") or ""), bool(inp.get("regex")),
+        read_guard=lambda p: jarvis_workspace.sensitive_reason(p, write=False)))
+
+
+def _memory_search_tool(inp: dict) -> str:
+    q = str(inp.get("query") or "")
+    rows = memory_search.search(_memory_db_connect, _memory_db_lock, q, int(inp.get("limit") or 8))
+    out = memory_search.format_results(rows)
+    if not any(r["kind"] == "fact" for r in rows):
+        sem = memory_enhance.semantic_recall(q)  # TF-IDF over facts/decisions/patterns: catches word variants
+        if sem and not sem.lower().startswith(("no ", "give me")):
+            out += "\n" + sem
+    return out
+
+
+def _kg_sync_tick() -> None:
+    if time.monotonic() - _kg_state["last"] >= kg.SYNC_MIN * 60:
+        _kg_state["last"] = time.monotonic()
+        threading.Thread(target=lambda: kg.sync(_memory_db_connect, _memory_db_lock), daemon=True, name="kg-sync").start()
+
+
+def _knowledge_graph_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "query").lower()
+    if action == "relate":
+        if not _attended():
+            return "Links can only be added from the PC."
+        return kg.relate(_memory_db_connect, _memory_db_lock, str(inp.get("a") or ""), str(inp.get("rel") or ""),
+                         str(inp.get("b") or ""), str(inp.get("a_type") or "thing"), str(inp.get("b_type") or "thing"))
+    if action == "sync":
+        c = kg.sync(_memory_db_connect, _memory_db_lock)
+        return "Graph refreshed: " + ", ".join(f"{n} {k}" for k, n in c.items())
+    return kg.format_query(kg.query(_memory_db_connect, _memory_db_lock, str(inp.get("name") or ""),
+                                    inp.get("depth") or 2))
+
+
+def _digest_tick() -> None:
+    """C6: speak batched low-priority notifications as one message every JARVIS_NOTIFY_DIGEST_MIN."""
+    every = _env_float("JARVIS_NOTIFY_DIGEST_MIN", 60) * 60
+    if time.monotonic() - _digest_state["last"] < every:
+        return
+    _digest_state["last"] = time.monotonic()
+    with _session_context_lock:
+        items = _session_context.get("notification_digest") or []
+        _session_context["notification_digest"] = []
+        if items:
+            _save_session_context_locked()
+    if items:
+        queue_or_deliver_notification(notify_priority.digest_text(items), bypass_busy_gate=True)
+
+
+_BATCH_TOOL_HANDLERS.update({
+    "background_agents": _background_agents_tool,
+    "review_code": _review_code_tool,
+    "code_search": _code_search_tool,
+    "memory_search": _memory_search_tool,
+    "knowledge_graph": _knowledge_graph_tool,
+})
+
+
+@_feature("agents")
+def _feature_agents(action: str, payload: dict):
+    if action == "get":
+        return {"agents": _agent_store.all(), "tools": sorted(_agent_known_tools() - _AGENT_FORBIDDEN_TOOLS),
+                "running": sorted(_agents_running)}
+    if action in ("create", "delete", "enable", "disable", "run"):
+        inp = dict(payload or {}, action=action)
+        res = _as_dashboard(_background_agents_tool, inp)
+        _log_action_audit("background_agents", {k: v for k, v in inp.items() if k != "steps"}, "(dashboard)", res)
+        return {"result": res}
+    return None
+
+
+@_feature("notifications")
+def _feature_notifications(action: str, payload: dict):
+    if action == "get":
+        st = notify_priority.stats(_memory_db_connect, _memory_db_lock)
+        with _session_context_lock:
+            digest = list(_session_context.get("notification_digest") or [])
+        return {"stats": {k: dict(v, score=notify_priority.score(v),
+                                  batched=notify_priority.should_batch(_memory_db_connect, _memory_db_lock, k))
+                          for k, v in st.items()}, "digest": digest}
+    if action == "reset":
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                notify_priority.ensure(conn)
+                conn.execute("DELETE FROM notification_stats")
+                conn.commit()
+            finally:
+                conn.close()
+        _log_action_audit("notification_priority", {"action": "reset"}, "(dashboard)", "reset")
+        return {"ok": True}
+    return None
+
+
+@_feature("graph")
+def _feature_graph(action: str, payload: dict):
+    if action == "get":
+        return {"result": None}
+    if action == "query":
+        return kg.query(_memory_db_connect, _memory_db_lock, str(payload.get("name") or ""), 2)
+    if action == "sync":
+        return {"counts": kg.sync(_memory_db_connect, _memory_db_lock)}
     return None
 
 
@@ -10160,6 +10480,11 @@ def _handle_text_command_impl(
     # deliver anything queued earlier right now instead of leaving it stuck until the next
     # health check or scheduled skill happens to notice.
     flush_pending_notifications()
+    if source in ("voice", "text", "dashboard"):
+        try:
+            notify_priority.on_user_command(_memory_db_connect, _memory_db_lock)  # C6: engaged after one = acted
+        except Exception as e:
+            log.debug("notification stats failed: %s", e)
 
     with _pending_action_lock:
         pending = _pending_action
@@ -10764,6 +11089,7 @@ def main() -> int:
     clip_history.start(_memory_db_connect, _memory_db_lock)  # A1; JARVIS_CLIPBOARD_HISTORY=0 turns it off
     _fg_tracker.start()  # B3: last real app window, for app shortcuts and meeting auto-start
     filewatcher.watcher.listeners.append(_file_index.on_event)  # B2: index new files in watched folders
+    filewatcher.watcher.listeners.append(_agents_on_file_event)  # C1: file_event background agents
     threading.Thread(target=audio_duck.warm_media_control, name="media-ctl-warm", daemon=True).start()
     start_prompt_cache_warmup()
     try:

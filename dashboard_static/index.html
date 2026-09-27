@@ -348,6 +348,41 @@
         <textarea id="tb-tpl-body" rows="3" placeholder="Body. {name} style placeholders are filled in when used." required aria-label="Template body"></textarea>
         <div class="macro-form-actions"><button class="btn" type="submit">Save template</button></div>
       </form>
+
+      <h2 class="settings-h">Background agents</h2>
+      <p class="muted">Standing jobs that run existing tools on a schedule, when certain mail arrives, or when a file lands.
+        Every step is logged in the Audit Trail and dangerous commands still wait for your yes. Paused in safe mode.</p>
+      <ul id="tb-agent-list" class="list"></ul>
+      <form id="tb-agent-form" class="macro-form">
+        <input id="tb-agent-name" placeholder="Name, e.g. landlord mail" maxlength="60" required aria-label="Agent name">
+        <div class="macro-form-actions">
+          <select id="tb-agent-trigger" aria-label="Trigger"><option value="interval">every N minutes</option><option value="daily">daily at a time</option>
+            <option value="mail_match">when matching mail arrives</option><option value="file_event">when a file lands</option><option value="manual">only when I run it</option></select>
+          <input id="tb-agent-max" type="number" min="1" max="288" value="24" aria-label="Max runs per day" title="Max runs per day">
+        </div>
+        <input id="tb-agent-config" class="mono" value='{"every_min": 60}' aria-label="Trigger settings as JSON">
+        <div id="tb-agent-steps"></div>
+        <div class="macro-form-actions">
+          <button id="tb-agent-add-step" class="btn btn-ghost" type="button">+ Step</button>
+          <button class="btn" type="submit">Save agent</button>
+          <span id="tb-agent-status" class="muted" aria-live="polite"></span>
+        </div>
+      </form>
+
+      <h2 class="settings-h">Announcement priority</h2>
+      <p class="muted">Kinds of announcement you keep cutting off move to an hourly digest; ones you follow up on keep interrupting. Reminders never wait.</p>
+      <div class="memory-filter"><button id="tb-notify-reset" class="btn btn-ghost" type="button">Reset learning</button>
+        <span id="tb-notify-digest" class="muted" aria-live="polite"></span></div>
+      <ul id="tb-notify-list" class="list"></ul>
+
+      <h2 class="settings-h">Connections</h2>
+      <p class="muted">People, projects, tasks and meetings Jarvis knows about, and how they link.</p>
+      <form id="tb-graph-form" class="memory-filter">
+        <input id="tb-graph-q" type="search" placeholder="A name, e.g. Racheal or a project" aria-label="Look up a person or project">
+        <button class="btn" type="submit">Look up</button>
+        <button id="tb-graph-sync" class="btn btn-ghost" type="button">Refresh</button>
+      </form>
+      <ul id="tb-graph-out" class="list"></ul>
     </section>
 
     <section id="view-settings" class="view">
