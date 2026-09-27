@@ -1404,6 +1404,11 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   non-urgent announcements (not reminders) until they stop. Cascades must not read `face` (gate-isolation
   allowlist test).
 - Found by tests while building: "couldn't reach Claude" counted as a successful run (now transient -> retry).
+- **Audit (2026-09-27)**: 8 bugs fixed (AUTONOMY.md lists them). Rules: only an explicit "Jarvis" makes
+  reminder text a job; times are made local and an unreadable time is never "run now"; the user's-own-words
+  check is 70% word overlap; rejected Jarvis work is tracking-only (never a spoken "remind Jarvis"); Jarvis
+  work needs a deadline; stale reset skips jobs still running; one job at a time; cascade release runs off
+  the scheduler thread and goes to the wake-up recap during sleep; email reply cap falls back to the sender.
 
 ### Cost reporting
 
@@ -1488,7 +1493,8 @@ row there each phase rather than only stating the total in chat.
 | 59 (feature batch Phase D: .pptx via write_file, weekly improvement report, Toolbox headless render check + fixes; 3 new tests) | Opus 5.5 | ~20 min | ~$1.80–$2.50 |
 | 60 (feature batch audit-and-fix: 17 bugs fixed incl. mail-agent NameError, agent placeholder injection, fuzzy macro flips, meeting speech loss; 18 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 61 (executive autonomy: deferred jobs that run, schedule_jarvis_task, reminder content cleanup, tool-handled turns not re-saved, minimal autonomy speech, untrusted-origin code block, email caps, cascades, live state; 20 new tests) | Opus 5.5 | ~55 min | ~$4.50–$6.30 |
-| **Running total (final)** | | **~2096 min** | **~$116.05–$162.75** |
+| 62 (executive-autonomy audit: 8 bugs fixed incl. second-person reminders becoming jobs, tz crash / run-now on bad times, paraphrase fallback nag, parallel jobs, bedtime release; 8 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~2121 min** | **~$118.05–$165.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

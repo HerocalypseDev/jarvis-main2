@@ -260,3 +260,104 @@ def test_state_line_mentions_the_live_state(J):
     line = J._state_line()
     for part in ("sleep", "safe mode", "meeting notes", "battery", "autonomy", "pending confirmation"):
         assert part in line
+
+
+# --- audit of the executive upgrade (2026-09-27) -------------------------------------------------
+def test_second_person_reminders_stay_reminders(J):
+    assert deferred.as_jarvis_instruction("You should call mom") is None
+    assert deferred.as_jarvis_instruction("Remind you to take the pills") is None
+    assert deferred.as_jarvis_instruction("Jarvis should run the tests") == "Run the tests"
+    J._command_ctx.source = "voice"
+    try:
+        out = J._execute_tool("create_reminder", {"text": "You need to take the pills", "due_in_minutes": 30}, "t")
+    finally:
+        J._command_ctx.source = None
+    assert "Scheduled job" not in out and deferred.list_jobs(J._deferred_store) == []
+
+
+def test_timezone_and_unreadable_times(J):
+    J._command_ctx.source = "text"
+    try:
+        later = (datetime.utcnow() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        assert "Scheduled job" in J._schedule_jarvis_task_tool({"instruction": "Run the tests", "due_at": later})
+    finally:
+        J._command_ctx.source = None
+    due = datetime.fromisoformat(deferred.list_jobs(J._deferred_store)[0]["due_at"])
+    assert timedelta(hours=1, minutes=55) < due - datetime.now() < timedelta(hours=2, minutes=5)
+    assert J._schedule_deferred_cb("Send the report", "sometime soon").startswith("not scheduled")
+    assert len(deferred.list_jobs(J._deferred_store)) == 1
+
+
+def test_paraphrased_quote_still_runs_and_rejected_work_never_nags(J, monkeypatch):
+    a = J.autonomy
+    reminders = []
+    a.configure(dict(J._autonomy_callbacks(), create_reminder=lambda *x: reminders.append(x) or "ok"))
+    a.set_enabled(True)
+    due = (datetime.now() + timedelta(minutes=30)).isoformat(timespec="seconds")
+    a._ingest([{"type": "task", "description": "change the code", "executor": "jarvis", "deadline_iso": due,
+                "instruction": "Change the code of the login page", "confidence": 0.9,
+                "source_quote": "change the login page code in about 30 minutes"}], "conversation", "",
+              user_text="later, in about 30 minutes, change the code of the login page please")
+    assert len(deferred.list_jobs(J._deferred_store)) == 1
+    # no time given / not the user's words: tracked only, never a spoken "remind Jarvis to ..."
+    a._ingest([{"type": "task", "description": "Remind Jarvis to clean the repo", "confidence": 0.9,
+                "source_quote": "clean the repo", "deadline_iso": due}], "conversation", "",
+              user_text="read me the email from Sam")
+    a._ingest([{"type": "task", "description": "Remind Jarvis to archive the logs", "confidence": 0.9,
+                "source_quote": "archive the logs", "deadline_iso": None}], "conversation", "",
+              user_text="archive the logs")
+    assert reminders == [] and len(deferred.list_jobs(J._deferred_store)) == 1
+
+
+def test_stale_reset_never_reruns_a_job_still_running(J):
+    jid = _due_now(J, "Run the tests")
+    assert [j["id"] for j in deferred.claim_due(J._deferred_store)] == [jid]
+    later = datetime.now() + timedelta(minutes=deferred.STALE_RUNNING_MIN + 5)
+    assert deferred.claim_due(J._deferred_store, later, still_running={jid}) == []
+    assert [j["id"] for j in deferred.claim_due(J._deferred_store, later)] == [jid]  # crashed: retried
+
+
+def test_due_jobs_run_one_at_a_time(J, monkeypatch):
+    gate, started = threading.Event(), []
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: started.append(t) or gate.wait(3) or "ok")
+    for n in ("Run the tests", "Send the weekly report", "Back up the notes folder"):
+        _due_now(J, n)
+    J._deferred_tick(datetime.now())
+    J._deferred_tick(datetime.now())
+    time.sleep(0.2)
+    assert len(started) == 1
+    gate.set()
+    _wait(J)
+
+
+def test_meeting_release_during_sleep_goes_to_the_recap(J, monkeypatch):
+    monkeypatch.setattr(J, "_session_context", {"pending_notifications": [{"text": "x", "meeting_hold": True}]})
+    monkeypatch.setattr(J, "_save_session_context_locked", lambda: None)
+    monkeypatch.setattr(J.sleep_mode, "is_active", lambda: True)
+    monkeypatch.setattr(J, "flush_pending_notifications", lambda: pytest.fail("must not speak at bedtime"))
+    J._cascade_release("meeting->False")
+    assert J._session_context["pending_notifications"] == [{"text": "x", "during_sleep": True}]
+
+
+def test_reply_storm_cap_uses_the_sender_when_no_address_given(J):
+    a = J.autonomy
+    a.configure(dict(J._autonomy_callbacks(), own_addresses=lambda: set(), run_agent=lambda i: "Sent."))
+    a.set_enabled(True)
+    for _ in range(3):
+        a._log_decision("reply", None, "act", "", "", category="email:email",
+                        payload={"type": "email", "details": {"to": "sam@x.com"}}, outcome="ok")
+    cid = a._insert_commitment({}, "task", "reply to Sam", "user", None, "q", 0.95, "email", "Sam <sam@x.com>")
+    ok, res = a._run_action("email", {"body": "Thanks!"}, cid)
+    assert not ok and "3 times today" in res
+
+
+def test_notify_user_job_speaks_and_runs_no_tools(J, monkeypatch):
+    monkeypatch.setattr(J, "run_agent_loop", lambda *a, **k: pytest.fail("a notify job must not run the agent"))
+    monkeypatch.setattr(J, "_execute_tool", lambda *a, **k: pytest.fail("a notify job must not run tools"))
+    jid, _ = deferred.schedule(J._deferred_store, "Call mom", datetime.now() + timedelta(seconds=1),
+                               origin="user", kind="notify_user")
+    J._deferred_store.q("UPDATE autonomy_deferred_jobs SET due_at=?", ((datetime.now() - timedelta(seconds=1)).isoformat(),),
+                        write=True)
+    J._deferred_tick(datetime.now())
+    assert J._test_said[-1][0] == "Reminder: Call mom"
+    assert J._deferred_store.q("SELECT status FROM autonomy_deferred_jobs WHERE id=?", (jid,))[0]["status"] == "done"

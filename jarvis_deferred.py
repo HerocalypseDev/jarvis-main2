@@ -27,7 +27,8 @@ MAX_ATTEMPTS = 3
 RETRY_MIN = 5
 DEDUPE_WINDOW_MIN = 20
 STALE_RUNNING_MIN = 90  # a job left 'running' by a crash/restart this long is retried
-_REMIND_JARVIS_RE = re.compile(r"^\s*(?:please\s+)?(?:remind\s+)?(?:jarvis|yourself|you)\s*,?\s+"
+# Only an explicit "Jarvis": "You should call mom" is a reminder FOR the user (audit 2026-09-27).
+_REMIND_JARVIS_RE = re.compile(r"^\s*(?:please\s+)?(?:remind\s+)?jarvis\s*,?\s+"
                                r"(?:to|should|needs? to|will|must|has to)\s+(.+)$", re.I)
 
 
@@ -105,12 +106,16 @@ def schedule(store: Store, instruction: str, due_at: datetime, source_quote: str
     return jid, f"Scheduled job #{jid} for {due_at.strftime('%A %H:%M')}: {instruction[:120]}"
 
 
-def claim_due(store: Store, now: datetime | None = None, limit: int = 3) -> list[dict]:
-    """Due jobs, each atomically moved pending -> running (a second caller gets nothing)."""
+def claim_due(store: Store, now: datetime | None = None, limit: int = 1,
+              still_running: set | None = None) -> list[dict]:
+    """Due jobs, each atomically moved pending -> running (a second caller gets nothing). A job left 'running'
+    STALE_RUNNING_MIN by a crash is retried, but never one this process is still running (`still_running`)."""
     now = now or datetime.now()
     stale = (now - timedelta(minutes=STALE_RUNNING_MIN)).isoformat(timespec="seconds")
-    store.q("UPDATE autonomy_deferred_jobs SET status='pending' WHERE status='running' AND started_at < ?",
-            (stale,), write=True)
+    for j in store.q("SELECT id FROM autonomy_deferred_jobs WHERE status='running' AND started_at < ?", (stale,)):
+        if j["id"] not in (still_running or set()):
+            store.q("UPDATE autonomy_deferred_jobs SET status='pending' WHERE id=? AND status='running'",
+                    (j["id"],), write=True)
     claimed = []
     for j in store.q("SELECT * FROM autonomy_deferred_jobs WHERE status='pending' AND due_at <= ? ORDER BY due_at "
                      "LIMIT ?", (now.isoformat(timespec="seconds"), limit)):

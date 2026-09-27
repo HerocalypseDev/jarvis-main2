@@ -6145,7 +6145,10 @@ def _parse_when(due_iso: str = "", in_minutes=None) -> datetime | None:
             return datetime.now() + timedelta(minutes=float(in_minutes))
         except (TypeError, ValueError):
             return None
-    return _parse_due_at(due_iso) if due_iso else None
+    when = _parse_due_at(str(due_iso or "").replace("Z", "+00:00")) if due_iso else None
+    if when is not None and when.tzinfo is not None:  # "...Z"/"+01:00" from the model: local wall time
+        when = when.astimezone().replace(tzinfo=None)
+    return when
 
 
 def _schedule_jarvis_task_tool(inp: dict) -> str:
@@ -6165,16 +6168,18 @@ def _schedule_jarvis_task_tool(inp: dict) -> str:
 
 def _schedule_deferred_cb(instruction: str, due_iso: str, quote: str = "") -> str:
     """Autonomy's route for work it extracted from the user's own words (see jarvis_autonomy._executor_for)."""
-    when = _parse_when(due_iso) or datetime.now() + timedelta(minutes=1)
+    when = _parse_when(due_iso)
+    if when is None:  # never guess "now": a job that runs at the wrong time is worse than none
+        return f"not scheduled: couldn't read the time {due_iso!r}"
     return deferred.schedule(_deferred_store, instruction, max(when, datetime.now()), quote, origin="conversation")[1]
 
 
 def _deferred_tick(now: datetime) -> None:
     """Scheduler tick: claim due jobs and run them. Safe mode / JARVIS_AUTONOMY_DISABLED stop it; dry-run logs
     what would run; while the user is mid-command a job waits for the next tick (then runs, never nags)."""
-    if autonomy.hard_disabled() or _commands_in_flight() > 0:
-        return
-    for job in deferred.claim_due(_deferred_store, now):
+    if autonomy.hard_disabled() or _commands_in_flight() > 0 or _deferred_running:
+        return  # one job at a time: several due together run one per tick, never as parallel agent loops
+    for job in deferred.claim_due(_deferred_store, now, still_running=set(_deferred_running)):
         if job["kind"] != "execute_jarvis":
             deferred.finish(_deferred_store, job["id"], True, "notified", job["attempts"])
             queue_or_deliver_notification(f"Reminder: {job['instruction']}", bypass_busy_gate=True, is_reminder=True)
@@ -6307,8 +6312,17 @@ def _cascade_hold(event: str) -> str:
 
 def _cascade_release(event: str) -> str:
     _cascade_flags["hold_announcements"] = False
-    flush_pending_notifications()
-    return "released held announcements"
+    if sleep_mode.is_active():
+        # the meeting ended because the user went to sleep: what waited belongs in the wake-up recap
+        with _session_context_lock:
+            for i in _session_context.get("pending_notifications") or []:
+                if i.pop("meeting_hold", None):
+                    i["during_sleep"] = True
+            _save_session_context_locked()
+        return "moved held announcements to the wake-up recap"
+    # speaking can take a while: never on the scheduler thread (it would delay reminders and jobs)
+    threading.Thread(target=flush_pending_notifications, daemon=True, name="cascade-release").start()
+    return "releasing held announcements"
 
 
 _cascade_flags = {"hold_announcements": False}

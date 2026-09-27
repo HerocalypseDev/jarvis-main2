@@ -381,6 +381,30 @@ Mitigations: audit trail, dashboard sessions, cancel, dry-run, safe mode, the of
 catastrophic gate. **Not verified live**: a real "in 30 minutes change the code" through voice and the
 coding agent end to end.
 
+**Audit of the executive upgrade (2026-09-27, same day)** - 8 real bugs fixed, regression tests at the end
+of `test_executive.py`:
+1. (High) "You should call mom" / "You need to take the pills" matched the remind-Jarvis pattern and became a
+   Jarvis JOB (Jarvis would try to do the user's errand). Only an explicit "Jarvis" now counts.
+2. (High) A due time with a timezone ("...Z") crashed scheduling (naive vs aware compare); an unreadable time
+   from extraction silently ran the job one minute later. Times are converted to local; unreadable = not scheduled.
+3. (Medium) The model's paraphrased quote failed the exact-substring "user's own words" check and the item fell
+   back to a spoken "Remind Jarvis to ..." reminder: the original nag. Now 70% word overlap; Jarvis work that is
+   rejected (not the user's words, or no time) is tracking-only and never becomes a reminder.
+4. (Medium) Jarvis work with no time ran in a minute; it now needs a real deadline.
+5. (Medium) The 90-minute stale reset could re-run a job this process was still running. Now excluded.
+6. (Medium) Up to 3 due jobs ran as parallel agent loops. Now one at a time (one per tick).
+7. (Medium) Cascade "meeting stopped" flushed announcements on the scheduler thread (delaying reminders/jobs) and,
+   when the meeting ended because Sleep Mode started, read them out at bedtime. Now a thread; during sleep they
+   go to the wake-up recap.
+8. (Medium) Reply storms: the per-recipient autonomous-email cap was skipped when the action named no address.
+   It now falls back to the commitment's sender.
+Checked clean: atomic claim (no double run), scheduler hook, dry-run/safe mode/kill switch, catastrophic staging,
+untrusted-origin block, FILL_TOOLS, mail_match baseline/NameError fix still in place, agent budgets, Host/Origin on
+`/api/feature/deferred`, no real-DB writes in tests. Residual: an injected email handled by an autonomous email
+action could still ask the agent to mail an extra recipient (the run can't run code, the caps count successful
+actions, not each send); `handled_by_tool` marks every item of that turn handled (an unrelated second item in the
+same sentence isn't actioned); Not verified live: a real voice "in 30 minutes change the code" end to end.
+
 ## How to verify (do this before trusting it)
 
 0. **New in the hardening pass.** (a) *Injection:* with Dry run on, email yourself from another address: "Lunch

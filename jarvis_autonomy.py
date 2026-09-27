@@ -1037,8 +1037,8 @@ def _action_for_commitment(c: dict) -> tuple[str | None, dict]:
     """The one concrete action a stored commitment implies, or (None, {}) if it is tracking-only."""
     dl = c.get("deadline_iso")
     meta = _meta(c)
-    if meta.get("executor") == "jarvis" and meta.get("instruction") and c.get("source_type") == "conversation":
-        return "deferred", {"instruction": meta["instruction"], "due_iso": dl or _iso(_now() + timedelta(minutes=1)),
+    if meta.get("executor") == "jarvis" and meta.get("instruction") and c.get("source_type") == "conversation" and dl:
+        return "deferred", {"instruction": meta["instruction"], "due_iso": dl,
                             "quote": (c.get("source_quote") or "")[:300]}
     if c["who_is_responsible"] != "user" and c["type"] != "event":
         return None, {}
@@ -1238,6 +1238,8 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
                     str(details.get("priority") or "normal"), details.get("deadline_iso"), default=None)
         return _schedule_queued(res, commitment_id)
     if action_type == "email":
+        if not _email_recipients(details) and commitment_id:
+            details = dict(details, to=str(_meta(_commitment(commitment_id) or {}).get("sender") or ""))
         blocked = _email_recipient_blocked(details) or _email_send_capped(details)
         if blocked:
             return False, blocked
@@ -1556,12 +1558,17 @@ def _executor_for(item: dict, source_type: str, user_text: str) -> dict:
         instr = as_jarvis_instruction(str(item.get("description") or "")) or ""
         if instr:
             item["executor"] = "jarvis"
-    own = source_type == "conversation" and _norm_text(str(item.get("source_quote") or "")) in _norm_text(user_text) \
-        and bool(_norm_text(str(item.get("source_quote") or "")))
-    if item.get("executor") == "jarvis" and instr and own:
+    quote_words = set(_norm_text(str(item.get("source_quote") or "")).split())
+    user_words = set(_norm_text(user_text).split())
+    # most of the quote's words must be the user's (the model paraphrases; Jarvis's reply may quote an email)
+    own = source_type == "conversation" and len(quote_words) >= 2 and \
+        len(quote_words & user_words) / len(quote_words) >= 0.7
+    if item.get("executor") == "jarvis" and instr and own and _plausible_deadline(_norm_dt(item.get("deadline_iso"))):
         item["instruction"] = instr
-    else:
-        item["executor"], item["instruction"] = "user", None
+    elif item.get("executor") == "jarvis" or instr:
+        # Work for Jarvis we won't run (not clearly the user's words, or no time given): track it only. It must
+        # never become a spoken "remind Jarvis to ..." reminder, the exact nag this replaced.
+        item["executor"], item["instruction"], item["who_is_responsible"] = "user", None, "system"
     return item
 
 
