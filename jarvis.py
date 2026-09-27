@@ -105,6 +105,7 @@ import jarvis_memory_search as memory_search
 import jarvis_kg as kg
 import jarvis_notify_priority as notify_priority
 import jarvis_improvement_report as improvement_report
+import jarvis_untrusted
 
 settings.JARVIS_MODULE = sys.modules[__name__]
 
@@ -2962,7 +2963,7 @@ BATCH_TOOLS = [
             "(name), enable/disable/delete (name), create (name, trigger_type interval {every_min>=5} | daily "
             "{at 'HH:MM', days 'mon,tue'} | mail_match {query: Gmail search} | file_event {ext, name_contains} | "
             "manual, steps [{tool, input}] using existing tools; {subject}/{sender}/{path} fill in from the "
-            "trigger; max_runs_per_day). Changing agents only works from the PC."
+            "trigger, only in create_reminder/search-type steps; max_runs_per_day). Changing agents only works from the PC."
         ),
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "log", "run", "enable", "disable", "delete", "create"]},
@@ -4101,7 +4102,7 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Held non-urgent notification (safe mode): %r", text)
         return
-    if not urgent and battery.current() == "critical":
+    if not (urgent or is_reminder or bypass_busy_gate) and battery.current() == "critical":
         with _session_context_lock:
             _session_context.setdefault("pending_notifications", []).append(
                 {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds")}
@@ -5407,10 +5408,11 @@ def _macro_reply(transcript: str) -> str | None:
 
 # A5: battery-aware background work. Read once per scheduler tick (psutil, ~free).
 _battery_state = {"autonomy_last": 0.0}
+DEADLINE_MAIL_LOOKUPS_PER_MIN = 3
 
 
 def _battery_tick() -> None:
-    lvl = battery.classify(*battery.read()) if battery.enabled() else "ok"
+    lvl = battery.classify(*battery.read(), current=battery.current()) if battery.enabled() else "ok"
     msg = battery.transition(lvl)
     if msg:
         log.info("Battery: %s", msg)
@@ -5429,12 +5431,29 @@ def _autonomy_tick_battery_aware(now: datetime) -> None:
 
 # A6: light context on a deadline nudge: related memory facts (local TF-IDF) + at most one Gmail
 # subject search (subjects only, never bodies). Runs once per nudge bucket, never per tick.
+_deadline_ctx_budget = {"minute": "", "used": 0}
+_EMAIL_ADDR_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
 def _deadline_context(description: str, bucket: str) -> str:
+    """Spoken with the nudge, so: plain sentences, no prompt headers, no email addresses read aloud.
+    All facts are ranked (not only the older ones the system prompt leaves out), and at most
+    DEADLINE_MAIL_LOOKUPS_PER_MIN Gmail searches run per minute however many deadlines come due at once."""
     parts = []
-    facts = _relevant_memory_line(description)
+    try:
+        block = memory_enhance.relevant_memory_line(description, skip_newest=0)
+    except Exception:
+        block = ""
+    facts = [re.sub(r"^- \[[^\]]*\]\s*", "", ln).strip() for ln in block.splitlines() if ln.startswith("- ")]
+    facts = [_EMAIL_ADDR_RE.sub("their address", f) for f in facts][:2]
     if facts:
-        parts.append(re.sub(r"\s+", " ", facts)[:300])
-    if bucket in ("24h", "2h") and "mcp_gmail_search_emails" in _mcp_tool_index:
+        parts.append(("Related: " + "; ".join(facts))[:260])
+    minute = datetime.now().strftime("%Y%m%d%H%M")
+    if _deadline_ctx_budget["minute"] != minute:
+        _deadline_ctx_budget.update(minute=minute, used=0)
+    if bucket in ("24h", "2h") and "mcp_gmail_search_emails" in _mcp_tool_index \
+            and _deadline_ctx_budget["used"] < DEADLINE_MAIL_LOOKUPS_PER_MIN:
+        _deadline_ctx_budget["used"] += 1
         words = [w for w in re.findall(r"[A-Za-z0-9]{4,}", description)
                  if w.lower() not in memory_enhance._QUERY_STOPWORDS][:4]
         if words:
@@ -5529,12 +5548,23 @@ def _feature_macros(action: str, payload: dict):
 _meeting_store = meeting.Store(_memory_db_connect, _memory_db_lock)
 _meeting_auto = {"declined_title": ""}
 _file_index = file_index.Index(_memory_db_connect, _memory_db_lock,
-                               llm=lambda prompt: _sleep_mail_claude("You tag files.", prompt, 60))
+                               llm=lambda prompt: None if safe_mode_on() else _sleep_mail_claude("You tag files.", prompt, 60))
 _fg_tracker = app_shortcuts.ForegroundTracker(lambda: _foreground_window())
 
 
 def _meeting_summarize(prompt: str) -> str | None:
-    return _sleep_mail_claude("You write concise meeting notes as JSON.", prompt, 1500)
+    # Up to ~15k tokens of transcript in: the 30 s timeout of the other helpers is too short (audit 2026-09-27).
+    data = _claude_request({"model": CLAUDE_MODEL, "max_tokens": 1500, "system": "You write concise meeting notes as JSON.",
+                            "messages": [{"role": "user", "content": prompt}]}, timeout=120)
+    return _claude_text(data) if data is not None else None
+
+
+def _meeting_transcribe(audio, rate: int) -> str | None:
+    """None = try this chunk later: with no Deepgram (local Whisper only), a 30 s chunk would compete for
+    the CPU with a push-to-talk command in progress, so it waits until that command is done."""
+    if not _use_deepgram_stt() and _commands_in_flight() > 0:
+        return None
+    return transcribe_pcm(audio, rate)
 
 
 def _meeting_action_items(items: list, meeting_id: int) -> None:
@@ -5552,7 +5582,7 @@ def _meeting_window_open() -> bool:
 
 
 def _meeting_start(title: str = "", source: str = "manual", window_open=None) -> str:
-    return meeting.start(_meeting_store, transcribe_pcm, _meeting_summarize, _meeting_action_items,
+    return meeting.start(_meeting_store, _meeting_transcribe, _meeting_summarize, _meeting_action_items,
                          lambda text: queue_or_deliver_notification(text, bypass_busy_gate=True),
                          title=title, source=source, window_open=window_open)
 
@@ -5613,6 +5643,13 @@ def _shortcut_fire(s: dict) -> str:
     """Runs one app shortcut. keys only go to the app the shortcut is for."""
     if s["kind"] == "keys":
         fg = _foreground_window()
+        last = _fg_tracker.last
+        if not app_shortcuts.app_matches(s["app"], fg) and app_shortcuts.app_matches(s["app"], last) \
+                and last.get("title"):
+            # From the Alt+K palette the browser has focus: bring back the app the user was just in.
+            focus_window(last["title"])
+            time.sleep(0.25)
+            fg = _foreground_window()
         if not app_shortcuts.app_matches(s["app"], fg):
             return f"{s['app']} isn't in front any more, so I didn't press {s['value']}."
         import keyboard
@@ -5670,6 +5707,9 @@ def _app_shortcut_route(transcript: str) -> tuple[str | None, str]:
 def _email_reply_tool(inp: dict) -> str:
     action = str(inp.get("action") or "suggest").lower()
     connect, lock = _memory_db_connect, _memory_db_lock
+    if action in ("save_template", "delete_template") and not _attended():
+        # an injected email must not be able to plant a template that later drafts start from
+        return "Email templates can only be changed from the PC."
     if action == "save_template":
         return email_templates.save(connect, lock, str(inp.get("name") or ""), str(inp.get("body") or ""),
                                     str(inp.get("subject") or ""), str(inp.get("tags") or ""))
@@ -5760,6 +5800,7 @@ def _feature_email(action: str, payload: dict):
 _agent_store = agents.Store(_memory_db_connect, _memory_db_lock)
 _agents_running: set = set()
 _agents_lock = threading.Lock()
+_agent_pending_lock = threading.Lock()
 _AGENT_FORBIDDEN_TOOLS = {"background_agents", "macros"}
 _kg_state = {"last": 0.0}
 _digest_state = {"last": time.monotonic()}
@@ -5779,8 +5820,9 @@ def _agent_run_async(a: dict, events: list[dict] | None = None) -> bool:
     def work():
         try:
             for fields in (events or [{}]):
-                current = _agent_store.get(a["name"]) or a
-                if not agents.budget_left(current, datetime.now()):
+                current = _agent_store.get(a["name"])
+                # re-read every run: turning an agent off (or deleting it) stops its queued events at once
+                if current is None or not current["enabled"] or not agents.budget_left(current, datetime.now()):
                     break
                 summary = agents.run(_agent_store, current,
                                      lambda tool, inp: _execute_tool(tool, inp, f"(background agent {a['name']})"),
@@ -5807,8 +5849,8 @@ def _agent_mail_check(a: dict, now: datetime) -> None:
         seen = set(a["seen"])
         new = [m for m in sleep_mail.parse_search(found) if m.get("id") and m["id"] not in seen]
         _agent_store.set(a["id"], seen=(a["seen"] + [m["id"] for m in new])[-300:])
-        if not a["seen"] and not a.get("last_run"):
-            return  # first check is a baseline: mail that was already there doesn't fire
+        if not a.get("last_check"):
+            return  # the agent's first check is a baseline: mail already there doesn't fire (a is pre-check)
         events = [{"subject": jarvis_untrusted.neutralize_injection(m.get("subject") or "")[0][:200],
                    "sender": jarvis_untrusted.neutralize_injection(m.get("sender") or "")[0][:200]} for m in new]
         if events:
@@ -5831,17 +5873,21 @@ def _agents_tick(now: datetime) -> None:
                 threading.Thread(target=_agent_mail_check, args=(a, now), daemon=True, name="agent-mail").start()
             continue
         if agents.due(a, now):
-            pending = a.get("pending") or []
+            pending = None
             if a["trigger_type"] == "file_event":
-                _agent_store.set(a["id"], pending=[])
+                with _agent_pending_lock:  # the file watcher appends from its own thread
+                    fresh = _agent_store.get(a["name"]) or a
+                    pending = fresh.get("pending") or []
+                    _agent_store.set(a["id"], pending=[])
             _agent_run_async(a, pending or None)
 
 
 def _agents_on_file_event(event: dict) -> None:
-    for a in _agent_store.all():
-        if agents.file_event_matches(a, event):
-            name = event["path"].replace("\\", "/").rsplit("/", 1)[-1]
-            _agent_store.set(a["id"], pending=(a["pending"] + [{"path": event["path"], "subject": name}])[-20:])
+    with _agent_pending_lock:
+        for a in _agent_store.all():
+            if agents.file_event_matches(a, event):
+                name = event["path"].replace("\\", "/").rsplit("/", 1)[-1]
+                _agent_store.set(a["id"], pending=(a["pending"] + [{"path": event["path"], "subject": name}])[-20:])
 
 
 def _background_agents_tool(inp: dict) -> str:
@@ -5895,7 +5941,11 @@ def _code_search_tool(inp: dict) -> str:
 
 def _memory_search_tool(inp: dict) -> str:
     q = str(inp.get("query") or "")
-    rows = memory_search.search(_memory_db_connect, _memory_db_lock, q, int(inp.get("limit") or 8))
+    try:
+        rows = memory_search.search(_memory_db_connect, _memory_db_lock, q, int(inp.get("limit") or 8))
+    except sqlite3.OperationalError as e:  # e.g. no FTS5 in this SQLite build
+        log.warning("memory full-text search unavailable: %s", e)
+        rows = []
     out = memory_search.format_results(rows)
     if not any(r["kind"] == "fact" for r in rows):
         sem = memory_enhance.semantic_recall(q)  # TF-IDF over facts/decisions/patterns: catches word variants
@@ -10547,6 +10597,8 @@ def _handle_text_command_impl(
     if tone is None:
         tone = voice_tone.analyze_tone(transcript)
     tone = voice_tone.adapt(tone, transcript)  # B5: repeated / short-command signals, local only
+    if (os.environ.get("JARVIS_REPLY_STYLE") or "").strip().lower() == "detailed" or _wants_full_speech(transcript):
+        tone["brief"] = False  # the user's own length setting wins over the heuristic
 
     # Simple-intent fast path (cloud-latency pass, Phase D): a small allowlist of intents skip
     # either the whole Claude round trip (time/date — deterministic, zero LLM call, zero

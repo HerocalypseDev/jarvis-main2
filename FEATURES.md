@@ -44,8 +44,8 @@ away is announced ("John's iPhone joined the network"); unnamed ones are not, so
 don't cause chatter. Rename from the Home network card's "Name" button or by voice.
 
 **A4 Voice macros.** `macros` table: name, trigger phrases (2+ words), steps `[{tool, input}]`.
-A command that normalises to a trigger phrase (lower case, punctuation and leading
-"jarvis"/"please" removed; >= 0.9 similarity for small transcription slips; max 12 words) runs the
+A command that normalises to a trigger phrase (lower case, punctuation, apostrophes and leading
+"jarvis"/"please" removed; exact match only, add extra phrases for variants; max 12 words) runs the
 steps with **no LLM call**, before intent routing. Steps must be existing tools (built-in, dynamic,
 or connected MCP); a macro cannot call the `macros` tool. Each step goes through `_execute_tool`
 (audited, gated); a staged catastrophic step stops the macro and says so. Creating, changing or
@@ -140,7 +140,8 @@ new documents to the active AI; set `JARVIS_FILE_TAG_LLM_PER_HOUR=0` for rules o
 **C1 Background agents.** `agents` table. Triggers: `interval` (>= 5 min), `daily` (HH:MM, optional
 weekdays; runs once if the PC is on within 6 h after the slot), `mail_match` (a Gmail search every 10
 min; the first check is a silent baseline; each new message runs the steps once with sanitised
-`{subject}`/`{sender}`), `file_event` (fed by the file watcher; `{path}`), `manual`. Steps are
+`{subject}`/`{sender}`), `file_event` (fed by the file watcher; `{path}`), `manual`. `{subject}`/`{sender}`/`{path}` are only allowed (and only filled) in reminder/search-type
+steps (`jarvis_agents.FILL_TOOLS`), never in anything that runs code, types, sends or writes. Steps are
 existing tools only (not `background_agents`/`macros`), each through `_execute_tool` (audited with
 transcript `(background agent NAME)`, catastrophic gate intact; a staged step stops the run), plus an
 `agent_run` audit row. Runs on worker threads from the 60 s scheduler tick, single flight per agent,
@@ -206,3 +207,11 @@ voice replies over 6 s.
   (C4/C5). **Not verified live**: a real meeting end to end, a real Everything install, a real
   mail_match agent against Gmail, app-shortcut keys into a real app, battery thresholds on a laptop.
 - Tool prefix grew by 14 tools (~2.5k tokens of the cached prefix); one-time cache re-write per restart.
+
+## Audit (2026-09-27)
+
+17 bugs found and fixed in this batch; details and the rules they imply are in CLAUDE.md ("Feature batch
+audit"), regression tests in `test_feature_batch_audit.py`. Most important: mail-triggered agents crashed
+on every check (missing module import); agent placeholders could carry a mail subject into a shell/send
+step; fuzzy macro matching could run the opposite command; meeting notes dropped short remarks in quiet
+chunks; a critical battery held reminders; every named device was announced after the PC woke up.

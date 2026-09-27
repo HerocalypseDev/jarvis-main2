@@ -65,6 +65,8 @@ def search(query: str, path: str = "", glob: str = "", regex: bool = False,
         root = os.path.expanduser(root)
         if not os.path.isdir(root):
             return {"ok": False, "error": f"{root} isn't a folder."}
+        if os.path.abspath(root) == os.path.abspath(os.path.splitdrive(os.path.abspath(root))[0] + os.sep):
+            return {"ok": False, "error": "That's a whole drive; name the project folder to search."}
         rg = _rg()
         if rg:
             backend = "ripgrep"

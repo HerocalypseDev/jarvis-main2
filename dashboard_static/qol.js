@@ -175,7 +175,7 @@ function renderPalette(resetSel = true) {
   const pins = loadPins();
   const seen = new Set();
   // App shortcuts for the app you were just in come first (feature batch B3).
-  const all = [...palette.shortcuts.map((sc) => ({ text: sc.label, shortcut: sc.id, detail: sc.kind + " " + sc.value })),
+  const all = [...palette.shortcuts.map((sc) => ({ text: sc.label, shortcut: sc.id, kind: sc.kind, say: sc.value, detail: sc.kind + " " + sc.value })),
     ...pins.map((t) => ({ text: t, pinned: true })), ...palette.recent.map((r) => ({ text: r.text, pinned: false }))]
     .filter((c) => !seen.has(c.text) && seen.add(c.text));
   palette.items = (q ? all.map((c) => ({ c, s: fuzzyScore(c.text.toLowerCase(), q) })).filter((x) => x.s > 0)
@@ -209,6 +209,7 @@ async function openPalette() {
 function closePalette() { palette.el?.classList.add("hidden"); }
 
 async function runPaletteItem(item) {
+  if (item && item.shortcut && item.kind === "say") return runPalette(item.say);
   if (item && item.shortcut) {
     closePalette();
     try {

@@ -3,8 +3,9 @@ calls with no LLM call ("start work mode" -> open VS Code, focus mode on, ...).
 
 Stored in `macros` (jarvis_memory.db): name, trigger phrases, steps [{"tool", "input"}], enabled.
 Matching is deterministic: the spoken/typed command, lower-cased, punctuation and a leading
-"jarvis"/"please" stripped, must equal a trigger phrase (or be >= MATCH_RATIO similar to it, for
-small transcription slips). Each step runs through jarvis's normal `_execute_tool`, so every step is
+"jarvis"/"please" stripped, must equal a trigger phrase exactly. (Fuzzy matching was removed in the
+2026-09-27 audit: "unlock the screen" scored 0.94 against a "lock the screen" macro. Add more
+phrases for variants instead.) Each step runs through jarvis's normal `_execute_tool`, so every step is
 audited and the catastrophic confirmation gate still applies: a step that gets staged stops the macro.
 
 Steps may only name tools that already exist; macros can't call the macro tool itself (no loops)
@@ -13,21 +14,23 @@ and add no new privileges.
 
 from __future__ import annotations
 
-import difflib
 import json
 import re
 import sqlite3
 from datetime import datetime
 from typing import Callable
 
-MATCH_RATIO = 0.9
+# Phrases that must keep reaching Jarvis's own handling: "stop talking" silences speech, safe mode is a
+# safety switch. A macro can't take them over.
+RESERVED = {"stop", "stop talking", "be quiet", "shut up", "quiet", "safe mode on", "safe mode off",
+            "turn on safe mode", "turn off safe mode", "yes", "no", "cancel"}
 MAX_STEPS = 12
 FORBIDDEN_STEP_TOOLS = {"macros"}
 _LEAD_RE = re.compile(r"^(?:(?:hey|ok|okay)\s+)?(?:jarvis\s+)?(?:please\s+)?")
 
 
 def normalize(text: str) -> str:
-    t = re.sub(r"[^\w\s']", " ", (text or "").lower())
+    t = re.sub(r"[^\w\s]", " ", (text or "").lower().replace("'", "").replace("\u2019", ""))
     t = re.sub(r"\s+", " ", t).strip()
     t = _LEAD_RE.sub("", t)
     return re.sub(r"\s+please$", "", t).strip()
@@ -69,6 +72,9 @@ def validate(name: str, phrases, steps, known_tools: set[str]) -> str | None:
         return "A macro needs at least one trigger phrase."
     if any(len(normalize(str(p)).split()) < 2 for p in phrases):
         return "Trigger phrases need at least two words (one word would fire by accident)."
+    reserved = [p for p in phrases if normalize(str(p)) in RESERVED]
+    if reserved:
+        return f"{reserved[0]!r} is one of Jarvis's own commands, so a macro can't use it."
     if not isinstance(steps, list) or not steps or len(steps) > MAX_STEPS:
         return f"A macro needs 1 to {MAX_STEPS} steps."
     for s in steps:
@@ -109,15 +115,10 @@ def match(connect, lock, transcript: str) -> dict | None:
     t = normalize(transcript)
     if not t or len(t.split()) > 12:
         return None
-    best, score = None, 0.0
     for m in list_macros(connect, lock):
-        if not m["enabled"]:
-            continue
-        for p in m["phrases"]:
-            r = 1.0 if p == t else difflib.SequenceMatcher(None, p, t).ratio()
-            if r > score:
-                best, score = m, r
-    return best if score >= MATCH_RATIO else None
+        if m["enabled"] and any(normalize(p) == t for p in m["phrases"]):
+            return m
+    return None
 
 
 def run(connect, lock, macro: dict, execute: Callable[[str, dict], str],

@@ -27,6 +27,12 @@ TRIGGERS = ("interval", "daily", "mail_match", "file_event", "manual")
 MAIL_CHECK_MIN = 10
 MAX_STEPS = 10
 _DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_PLACEHOLDER_RE = re.compile(r"\{(subject|sender|path|snippet)\}")
+# The only tools whose inputs may carry trigger text written by someone else (a mail subject, a
+# downloaded file's name). Anything that runs code, types, sends, fetches or writes is excluded, so a
+# crafted subject can never become a shell command, a typed keystroke or an outgoing message.
+FILL_TOOLS = {"create_reminder", "quick_search", "find_files", "clipboard_history", "memory_search",
+              "semantic_recall", "recall_facts", "weather"}
 
 
 def ensure(conn: sqlite3.Connection) -> None:
@@ -100,6 +106,9 @@ def validate(trigger_type: str, config: dict, steps, known_tools: set[str], forb
             return f"Step tool {tool!r} isn't an existing tool an agent may use."
         if not isinstance(s.get("input") or {}, dict):
             return f"Step {tool!r} input must be an object."
+        if tool not in FILL_TOOLS and _PLACEHOLDER_RE.search(json.dumps(s.get("input") or {})):
+            return (f"Step {tool!r} can't use {{subject}}/{{sender}}/{{path}}: that text comes from other people "
+                    f"(mail, downloaded file names). Placeholders only work in: {', '.join(sorted(FILL_TOOLS))}.")
     return None
 
 
@@ -165,7 +174,7 @@ def file_event_matches(a: dict, event: dict) -> bool:
 def fill(value, fields: dict):
     """{subject}/{sender}/{path} placeholders in string step inputs."""
     if isinstance(value, str):
-        return re.sub(r"\{(subject|sender|path|snippet)\}", lambda m: str(fields.get(m.group(1), "")), value)
+        return _PLACEHOLDER_RE.sub(lambda m: str(fields.get(m.group(1), "")), value)
     if isinstance(value, dict):
         return {k: fill(v, fields) for k, v in value.items()}
     if isinstance(value, list):
@@ -178,7 +187,9 @@ def run(store: Store, a: dict, execute: Callable[[str, dict], str], staged: Call
     now = now or datetime.now()
     out, ok = [], True
     for i, s in enumerate(a["steps"], 1):
-        result = execute(s["tool"], fill(dict(s.get("input") or {}), fields or {})) or ""
+        inp = dict(s.get("input") or {})
+        # Third-party text only ever reaches tools that just record or look things up (audit 2026-09-27).
+        result = execute(s["tool"], fill(inp, fields or {}) if s["tool"] in FILL_TOOLS else inp) or ""
         if staged(result):
             out.append(f"step {i} ({s['tool']}) is waiting for your confirmation")
             break

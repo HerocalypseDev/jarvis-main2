@@ -26,12 +26,16 @@ def _pct(name: str, default: float) -> float:
         return default
 
 
-def classify(percent, plugged) -> str:
+HYSTERESIS_PCT = 3  # climbing back out of a level needs this much headroom (no flapping at 20/21%)
+
+
+def classify(percent, plugged, current: str = "ok") -> str:
     if percent is None or plugged:
         return "ok"
-    if percent <= _pct("JARVIS_BATTERY_CRITICAL_PCT", 10):
+    crit, low = _pct("JARVIS_BATTERY_CRITICAL_PCT", 10), _pct("JARVIS_BATTERY_LOW_PCT", 20)
+    if percent <= crit or (current == "critical" and percent <= crit + HYSTERESIS_PCT):
         return "critical"
-    if percent <= _pct("JARVIS_BATTERY_LOW_PCT", 20):
+    if percent <= low or (current in ("low", "critical") and percent <= low + HYSTERESIS_PCT):
         return "low"
     return "ok"
 

@@ -30,6 +30,7 @@ from typing import Callable
 log = logging.getLogger("jarvis.file_index")
 
 HASH_MAX_MB = 512
+SETTLE_S = 20  # a file modified more recently than this is indexed later
 TEXT_CHARS = 2000
 CATEGORIES = {
     "image": {"jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "tif", "tiff", "svg"},
@@ -192,6 +193,15 @@ class Index:
         p = Path(path)
         if p.name.lower().endswith((".crdownload", ".part", ".tmp", ".partial")):
             return None  # still downloading; the finished file arrives as its own event
+        old = self._db("SELECT size, mtime FROM file_index WHERE path=?", (path,))
+        if old and old[0]["size"] == st.st_size and old[0]["mtime"] == st.st_mtime:
+            return None  # nothing changed since it was indexed: no re-hash, no model call
+        if time.time() - st.st_mtime < SETTLE_S:
+            # still being written (the watcher reports it every poll): look again once it has settled
+            t = threading.Timer(SETTLE_S, lambda: self.on_event({"kind": "changed", "path": path}))
+            t.daemon = True
+            t.start()
+            return None
         ext = p.suffix.lower().lstrip(".")
         digest = sha256_of(path)
         text = extract_text(path) if _EXT_CATEGORY.get(ext) == "document" else ""
@@ -236,7 +246,7 @@ class Index:
              limit: int = 25) -> list[dict]:
         if duplicates:
             rows = self._db("SELECT * FROM file_index WHERE sha256 IN (SELECT sha256 FROM file_index WHERE sha256 IS "
-                            "NOT NULL GROUP BY sha256 HAVING COUNT(*) > 1) ORDER BY sha256, mtime")
+                            "NOT NULL AND size > 0 GROUP BY sha256 HAVING COUNT(*) > 1) ORDER BY sha256, mtime")
         else:
             sql, args = "SELECT * FROM file_index WHERE 1=1", []
             if tag:

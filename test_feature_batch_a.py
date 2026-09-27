@@ -134,6 +134,8 @@ def test_device_names_and_returning_devices(db):
     netscan.record(connect, lock, dict(scan), now=1000.0)
     out = netscan.handle_tool(connect, lock, {"action": "name", "device": "192.168.1.5", "name": "John's iPhone"}, scan)
     assert "John's iPhone" in out
+    # Jarvis kept scanning (the phone was away, the PC wasn't), then the phone came back
+    netscan.record(connect, lock, dict(scan, devices=scan["devices"][1:]), now=1000.0 + netscan.RETURN_AFTER_S)
     later = dict(scan)
     netscan.record(connect, lock, later, now=1000.0 + netscan.RETURN_AFTER_S + 5)
     netscan.apply_names(later, netscan.names(connect, lock))

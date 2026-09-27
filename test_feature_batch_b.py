@@ -135,6 +135,7 @@ def test_file_index_tags_duplicates_and_rate_limited_llm(db, tmp_path, monkeypat
     (d / "setup.exe").write_bytes(b"MZ")
     (d / "big.crdownload").write_bytes(b"x")
     monkeypatch.setenv("JARVIS_FILE_TAG_LLM_PER_HOUR", "1")
+    monkeypatch.setattr(fi, "SETTLE_S", 0)  # files were just written
     for f in sorted(d.iterdir()):
         idx.index_file(str(f))
     assert "invoice" in idx.find(tag="invoice")[0]["tags"]

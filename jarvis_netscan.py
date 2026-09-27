@@ -28,6 +28,7 @@ from typing import Callable
 
 ARP_SETTLE_S = 1.5
 RETURN_AFTER_S = 1800  # a named device gone this long is announced when it rejoins
+RECENT_SCAN_S = 600  # ...but only if the previous scan of that network was this recent
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _MAC_RE = re.compile(r"^([0-9a-f]{2}[-:]){5}[0-9a-f]{2}$", re.I)
 _hostname_cache: dict[str, str] = {}
@@ -160,9 +161,13 @@ def record(connect: Callable[[], sqlite3.Connection], lock, result: dict, now: f
             known = {r[0]: r[1] for r in rows}
             last_seen = {r[0]: r[2] for r in rows}
             new = [d for d in result["devices"] if d["mac"] not in known] if known else []
-            # Known devices back after RETURN_AFTER_S away (callers announce only the named ones).
-            result["returned"] = [d for d in result["devices"]
-                                  if d["mac"] in last_seen and now - last_seen[d["mac"]] >= RETURN_AFTER_S]
+            # Known devices back after RETURN_AFTER_S away (callers announce only the named ones). Only
+            # counted when this network was also scanned recently: after the PC slept or scanning was
+            # paused, every device would otherwise look "just back" at once (audit 2026-09-27).
+            last_scan = max(last_seen.values(), default=0)
+            watching = now - last_scan <= RECENT_SCAN_S
+            result["returned"] = [d for d in result["devices"] if watching and d["mac"] in last_seen
+                                  and now - last_seen[d["mac"]] >= RETURN_AFTER_S]
             for d in result["devices"]:
                 conn.execute("INSERT INTO network_devices VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(network, mac) "
                              "DO UPDATE SET ip=excluded.ip, hostname=COALESCE(NULLIF(excluded.hostname, ''), hostname), "

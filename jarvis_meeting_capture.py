@@ -33,6 +33,8 @@ log = logging.getLogger("jarvis.meeting")
 RATE = 16000
 CHUNK_S = 30
 PIECE_S = 2
+CARRY_MAX_S = 120  # audio held back while STT is deferred
+KEEP_DAYS = 90  # meetings older than this are deleted when a new one starts
 SILENCE_RMS = 0.004
 MEETING_WINDOW_RE = re.compile(r"zoom meeting|zoom workplace|microsoft teams|\bteams\b.*\b(meeting|call)\b|"
                                r"google meet|\bmeet\s*-|webex|skype|discord.*(call|voice)|whereby|jitsi", re.I)
@@ -107,6 +109,7 @@ def start(store: Store, transcribe: Callable[[np.ndarray, int], str], summarize:
     with _lock:
         if _session:
             return f"Meeting notes are already running (started {_session['started_at'][11:16]})."
+        prune(store)
         mid = store.q("INSERT INTO meetings (title, started_at, status, source) VALUES (?, ?, 'recording', ?)",
                       (title[:120] or "Meeting", _now(), source), write=True)
         _session = {"id": mid, "title": title or "Meeting", "started_at": _now(), "source": source,
@@ -134,22 +137,40 @@ def _run(store: Store, sess: dict, transcribe, summarize, on_action_items, notif
     t0 = last_voice = time.monotonic()
     reason = None
 
-    def process(buf: list) -> None:
+    def process(buf: list, final: bool = False) -> list:
+        """Transcribes the buffered audio; returns what must be kept for later. transcribe() returning
+        None means "not now" (the user is mid-command and only local Whisper is available): the audio
+        is carried into the next chunk, up to CARRY_MAX_S, instead of competing with push-to-talk."""
         nonlocal last_voice
         if not buf:
-            return
+            return []
         mono = np.concatenate(buf)
-        if mono.size and float(np.sqrt(np.mean(mono ** 2))) >= SILENCE_RMS:
-            last_voice = time.monotonic()
+        # Loudest 2 s piece, not the whole-chunk average: one short remark in 30 s of quiet averages out
+        # below the threshold and would have been dropped (audit 2026-09-27).
+        if not any(x.size and float(np.sqrt(np.mean(x ** 2))) >= SILENCE_RMS for x in buf):
+            return []
+        last_voice = time.monotonic()
+        text = None
+        for _ in range(30 if final else 1):  # at the end, wait (up to ~30 s) for a turn instead of dropping it
             try:
-                text = (transcribe(mono, RATE) or "").strip()
+                text = transcribe(mono, RATE)
             except Exception as e:
                 log.warning("Meeting chunk transcription failed: %s", e)
                 text = ""
-            if text:
-                store.q("INSERT INTO meeting_segments (meeting_id, ts, text) VALUES (?, ?, ?)",
-                        (sess["id"], _now(), text), write=True)
-                sess["segments"] += 1
+            if text is not None or not final:
+                break
+            time.sleep(1)
+        if text is None:
+            keep = list(buf)  # the pieces themselves, so the loudness check still sees them separately
+            while len(keep) > 1 and sum(x.size for x in keep) > RATE * CARRY_MAX_S:
+                keep.pop(0)
+            return keep
+        text = text.strip()
+        if text:
+            store.q("INSERT INTO meeting_segments (meeting_id, ts, text) VALUES (?, ?, ?)",
+                    (sess["id"], _now(), text), write=True)
+            sess["segments"] += 1
+        return []
 
     buf: list = []
     try:
@@ -158,8 +179,7 @@ def _run(store: Store, sess: dict, transcribe, summarize, on_action_items, notif
                 # Short reads so "stop meeting notes" takes effect within PIECE_S, not a whole chunk.
                 buf.append(np.asarray(rec.record(numframes=RATE * PIECE_S), dtype=np.float32).reshape(-1))
                 if sum(x.size for x in buf) >= RATE * CHUNK_S:
-                    process(buf)
-                    buf = []
+                    buf = process(buf)
                 now = time.monotonic()
                 if now - t0 >= max_s:
                     reason = "max duration"
@@ -169,7 +189,7 @@ def _run(store: Store, sess: dict, transcribe, summarize, on_action_items, notif
                     reason = "meeting window closed"
                 if reason:
                     break
-            process(buf)
+            process(buf, final=True)
     except Exception as e:
         log.warning("Meeting capture failed: %s", e)
         reason = f"capture failed: {e}"
@@ -237,3 +257,12 @@ def transcript_of(store: Store, mid: int) -> str:
 def delete_meeting(store: Store, mid: int) -> None:
     store.q("DELETE FROM meeting_segments WHERE meeting_id=?", (int(mid),), write=True)
     store.q("DELETE FROM meetings WHERE id=?", (int(mid),), write=True)
+
+
+def prune(store: Store, keep_days: int = KEEP_DAYS) -> None:
+    """Retention: transcripts are other people's words; they don't stay forever."""
+    from datetime import timedelta
+    cut = (datetime.now() - timedelta(days=keep_days)).isoformat(timespec="seconds")
+    store.q("DELETE FROM meeting_segments WHERE meeting_id IN (SELECT id FROM meetings WHERE started_at < ?)", (cut,),
+            write=True)
+    store.q("DELETE FROM meetings WHERE started_at < ?", (cut,), write=True)

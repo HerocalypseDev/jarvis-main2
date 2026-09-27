@@ -14,14 +14,12 @@ lists that app's shortcuts first. No per-app listeners, nothing always-on beyond
 
 from __future__ import annotations
 
-import difflib
 import re
 import sqlite3
 import sys
 import threading
 import time
 
-MATCH_RATIO = 0.88
 KINDS = ("keys", "say", "macro")
 _KEYS_RE = re.compile(r"^[a-z0-9+\- ,]{1,60}$", re.I)
 _SKIP_TITLE_RE = re.compile(r"jarvis", re.I)
@@ -48,7 +46,7 @@ def _db(connect, lock, sql: str, args: tuple = (), write: bool = False):
 
 
 def _norm(t: str) -> str:
-    t = re.sub(r"[^\w\s]", " ", (t or "").lower())
+    t = re.sub(r"[^\w\s]", " ", (t or "").lower().replace("'", "").replace("\u2019", ""))
     return re.sub(r"^(?:jarvis\s+)?(?:please\s+)?", "", re.sub(r"\s+", " ", t).strip())
 
 
@@ -97,12 +95,8 @@ def match(connect, lock, transcript: str, fg: dict) -> dict | None:
     t = _norm(transcript)
     if not t or len(t.split()) > 8:
         return None
-    best, score = None, 0.0
-    for s in for_app(connect, lock, fg):
-        r = 1.0 if s["label"] == t else difflib.SequenceMatcher(None, s["label"], t).ratio()
-        if r > score:
-            best, score = s, r
-    return best if score >= MATCH_RATIO else None
+    # exact phrase only (audit 2026-09-27): fuzzy matching let "unlock ..." fire a "lock ..." shortcut
+    return next((s for s in for_app(connect, lock, fg) if _norm(s["label"]) == t), None)
 
 
 class ForegroundTracker:

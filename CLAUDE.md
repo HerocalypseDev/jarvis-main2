@@ -1349,6 +1349,34 @@ Full write-up: `FEATURES.md` (per-feature defaults, env vars, residual risks). R
   script that imports jarvis with a temp `JARVIS_MEMORY_DB_PATH`, seeds rows and serves
   `jarvis_dashboard._build_app()` works as a preview. features.js must call `refreshToolbox()` itself on
   a direct `#/toolbox` load (app.js routes before it loads).
+- **Feature batch audit (2026-09-27, same day)** - 17 real bugs fixed, each pinned in
+  `test_feature_batch_audit.py`. Rules to keep:
+  - Agent placeholders (`{subject}/{sender}/{path}`, third-party text) are only accepted, and only filled,
+    in `jarvis_agents.FILL_TOOLS` (reminder/search-type tools). Never widen it to anything that runs code,
+    types, sends, fetches or writes.
+  - A queued agent run re-reads the agent each time: disabled/deleted = stop now. mail_match's baseline is
+    the agent's first check (`last_check` unset), not "nothing seen yet".
+  - Macros and app shortcuts match the normalised phrase EXACTLY (apostrophes dropped). Fuzzy matching was
+    removed: "unlock the screen" scored 0.94 against "lock the screen". Hush/safe-mode/yes/no phrases are
+    reserved.
+  - `jarvis_untrusted` is now imported at module level in jarvis.py; it was only imported inside two
+    functions, so every mail_match agent check crashed with NameError. Run `python -m pyflakes` on
+    changed modules (installed) - it catches this class.
+  - Meeting capture: loudness is judged per 2 s piece (a short remark in a quiet 30 s chunk was dropped);
+    with local Whisper only, chunks wait (`_meeting_transcribe` -> None) while a user command is in flight,
+    carried up to 120 s; summary call has its own 120 s timeout; meetings older than 90 days are pruned.
+  - Critical battery never holds reminders or `bypass_busy_gate` results; levels have 3% hysteresis.
+  - Netscan "X joined" needs the previous scan of that network within 10 min (no burst after sleep).
+  - Deadline context is speakable (no prompt header, no email addresses, includes the newest facts) and
+    does at most 3 Gmail lookups per minute.
+  - Palette app shortcuts: `keys` focus the tracked app first; `say` runs through /api/command.
+  - Email templates change only when attended; tone's "brief" hint yields to `JARVIS_REPLY_STYLE=detailed`;
+    clipboard: bad `JARVIS_CLIPBOARD_HISTORY_MAX` no longer crashes import, huge copies scanned on 200k chars;
+    file index skips unchanged and still-being-written files (re-queued after 20 s) and ignores empty files as
+    duplicates, no AI tags in safe mode; `code_search` refuses a drive root; `memory_search` survives no FTS5.
+  - Residual (accepted): macros can still be triggered by a hands-free follow-up capture (same class as the
+    agent loop; the catastrophic gate still holds); clipboard secret detection is a heuristic; the
+    announcement-priority signal is weak (barge-in = dismiss). Not verified live: same list as FEATURES.md.
 - Shell heredocs in this environment can turn `\b` into a real backspace byte: write patch scripts with
   the Write tool, and scan for control characters after scripted edits.
 - `_macro_known_tools()` uses connected MCP tools only - never `get_mcp_tool_schemas()`, which starts
@@ -1435,7 +1463,8 @@ row there each phase rather than only stating the total in chat.
 | 57 (feature batch Phase B: meeting notes, file index, app shortcuts, email drafts, tone adapt; 12 new tests) | Opus 5.5 | ~40 min | ~$3.60–$5.00 |
 | 58 (feature batch Phase C: background agents, review_code, code_search, memory FTS, lite knowledge graph, announcement priority; 12 new tests) | Opus 5.5 | ~45 min | ~$4.00–$5.60 |
 | 59 (feature batch Phase D: .pptx via write_file, weekly improvement report, Toolbox headless render check + fixes; 3 new tests) | Opus 5.5 | ~20 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~2001 min** | **~$108.35–$151.95** |
+| 60 (feature batch audit-and-fix: 17 bugs fixed incl. mail-agent NameError, agent placeholder injection, fuzzy macro flips, meeting speech loss; 18 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
+| **Running total (final)** | | **~2041 min** | **~$111.55–$156.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
