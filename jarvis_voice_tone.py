@@ -28,7 +28,8 @@ except ImportError:  # prosodic analysis just degrades to text-only if numpy is 
 # count for more than a milder one (e.g. "again") without a full ML model.
 _CUE_PATTERNS: dict[str, list[tuple[float, "re.Pattern[str]"]]] = {
     "frustrated": [
-        (2.0, re.compile(r"\b(ugh+|i give up|sick of|fed up)\b", re.I)),
+        (2.0, re.compile(r"\b(ugh+|i give up|sick of|fed up|for the last time|how many times)\b", re.I)),
+        (1.5, re.compile(r"\b(wtf|damn it|dammit|i (already|just) (said|told you)|that'?s (wrong|not what i (said|asked)))\b", re.I)),
         (1.5, re.compile(r"\b(seriously|come on|still (broken|not working|doesn'?t work))\b", re.I)),
         (1.0, re.compile(r"\b(annoying|frustrat\w*|not working|broken again|why (won'?t|isn'?t|doesn'?t))\b", re.I)),
         (0.75, re.compile(r"!!+")),
@@ -139,6 +140,41 @@ _TONE_GUIDANCE = {
 }
 
 
+# --- Feature batch B5 (2026-09-27): local, text-only extras. No audio emotion API, no model. -----
+REPEAT_WINDOW_S = 120
+_recent: list[tuple[float, str]] = []
+
+
+def _norm_cmd(t: str) -> str:
+    return re.sub(r"[^a-z0-9 ]", "", (t or "").lower()).strip()
+
+
+def adapt(result: dict, transcript: str, now: float | None = None) -> dict:
+    """Adds two signals to an analyze_tone() result, using only the transcript and recent history:
+    - repeated: the same command again within REPEAT_WINDOW_S (the last answer probably missed), which
+      also nudges the tone to frustrated;
+    - brief: a short imperative (<= 5 words, not a question), which asks for a one-sentence reply.
+    Records the command in the history. Returns a new dict."""
+    import time as _time
+    now = _time.monotonic() if now is None else now
+    out = dict(result or {"tone": "neutral", "confidence": 1.0, "signals": []})
+    out["signals"] = list(out.get("signals") or [])
+    norm = _norm_cmd(transcript)
+    _recent[:] = [(t, c) for t, c in _recent if now - t < REPEAT_WINDOW_S]
+    repeated = bool(norm) and len(norm.split()) >= 2 and any(c == norm for _, c in _recent)
+    _recent.append((now, norm))
+    del _recent[:-20]
+    words = len((transcript or "").split())
+    out["repeated"] = repeated
+    out["brief"] = 0 < words <= 5 and "?" not in (transcript or "") and not re.match(
+        r"\s*(how|why|what|who|when|where|explain|tell me about)\b", transcript or "", re.I)
+    if repeated:
+        out["signals"].append("repeated command")
+        if out.get("tone") in ("neutral", "curious", "positive"):
+            out["tone"], out["confidence"] = "frustrated", max(0.5, float(out.get("confidence") or 0) * 0.6)
+    return out
+
+
 def tone_context_line(result: dict) -> str:
     """Short line to fold into the agent system prompt for this turn; empty string if the
     tone isn't confident enough to be worth mentioning (avoids noise on ambiguous input)."""
@@ -146,7 +182,12 @@ def tone_context_line(result: dict) -> str:
         return ""
     tone = result.get("tone", "neutral")
     confidence = result.get("confidence", 0.0)
+    extra = ""
+    if result.get("repeated"):
+        extra += " They just asked this again, so the last answer likely missed: try a different approach, briefly."
+    if result.get("brief"):
+        extra += " It was a short command: reply in one short sentence."
     if tone == "neutral" or confidence < MIN_CONFIDENCE_TO_REPORT:
-        return ""
+        return f"\n\n{extra.strip()}" if extra else ""
     guidance = _TONE_GUIDANCE.get(tone, "")
-    return f"\n\nVoice tone detected: {tone} (confidence {confidence:.0%}). {guidance}.".rstrip()
+    return f"\n\nVoice tone detected: {tone} (confidence {confidence:.0%}). {guidance}.{extra}".rstrip()

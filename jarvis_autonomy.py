@@ -1519,6 +1519,16 @@ def _ingest(items: list[dict], source_type: str, sender: str, gated_ok: bool = T
     return created
 
 
+def ingest_external(items: list[dict], source_type: str = "message", sender: str = "") -> list[int]:
+    """Already-extracted items from another feature (e.g. meeting notes' action items) through the normal
+    commitment path: validation, dedupe, policy routing and the third-party confidence bar for inbound
+    sources. No-op while autonomy is off."""
+    if not enabled():
+        return []
+    items = [dict(i, type=i.get("type") or "task") for i in items if isinstance(i, dict)]
+    return _ingest(items, source_type, sender, gated_ok=gate_reason() is None)
+
+
 def _should_extract(transcript: str) -> bool:
     """Cheap fast path first (planning-cue regex), then anything long enough to hold a plan, then clear
     future/obligation phrasing the cue list misses. JARVIS_AUTONOMY_EXTRACT_ALWAYS=1 skips the gate;

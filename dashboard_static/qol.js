@@ -120,7 +120,7 @@ function savePins(pins) {
   try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); } catch { /* storage blocked: pins just don't persist */ }
 }
 
-const palette = { el: null, input: null, list: null, items: [], recent: [], sel: 0 };
+const palette = { el: null, input: null, list: null, items: [], recent: [], shortcuts: [], app: "", sel: 0 };
 
 function buildPalette() {
   const el = document.createElement("div");
@@ -140,17 +140,19 @@ function buildPalette() {
   palette.input.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") { palette.sel = Math.min(palette.sel + 1, palette.items.length - 1); renderPalette(false); e.preventDefault(); }
     else if (e.key === "ArrowUp") { palette.sel = Math.max(palette.sel - 1, 0); renderPalette(false); e.preventDefault(); }
-    else if (e.key === "Enter") { e.preventDefault(); runPalette(palette.items[palette.sel]?.text ?? palette.input.value); }
+    else if (e.key === "Enter") { e.preventDefault(); runPaletteItem(palette.items[palette.sel]); }
   });
   palette.list.addEventListener("click", (e) => {
     const li = e.target.closest("li");
     if (!li) return;
-    const text = palette.items[+li.dataset.i]?.text;
+    const item = palette.items[+li.dataset.i];
+    const text = item?.text;
+    if (item?.shortcut) { runPaletteItem(item); return; }
     if (e.target.closest(".pin")) {
       const pins = loadPins();
       savePins(pins.includes(text) ? pins.filter((p) => p !== text) : [text, ...pins].slice(0, 30));
       renderPalette(false);
-    } else runPalette(text);
+    } else runPaletteItem(item);
   });
 }
 
@@ -172,7 +174,9 @@ function renderPalette(resetSel = true) {
   const q = palette.input.value.trim().toLowerCase();
   const pins = loadPins();
   const seen = new Set();
-  const all = [...pins.map((t) => ({ text: t, pinned: true })), ...palette.recent.map((r) => ({ text: r.text, pinned: false }))]
+  // App shortcuts for the app you were just in come first (feature batch B3).
+  const all = [...palette.shortcuts.map((sc) => ({ text: sc.label, shortcut: sc.id, detail: sc.kind + " " + sc.value })),
+    ...pins.map((t) => ({ text: t, pinned: true })), ...palette.recent.map((r) => ({ text: r.text, pinned: false }))]
     .filter((c) => !seen.has(c.text) && seen.add(c.text));
   palette.items = (q ? all.map((c) => ({ c, s: fuzzyScore(c.text.toLowerCase(), q) })).filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s).map((x) => x.c) : all).slice(0, 40);
@@ -180,8 +184,8 @@ function renderPalette(resetSel = true) {
   if (resetSel) palette.sel = 0;
   palette.list.innerHTML = palette.items.map((c, i) => `
     <li data-i="${i}" class="${i === palette.sel ? "sel" : ""}" role="option" aria-selected="${i === palette.sel}">
-      <span class="palette-text">${c.fresh ? "Run: " : ""}${esc(c.text)}</span>
-      ${c.fresh ? "" : `<button class="pin" title="${c.pinned ? "Unpin" : "Pin"}">${c.pinned ? "★" : "☆"}</button>`}
+      <span class="palette-text">${c.fresh ? "Run: " : ""}${esc(c.text)}${c.shortcut ? ` <span class="src-badge">${esc(palette.app)}</span> <span class="muted">${esc(c.detail)}</span>` : ""}</span>
+      ${c.fresh || c.shortcut ? "" : `<button class="pin" title="${c.pinned ? "Unpin" : "Pin"}">${c.pinned ? "★" : "☆"}</button>`}
     </li>`).join("") || `<li class="muted">No past commands yet.</li>`;
   palette.list.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
 }
@@ -194,10 +198,26 @@ async function openPalette() {
   try {
     palette.recent = (await (await fetch("/api/commands/recent?limit=100")).json()).commands || [];
   } catch { palette.recent = []; }
+  try {
+    const sc = await (await fetch("/api/feature/shortcuts", { cache: "no-store" })).json();
+    palette.shortcuts = sc.current || [];
+    palette.app = (sc.foreground && sc.foreground.app) || "";
+  } catch { palette.shortcuts = []; }
   renderPalette();
 }
 
 function closePalette() { palette.el?.classList.add("hidden"); }
+
+async function runPaletteItem(item) {
+  if (item && item.shortcut) {
+    closePalette();
+    try {
+      await fetch("/api/feature/shortcuts/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.shortcut }) });
+    } catch (e) { alert("Couldn't run the shortcut: " + e); }
+    return;
+  }
+  return runPalette(item ? item.text : palette.input.value);
+}
 
 async function runPalette(text) {
   text = (text || "").trim();

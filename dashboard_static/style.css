@@ -725,3 +725,9 @@ p.consent-list { padding-left: 0; }
 .macro-step select { max-width: 40%; }
 .macro-step input { flex: 1; min-width: 0; }
 .macro-form-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.chip { cursor: pointer; }
+.chip.active { outline: 1px solid var(--accent, #4dd0ff); }
+.drafts { white-space: pre-wrap; max-width: 760px; }
+.drafts:empty { display: none; }
+#tb-email-text { width: 100%; box-sizing: border-box; }

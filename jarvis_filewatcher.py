@@ -73,6 +73,7 @@ class FileWatcher:
         self.poll_interval = poll_interval
         self.large_file_bytes = large_file_mb * 1024 * 1024
         self.notifier = notifier  # callable(text: str, urgent: bool) -> None
+        self.listeners: list = []  # callable(event dict), e.g. the file index (must not block)
         self._events: list[dict] = []
         self._events_lock = threading.Lock()
         self._stop = threading.Event()
@@ -197,6 +198,11 @@ class FileWatcher:
 
         for event in new_events:
             self._announce(event)
+            for fn in list(self.listeners):
+                try:
+                    fn(event)
+                except Exception as e:
+                    log.warning("File watcher listener failed: %s", e)
         return new_events
 
     def _announce(self, event: dict) -> None:

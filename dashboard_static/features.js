@@ -146,3 +146,142 @@ document.getElementById("home-network")?.addEventListener("click", async (e) => 
   await featurePost("devices", "name", { mac, name }).catch((err) => alert(String(err)));
   if (window.refreshNetwork) window.refreshNetwork();
 });
+
+// --- Meeting notes (B1) ------------------------------------------------------------------------
+async function refreshMeetings() {
+  const list = document.getElementById("tb-meeting-list");
+  if (!list) return;
+  const data = await featureGet("meetings");
+  const btn = document.getElementById("tb-meeting-toggle");
+  btn.textContent = data.active ? "Stop meeting notes" : "Start meeting notes";
+  btn.dataset.running = data.active ? "1" : "";
+  document.getElementById("tb-meeting-status").textContent = data.active
+    ? `Recording since ${String(data.active.started_at).slice(11, 16)}, ${data.active.segments} segment(s).` : "";
+  list.innerHTML = (data.meetings || []).length ? data.meetings.map((m) => `
+    <li class="list-item">
+      <div><span class="tool">${esc(m.title || "Meeting")}</span> <span class="muted">${fmtWhen(m.started_at)} · ${m.segments} segment(s) · ${esc(m.status)}${m.stop_reason ? " (" + esc(m.stop_reason) + ")" : ""}</span></div>
+      <div>${esc(m.summary || "")}</div>
+      ${(m.action_items || []).length ? `<ul>${m.action_items.map((a) => `<li>${esc(a.description)}${a.deadline_iso ? ` <span class="muted">by ${fmtWhen(a.deadline_iso)}</span>` : ""}</li>`).join("")}</ul>` : ""}
+      <div class="memory-actions"><button class="btn btn-ghost" type="button" data-meeting-tx="${m.id}">Transcript</button>
+        <button class="btn btn-ghost" type="button" data-meeting-del="${m.id}">Delete</button></div>
+      <pre class="drafts" id="tb-meeting-tx-${m.id}"></pre></li>`).join("") : `<li class="empty-state">No meeting notes yet.</li>`;
+}
+TOOLBOX_PANELS.push(refreshMeetings);
+
+document.getElementById("tb-meeting-toggle")?.addEventListener("click", async (e) => {
+  const r = await featurePost("meetings", e.target.dataset.running ? "stop" : "start").catch((err) => ({ result: String(err) }));
+  document.getElementById("tb-meeting-status").textContent = r.result || "";
+  setTimeout(() => refreshMeetings().catch(() => {}), 800);
+});
+document.getElementById("tb-meeting-list")?.addEventListener("click", async (e) => {
+  const tx = e.target.dataset.meetingTx, del = e.target.dataset.meetingDel;
+  if (tx) {
+    const r = await featurePost("meetings", "transcript", { id: Number(tx) }).catch(() => ({ text: "" }));
+    document.getElementById("tb-meeting-tx-" + tx).textContent = r.text || "(empty)";
+  }
+  if (del && confirm("Delete this meeting's notes and transcript?")) {
+    await featurePost("meetings", "delete", { id: Number(del) }).catch(() => {});
+    refreshMeetings();
+  }
+});
+
+// --- Files (B2) --------------------------------------------------------------------------------
+let filesTag = "";
+function fileRows(rows) {
+  return rows.length ? rows.map((r) => `<li class="list-item compact"><span class="clip-preview mono" title="${escAttr(r.path)}">${esc(r.path)}</span>
+    <span class="muted">${esc(r.tags)} · ${Math.round((r.size || 0) / 1024)} KB</span></li>`).join("") : `<li class="empty-state">No matching files.</li>`;
+}
+async function refreshFiles(mode) {
+  const list = document.getElementById("tb-files-list");
+  if (!list) return;
+  const q = document.getElementById("tb-files-search").value.trim();
+  if (mode === "dupes") {
+    list.innerHTML = fileRows((await featurePost("files", "find", { duplicates: true })).rows || []);
+    return;
+  }
+  if (q || filesTag) {
+    list.innerHTML = fileRows((await featurePost("files", "find", { tag: filesTag, name_query: q })).rows || []);
+    return;
+  }
+  const data = await featureGet("files");
+  document.getElementById("tb-files-tags").innerHTML = Object.entries(data.tags || {}).slice(0, 30).map(([t, n]) =>
+    `<button type="button" class="btn btn-ghost btn-xs chip${t === filesTag ? " active" : ""}" data-tag="${escAttr(t)}">${esc(t)} (${n})</button>`).join("");
+  list.innerHTML = fileRows(data.recent || []);
+}
+TOOLBOX_PANELS.push(() => refreshFiles());
+document.getElementById("tb-files-search")?.addEventListener("input", () => refreshFiles().catch(() => {}));
+document.getElementById("tb-files-dupes")?.addEventListener("click", () => refreshFiles("dupes").catch(() => {}));
+document.getElementById("tb-files-tags")?.addEventListener("click", (e) => {
+  if (e.target.dataset.tag === undefined) return;
+  filesTag = filesTag === e.target.dataset.tag ? "" : e.target.dataset.tag;
+  document.querySelectorAll("#tb-files-tags .chip").forEach((c) => c.classList.toggle("active", c.dataset.tag === filesTag));
+  refreshFiles().catch(() => {});
+});
+document.getElementById("tb-files-index")?.addEventListener("click", async () => {
+  const r = await featurePost("files", "index_watched").catch((err) => ({ result: String(err) }));
+  document.getElementById("tb-files-status").textContent = r.result || "";
+});
+
+// --- App shortcuts (B3) ------------------------------------------------------------------------
+async function refreshShortcuts() {
+  const list = document.getElementById("tb-sc-list");
+  if (!list) return;
+  const data = await featureGet("shortcuts");
+  document.getElementById("tb-sc-app").textContent = data.foreground.app ? `${data.foreground.app} (${data.foreground.title})` : "unknown";
+  const current = new Set((data.current || []).map((s) => s.id));
+  list.innerHTML = (data.all || []).length ? data.all.map((s) => `<li class="list-item compact">
+    <span class="tool">${esc(s.label)}</span> <span class="muted">in ${esc(s.app)} · ${esc(s.kind)} ${esc(s.value)}</span>
+    ${current.has(s.id) ? '<span class="pill pill-running">current app</span>' : ""}
+    <button class="btn btn-ghost btn-xs" type="button" data-sc-del="${s.id}">Delete</button></li>`).join("")
+    : `<li class="empty-state">No app shortcuts yet.</li>`;
+  const appIn = document.getElementById("tb-sc-app-in");
+  if (!appIn.value && data.foreground.app) appIn.value = data.foreground.app;
+}
+TOOLBOX_PANELS.push(refreshShortcuts);
+document.getElementById("tb-sc-list")?.addEventListener("click", async (e) => {
+  if (!e.target.dataset.scDel) return;
+  await featurePost("shortcuts", "delete", { id: Number(e.target.dataset.scDel) }).catch(() => {});
+  refreshShortcuts();
+});
+document.getElementById("tb-sc-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const r = await featurePost("shortcuts", "add", {
+    app: document.getElementById("tb-sc-app-in").value, label: document.getElementById("tb-sc-label").value,
+    kind: document.getElementById("tb-sc-kind").value, value: document.getElementById("tb-sc-value").value,
+  }).catch((err) => ({ result: String(err) }));
+  document.getElementById("tb-sc-status").textContent = r.result || "";
+  refreshShortcuts();
+});
+
+// --- Email replies + templates (B4) ------------------------------------------------------------
+async function refreshTemplates() {
+  const list = document.getElementById("tb-tpl-list");
+  if (!list) return;
+  const data = await featureGet("email");
+  list.innerHTML = (data.templates || []).length ? data.templates.map((t) => `<li class="list-item compact">
+    <span class="tool">${esc(t.name)}</span> <span class="clip-preview muted">${esc(t.body)}</span>
+    <button class="btn btn-ghost btn-xs" type="button" data-tpl-del="${escAttr(t.name)}">Delete</button></li>`).join("")
+    : `<li class="empty-state">No templates. Save one below, or say "save that as an email template".</li>`;
+}
+TOOLBOX_PANELS.push(refreshTemplates);
+document.getElementById("tb-tpl-list")?.addEventListener("click", async (e) => {
+  if (!e.target.dataset.tplDel) return;
+  await featurePost("email", "delete_template", { name: e.target.dataset.tplDel }).catch(() => {});
+  refreshTemplates();
+});
+document.getElementById("tb-tpl-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await featurePost("email", "save_template", { name: document.getElementById("tb-tpl-name").value,
+    subject: document.getElementById("tb-tpl-subject").value, body: document.getElementById("tb-tpl-body").value }).catch(() => {});
+  e.target.reset();
+  refreshTemplates();
+});
+document.getElementById("tb-email-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = document.getElementById("tb-email-status");
+  status.textContent = "Writing drafts...";
+  const r = await featurePost("email", "suggest", { email: document.getElementById("tb-email-text").value,
+    tone: document.getElementById("tb-email-tone").value }).catch((err) => ({ result: String(err) }));
+  status.textContent = "";
+  document.getElementById("tb-email-drafts").textContent = r.result || "";
+});

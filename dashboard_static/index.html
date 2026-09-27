@@ -299,6 +299,55 @@
           <span id="tb-macro-status" class="muted" aria-live="polite"></span>
         </div>
       </form>
+
+      <h2 class="settings-h">Meeting notes</h2>
+      <p class="muted">Off until you start it. Records only what your speakers play (the other people), transcribes it, and writes a summary with action items when it stops.
+        Auto-start for Zoom/Teams/Meet windows is <span class="mono">JARVIS_MEETING_AUTO</span> (off by default).</p>
+      <div class="memory-filter">
+        <button id="tb-meeting-toggle" class="btn" type="button">Start meeting notes</button>
+        <span id="tb-meeting-status" class="muted" aria-live="polite"></span>
+      </div>
+      <ul id="tb-meeting-list" class="list"></ul>
+
+      <h2 class="settings-h">Files</h2>
+      <p class="muted">Files that arrive in watched folders get tags and a fingerprint (for finding duplicates). Nothing is moved.</p>
+      <div class="memory-filter">
+        <input id="tb-files-search" type="search" placeholder="Name contains..." aria-label="Search indexed files">
+        <button id="tb-files-dupes" class="btn btn-ghost" type="button">Show duplicates</button>
+        <button id="tb-files-index" class="btn btn-ghost" type="button">Index what's already there</button>
+        <span id="tb-files-status" class="muted" aria-live="polite"></span>
+      </div>
+      <div id="tb-files-tags" class="chip-row"></div>
+      <ul id="tb-files-list" class="list"></ul>
+
+      <h2 class="settings-h">App shortcuts</h2>
+      <p class="muted">Phrases that only work while a given app is in front. They also show first in the Alt+K palette. You were last in: <span id="tb-sc-app" class="mono"></span></p>
+      <ul id="tb-sc-list" class="list"></ul>
+      <form id="tb-sc-form" class="settings-add">
+        <input id="tb-sc-app-in" placeholder="app, e.g. code.exe or title:Excel" required aria-label="App">
+        <input id="tb-sc-label" placeholder="phrase, e.g. format document" required aria-label="Phrase">
+        <select id="tb-sc-kind" aria-label="Kind"><option value="keys">press keys</option><option value="say">run command</option><option value="macro">run macro</option></select>
+        <input id="tb-sc-value" placeholder="shift+alt+f" required aria-label="Value">
+        <button class="btn" type="submit">Add</button>
+        <span id="tb-sc-status" class="muted" aria-live="polite"></span>
+      </form>
+
+      <h2 class="settings-h">Email replies</h2>
+      <p class="muted">Paste an email to get up to 3 draft replies. Nothing is ever sent from here.</p>
+      <form id="tb-email-form" class="macro-form">
+        <textarea id="tb-email-text" rows="5" placeholder="Paste the email you want to answer" aria-label="Email to reply to"></textarea>
+        <div class="macro-form-actions"><input id="tb-email-tone" placeholder="tone (optional): friendly, formal..." aria-label="Tone">
+          <button class="btn" type="submit">Suggest replies</button><span id="tb-email-status" class="muted" aria-live="polite"></span></div>
+      </form>
+      <pre id="tb-email-drafts" class="drafts"></pre>
+      <h3 class="block-title">Templates</h3>
+      <ul id="tb-tpl-list" class="list"></ul>
+      <form id="tb-tpl-form" class="macro-form">
+        <input id="tb-tpl-name" placeholder="Template name" required aria-label="Template name">
+        <input id="tb-tpl-subject" placeholder="Subject (optional)" aria-label="Template subject">
+        <textarea id="tb-tpl-body" rows="3" placeholder="Body. {name} style placeholders are filled in when used." required aria-label="Template body"></textarea>
+        <div class="macro-form-actions"><button class="btn" type="submit">Save template</button></div>
+      </form>
     </section>
 
     <section id="view-settings" class="view">

@@ -1332,6 +1332,13 @@ Full write-up: `FEATURES.md` (per-feature defaults, env vars, residual risks). R
   joined" for named devices, voice macros (deterministic, no LLM, before intent routing; changes
   attended-only), battery saver (low/critical, holds non-urgent speech when critical), deadline-nudge
   context (facts + <=3 mail subjects once per bucket). Tests: `test_feature_batch_a.py`.
+- Phase B shipped: opt-in meeting notes (speakers-only WASAPI loopback via `soundcard`, STT per 30 s
+  chunk, one summary call, action items via `autonomy.ingest_external` third-party path; auto-start only
+  with `JARVIS_MEETING_AUTO=1`), file index/tags/duplicates fed by `filewatcher.watcher.listeners`
+  (never moves files; AI tags rate-limited), app shortcuts (voice/typed only, keys only to the saved
+  app), email drafts (no send path), local tone adapt (repeated/brief). Tests: `test_feature_batch_b.py`.
+- Shell heredocs in this environment can turn `\b` into a real backspace byte: write patch scripts with
+  the Write tool, and scan for control characters after scripted edits.
 - `_macro_known_tools()` uses connected MCP tools only - never `get_mcp_tool_schemas()`, which starts
   MCP servers (a test that called it launched real servers and took 100s).
 
@@ -1413,7 +1420,8 @@ row there each phase rather than only stating the total in chat.
 | 54 (hand-off guard: nudge unbacked "handed off to James" replies, no reply-caching of task status; 3 new tests) | Opus 5.5 | ~10 min | ~$0.70–$1.00 |
 | 55 (removed Gemini daily-quota model fallback; 1 test removed) | Opus 5.5 | ~3 min | ~$0.20–$0.30 |
 | 56 (feature batch Phase A: clipboard history, Everything search, device names, voice macros, battery saver, deadline context, Toolbox route; 22 new tests) | Opus 5.5 | ~45 min | ~$4.00–$5.60 |
-| **Running total (final)** | | **~1896 min** | **~$98.95–$138.85** |
+| 57 (feature batch Phase B: meeting notes, file index, app shortcuts, email drafts, tone adapt; 12 new tests) | Opus 5.5 | ~40 min | ~$3.60–$5.00 |
+| **Running total (final)** | | **~1936 min** | **~$102.55–$143.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
