@@ -27,6 +27,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Callable
 
 ARP_SETTLE_S = 1.5
+RETURN_AFTER_S = 1800  # a named device gone this long is announced when it rejoins
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _MAC_RE = re.compile(r"^([0-9a-f]{2}[-:]){5}[0-9a-f]{2}$", re.I)
 _hostname_cache: dict[str, str] = {}
@@ -154,9 +155,14 @@ def record(connect: Callable[[], sqlite3.Connection], lock, result: dict, now: f
         conn = connect()
         try:
             _ensure(conn)
-            rows = conn.execute("SELECT mac, first_seen FROM network_devices WHERE network=?", (network,)).fetchall()
+            rows = conn.execute("SELECT mac, first_seen, last_seen FROM network_devices WHERE network=?",
+                                (network,)).fetchall()
             known = {r[0]: r[1] for r in rows}
+            last_seen = {r[0]: r[2] for r in rows}
             new = [d for d in result["devices"] if d["mac"] not in known] if known else []
+            # Known devices back after RETURN_AFTER_S away (callers announce only the named ones).
+            result["returned"] = [d for d in result["devices"]
+                                  if d["mac"] in last_seen and now - last_seen[d["mac"]] >= RETURN_AFTER_S]
             for d in result["devices"]:
                 conn.execute("INSERT INTO network_devices VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(network, mac) "
                              "DO UPDATE SET ip=excluded.ip, hostname=COALESCE(NULLIF(excluded.hostname, ''), hostname), "
@@ -171,6 +177,91 @@ def record(connect: Callable[[], sqlite3.Connection], lock, result: dict, now: f
 
 
 def describe(d: dict) -> str:
+    if d.get("name"):
+        return f"{d['name']} ({d['ip']})"
     name = d.get("hostname") or ("the router" if d.get("gateway") else
                                  "a device with a private MAC, probably a phone" if d.get("private_mac") else "an unnamed device")
     return f"{name} at {d['ip']} (MAC {d['mac']})"
+
+
+# --- Friendly names (2026-09-27, feature batch A3): "call 192.168.1.23 John's iPhone" -------------
+# Keyed by MAC alone, so a name follows the device across networks (a phone with a private MAC per
+# network needs naming once per network).
+def _ensure_names(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS network_device_names (mac TEXT PRIMARY KEY, name TEXT NOT NULL, "
+                 "type TEXT, notes TEXT, updated_at REAL NOT NULL)")
+
+
+def names(connect, lock) -> dict[str, dict]:
+    with lock:
+        conn = connect()
+        try:
+            _ensure_names(conn)
+            return {r[0]: {"name": r[1], "type": r[2] or "", "notes": r[3] or ""}
+                    for r in conn.execute("SELECT mac, name, type, notes FROM network_device_names")}
+        finally:
+            conn.close()
+
+
+def apply_names(result: dict, known: dict[str, dict]) -> dict:
+    for d in result.get("devices") or []:
+        n = known.get(d.get("mac"))
+        d["name"], d["device_type"] = (n["name"], n["type"]) if n else ("", "")
+    return result
+
+
+def resolve(target: str, devices: list[dict], known: dict[str, dict] | None = None) -> str | None:
+    """A MAC, an IP, a hostname or an existing friendly name -> the device's MAC (None if unclear)."""
+    t = (target or "").strip().lower()
+    if not t:
+        return None
+    if normalize_mac(t):
+        return normalize_mac(t)
+    for d in devices:
+        if t in (d.get("ip", ""), (d.get("hostname") or "").lower()):
+            return d["mac"]
+    for mac, n in (known or {}).items():
+        if n["name"].lower() == t:
+            return mac
+    return None
+
+
+def set_name(connect, lock, mac: str, name: str, dtype: str = "", notes: str = "") -> None:
+    with lock:
+        conn = connect()
+        try:
+            _ensure_names(conn)
+            if name:
+                conn.execute("INSERT INTO network_device_names VALUES (?, ?, ?, ?, ?) ON CONFLICT(mac) DO UPDATE SET "
+                             "name=excluded.name, type=excluded.type, notes=excluded.notes, updated_at=excluded.updated_at",
+                             (mac, name[:60], dtype[:30], notes[:200], time.time()))
+            else:
+                conn.execute("DELETE FROM network_device_names WHERE mac=?", (mac,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def handle_tool(connect, lock, inp: dict, last: dict | None) -> str:
+    action = str(inp.get("action") or "list").lower()
+    known = names(connect, lock)
+    devices = (last or {}).get("devices") or []
+    if action in ("name", "unname"):
+        mac = resolve(str(inp.get("device") or ""), devices, known)
+        if not mac:
+            return "I couldn't tell which device that is. Give its IP address or MAC (list devices first)."
+        name = "" if action == "unname" else str(inp.get("name") or "").strip()
+        if action == "name" and not name:
+            return "What should I call it?"
+        set_name(connect, lock, mac, name, str(inp.get("type") or ""), str(inp.get("notes") or ""))
+        return f"Named {mac} \"{name}\"." if name else f"Removed the name for {mac}."
+    apply_names(last or {}, known)
+    if action == "named":
+        if not known:
+            return "No devices are named yet."
+        return "Named devices:\n" + "\n".join(f"- {n['name']} ({mac})" + (f", {n['type']}" if n["type"] else "")
+                                               for mac, n in known.items())
+    if not devices:
+        return "No network scan result yet; the first scan runs within a minute of starting."
+    return "Devices online now:\n" + "\n".join(f"- {describe(d)} MAC {d['mac']}" + (" [this PC]" if d.get("this_pc") else "")
+                                                for d in devices)

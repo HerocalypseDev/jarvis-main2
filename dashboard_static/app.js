@@ -5,7 +5,7 @@ const state = { data: null, followedSessionId: null };
 // no history API, no nested routes — this is a supervision dashboard, not a SPA framework demo.
 const ROUTES = [
   "home", "sessions", "tasks", "autonomy", "identity", "sleep",
-  "usage", "activity", "audit", "victory", "daily", "voice", "memory", "settings",
+  "usage", "activity", "audit", "victory", "daily", "voice", "memory", "toolbox", "settings",
 ];
 // Routes that have somewhere to click *into* more detail — Autonomy/Identity/Sleep/Usage/
 // Victory/Daily each already show everything inline and want the full width instead (see
@@ -34,6 +34,7 @@ function onRouteActivated(route) {
   if (route === "settings" && window.refreshSettings) window.refreshSettings();
   if (route === "memory" && window.refreshMemory) window.refreshMemory();
   if (route === "voice" && window.refreshVoice) window.refreshVoice();
+  if (route === "toolbox" && window.refreshToolbox) window.refreshToolbox();
   syncContextVisibility();
 }
 
@@ -220,6 +221,11 @@ function esc(s) {
   const div = document.createElement("div");
   div.textContent = s == null ? "" : String(s);
   return div.innerHTML;
+}
+
+// esc() escapes <>& only; attribute values also need quotes escaped.
+function escAttr(s) {
+  return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function truncate(s, n) {

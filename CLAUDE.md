@@ -1318,6 +1318,23 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   shown on the localhost dashboard. Verified live (scan found router + this PC; simulated new device fired
   toast + notification against a temp DB). Not eyeballed in a real browser.
 
+## Feature batch (2026-09-27)
+
+Full write-up: `FEATURES.md` (per-feature defaults, env vars, residual risks). Rules to keep:
+- One agent tool per feature with an `action` enum (`BATCH_TOOLS` in jarvis.py), dispatched through
+  `_BATCH_TOOL_HANDLERS` - keeps the cached tool prefix small. Always via `_execute_tool` (audit + gate).
+- Dashboard: generic `GET /api/feature/{name}` / `POST /api/feature/{name}/{action}`, handlers
+  registered with `@_feature(name)` in jarvis.py (`providers["feature:<name>"]`). UI: the **Toolbox**
+  route (`dashboard_static/features.js`). `escAttr()` (app.js) for attribute values - `esc()` does not
+  escape quotes.
+- Phase A shipped: clipboard history (password-manager-private copies never read, secrets kept as
+  length only), Everything `quick_search` (loopback HTTP or es.exe, no disk walk), device names + "X
+  joined" for named devices, voice macros (deterministic, no LLM, before intent routing; changes
+  attended-only), battery saver (low/critical, holds non-urgent speech when critical), deadline-nudge
+  context (facts + <=3 mail subjects once per bucket). Tests: `test_feature_batch_a.py`.
+- `_macro_known_tools()` uses connected MCP tools only - never `get_mcp_tool_schemas()`, which starts
+  MCP servers (a test that called it launched real servers and took 100s).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1395,7 +1412,8 @@ row there each phase rather than only stating the total in chat.
 | 53 (.docx writer: LaTeX $…$/$$…$$ -> native Word equations; trig practice note regenerated; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
 | 54 (hand-off guard: nudge unbacked "handed off to James" replies, no reply-caching of task status; 3 new tests) | Opus 5.5 | ~10 min | ~$0.70–$1.00 |
 | 55 (removed Gemini daily-quota model fallback; 1 test removed) | Opus 5.5 | ~3 min | ~$0.20–$0.30 |
-| **Running total (final)** | | **~1851 min** | **~$94.95–$133.25** |
+| 56 (feature batch Phase A: clipboard history, Everything search, device names, voice macros, battery saver, deadline context, Toolbox route; 22 new tests) | Opus 5.5 | ~45 min | ~$4.00–$5.60 |
+| **Running total (final)** | | **~1896 min** | **~$98.95–$138.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

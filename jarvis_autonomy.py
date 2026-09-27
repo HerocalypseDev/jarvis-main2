@@ -1925,6 +1925,10 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
             continue
         when = "is overdue" if bucket == "overdue" else f"is due {due.strftime('%A %H:%M')}"
         text = f"Heads up: {_clean(c['description'], 200)} {when}."
+        # Light prep context (feature batch A6): related facts + a few mail subjects, once per bucket.
+        extra = "" if dry_run() else _call("deadline_context", c["description"], bucket, default="")
+        if extra:
+            text += " " + _clean(extra, 400)
         decision = _route("deadline:notification", "", c["description"], c["source_quote"] or "", "notification",
                           {"text": text}, 1.0, "deadline", c["id"], model_says="act", gated_ok=gated_ok)
         if decision in ("act", "queued", "suggest", "silent"):

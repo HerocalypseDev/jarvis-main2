@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -678,6 +679,23 @@ def _build_app(
         # Read-only; fetches calendar/mail through the same MCP tools the agent uses.
         return JSONResponse(_provider("briefing")("morning" if kind == "morning" else "urgent"),
                             headers={"Cache-Control": "no-store"})
+
+    # Feature batch 2026-09-27: one generic pair of routes for the newer features (clipboard, device
+    # names, macros, agents, ...). jarvis.py registers providers["feature:<name>"] = fn(action, payload).
+    # Covered by the Host/Origin middleware like every /api route.
+    @app.get("/api/feature/{name}")
+    def api_feature_get(name: str):
+        res = _provider(f"feature:{name}")("get", {})
+        return JSONResponse(res if res is not None else {"error": "unknown"}, status_code=200 if res is not None else 404,
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/feature/{name}/{action}")
+    def api_feature_post(name: str, action: str, payload: dict = Body(default={})):
+        if action == "get" or not re.fullmatch(r"[a-z_]{1,32}", action):
+            return JSONResponse({"error": "bad action"}, status_code=400)
+        res = _provider(f"feature:{name}")(action, payload or {})
+        return JSONResponse(res if res is not None else {"error": "unknown action"},
+                            status_code=200 if res is not None else 404)
 
     @app.get("/api/commands/recent")
     def api_recent_commands(limit: int = 50) -> dict:

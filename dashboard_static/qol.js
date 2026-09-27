@@ -395,6 +395,7 @@ if (typeof currentRoute === "function" && currentRoute() === "home") refreshLate
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshLatency(); }, 30000);
 
 // --- Home network devices: GET /api/network_devices (scanned server-side every 60s) --------------
+window.refreshNetwork = () => refreshNetwork();
 async function refreshNetwork() {
   const list = document.getElementById("home-network");
   const meta = document.getElementById("home-network-meta");
@@ -414,7 +415,8 @@ async function refreshNetwork() {
       const tag = d.this_pc ? "this PC" : d.gateway ? "router" : d.private_mac ? "private MAC" : "";
       const isNew = !d.this_pc && d.first_seen && Date.now() / 1000 - d.first_seen < 3600;
       return `<li class="list-item compact"><span class="health-dot ok" aria-hidden="true"></span>
-        <span class="tool">${esc(d.hostname || d.ip)}</span> <span class="muted">${esc(d.ip)} · <code>${esc(d.mac)}</code>${tag ? " · " + tag : ""}</span>${isNew ? ' <span class="pill pill-running">new</span>' : ""}</li>`;
+        <span class="tool">${esc(d.name || d.hostname || d.ip)}</span> <span class="muted">${esc(d.ip)} · <code>${esc(d.mac)}</code>${tag ? " · " + tag : ""}</span>${isNew ? ' <span class="pill pill-running">new</span>' : ""}
+        <button class="btn btn-ghost btn-xs" type="button" data-rename-mac="${esc(d.mac)}" data-current="${escAttr(d.name || "")}">Name</button></li>`;
     }).join("") || '<li class="muted">No devices found.</li>';
   } catch (e) {
     list.innerHTML = `<li class="muted">Couldn't load network devices: ${esc(String(e))}</li>`;

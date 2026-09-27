@@ -44,6 +44,7 @@
       <a href="#/daily" data-route="daily" class="nav-link"><span class="nav-icon">&#8635;</span><span class="nav-label">Daily</span></a>
       <a href="#/voice" data-route="voice" class="nav-link"><span class="nav-icon">&#127908;</span><span class="nav-label">Voice</span></a>
       <a href="#/memory" data-route="memory" class="nav-link"><span class="nav-icon">&#10070;</span><span class="nav-label">Memory</span></a>
+      <a href="#/toolbox" data-route="toolbox" class="nav-link"><span class="nav-icon">&#9874;</span><span class="nav-label">Toolbox</span></a>
       <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></a>
     </nav>
   </aside>
@@ -272,6 +273,34 @@
       <ul id="memory-facts" class="list"></ul>
     </section>
 
+    <section id="view-toolbox" class="view">
+      <div class="view-head"><h1 class="view-title">Toolbox</h1></div>
+      <h2 class="settings-h">Clipboard history</h2>
+      <p class="muted">The last 50 things you copied. Secret-looking copies keep only their length, and copies password managers mark private are never read.
+        Turn off with JARVIS_CLIPBOARD_HISTORY=0.</p>
+      <div class="memory-filter">
+        <input id="tb-clip-search" type="search" placeholder="Search copies" aria-label="Search clipboard history">
+        <button id="tb-clip-clear" class="btn btn-ghost" type="button">Clear all</button>
+        <span id="tb-clip-status" class="muted" aria-live="polite"></span>
+      </div>
+      <ul id="tb-clip-list" class="list"></ul>
+
+      <h2 class="settings-h">Voice macros</h2>
+      <p class="muted">Say a trigger phrase and the steps run straight away, with no AI call. Steps use Jarvis's existing tools;
+        anything dangerous still needs your yes.</p>
+      <ul id="tb-macro-list" class="list"></ul>
+      <form id="tb-macro-form" class="macro-form">
+        <input id="tb-macro-name" placeholder="Name, e.g. work mode" maxlength="60" required aria-label="Macro name">
+        <input id="tb-macro-phrases" placeholder="Trigger phrases, comma separated: start work mode, work time" required aria-label="Trigger phrases">
+        <div id="tb-macro-steps"></div>
+        <div class="macro-form-actions">
+          <button id="tb-macro-add-step" class="btn btn-ghost" type="button">+ Step</button>
+          <button class="btn" type="submit">Save macro</button>
+          <span id="tb-macro-status" class="muted" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
+
     <section id="view-settings" class="view">
       <div class="view-head"><h1 class="view-title">Settings</h1></div>
       <p class="muted">Changes are saved to <span class="mono">.env</span>. Most apply immediately; the rest say "restart".</p>
@@ -303,5 +332,6 @@
 <script src="autonomy.js"></script>
 <script src="qol.js"></script>
 <script src="voice.js"></script>
+<script src="features.js"></script>
 </body>
 </html>

@@ -716,3 +716,12 @@ p.consent-list { padding-left: 0; }
 /* Home: the command box sits at the top so it never needs a scroll */
 .home-compose { margin-bottom: 16px; }
 .home-compose .compose-status:empty { display: none; }
+
+/* Toolbox (feature batch 2026-09-27) */
+.btn-xs { padding: 1px 8px; font-size: 11px; margin-left: 6px; }
+.clip-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.macro-form { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 24px; max-width: 760px; }
+.macro-step { display: flex; gap: 6px; }
+.macro-step select { max-width: 40%; }
+.macro-step input { flex: 1; min-width: 0; }
+.macro-form-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
