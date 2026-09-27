@@ -407,3 +407,22 @@ TOOLBOX_PANELS.push(refreshReport);
 
 // Direct load of #/toolbox: app.js routed before this file existed.
 if (typeof currentRoute === "function" && currentRoute() === "toolbox") refreshToolbox();
+
+// --- Scheduled work (executive autonomy) --------------------------------------------------------
+async function refreshJobs() {
+  const list = document.getElementById("tb-jobs-list");
+  if (!list) return;
+  const data = await featureGet("deferred");
+  list.innerHTML = (data.jobs || []).length ? data.jobs.map((j) => `<li class="list-item">
+    <div><span class="pill${j.status === "pending" || j.status === "running" ? " pill-running" : ""}">${esc(j.status)}</span>
+      <span class="tool">${esc(j.instruction)}</span> <span class="muted">${fmtWhen(j.due_at)} · ${esc(j.origin)}${j.attempts ? " · try " + j.attempts : ""}</span>
+      ${j.status === "pending" ? `<button class="btn btn-ghost btn-xs" type="button" data-job-cancel="${j.id}">Cancel</button>` : ""}</div>
+    ${j.result ? `<div class="muted">${esc(String(j.result).slice(0, 300))}</div>` : ""}</li>`).join("")
+    : `<li class="empty-state">Nothing scheduled. Say "in an hour, run the tests in my project".</li>`;
+}
+TOOLBOX_PANELS.push(refreshJobs);
+document.getElementById("tb-jobs-list")?.addEventListener("click", async (e) => {
+  if (!e.target.dataset.jobCancel) return;
+  await featurePost("deferred", "cancel", { id: Number(e.target.dataset.jobCancel) }).catch(() => {});
+  refreshJobs();
+});

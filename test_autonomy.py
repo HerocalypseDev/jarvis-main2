@@ -20,6 +20,8 @@ def A(monkeypatch, tmp_path):
     monkeypatch.delenv("JARVIS_AUTONOMY_DISABLED", raising=False)
     # The product default is ON; most tests exercise the off -> on transition, so they start from explicit off.
     monkeypatch.setenv("JARVIS_AUTONOMY_ENABLED", "0")
+    # These tests check what autonomy says; the product default (minimal) is covered in test_executive.py.
+    monkeypatch.setenv("JARVIS_AUTONOMY_SPEECH", "normal")
     import jarvis_autonomy as a
 
     a._initialized_paths.clear()

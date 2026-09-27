@@ -84,7 +84,7 @@ def test_briefing_report_reads_real_reminders_and_pending(monkeypatch, tmp_path)
     out = jarvis.briefing_report("urgent")
     keys = [s["key"] for s in out["sections"]]
     assert keys[:2] == ["pending", "reminders"] and "calendar" not in keys and "mail" not in keys
-    assert "stretch" in out["speech"] and "shut down the computer" in out["speech"]
+    assert "stretch" in out["speech"].lower() and "shut down the computer" in out["speech"]
 
 
 def test_briefing_voice_reply_is_not_summarized_away(monkeypatch, tmp_path):

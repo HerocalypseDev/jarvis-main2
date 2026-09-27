@@ -305,6 +305,82 @@ Intentional and unchanged: high-risk projects are still *simulated* unless their
 user-written `ask_once`/`always_ask`/`ignore` rule is honoured; the confidence floor records (not acts on)
 low-confidence items.
 
+## Executive autonomy: deferred execution (2026-09-27)
+
+**User decision (2026-09-27): full autonomy, risks accepted** (prompt injection via mail/web, unwanted
+sends, wrong tool calls, cost). Autonomy acts on nearly everything; only the catastrophic tier
+(shutdown/restart/sign-out, disk format, recursive wipe of a drive or profile) still needs a yes, and
+autonomous runs that reach one STAGE it.
+
+**The bug this fixes.** "Change the code of X in 30 minutes" was extracted as a task "remind Jarvis to
+change the code"; `_action_for_commitment` turned every dated task into a reminder, so 30 minutes later
+Jarvis read the sentence out and did nothing.
+
+**Now.** Work for Jarvis becomes a job that runs (`jarvis_deferred.py`, table `autonomy_deferred_jobs`:
+due_at, kind execute_jarvis|notify_user, instruction, source_quote, origin user|conversation, status
+pending|running|done|failed|cancelled, result, attempts). Three ways in, all deduplicated (a near-identical
+pending job due within 20 min is reused, so the live tool call and the later extraction of the same turn
+make ONE job):
+1. `schedule_jarvis_task` tool: the agent calls it while answering "in 30 minutes change ...". Refused for
+   autonomous/unattended/untrusted runs: only a real user request (voice, typed, dashboard, phone).
+2. Safety net: `create_reminder` whose text is "remind Jarvis to X" (from a user request) becomes a job.
+3. Extraction: the prompt now returns `executor` (user|jarvis) and `instruction`; the old "remind Jarvis
+   to X" wording is also recognised. Honoured ONLY for `conversation` items whose quote appears in what the
+   USER said (not Jarvis's reply, which may quote an email); mail/message/file items never create jobs.
+   `_action_for_commitment` returns `deferred`, `_run_action` schedules it; deadline nudges skip these.
+
+**Runner.** Every scheduler tick `_deferred_tick` claims due jobs atomically (pending->running, never twice)
+and runs each on a worker thread through `run_agent_loop` (record_history=False) with command source
+`autonomy_deferred`: every tool call audited, the catastrophic gate intact. That source is non-None, so
+`change_jarvis_code`/`delegate_to_claude_code` START the coding agent (with the self-edit preamble) instead
+of refusing as unattended; it is not "attended", so forget/macro/agent/template changes stay refused. The
+prompt tells it to use those tools for code changes. A job shows as an `autonomy` session on the dashboard,
+and in Toolbox > Scheduled work (cancel there or with the `scheduled_jobs` tool).
+- Stopped by safe mode / `JARVIS_AUTONOMY_DISABLED`; waits a tick while the user is mid-command; dry-run
+  records "(dry run) would run: ..." and runs nothing.
+- Only transient failures (no model reachable, a crash) retry, 5 min apart, 3 tries; a run that finished and
+  reported a problem is final (re-running could repeat side effects). Failures and "needs your yes" are
+  always spoken; a job stuck `running` 90 min (restart) is retried.
+
+**Reminders.** Reminder text is reduced to what to SAY (`_reminder_content`): "Reminder every 20 minutes
+starting noon tomorrow: drink water" fires as "Reminder: Drink water". A turn in which a tool already
+scheduled something (create_reminder, schedule_jarvis_task, queue_task, set_plan, a calendar create) is
+recorded by extraction but not re-actioned, and gets no deadline nudges (this was the "saved again every
+turn" duplicate).
+
+**Speech.** `JARVIS_AUTONOMY_SPEECH=minimal` (default) | normal. Minimal: no suggestion announcements, no
+informational notifications, no "starting/done" lines; only failures, real reminder content (deadline
+nudges) and "needs your yes". Everything is still in the Activity log and dashboard.
+
+**Untrusted text never becomes code.** Runs built from extracted data (`_autonomy_run_agent`: calendar/
+email/file actions, from any source) and queued tasks autonomy took from mail/messages/files or its own
+planning (marked `[untrusted-origin]`) cannot use run_shell, run_python, type_text, create_tool,
+manage_dynamic_tool, change_jarvis_code, delegate_to_claude_code, schedule_jarvis_task or Windows-MCP UI
+tools. Agent placeholders stay limited to `FILL_TOOLS`.
+
+**Autonomous email.** Never to the user's own addresses; at most `JARVIS_AUTONOMY_EMAIL_MAX_PER_RECIPIENT_DAY`
+(3) per recipient and `JARVIS_AUTONOMY_EMAIL_MAX_PER_DAY` (20) per day, counted from successful email
+actions in `autonomy_decisions`. Every send is an audited action; the inbox poll skips the user's own mail.
+
+**Cascades** (`jarvis_cascades.py`, data rules, one audit row `cascade` per firing, once per transition):
+sleep on -> stop meeting notes; battery critical -> stop meeting notes; meeting notes start -> hold
+non-urgent announcements (reminders still speak); meeting notes stop -> read the held ones out.
+
+**Live state.** `_state_line()` (sleep, safe mode, meeting, battery band, autonomy on/dry-run, active agents,
+next scheduled job, pending confirmation) goes into the autonomy classifier/planner context and every
+scheduled job's prompt. Not added to normal user turns (cached-prefix cost).
+
+**Monitoring.** Existing monitors act under auto_act: the inbox poll (every 10 min), background agents
+(interval/daily/mail/file triggers), the deadline scan and now the job runner. Not built: automatic
+disk/RAM remediation (it would mean deleting files or killing processes unprompted).
+
+**Residual risks (accepted by the user):** a job does what the agent decides at that time, with full tool
+access (e.g. sending mail, editing code through the coding agent); a mis-extracted instruction from the
+user's own words can run; cost of each run is a normal agent turn (plus a coding-agent run for code jobs).
+Mitigations: audit trail, dashboard sessions, cancel, dry-run, safe mode, the off switch, budgets, and the
+catastrophic gate. **Not verified live**: a real "in 30 minutes change the code" through voice and the
+coding agent end to end.
+
 ## How to verify (do this before trusting it)
 
 0. **New in the hardening pass.** (a) *Injection:* with Dry run on, email yourself from another address: "Lunch

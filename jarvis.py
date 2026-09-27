@@ -106,6 +106,8 @@ import jarvis_kg as kg
 import jarvis_notify_priority as notify_priority
 import jarvis_improvement_report as improvement_report
 import jarvis_untrusted
+import jarvis_deferred as deferred
+import jarvis_cascades as cascades
 
 settings.JARVIS_MODULE = sys.modules[__name__]
 
@@ -2026,6 +2028,8 @@ AGENT_TOOLS = [
     {
         "name": "create_reminder",
         "description": (
+            "Schedule a reminder that Jarvis SPEAKS TO THE USER later (for work Jarvis itself should do later, use "
+            "schedule_jarvis_task instead). `text` = only what to say when it fires, no schedule words. "
             "Schedule a reminder Jarvis will bring up on its own later, at a specific time "
             "(\"due_at\") or after a delay (\"due_in_minutes\"), optionally repeating. Use this "
             "whenever the user asks to be reminded, nudged, or followed up with later (e.g. "
@@ -3019,6 +3023,26 @@ BATCH_TOOLS = [
             "keeps cutting off, failing background agents, slow voice replies. Changes nothing."
         ),
         "input_schema": {"type": "object", "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 60}}},
+    },
+    {
+        "name": "schedule_jarvis_task",
+        "description": (
+            "Schedule WORK FOR JARVIS to do by itself later: at the time it runs the instruction through the "
+            "normal pipeline (tools, coding agent, email, research...). Use this whenever the user asks Jarvis to "
+            "do something later ('in 30 minutes change the code in X', 'tonight send Sam the report', 'at 5 run "
+            "the tests'). Never use create_reminder for that: reminders only speak to the user. instruction = the "
+            "exact command in imperative form with all details (paths, names), never 'remind Jarvis to ...'."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "instruction": {"type": "string"}, "due_at": {"type": "string", "description": "local date/time"},
+            "due_in_minutes": {"type": "number"}, "source_quote": {"type": "string"}},
+            "required": ["instruction"]},
+    },
+    {
+        "name": "scheduled_jobs",
+        "description": "Jarvis's scheduled work (from schedule_jarvis_task). action=list (pending), history, cancel (id).",
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "history", "cancel"]}, "id": {"type": "integer"}}},
     },
 ]
 AGENT_TOOLS.extend(BATCH_TOOLS)
@@ -4102,6 +4126,13 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Held non-urgent notification (safe mode): %r", text)
         return
+    if not (urgent or is_reminder) and _cascade_flags["hold_announcements"]:
+        with _session_context_lock:
+            _session_context.setdefault("pending_notifications", []).append(
+                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds"), "meeting_hold": True})
+            _save_session_context_locked()
+        log.info("Held notification while meeting notes record: %r", text)
+        return
     if not (urgent or is_reminder or bypass_busy_gate) and battery.current() == "critical":
         with _session_context_lock:
             _session_context.setdefault("pending_notifications", []).append(
@@ -4186,8 +4217,11 @@ def flush_pending_notifications() -> None:
 
         in_safe_mode = safe_mode_on()
 
+        meeting_hold = _cascade_flags["hold_announcements"]
+
         def _stays(i: dict) -> bool:
             return bool(
+                (meeting_hold and i.get("meeting_hold")) or
                 (in_safe_mode and i.get("safe_mode"))
                 or i.get("during_sleep")
                 or (keep_held and i.get("group_safe"))
@@ -4585,6 +4619,23 @@ def _parse_due_at(due_at: str) -> datetime | None:
     return None
 
 
+_SCHEDULE_WORDS_RE = re.compile(r"\b(remind(er)?|repeat(ing)?|every|starting|start|from|at|in|tomorrow|today|"
+                                r"tonight|noon|midnight|minutes?|mins?|hours?|hrs?|daily|weekly|\d)\b", re.I)
+
+
+def _reminder_content(text: str) -> str:
+    """What the reminder should SAY: "Reminder every 20 minutes starting noon tomorrow: drink water" -> "drink
+    water"; "remind me to call mom" -> "call mom". The schedule lives in the reminder's fields, and saying it
+    on every fire was noise (user report 2026-09-27)."""
+    t = re.sub(r"\s+", " ", (text or "")).strip()
+    head, sep, tail = t.rpartition(":")
+    if sep and tail.strip() and len(_SCHEDULE_WORDS_RE.findall(head)) >= 2:
+        t = tail.strip()
+    t = re.sub(r"^(?:reminder\s*[:,-]?\s*|remind me\s+(?:to\s+|about\s+|that\s+)?|don'?t forget\s+(?:to\s+)?)", "",
+               t, flags=re.I).strip()
+    return t[:1].upper() + t[1:] if t else ""
+
+
 def create_reminder(
     text: str,
     due_at: str = "",
@@ -4596,7 +4647,7 @@ def create_reminder(
     (due_in_minutes) — exactly one should be given; due_in_minutes wins if both are. An
     optional repeat_every_minutes re-arms the same reminder after each delivery instead of
     firing once."""
-    text = (text or "").strip()
+    text = _reminder_content(text)
     if not text:
         return "No reminder text given."
     when: datetime | None = None
@@ -5017,6 +5068,10 @@ def _run_queued_task(description: str, instructions: str) -> None:
     task with instructions is executed exactly like a scheduled skill (full tool access,
     reply delivered through the interrupt gate)."""
     log.info("Running queued task %r.", description)
+    untrusted = UNTRUSTED_TASK_MARKER in (instructions or "")
+    instructions = (instructions or "").replace(UNTRUSTED_TASK_MARKER, "").strip()
+    prev_untrusted = getattr(_command_ctx, "untrusted_origin", False)
+    _command_ctx.untrusted_origin = untrusted
     _set_scheduled_task_running(True)
     record_recent_task(f"queued task: {description}")
     synthetic_transcript = (
@@ -5028,6 +5083,7 @@ def _run_queued_task(description: str, instructions: str) -> None:
         if reply:
             queue_or_deliver_notification(reply)
     finally:
+        _command_ctx.untrusted_origin = prev_untrusted
         _set_scheduled_task_running(False)
 
 
@@ -5111,6 +5167,8 @@ def _scheduler_loop() -> None:
             _netscan_tick()
             _meeting_tick()
             _agents_tick(now)
+            _deferred_tick(now)
+            _cascade_tick()
             _kg_sync_tick()
             _digest_tick()
         except Exception as e:
@@ -5124,7 +5182,10 @@ def _autonomy_run_agent(instruction: str) -> str:
     the catastrophic confirmation gate all apply) and returns the reply."""
     _set_scheduled_task_running(True)
     prev = getattr(_command_ctx, "autonomous", False)
+    prev_untrusted = getattr(_command_ctx, "untrusted_origin", False)
     _command_ctx.autonomous = True
+    # These actions are built from extracted data (often an email): never shell/python/typing (2026-09-27).
+    _command_ctx.untrusted_origin = True
     try:
         # record_history=False: the synthetic instruction must not land in the conversation history
         # that later turns and summaries are built from (audit F-01).
@@ -5134,6 +5195,7 @@ def _autonomy_run_agent(instruction: str) -> str:
         )
     finally:
         _command_ctx.autonomous = prev
+        _command_ctx.untrusted_origin = prev_untrusted
         _set_scheduled_task_running(False)
 
 
@@ -6062,6 +6124,214 @@ def _feature_report(action: str, payload: dict):
     return None
 
 
+# --- Executive autonomy (2026-09-27, AUTONOMY.md "Deferred execution") -------------------------------
+# "In 30 minutes change the code for X" becomes a job that RUNS at that time through the normal agent loop
+# (tools audited, catastrophic gate intact), instead of a reminder that reads "remind Jarvis to ..." aloud.
+_deferred_store = deferred.Store(_memory_db_connect, _memory_db_lock)
+_deferred_running: set = set()
+DEFERRED_SOURCE = "autonomy_deferred"  # command source while a job runs: allowed to start the coding agent
+# (it is the user's own earlier request), but not "attended" (no forget/macro/agent/template changes).
+
+
+def _deferred_speech(text: str, failure: bool = False, urgent: bool = False) -> None:
+    """Minimal (default): speak only failures and "needs your yes"; the Activity log/dashboard have the rest."""
+    if failure or urgent or not autonomy.speech_minimal():
+        queue_or_deliver_notification(text, urgent=urgent, bypass_busy_gate=failure or urgent)
+
+
+def _parse_when(due_iso: str = "", in_minutes=None) -> datetime | None:
+    if in_minutes not in (None, ""):
+        try:
+            return datetime.now() + timedelta(minutes=float(in_minutes))
+        except (TypeError, ValueError):
+            return None
+    return _parse_due_at(due_iso) if due_iso else None
+
+
+def _schedule_jarvis_task_tool(inp: dict) -> str:
+    """The user asks Jarvis to DO something later. Only from a real user request (voice/typed/dashboard/phone):
+    an autonomous or unattended run (e.g. one acting on an email) can never plant work for later."""
+    src = _current_command_source()
+    if src not in ("voice", "text", "dashboard", "phone") or getattr(_command_ctx, "autonomous", False) \
+            or getattr(_command_ctx, "untrusted_origin", False):
+        return "Refused: only your own request can schedule work for Jarvis to do later."
+    when = _parse_when(str(inp.get("due_at") or ""), inp.get("due_in_minutes"))
+    if when is None:
+        return "When should I do it? Give a time or a number of minutes from now."
+    jid, msg = deferred.schedule(_deferred_store, str(inp.get("instruction") or ""), when,
+                                 str(inp.get("source_quote") or ""), origin="user")
+    return msg
+
+
+def _schedule_deferred_cb(instruction: str, due_iso: str, quote: str = "") -> str:
+    """Autonomy's route for work it extracted from the user's own words (see jarvis_autonomy._executor_for)."""
+    when = _parse_when(due_iso) or datetime.now() + timedelta(minutes=1)
+    return deferred.schedule(_deferred_store, instruction, max(when, datetime.now()), quote, origin="conversation")[1]
+
+
+def _deferred_tick(now: datetime) -> None:
+    """Scheduler tick: claim due jobs and run them. Safe mode / JARVIS_AUTONOMY_DISABLED stop it; dry-run logs
+    what would run; while the user is mid-command a job waits for the next tick (then runs, never nags)."""
+    if autonomy.hard_disabled() or _commands_in_flight() > 0:
+        return
+    for job in deferred.claim_due(_deferred_store, now):
+        if job["kind"] != "execute_jarvis":
+            deferred.finish(_deferred_store, job["id"], True, "notified", job["attempts"])
+            queue_or_deliver_notification(f"Reminder: {job['instruction']}", bypass_busy_gate=True, is_reminder=True)
+            continue
+        if autonomy.dry_run():
+            res = f"(dry run) would run: {job['instruction']}"
+            deferred.finish(_deferred_store, job["id"], True, res, job["attempts"])
+            _log_action_audit("deferred_job", {"id": job["id"], "dry_run": True}, "(autonomy deferred)", res)
+            continue
+        _deferred_running.add(job["id"])  # visible as running from the moment it is claimed
+        threading.Thread(target=_run_deferred_job, args=(job,), daemon=True, name=f"deferred-{job['id']}").start()
+
+
+def _run_deferred_job(job: dict) -> None:
+    transcript = f"(autonomy deferred) {job['instruction']}"
+    _deferred_running.add(job["id"])  # (already added by _deferred_tick; kept for direct callers)
+    prev = (getattr(_command_ctx, "source", None), getattr(_command_ctx, "autonomous", False))
+    _command_ctx.source, _command_ctx.autonomous = DEFERRED_SOURCE, True
+    _set_scheduled_task_running(True)
+    session_id = dashboard.start_session("autonomy", transcript)
+    dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "autonomy", "transcript": transcript}})
+    _deferred_speech(f"Starting: {job['instruction'][:120]}")
+    ok, reply, transient = False, "", False
+    try:
+        reply = run_agent_loop(
+            f"(Scheduled job #{job['id']}: the user asked earlier for this to be done at this time. Do it now, "
+            "fully, without asking them anything first; for a code change use change_jarvis_code (Jarvis's own "
+            "code) or delegate_to_claude_code (any other project). Dangerous system actions still stage for "
+            f"their yes as usual. Live state: {_state_line()}) {job['instruction']}",
+            record_history=False)
+        transient = (reply or "").strip() == CLAUDE_UNAVAILABLE_REPLY  # no model answered: try again later
+        ok = bool((reply or "").strip()) and not _looks_failed(reply) and not transient
+    except Exception as e:
+        reply, transient = f"Tool failed: {e}", True
+        log.warning("Deferred job %s failed: %s", job["id"], e)
+    finally:
+        _command_ctx.source, _command_ctx.autonomous = prev
+        _set_scheduled_task_running(False)
+    try:
+        _finish_deferred_job(job, ok, reply, transient, transcript, session_id)
+    finally:
+        _deferred_running.discard(job["id"])  # last: "running" covers the result being recorded and reported
+
+
+def _finish_deferred_job(job: dict, ok: bool, reply: str, transient: bool, transcript: str, session_id) -> None:
+    # Only a transient failure (no model reachable, a crash) is retried: a run that finished and reported a
+    # problem already did whatever it could, and doing it again could repeat its side effects.
+    attempts = job["attempts"] if transient else deferred.MAX_ATTEMPTS
+    status = deferred.finish(_deferred_store, job["id"], ok, reply, attempts)
+    dashboard.end_session(session_id, "done" if ok else "failed", reply)
+    dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done" if ok else "failed", "reply": reply}})
+    _log_action_audit("deferred_job", {"id": job["id"], "attempt": job["attempts"], "status": status},
+                      transcript, reply)
+    if "staged, not run" in (reply or "") or _dashboard_get_pending():
+        _deferred_speech(f"Scheduled job needs your yes: {reply[:200]}", urgent=True)
+    elif status == "failed":
+        tries = f" after {job['attempts']} tries" if job["attempts"] > 1 else ""
+        _deferred_speech(f"The scheduled job \"{job['instruction'][:80]}\" failed{tries}: {reply[:160]}", failure=True)
+    elif ok:
+        _deferred_speech(f"Done: {job['instruction'][:80]}. {reply[:200]}")
+
+
+def _deferred_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "list").lower()
+    if action == "cancel":
+        return "Cancelled." if deferred.cancel(_deferred_store, int(inp.get("id") or 0)) else "No pending job with that id."
+    jobs = deferred.list_jobs(_deferred_store, include_finished=action == "history")
+    return "\n".join(f"#{j['id']} {j['status']} {j['due_at'][:16]}: {j['instruction'][:120]}"
+                     + (f" -> {(j['result'] or '')[:120]}" if j.get("result") else "") for j in jobs) \
+        or "No scheduled jobs."
+
+
+# Runs that started from someone else's text (an email/message action, a background task autonomy took from
+# mail) may never run code: "email body must never become shell/python" (user decision 2026-09-27).
+_UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dynamic_tool", "type_text",
+                            "change_jarvis_code", "delegate_to_claude_code", "schedule_jarvis_task"}
+UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
+
+
+def _untrusted_block(tool_name: str) -> str | None:
+    if getattr(_command_ctx, "untrusted_origin", False) and (
+            tool_name in _UNTRUSTED_BLOCKED_TOOLS or tool_name.startswith("mcp_windows_")):
+        return (f"Refused: {tool_name} can't run in a task that came from someone else's message or email "
+                "(it could be a hidden instruction). Ask me directly if you want this.")
+    return None
+
+
+def _state_line() -> str:
+    """Short live state for autonomous planning and scheduled jobs (not added to normal user prompts)."""
+    parts = [f"sleep {'on' if sleep_mode.is_active() else 'off'}", f"safe mode {'on' if safe_mode_on() else 'off'}",
+             f"meeting notes {'recording' if meeting.active() else 'off'}", f"battery {battery.current()}",
+             f"autonomy {'dry-run' if autonomy.dry_run() else ('on' if autonomy.enabled() else 'off')}"]
+    try:
+        n = sum(1 for a in _agent_store.all() if a["enabled"])
+        parts.append(f"{n} background agent(s) on")
+        nxt = deferred.next_pending(_deferred_store)
+        if nxt:
+            parts.append(f"next scheduled job {nxt['due_at'][11:16]}: {nxt['instruction'][:60]}")
+    except Exception:
+        pass
+    p = _dashboard_get_pending()
+    parts.append(f"a dangerous action awaits the user's yes ({p.get('tool_name')})" if p else "no pending confirmation")
+    return "; ".join(parts)
+
+
+_BATCH_TOOL_HANDLERS.update({"schedule_jarvis_task": _schedule_jarvis_task_tool, "scheduled_jobs": _deferred_tool})
+
+
+@_feature("deferred")
+def _feature_deferred(action: str, payload: dict):
+    if action == "get":
+        return {"jobs": deferred.list_jobs(_deferred_store, include_finished=True, limit=50),
+                "running": sorted(_deferred_running), "speech": "minimal" if autonomy.speech_minimal() else "normal"}
+    if action == "cancel":
+        ok = deferred.cancel(_deferred_store, int(payload.get("id") or 0))
+        _log_action_audit("scheduled_jobs", {"action": "cancel", "id": payload.get("id")}, "(dashboard)", str(ok))
+        return {"ok": ok}
+    return None
+
+
+# --- Cascades (jarvis_cascades.RULES): deterministic side effects when a state changes ----------------
+def _cascade_stop_meeting(event: str) -> str:
+    return meeting.stop(f"cascade: {event}") if meeting.active() else "no meeting notes running"
+
+
+def _cascade_hold(event: str) -> str:
+    _cascade_flags["hold_announcements"] = True
+    return "holding non-urgent announcements"
+
+
+def _cascade_release(event: str) -> str:
+    _cascade_flags["hold_announcements"] = False
+    flush_pending_notifications()
+    return "released held announcements"
+
+
+_cascade_flags = {"hold_announcements": False}
+_CASCADE_ACTIONS = {"stop_meeting_notes": _cascade_stop_meeting, "hold_announcements": _cascade_hold,
+                    "release_announcements": _cascade_release}
+_cascade_watch = cascades.Watcher()
+
+
+def _cascade_tick() -> None:
+    state = {"sleep": sleep_mode.is_active(), "safe_mode": safe_mode_on(), "meeting": bool(meeting.active()),
+             "battery": battery.current()}
+    for event, action in _cascade_watch.changes(state):
+        fn = _CASCADE_ACTIONS.get(action)
+        if fn is None:
+            continue
+        try:
+            res = fn(event)
+        except Exception as e:
+            res = f"failed: {e}"
+        log.info("Cascade %s -> %s: %s", event, action, res)
+        _log_action_audit("cascade", {"event": event, "action": action}, "(cascade)", res)
+
+
 # --- Morning briefing v2 / "what's urgent?" (jarvis_briefing.py) ---------------------------------
 def _briefing_fetchers(kind: str, now: datetime) -> dict:
     urgent = kind == "urgent"
@@ -6202,6 +6472,9 @@ def _autonomy_callbacks() -> dict:
         "organise": autonomy_organise.handle_new_file,   # file organising: on whenever autonomy is on
         "watch_path": lambda p: filewatcher.watcher.add_path(p, baseline=True),
         "deadline_context": _deadline_context,
+        "schedule_deferred": _schedule_deferred_cb,
+        "state_line": _state_line,
+        "own_addresses": lambda: sleep_mail.own_addresses(),
     }
 
 
@@ -9053,7 +9326,10 @@ def _execute_tool_impl(
     inp = tool_input or {}
     result = f"Unrecognized tool: {tool_name!r}"
     try:
-        if tool_name.startswith("mcp_"):
+        blocked = _untrusted_block(tool_name)
+        if blocked:
+            result = blocked
+        elif tool_name.startswith("mcp_"):
             # MCP tools can type into a terminal or Run box (Windows-MCP Type/Shortcut, the
             # browser), so their text goes through the same tripwire as run_shell/run_python.
             reason = None if skip_confirmation else _catastrophic_reason(
@@ -9383,6 +9659,14 @@ def _execute_tool_impl(
                 str(inp.get("instructions") or ""),
                 schedule if isinstance(schedule, dict) else None,
             )
+        elif tool_name == "create_reminder" and deferred.as_jarvis_instruction(str(inp.get("text") or "")) \
+                and _current_command_source() in ("voice", "text", "dashboard", "phone") \
+                and not getattr(_command_ctx, "autonomous", False):
+            # Safety net for the live bug: "remind Jarvis to change the code" was saved as a reminder and only
+            # read out. Work for Jarvis becomes a job that runs.
+            result = _schedule_jarvis_task_tool({
+                "instruction": deferred.as_jarvis_instruction(str(inp.get("text") or "")),
+                "due_at": str(inp.get("due_at") or ""), "due_in_minutes": inp.get("due_in_minutes")})
         elif tool_name == "create_reminder":
             result = create_reminder(
                 str(inp.get("text") or ""),

@@ -1382,6 +1382,29 @@ Full write-up: `FEATURES.md` (per-feature defaults, env vars, residual risks). R
 - `_macro_known_tools()` uses connected MCP tools only - never `get_mcp_tool_schemas()`, which starts
   MCP servers (a test that called it launched real servers and took 100s).
 
+## Executive autonomy: deferred execution (2026-09-27)
+
+Full write-up: AUTONOMY.md "Executive autonomy". **User decision (2026-09-27): full autonomy, risks
+accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_executive.py`):
+- Work for Jarvis at a later time is a job in `autonomy_deferred_jobs` (`jarvis_deferred.py`) that RUNS at
+  due time via `_deferred_tick` -> `run_agent_loop` with command source `autonomy_deferred` (so
+  change_jarvis_code/delegate start; attended-only actions stay refused). Never turn it back into a spoken
+  reminder. Claim is atomic; dedupe window 20 min; only transient failures retry.
+- Jobs come only from the user: `schedule_jarvis_task` (refused for autonomous/unattended/untrusted runs),
+  `create_reminder("remind Jarvis to X")` from a user request, or extraction where `executor=jarvis` AND the
+  quote is in the USER's own words from a `conversation` turn. Mail/messages/files never create jobs.
+- Reminders speak only their content (`_reminder_content`); turns where a scheduling tool ran are recorded
+  but not re-actioned or nudged.
+- `JARVIS_AUTONOMY_SPEECH=minimal` default. `test_autonomy.py`'s fixture pins `normal` because those
+  tests check what autonomy says.
+- `_command_ctx.untrusted_origin` (set by `_autonomy_run_agent` and `[untrusted-origin]` queued tasks)
+  blocks shell/python/typing/code-agent/job-scheduling tools in `_execute_tool_impl`. Never relax it.
+- Autonomous email: never to own addresses, 3/recipient/day, 20/day.
+- Cascades (`jarvis_cascades.RULES`): sleep or critical battery stops meeting notes; meeting notes hold
+  non-urgent announcements (not reminders) until they stop. Cascades must not read `face` (gate-isolation
+  allowlist test).
+- Found by tests while building: "couldn't reach Claude" counted as a successful run (now transient -> retry).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1464,7 +1487,8 @@ row there each phase rather than only stating the total in chat.
 | 58 (feature batch Phase C: background agents, review_code, code_search, memory FTS, lite knowledge graph, announcement priority; 12 new tests) | Opus 5.5 | ~45 min | ~$4.00–$5.60 |
 | 59 (feature batch Phase D: .pptx via write_file, weekly improvement report, Toolbox headless render check + fixes; 3 new tests) | Opus 5.5 | ~20 min | ~$1.80–$2.50 |
 | 60 (feature batch audit-and-fix: 17 bugs fixed incl. mail-agent NameError, agent placeholder injection, fuzzy macro flips, meeting speech loss; 18 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
-| **Running total (final)** | | **~2041 min** | **~$111.55–$156.45** |
+| 61 (executive autonomy: deferred jobs that run, schedule_jarvis_task, reminder content cleanup, tool-handled turns not re-saved, minimal autonomy speech, untrusted-origin code block, email caps, cascades, live state; 20 new tests) | Opus 5.5 | ~55 min | ~$4.50–$6.30 |
+| **Running total (final)** | | **~2096 min** | **~$116.05–$162.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

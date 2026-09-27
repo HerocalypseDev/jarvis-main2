@@ -71,11 +71,15 @@ Return a JSON array. Each element must have this exact schema:
 "deadline_iso": "ISO8601 datetime or null",
 "related_project": "project name or null",
 "confidence": 0.0–1.0,
-"source_quote": "exact snippet from the conversation that implies this"
+"source_quote": "exact snippet from the conversation that implies this",
+"executor": "user" | "jarvis",
+"instruction": "for executor jarvis: the exact command Jarvis should carry out then, as a clean imperative (e.g. 'Change the login code in C:/proj/app.py to use OAuth'), otherwise null"
 }
 Rules:
 
 Only include items with confidence >= 0.6.
+executor = "jarvis" when the USER asked Jarvis itself to DO something later ("in 30 minutes change the code...", "tonight send the report to Sam", "at 5 run the tests", "later research X"). The instruction is the work itself, never "remind Jarvis to ...". executor = "user" for things the user will do or wants to be reminded of ("remind me to call mom").
+Skip anything a tool in "Recent tool actions" already scheduled (create_reminder, schedule_jarvis_task, queue_task, a calendar event): it is handled.
 Be conservative: if something is vague or speculative, omit it.
 Prefer precise deadlines when present; otherwise leave deadline_iso null.
 Infer times/dates from relative expressions ("tomorrow at 2pm", "next Friday") using the current time: {current_time_iso}. If you cannot resolve a date confidently, leave deadline_iso null.
@@ -201,6 +205,8 @@ _UNTRUSTED_TOOL_RE = re.compile(
 HUMAN_ONLY_ACTIONS = ("enable", "dry_run_off", "set_policy")
 ATTENDED_ONLY_ACTIONS = ("approve", "dismiss", "never", "add_action", "approve_campaign", "add_project",
                          "accept_commitment", "complete_commitment", "cancel_commitment")
+# Tools that already schedule something: a turn that used one is recorded, not re-actioned by extraction.
+_SCHEDULING_TOOL_RE = re.compile(r"^(create_reminder|schedule_jarvis_task|queue_task|set_plan)$|calendar.*(create|insert|add)")
 _FUTURE_RE = re.compile(
     r"\b(will|shall|i'll|we'll|let's|upcoming|later|soon|before|after|until|deadline|due|"
     r"on (?:mon|tue|wed|thu|fri|sat|sun)\w*|at \d{1,2}(?::\d\d)?\s?(?:am|pm)?|\d{1,2}(?::\d\d)?\s?(?:am|pm)|"
@@ -760,6 +766,10 @@ def _insert_commitment(c: dict, ctype: str, desc: str, who: str, deadline: str |
         meta["participants"] = [_clean(x, 120) for x in c["participants"][:10] if isinstance(x, (str, int, float))]
     if sender:
         meta["sender"] = _clean(sender, 200)
+    if c.get("executor") == "jarvis" and c.get("instruction"):
+        meta["executor"], meta["instruction"] = "jarvis", _clean(c["instruction"], 1000)
+    if c.get("handled_by_tool"):
+        meta["handled_by_tool"] = meta["actioned"] = True
     now = _iso()
     return _exec(
         "INSERT INTO commitments (type, description, who_is_responsible, deadline_iso, related_project_id, "
@@ -1025,9 +1035,13 @@ def _log_decision(context: str, need: Any, decision: str, action: str = "", reas
 # ---------------------------------------------------------------------------- actions & suggestions
 def _action_for_commitment(c: dict) -> tuple[str | None, dict]:
     """The one concrete action a stored commitment implies, or (None, {}) if it is tracking-only."""
+    dl = c.get("deadline_iso")
+    meta = _meta(c)
+    if meta.get("executor") == "jarvis" and meta.get("instruction") and c.get("source_type") == "conversation":
+        return "deferred", {"instruction": meta["instruction"], "due_iso": dl or _iso(_now() + timedelta(minutes=1)),
+                            "quote": (c.get("source_quote") or "")[:300]}
     if c["who_is_responsible"] != "user" and c["type"] != "event":
         return None, {}
-    dl = c.get("deadline_iso")
     if c["type"] == "event" and dl:
         meta = _meta(c)
         return "calendar", {"title": c["description"], "start_iso": dl, "end_iso": meta.get("end_iso"),
@@ -1156,6 +1170,39 @@ def _email_recipient_blocked(details: dict) -> str | None:
     return None
 
 
+UNTRUSTED_TASK_MARKER = "[untrusted-origin]"  # same string as jarvis.UNTRUSTED_TASK_MARKER
+_EMAIL_ADDR_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _email_recipients(details: dict) -> list[str]:
+    raw = " ".join(str(details.get(k) or "") for k in ("to", "recipient", "recipients", "email", "reply_to", "cc"))
+    return sorted({a.lower().rstrip(".") for a in _EMAIL_ADDR_RE.findall(raw)})
+
+
+def _email_send_capped(details: dict) -> str | None:
+    """Loop/flood guard for autonomous email: never to the user's own addresses (a reply to yourself could feed
+    the inbox poll forever), at most JARVIS_AUTONOMY_EMAIL_MAX_PER_RECIPIENT_DAY (3) per recipient and
+    JARVIS_AUTONOMY_EMAIL_MAX_PER_DAY (20) in total per day. Counted from the audit of autonomous email actions."""
+    own = {a.lower() for a in (_call("own_addresses", default=set()) or set())}
+    rec = _email_recipients(details)
+    if any(r in own for r in rec):
+        return "not sending: autonomy never emails your own address"
+    since = _today_start()
+    sent = _rows("SELECT payload_json FROM autonomy_decisions WHERE created_at >= ? AND outcome='ok' AND "
+                 "payload_json LIKE '%\"type\": \"email\"%'", (since,)) if _has_payload_col() else []
+    if len(sent) >= _env_int("JARVIS_AUTONOMY_EMAIL_MAX_PER_DAY", 20):
+        return "not sending: today's autonomous email limit is reached"
+    per = _env_int("JARVIS_AUTONOMY_EMAIL_MAX_PER_RECIPIENT_DAY", 3)
+    for r in rec:
+        if sum(1 for row in sent if r in str(row.get("payload_json") or "").lower()) >= per:
+            return f"not sending: already emailed {r} {per} times today"
+    return None
+
+
+def _has_payload_col() -> bool:
+    return any(c["name"] == "payload_json" for c in _rows("PRAGMA table_info(autonomy_decisions)"))
+
+
 def _run_action(action_type: str | None, details: dict, commitment_id: int | None = None) -> tuple[bool, str]:
     """Performs one approved/auto action through existing Jarvis paths only. Dry-run does nothing."""
     if hard_disabled() or not enabled():  # kill switch, even for a worker that started before it was pulled
@@ -1168,17 +1215,30 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
                     default=None)
         return (res is not None and "couldn't" not in str(res).lower()), str(res)
     if action_type == "notification":
-        _call("notify", str(details.get("text") or details.get("description") or ""), False)
+        text = str(details.get("text") or details.get("description") or "")
+        if speech_minimal() and details.get("speech") != "reminder":
+            return True, "logged only (JARVIS_AUTONOMY_SPEECH=minimal)"
+        _call("notify", text, False)
         return True, "notification delivered"
+    if action_type == "deferred":
+        # Work the user gave Jarvis for later: scheduled as a job that RUNS then (jarvis_deferred), not a nag.
+        res = _call("schedule_deferred", str(details.get("instruction") or ""), str(details.get("due_iso") or ""),
+                    str(details.get("quote") or ""), default=None)
+        return (res is not None and "job #" in str(res)), str(res)
     if action_type == "background_task":
         if (_call("running_background_count", default=0) or 0) >= budgets()["max_bg_tasks"]:
             return False, BG_BUSY
         desc = str(details.get("description") or details.get("title") or "autonomy task")
-        res = _call("queue_task", desc, str(details.get("instructions") or desc),
+        instructions = str(details.get("instructions") or desc)
+        c = _commitment(commitment_id) if commitment_id else None
+        if not c or c.get("source_type") != "conversation":
+            # taken from mail/messages/files or the model's own planning: runs without shell/python/typing
+            instructions = f"{UNTRUSTED_TASK_MARKER} {instructions}"
+        res = _call("queue_task", desc, instructions,
                     str(details.get("priority") or "normal"), details.get("deadline_iso"), default=None)
         return _schedule_queued(res, commitment_id)
     if action_type == "email":
-        blocked = _email_recipient_blocked(details)
+        blocked = _email_recipient_blocked(details) or _email_send_capped(details)
         if blocked:
             return False, blocked
     cal_note = ""
@@ -1467,7 +1527,8 @@ def _related_memory(turns_text: str) -> str:
 
 def extract_commitments_and_projects(turns_text: str, tool_actions_text: str = "(none)",
                                      source_type: str = "conversation", sender: str = "",
-                                     gated_ok: bool = True) -> list[int]:
+                                     gated_ok: bool = True, user_text: str = "",
+                                     handled_by_tool: bool = False) -> list[int]:
     """conversation text -> commitments (+ projects) -> policy routing. Returns new commitment ids."""
     if not enabled() or not (turns_text or "").strip():
         return []
@@ -1480,20 +1541,46 @@ def extract_commitments_and_projects(turns_text: str, tool_actions_text: str = "
                               recent_tool_actions_text=tool_ctx, current_time_iso=_iso()), 900)
     if not isinstance(parsed, list):
         return []
-    return _ingest([c for c in parsed if isinstance(c, dict)], source_type, sender, gated_ok)
+    return _ingest([c for c in parsed if isinstance(c, dict)], source_type, sender, gated_ok,
+                   user_text=user_text, handled_by_tool=handled_by_tool)
+
+
+def _executor_for(item: dict, source_type: str, user_text: str) -> dict:
+    """Work for Jarvis ("executor": "jarvis") is honoured only when it comes from the user's own words in a
+    conversation turn: never from mail/messages/files, and the quote must appear in what the USER said (not
+    in Jarvis's reply, which may quote an email). Also catches the old "remind Jarvis to X" wording."""
+    item = dict(item)
+    instr = str(item.get("instruction") or "").strip()
+    if not instr:
+        from jarvis_deferred import as_jarvis_instruction
+        instr = as_jarvis_instruction(str(item.get("description") or "")) or ""
+        if instr:
+            item["executor"] = "jarvis"
+    own = source_type == "conversation" and _norm_text(str(item.get("source_quote") or "")) in _norm_text(user_text) \
+        and bool(_norm_text(str(item.get("source_quote") or "")))
+    if item.get("executor") == "jarvis" and instr and own:
+        item["instruction"] = instr
+    else:
+        item["executor"], item["instruction"] = "user", None
+    return item
 
 
 def _ingest(items: list[dict], source_type: str, sender: str, gated_ok: bool = True,
-            suspicious: bool = False) -> list[int]:
+            suspicious: bool = False, user_text: str = "", handled_by_tool: bool = False) -> list[int]:
     created: list[int] = []
     for item in items:
         try:  # one bad item must not lose the rest of the batch
+            item = _executor_for(item, source_type, user_text)
+            if handled_by_tool:
+                # A reminder/job/calendar event was already made by a tool this turn: record, don't redo
+                # (this was the "same recurring reminder saved again every turn" spam).
+                item["handled_by_tool"] = True
             cid = add_commitment(item, source_type, sender)
             if not cid:
                 continue
             created.append(cid)
             c = _commitment(cid)
-            if not c:
+            if not c or handled_by_tool:
                 continue
             action_type, details = _action_for_commitment(c)
             category = f"{source_type}:{action_type or 'track'}"
@@ -1555,8 +1642,10 @@ def after_turn(transcript: str, reply: str, source: str = "text") -> None:
         # (so a low-confidence item from it is quarantined), but under the full-permission model a
         # confident one still acts.
         src = "message" if _used_untrusted_tool(transcript) else "conversation"
+        handled = any(_SCHEDULING_TOOL_RE.search(str(r["tool_name"] or "")) for r in _recent_tool_rows(transcript, 30))
         extract_commitments_and_projects(turns, _recent_tool_actions(transcript), src,
-                                         gated_ok=gate_reason() is None)
+                                         gated_ok=gate_reason() is None, user_text=transcript,
+                                         handled_by_tool=handled)
 
     _spawn("autonomy-extract", _work)
 
@@ -1929,6 +2018,8 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
         left = due - now
         bucket = "overdue" if left.total_seconds() < 0 else ("2h" if left <= timedelta(hours=2) else "24h")
         meta = _meta(c)
+        if meta.get("executor") == "jarvis" or meta.get("handled_by_tool"):
+            continue  # its job runs by itself / the reminder the tool made fires by itself
         # In dry-run nothing really happens, so it keeps its own bookkeeping and never uses up a real nudge.
         nkey, akey = ("dry_notified", "dry_actioned") if dry_run() else ("notified", "actioned")
         if bucket in (meta.get(nkey) or []):
@@ -1940,7 +2031,8 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
         if extra:
             text += " " + _clean(extra, 400)
         decision = _route("deadline:notification", "", c["description"], c["source_quote"] or "", "notification",
-                          {"text": text}, 1.0, "deadline", c["id"], model_says="act", gated_ok=gated_ok)
+                          {"text": text, "speech": "reminder"}, 1.0, "deadline", c["id"], model_says="act",
+                          gated_ok=gated_ok)
         if decision in ("act", "queued", "suggest", "silent"):
             _set_commitment_meta(c["id"], **{nkey: (meta.get(nkey) or []) + [bucket]})
             fired += decision == "act"
@@ -1954,8 +2046,16 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
     return fired
 
 
+def speech_minimal() -> bool:
+    """JARVIS_AUTONOMY_SPEECH=minimal (default) | normal. Minimal: autonomy speaks only failures and real
+    reminder content; everything else is in the Activity log ("what did autonomy do")."""
+    return (os.environ.get("JARVIS_AUTONOMY_SPEECH") or "minimal").strip().lower() != "normal"
+
+
 def _announce_pending(now: datetime) -> None:
     """Speak at most one not-yet-announced suggestion per tick, only when the gates are clear."""
+    if speech_minimal():
+        return
     rows = _rows("SELECT * FROM autonomy_suggestions WHERE status='pending' AND announced_at IS NULL "
                  "ORDER BY id LIMIT 1")
     if not rows:
@@ -1969,6 +2069,9 @@ def _announce_pending(now: datetime) -> None:
 
 def _context_summary(now: datetime) -> str:
     parts = [f"Now: {now.strftime('%A %Y-%m-%d %H:%M')}"]
+    state = _call("state_line", default="")
+    if state:
+        parts.append(f"Live state: {state}")
     for label, name, arg in (("Calendar (next 48h)", "calendar_events", 48), ("Workspace", "workspace", None),
                              ("File events", "file_events", None), ("System", "system_status", None)):
         val = _call(name, arg, default="") if arg is not None else _call(name, default="")
