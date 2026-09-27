@@ -30,3 +30,19 @@ Build read-only, with a name allowlist and no location history stored.
 
 ### Before building
 Run the project's double-check protocol: map onto existing tables/functions, list new tables/APIs, risk review (security, cost, data exposure, irreversibility, performance), and stop and ask on non-zero risk.
+
+
+## Feature batch 2026-09-27: deliberately not built
+
+- **Wake word (D2).** openWakeWord would run an ONNX model on every mic block all day (steady CPU,
+  new dependency, false wakes from TV). Push-to-talk + the follow-up window cover hands-busy use. If
+  wanted: a separate `jarvis_wakeword.py`, `JARVIS_WAKEWORD_ENABLED=0` default, paused in Sleep Mode
+  and safe mode, and a wake must never count as "attended" for the confirmation gate (same rule as
+  the hands-free follow-up window).
+- **generate_image (D3).** Needs a paid image model (Gemini image or similar) and a decision on
+  where images go; add behind its own key, on request only.
+- **translate session (D3).** Single translations already work in conversation. A live interpreter
+  mode would be meeting-capture + per-chunk translation; build on `jarvis_meeting_capture` if asked.
+- **Code embeddings index (`JARVIS_CODE_INDEX`, C3).** ripgrep/git grep answer most code questions
+  instantly; an embeddings index means a model or API plus idle-time indexing. Reserved flag only.
+- **Test-writer skill (D4).** Use `delegate_to_claude_code` ("write tests for X"); never on save.

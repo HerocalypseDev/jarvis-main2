@@ -731,3 +731,8 @@ p.consent-list { padding-left: 0; }
 .drafts { white-space: pre-wrap; max-width: 760px; }
 .drafts:empty { display: none; }
 #tb-email-text { width: 100%; box-sizing: border-box; }
+#view-toolbox input, #view-toolbox select, #view-toolbox textarea {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font: inherit; }
+#view-toolbox input:focus-visible, #view-toolbox select:focus-visible, #view-toolbox textarea:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: 1px; }
+#view-toolbox .settings-add select { flex: 0 0 auto; }

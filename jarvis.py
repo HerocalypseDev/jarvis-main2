@@ -104,6 +104,7 @@ import jarvis_code_tools as code_tools
 import jarvis_memory_search as memory_search
 import jarvis_kg as kg
 import jarvis_notify_priority as notify_priority
+import jarvis_improvement_report as improvement_report
 
 settings.JARVIS_MODULE = sys.modules[__name__]
 
@@ -1796,7 +1797,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "write_file",
-        "description": "Write (or append to) a text file, creating parent folders if needed. For a Word document use a .docx name and write the content as simple Markdown: # to #### headings, - bullets (indent 2 spaces to nest), 1. numbered lines, **bold**, *italic*, `code`, | tables | with a |---| line under the header row, > quotes, ``` code blocks, and a line of just --- for a page break; it is saved as a neatly styled Word file (Calibri, spaced headings, shaded table headers). For a long document, write it in parts: the first call, then append=true for each further part. Default location is Jarvis_Workspace: give just a filename (or relative path) and it is filed automatically into Bugs, Code_Projects, Learning_Resources, Notes, Assets, Roblox_Projects or Temp by what it is. Only pass an absolute path when the user named an exact location.",
+        "description": "Write (or append to) a text file, creating parent folders if needed. For a PowerPoint deck use a .pptx name: each '# Title' line starts a slide (the first is the title slide, a plain line under it its subtitle), '- ' bullets (indent 2 spaces to nest) are its points, and a 'Notes: ...' line goes into the speaker notes. For a Word document use a .docx name and write the content as simple Markdown: # to #### headings, - bullets (indent 2 spaces to nest), 1. numbered lines, **bold**, *italic*, `code`, | tables | with a |---| line under the header row, > quotes, ``` code blocks, and a line of just --- for a page break; it is saved as a neatly styled Word file (Calibri, spaced headings, shaded table headers). For a long document, write it in parts: the first call, then append=true for each further part. Default location is Jarvis_Workspace: give just a filename (or relative path) and it is filed automatically into Bugs, Code_Projects, Learning_Resources, Notes, Assets, Roblox_Projects or Temp by what it is. Only pass an absolute path when the user named an exact location.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -3008,6 +3009,15 @@ BATCH_TOOLS = [
             "action": {"type": "string", "enum": ["query", "relate", "sync"]}, "name": {"type": "string"},
             "a": {"type": "string"}, "rel": {"type": "string"}, "b": {"type": "string"},
             "a_type": {"type": "string"}, "b_type": {"type": "string"}, "depth": {"type": "integer"}}},
+    },
+    {
+        "name": "improvement_report",
+        "description": (
+            "Read-only suggestions for making Jarvis work better, from the last `days` (default 7): tools that "
+            "keep failing, commands repeated often enough to become a voice macro, announcements the user "
+            "keeps cutting off, failing background agents, slow voice replies. Changes nothing."
+        ),
+        "input_schema": {"type": "object", "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 60}}},
     },
 ]
 AGENT_TOOLS.extend(BATCH_TOOLS)
@@ -5985,6 +5995,23 @@ def _feature_graph(action: str, payload: dict):
     return None
 
 
+# --- Feature batch 2026-09-27 (FEATURES.md): Phase D ------------------------------------------------
+def _improvement_report(days: int = 7) -> dict:
+    return improvement_report.build(_memory_db_connect, _memory_db_lock, days, latency.recent(50))
+
+
+_BATCH_TOOL_HANDLERS["improvement_report"] = lambda inp: improvement_report.format_report(
+    _improvement_report(max(1, min(int(inp.get("days") or 7), 60))))
+
+
+@_feature("report")
+def _feature_report(action: str, payload: dict):
+    if action == "get":
+        r = _improvement_report(7)
+        return {"report": r, "suggestions": improvement_report.suggestions(r)}
+    return None
+
+
 # --- Morning briefing v2 / "what's urgent?" (jarvis_briefing.py) ---------------------------------
 def _briefing_fetchers(kind: str, now: datetime) -> dict:
     urgent = kind == "urgent"
@@ -8195,6 +8222,10 @@ def _write_file_tool(path: str, content: str, append: bool) -> str:
         if p.suffix.lower() == ".docx":
             _write_docx(p, content or "", append)
             return f"{'Appended' if append else 'Wrote'} a Word document ({len(content or '')} chars) to {p}."
+        if p.suffix.lower() == ".pptx":
+            import jarvis_pptx
+            n = jarvis_pptx.write(p, content or "", append)
+            return f"{'Added to' if append else 'Wrote'} a PowerPoint deck ({n} slides) at {p}."
         with open(p, "a" if append else "w", encoding="utf-8") as f:
             f.write(content or "")
         return f"{'Appended' if append else 'Wrote'} {len(content or '')} chars to {p}."

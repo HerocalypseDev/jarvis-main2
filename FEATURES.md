@@ -181,3 +181,28 @@ sanitised, the catastrophic gate still applies, but an agent that e.g. writes fi
 in the name takes attacker-chosen text); keep agent steps simple. `review_code` sends the file or diff
 to the active AI. The digest learns from a weak signal (barge-in) and can batch a kind the user
 actually wanted; reset it in the Toolbox.
+
+## Phase D (optional items)
+
+| Item | Status |
+|---|---|
+| D1 Macro/skill form builder | **Shipped** as the Toolbox > Voice macros form (tool dropdown + JSON input per step). Agents use the same step builder. |
+| D2 Wake word | **Not built** (see Later.md): an always-on detector costs CPU all day and adds a model dependency. |
+| D3 create_presentation | **Shipped** as `write_file` with a `.pptx` name (`jarvis_pptx.py`, python-pptx already installed): `# Title` per slide, `-` bullets, `Notes:` lines. No new tool. |
+| D3 translate / generate_image | **Not built** (see Later.md): the agent already translates in conversation; image generation needs a paid image API and model choice. |
+| D4 test helper | **Not built**: "write tests for X" already goes to the coding agent through `delegate_to_claude_code`, on request only. |
+| D5 Weekly improvement suggestions | **Shipped**: `jarvis_improvement_report.py`, tool `improvement_report`, Toolbox > Suggestions this week. Plain SQL, no model call, never changes anything. |
+
+**D5 report** looks at the last 7 days: tools failing 2+ times, commands said the same way 3+ times
+(macro candidates), announcement kinds cut off more than followed up, failing background agents,
+voice replies over 6 s.
+
+## Verification (all phases)
+
+- Tests: `test_feature_batch_a.py` (22), `_b.py` (12), `_c.py` (12), `_d.py` (3); full suite green.
+- Toolbox route rendered in headless Chromium at 1440 and 390 px against a seeded temp DB: every panel
+  loads, no console errors, no horizontal scroll, the seeded fake secret never appears in the page.
+- Live on this PC: WASAPI loopback capture (B1); FTS search and graph sync on a copy of the real DB
+  (C4/C5). **Not verified live**: a real meeting end to end, a real Everything install, a real
+  mail_match agent against Gmail, app-shortcut keys into a real app, battery thresholds on a laptop.
+- Tool prefix grew by 14 tools (~2.5k tokens of the cached prefix); one-time cache re-write per restart.

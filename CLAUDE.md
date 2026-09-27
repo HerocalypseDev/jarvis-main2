@@ -1343,6 +1343,12 @@ Full write-up: `FEATURES.md` (per-feature defaults, env vars, residual risks). R
   incremental, forgotten rows purged), lite knowledge graph (SQL nodes/edges, 2 hops), announcement
   priority (dismiss/act counts, low-score kinds to an hourly digest; reminders never). Tests:
   `test_feature_batch_c.py`.
+- Phase D: `.pptx` via `write_file` (`jarvis_pptx.py`), read-only `improvement_report` (plain SQL, never
+  edits). Wake word, image generation, translate mode, code embeddings, test-writer: not built, see
+  Later.md. The Toolbox route was checked in headless Chromium (Python playwright is installed): a
+  script that imports jarvis with a temp `JARVIS_MEMORY_DB_PATH`, seeds rows and serves
+  `jarvis_dashboard._build_app()` works as a preview. features.js must call `refreshToolbox()` itself on
+  a direct `#/toolbox` load (app.js routes before it loads).
 - Shell heredocs in this environment can turn `\b` into a real backspace byte: write patch scripts with
   the Write tool, and scan for control characters after scripted edits.
 - `_macro_known_tools()` uses connected MCP tools only - never `get_mcp_tool_schemas()`, which starts
@@ -1428,7 +1434,8 @@ row there each phase rather than only stating the total in chat.
 | 56 (feature batch Phase A: clipboard history, Everything search, device names, voice macros, battery saver, deadline context, Toolbox route; 22 new tests) | Opus 5.5 | ~45 min | ~$4.00–$5.60 |
 | 57 (feature batch Phase B: meeting notes, file index, app shortcuts, email drafts, tone adapt; 12 new tests) | Opus 5.5 | ~40 min | ~$3.60–$5.00 |
 | 58 (feature batch Phase C: background agents, review_code, code_search, memory FTS, lite knowledge graph, announcement priority; 12 new tests) | Opus 5.5 | ~45 min | ~$4.00–$5.60 |
-| **Running total (final)** | | **~1981 min** | **~$106.55–$149.45** |
+| 59 (feature batch Phase D: .pptx via write_file, weekly improvement report, Toolbox headless render check + fixes; 3 new tests) | Opus 5.5 | ~20 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~2001 min** | **~$108.35–$151.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

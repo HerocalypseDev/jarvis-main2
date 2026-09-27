@@ -394,3 +394,16 @@ document.getElementById("tb-graph-sync")?.addEventListener("click", async () => 
   const r = await featurePost("graph", "sync").catch(() => null);
   document.getElementById("tb-graph-out").innerHTML = r ? `<li class="muted">Refreshed: ${Object.entries(r.counts).map(([k, n]) => `${n} ${esc(k)}`).join(", ")}</li>` : "";
 });
+
+// --- Weekly improvement suggestions (D5) -------------------------------------------------------
+async function refreshReport() {
+  const list = document.getElementById("tb-report-list");
+  if (!list) return;
+  const data = await featureGet("report");
+  list.innerHTML = (data.suggestions || []).length ? data.suggestions.map((x) => `<li class="list-item compact">${esc(x)}</li>`).join("")
+    : `<li class="empty-state">Nothing to suggest from the last week.</li>`;
+}
+TOOLBOX_PANELS.push(refreshReport);
+
+// Direct load of #/toolbox: app.js routed before this file existed.
+if (typeof currentRoute === "function" && currentRoute() === "toolbox") refreshToolbox();
