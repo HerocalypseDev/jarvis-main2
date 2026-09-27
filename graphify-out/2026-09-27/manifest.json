@@ -18,15 +18,15 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1790536018.5881448,
-    "seen": 1790536381.391091,
-    "ast_hash": "befff3096003e643fca070bd59286421",
+    "mtime": 1790538827.7518897,
+    "seen": 1790539222.8603296,
+    "ast_hash": "dc5aa9e6f3c4057f93a0b4787ac98282",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
-    "mtime": 1789930065.581464,
-    "seen": 1789930589.9352367,
-    "ast_hash": "4a01d7cdbfe9331c97025cd5c37fc364",
+    "mtime": 1790536708.805302,
+    "seen": 1790539222.8603842,
+    "ast_hash": "4954e52137a9c4535734e38e8666c489",
     "semantic_hash": ""
   },
   "jarvis_memory_enhance.py": {
@@ -60,9 +60,9 @@
     "semantic_hash": ""
   },
   "jarvis_voice_tone.py": {
-    "mtime": 1789557319.3027544,
-    "seen": 1789735211.8907244,
-    "ast_hash": "1abbc5fe00cedbefbd8cdba9c87b9017",
+    "mtime": 1790537211.959573,
+    "seen": 1790539222.8604505,
+    "ast_hash": "18d6cc16fdf63604e06dc7859494d6fb",
     "semantic_hash": ""
   },
   "jarvis_window_control.py": {
@@ -108,9 +108,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1790536327.7350962,
-    "seen": 1790536381.3915536,
-    "ast_hash": "99223891e78f65e3e04a92ea51e700ba",
+    "mtime": 1790539002.448392,
+    "seen": 1790539222.8605564,
+    "ast_hash": "6b036ddada562b611ebb0181b5bae01c",
     "semantic_hash": ""
   },
   "README.md": {
@@ -120,9 +120,9 @@
     "semantic_hash": ""
   },
   "requirements.txt": {
-    "mtime": 1790146865.1756382,
-    "seen": 1790147882.776723,
-    "ast_hash": "10a3fe6ab2aa526b9da79ad0906b8a3f",
+    "mtime": 1790537550.8474586,
+    "seen": 1790539222.8605912,
+    "ast_hash": "a28b8155343d73a19053a32396dca5c9",
     "semantic_hash": ""
   },
   "dashboard_static/app.js": {
@@ -138,9 +138,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/index.html": {
-    "mtime": 1790535790.3198428,
-    "seen": 1790536381.391687,
-    "ast_hash": "4aa4cd09f5bb5c0f9a3ce981a35a0b93",
+    "mtime": 1790538809.9026783,
+    "seen": 1790539222.860589,
+    "ast_hash": "c65a55cbef13fe517fb245744485afff",
     "semantic_hash": ""
   },
   "test_dashboard.py": {
@@ -516,9 +516,9 @@
     "semantic_hash": ""
   },
   "Later.md": {
-    "mtime": 1789831267.7609615,
-    "seen": 1789849237.1631393,
-    "ast_hash": "eac83b3f02ea1f15cf2f144b8706bff1",
+    "mtime": 1790539002.4443789,
+    "seen": 1790539222.8605633,
+    "ast_hash": "3df302b7478596fbcc652e95d9268a8f",
     "semantic_hash": ""
   },
   "jarvis_face.py": {
@@ -552,9 +552,9 @@
     "semantic_hash": ""
   },
   "jarvis_autonomy.py": {
-    "mtime": 1790535663.0235083,
-    "seen": 1790536381.3910964,
-    "ast_hash": "c180d5a4cb86f6d678890c572fcb974f",
+    "mtime": 1790537269.894975,
+    "seen": 1790539222.86034,
+    "ast_hash": "7416e279e576f1008fd3c89b8efc6c68",
     "semantic_hash": ""
   },
   "jarvis_dynamic_tools.py": {
@@ -666,9 +666,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/qol.js": {
-    "mtime": 1790535790.3329124,
-    "seen": 1790536381.3910787,
-    "ast_hash": "68dcdc86ce6690a3434c3f348af5e6cd",
+    "mtime": 1790537425.9505358,
+    "seen": 1790539222.8603184,
+    "ast_hash": "4eed379fe3a70395dbace4e210ba1a20",
     "semantic_hash": ""
   },
   "jarvis_followup.py": {
@@ -678,9 +678,9 @@
     "semantic_hash": ""
   },
   "jarvis_settings.py": {
-    "mtime": 1790535814.1775546,
-    "seen": 1790536381.3911686,
-    "ast_hash": "ac57365b6d415acc87a0f6db1f661a20",
+    "mtime": 1790538440.4715033,
+    "seen": 1790539222.8604295,
+    "ast_hash": "c1dd7d74011320b2d53ce426a51231f8",
     "semantic_hash": ""
   },
   "jarvis_weather.py": {
@@ -804,9 +804,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/features.js": {
-    "mtime": 1790535803.2785962,
-    "seen": 1790536381.391075,
-    "ast_hash": "50c7ee560e3820fac5ea3fabb5bddbe4",
+    "mtime": 1790538913.372981,
+    "seen": 1790539222.8603146,
+    "ast_hash": "d5b7ad2386e62686fe5740067a6b988d",
     "semantic_hash": ""
   },
   "jarvis_battery.py": {
@@ -840,9 +840,93 @@
     "semantic_hash": ""
   },
   "FEATURES.md": {
-    "mtime": 1790536311.4817567,
-    "seen": 1790536381.3915718,
-    "ast_hash": "e5c1692759ada2b0d74f39a85b861ac1",
+    "mtime": 1790539002.4443789,
+    "seen": 1790539222.8605611,
+    "ast_hash": "0a732da562012b1283dd1bac94c58f6b",
+    "semantic_hash": ""
+  },
+  "jarvis_agents.py": {
+    "mtime": 1790538039.7639668,
+    "seen": 1790539222.860333,
+    "ast_hash": "ea4d65dd81e664db0df682c67562e756",
+    "semantic_hash": ""
+  },
+  "jarvis_app_shortcuts.py": {
+    "mtime": 1790536748.0944655,
+    "seen": 1790539222.8603354,
+    "ast_hash": "bc5916e5fb35daafee69a863e0ba6add",
+    "semantic_hash": ""
+  },
+  "jarvis_code_tools.py": {
+    "mtime": 1790538270.056672,
+    "seen": 1790539222.860363,
+    "ast_hash": "e1b46d33dd6ca1a259323d32a7b116ba",
+    "semantic_hash": ""
+  },
+  "jarvis_email_templates.py": {
+    "mtime": 1790536748.278595,
+    "seen": 1790539222.8603747,
+    "ast_hash": "0663c89132463c424f8001234da5fc47",
+    "semantic_hash": ""
+  },
+  "jarvis_file_index.py": {
+    "mtime": 1790536691.1009233,
+    "seen": 1790539222.8603818,
+    "ast_hash": "f5091dd45b0d67ce14497c480b8bef6a",
+    "semantic_hash": ""
+  },
+  "jarvis_improvement_report.py": {
+    "mtime": 1790538806.885551,
+    "seen": 1790539222.860398,
+    "ast_hash": "0b57e9856e94b846538f9bbd6317e484",
+    "semantic_hash": ""
+  },
+  "jarvis_kg.py": {
+    "mtime": 1790538156.5709343,
+    "seen": 1790539222.8604002,
+    "ast_hash": "3e893478238d5cd4784dbbc3c7b3ac0f",
+    "semantic_hash": ""
+  },
+  "jarvis_meeting_capture.py": {
+    "mtime": 1790537273.1553192,
+    "seen": 1790539222.860407,
+    "ast_hash": "766d7a93a2fe6e91eef45cc2e8b30484",
+    "semantic_hash": ""
+  },
+  "jarvis_memory_search.py": {
+    "mtime": 1790538111.1869423,
+    "seen": 1790539222.8604138,
+    "ast_hash": "3ba7035b43fe552117b20fb9ce8cec6e",
+    "semantic_hash": ""
+  },
+  "jarvis_notify_priority.py": {
+    "mtime": 1790538182.3788495,
+    "seen": 1790539222.8604183,
+    "ast_hash": "2e5bf1ed916206a989044b6589dccf12",
+    "semantic_hash": ""
+  },
+  "jarvis_pptx.py": {
+    "mtime": 1790538778.467173,
+    "seen": 1790539222.86042,
+    "ast_hash": "b1114e691effe7d5af6e6deedec96ace",
+    "semantic_hash": ""
+  },
+  "test_feature_batch_b.py": {
+    "mtime": 1790537704.6910863,
+    "seen": 1790539222.8605094,
+    "ast_hash": "37c0d59a0d467eaa920aed81776f6a32",
+    "semantic_hash": ""
+  },
+  "test_feature_batch_c.py": {
+    "mtime": 1790538476.7069235,
+    "seen": 1790539222.8605118,
+    "ast_hash": "fe93c233fd4231f94d985a5f6f300eee",
+    "semantic_hash": ""
+  },
+  "test_feature_batch_d.py": {
+    "mtime": 1790538850.3566673,
+    "seen": 1790539222.8605137,
+    "ast_hash": "98c053e4b4c0e79cb3e3ac1f31fcc738",
     "semantic_hash": ""
   }
 }
