@@ -7,6 +7,10 @@ changes), not only when explicitly asked: commit with a clear message and `git p
 credential, token, or PIN (check new files under `skills/` in particular — a skill can contain
 things like typed passcodes).
 
+Push finished work directly to `main` (fast-forward/merge from the working branch) unless told
+otherwise — standing permission from the user (2026-09-28), so no need to ask each session. Never
+force-push `main`; if `main` has moved, merge it in first and re-run the relevant tests.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
