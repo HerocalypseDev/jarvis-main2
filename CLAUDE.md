@@ -1428,6 +1428,15 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   `flush_pending_notifications` reads each distinct queued message once (a repeating reminder held for an
   hour queued the same line several times). Quiet hours itself was removed right after (see the chief-of-staff notes).
 
+## Smarter + autonomous batch (2026-09-28)
+
+Full write-up: `SMARTER.md` (per phase: why, what, defaults, not verified live). Tests: `test_smarter.py`.
+Rules to keep:
+- **Tool narrowing** (`jarvis_tool_router.py`, `JARVIS_TOOL_NARROWING` auto|on|off, default auto = Gemini
+  only): the model sees core tools + BM25 matches + `find_tools`. `find_tools` is loop-internal and
+  side-effect free; never give it side effects. Don't turn narrowing on for Claude by default (breaks the
+  cached tool prefix).
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1515,7 +1524,8 @@ row there each phase rather than only stating the total in chat.
 | 63 (Toolbox trimmed: removed App shortcuts / Meeting notes / Email replies panels, features kept) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 64 (duplicate overdue burst: skip nudges a reminder covers, drop unrelated "Related:" facts, dedupe the held backlog; 3 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
 | 65 (removed quiet hours: gate, helpers, Settings entry; test now pins that a leftover setting holds nothing) | Opus 5.5 | ~8 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~2164 min** | **~$121.05–$169.85** |
+| 66 (smarter batch Phase 1: tool narrowing with BM25 ranker + find_tools, Gemini-only by default; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~2189 min** | **~$123.05–$172.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

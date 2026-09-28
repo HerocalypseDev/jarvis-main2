@@ -40,6 +40,10 @@ SETTINGS: list[dict] = [
      "live": ("jarvis", "SMART_MODEL_EFFORT", str)},
     {"key": "JARVIS_SMART_MODEL_MIN_WORDS", "label": "Words that count as a long request", "kind": "number", "default": "40",
      "help": "Requests at least this long go to the smart model.", "live": ("jarvis", "SMART_MODEL_MIN_WORDS", int)},
+    {"key": "JARVIS_TOOL_NARROWING", "label": "Tool narrowing", "kind": "choice", "default": "auto",
+     "choices": ["auto", "on", "off"],
+     "help": "Send the brain only the ~28 tools a command needs (+ a find_tools helper). auto = Gemini only "
+             "(keeps Claude's prompt cache); on = both.", "live": "env"},
     {"key": "JARVIS_SAFE_MODE", "label": "Safe mode", "kind": "bool", "default": "0",
      "help": "Pauses autonomy, turns off the follow-up window and holds non-urgent announcements. "
              "Commands and the confirmation step work as normal.", "live": "env"},

@@ -56,6 +56,7 @@ import jarvis_workflow as workflow
 import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
+import jarvis_tool_router as tool_router
 import jarvis_filewatcher as filewatcher
 import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
@@ -3123,6 +3124,34 @@ _HARD_TASK_RE = re.compile(
     r"think (hard|carefully|it through)|in detail|deep dive|review|brainstorm|summari[sz]e)",
     re.IGNORECASE,
 )
+
+
+TOOL_NARROWING_LIMIT = int(os.environ.get("JARVIS_TOOL_NARROWING_LIMIT", "28") or 28)
+
+
+def _tool_narrowing_on() -> bool:
+    """JARVIS_TOOL_NARROWING: auto (default: Gemini only, where there is no prompt cache to lose and
+    small models pick badly from 150+ tools) | on (also Claude; each distinct tool list is its own
+    cache entry, so expect more cache writes) | off."""
+    mode = (os.environ.get("JARVIS_TOOL_NARROWING") or "auto").strip().lower()
+    if mode in ("0", "off", "false", "no"):
+        return False
+    if mode in ("1", "on", "true", "yes", "always"):
+        return True
+    return _llm_provider() != "claude"
+
+
+def _recent_history_text(messages: list[dict], turns: int = 2) -> str:
+    """Plain text of the last few history messages, used as low-weight context for tool ranking
+    ("and send it to her too" needs the previous turn to pick the right tools)."""
+    out = []
+    for m in messages[-turns * 2:]:
+        c = m.get("content")
+        if isinstance(c, str):
+            out.append(c[:300])
+        elif isinstance(c, list):
+            out.extend(str(b.get("text", ""))[:300] for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return " ".join(out)
 
 
 def _pick_model(transcript: str) -> str:
@@ -10207,7 +10236,15 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     # tools were offered — it only narrows which tools Claude *can pick from* this turn. Builds
     # its own separate cached prefix from the full-tool-list one (Anthropic caches by exact
     # prefix match), so its cache hit rate ramps up independently as these commands repeat.
-    tools = tools_override if tools_override is not None else (AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas())
+    full_tools = AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()
+    if tools_override is not None:
+        tools = tools_override
+    elif _tool_narrowing_on():
+        # Tool narrowing (2026-09-28): a short, ranked list + find_tools, instead of every schema.
+        tools = tool_router.select(transcript, full_tools, limit=TOOL_NARROWING_LIMIT,
+                                   context=_recent_history_text(messages[:-1]))
+    else:
+        tools = full_tools
     tone_line = voice_tone.tone_context_line(tone) if tone else ""
     # Built once per command, not per round trip: the volatile block (clock minute) sits
     # before the messages in the cached prefix, so recomputing it mid-loop across a minute
@@ -10324,6 +10361,18 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         # rather than being silently dropped from this list.
         tool_results = []
         for i, tu in enumerate(tool_uses):
+            if tu.get("name") == tool_router.FIND_TOOLS_NAME:
+                # Loop-internal and side-effect free: it only widens what the model may pick from
+                # next round (every picked tool still runs through _execute_tool and its gate).
+                offered = {t.get("name") for t in tools}
+                added, result_text = tool_router.find_more(str((tu.get("input") or {}).get("query", "")),
+                                                           full_tools, offered)
+                if added:
+                    tools = tools[:-1] + added + tools[-1:]
+                    cached_tools = _cached_tools(tools)
+                log.info("find_tools %r -> %s", (tu.get("input") or {}).get("query"), [t["name"] for t in added])
+                tool_results.append({"type": "tool_result", "tool_use_id": tu.get("id"), "content": result_text})
+                continue
             if i < MAX_TOOL_CALLS_PER_TURN:
                 result_text = _execute_tool(tu.get("name", ""), tu.get("input") or {}, transcript)
             else:
