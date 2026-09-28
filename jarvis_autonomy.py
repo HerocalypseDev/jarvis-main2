@@ -280,6 +280,12 @@ def _db_path() -> Path:
 
 
 _SCHEMA = [
+    # Confidence that learns (smarter batch 2026-09-28): per action type, how often the user undid/dismissed
+    # vs approved what autonomy did. It can only RAISE the confidence bar for that type, never lower it.
+    "CREATE TABLE IF NOT EXISTS autonomy_calibration (action_type TEXT PRIMARY KEY, good INTEGER NOT NULL DEFAULT 0, "
+    "bad INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
+    # Things autonomy itself created (e.g. reminder ids), so cancelling one counts as "that was wrong".
+    "CREATE TABLE IF NOT EXISTS autonomy_created (kind TEXT NOT NULL, ref TEXT NOT NULL, action_type TEXT, created_at TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS commitments ("
     "id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, description TEXT NOT NULL, "
     "who_is_responsible TEXT NOT NULL DEFAULT 'user', deadline_iso TEXT, related_project_id INTEGER, "
@@ -775,6 +781,11 @@ def _insert_commitment(c: dict, ctype: str, desc: str, who: str, deadline: str |
         meta["executor"], meta["instruction"] = "jarvis", _clean(c["instruction"], 1000)
     if c.get("handled_by_tool"):
         meta["handled_by_tool"] = meta["actioned"] = True
+    elif _REMINDER_ABOUT_RE.search(desc) or _call("reminder_covers", desc, default=False):
+        # Stopped at the source (2026-09-28): a commitment that is itself a reminder request, or one a real
+        # reminder already covers, is stored for tracking but never actioned or nudged (the reminder speaks).
+        meta["handled_by_tool"] = meta["actioned"] = True
+        meta["covered_by"] = "reminder"
     now = _iso()
     return _exec(
         "INSERT INTO commitments (type, description, who_is_responsible, deadline_iso, related_project_id, "
@@ -892,6 +903,64 @@ def _sender_matches(rule_value: str, sender: str) -> bool:
     return addr == rv
 
 
+CALIBRATION_STEP = 0.05
+CALIBRATION_MAX_RAISE = 0.2
+
+
+def record_outcome(action_type: str | None, good: bool) -> None:
+    """Feedback on one autonomous action of this type: approved (good) or dismissed/undone/cancelled (bad)."""
+    if not action_type:
+        return
+    col = "good" if good else "bad"
+    _exec(f"INSERT INTO autonomy_calibration (action_type, {col}, updated_at) VALUES (?, 1, ?) "
+          f"ON CONFLICT(action_type) DO UPDATE SET {col} = {col} + 1, updated_at = excluded.updated_at",
+          (str(action_type)[:40], _iso()))
+    log.info("Autonomy calibration: %s %s", action_type, "good" if good else "bad")
+
+
+def learned_raise(action_type: str | None) -> float:
+    """How much higher the confidence bar is for this action type, from feedback: +0.05 per net bad outcome
+    (two approvals cancel one bad), capped at +0.2. Never negative: feedback can only make autonomy more careful."""
+    if not action_type:
+        return 0.0
+    rows = _rows("SELECT good, bad FROM autonomy_calibration WHERE action_type=?", (str(action_type)[:40],))
+    if not rows:
+        return 0.0
+    net = rows[0]["bad"] - rows[0]["good"] / 2
+    return round(max(0.0, min(CALIBRATION_MAX_RAISE, CALIBRATION_STEP * net)), 3)
+
+
+def note_created(kind: str, ref: Any, action_type: str) -> None:
+    _exec("INSERT INTO autonomy_created (kind, ref, action_type, created_at) VALUES (?, ?, ?, ?)",
+          (kind, str(ref), action_type, _iso()))
+
+
+def note_reminder_cancelled(reminder_id: Any) -> bool:
+    """The user cancelled a reminder: if autonomy made it in the last 2 days, that counts as a bad outcome."""
+    since = _iso(_now() - timedelta(days=2))
+    rows = _rows("SELECT action_type FROM autonomy_created WHERE kind='reminder' AND ref=? AND created_at>=?",
+                 (str(reminder_id), since))
+    if rows:
+        record_outcome(rows[0]["action_type"] or "reminder", False)
+    return bool(rows)
+
+
+def note_user_undo(window_min: int = 10) -> str | None:
+    """The user said "undo" soon after an autonomous action: that action type gets a bad outcome."""
+    since = _iso(_now() - timedelta(minutes=window_min))
+    rows = _rows("SELECT payload_json FROM autonomy_decisions WHERE decision='act' AND outcome='ok' AND created_at>=? "
+                 "ORDER BY id DESC LIMIT 1", (since,))
+    if not rows:
+        return None
+    try:
+        atype = (json.loads(rows[0]["payload_json"] or "{}") or {}).get("type")
+    except (json.JSONDecodeError, AttributeError):
+        atype = None
+    if atype:
+        record_outcome(atype, False)
+    return atype
+
+
 def _evaluate_base(category: str, sender: str, text: str, confidence: float,
                    action_type: str | None, source_type: str) -> tuple[str, str]:
     """-> ('auto_act' | 'record' | 'ask' | 'ignore', reason).
@@ -914,7 +983,7 @@ def _evaluate_base(category: str, sender: str, text: str, confidence: float,
             matched.append(r)
         elif kind == "keyword" and mv and mv in text_l and (not r["category"] or r["category"] == category):
             matched.append(r)
-    default_floor = _env_float("JARVIS_AUTONOMY_AUTO_MIN_CONF", MIN_AUTO_CONF_DEFAULT)
+    default_floor = _env_float("JARVIS_AUTONOMY_AUTO_MIN_CONF", MIN_AUTO_CONF_DEFAULT) + learned_raise(action_type)
     if not matched:
         if confidence < default_floor:
             return "record", f"no rule; confidence {confidence:.2f} < {default_floor:.2f}, recorded only"
@@ -953,7 +1022,7 @@ def evaluate_policy(category: str, sender: str, text: str, confidence: float, ac
         return verdict, reason
     if not (action_type in INBOUND_GUARDED or suspicious):
         return verdict, reason
-    bar = _env_float("JARVIS_AUTONOMY_INBOUND_AUTO_MIN_CONF", INBOUND_AUTO_MIN_CONF_DEFAULT)
+    bar = _env_float("JARVIS_AUTONOMY_INBOUND_AUTO_MIN_CONF", INBOUND_AUTO_MIN_CONF_DEFAULT) + learned_raise(action_type)
     if confidence >= bar:
         return verdict, reason
     if not suspicious and _structured_meeting(action_type, details):
@@ -1218,7 +1287,11 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
     if action_type == "reminder":
         res = _call("create_reminder", str(details.get("text") or ""), str(details.get("due_iso") or ""),
                     default=None)
-        return (res is not None and "couldn't" not in str(res).lower()), str(res)
+        ok = res is not None and "couldn't" not in str(res).lower()
+        m = re.search(r"#(\d+)", str(res or ""))
+        if ok and m:
+            note_created("reminder", m.group(1), "reminder")
+        return ok, str(res)
     if action_type == "notification":
         text = str(details.get("text") or details.get("description") or "")
         if speech_minimal() and details.get("speech") != "reminder":
@@ -1341,6 +1414,7 @@ def approve_suggestion(sid: int, background: bool = True) -> str:
         now_status = (_rows("SELECT status FROM autonomy_suggestions WHERE id=?", (sid,)) or [{"status": s["status"]}])[0]["status"]
         return f"Suggestion #{sid} is already {now_status}."
     record_feedback(s["category"], s["sender"] or "", s["action_type"], True)
+    record_outcome(s["action_type"], True)
     if s["commitment_id"]:
         release_commitment(s["commitment_id"])  # the user vouched for it by approving
 
@@ -1376,6 +1450,7 @@ def dismiss_suggestion(sid: int, never: bool = False) -> str:
         return f"Suggestion #{sid} is already {_rows('SELECT status FROM autonomy_suggestions WHERE id=?', (sid,))[0]['status']}."
     _publish()
     record_feedback(s["category"], s["sender"] or "", s["action_type"], False)
+    record_outcome(s["action_type"], False)
     if never:
         set_policy(s["category"], "ignore", source="user")
     _log_decision(s["title"], None, "dismiss", "", "user dismissed" + (" (never)" if never else ""))

@@ -59,6 +59,8 @@ import jarvis_memory_enhance as memory_enhance
 import jarvis_tool_router as tool_router
 import jarvis_lessons as lessons
 import jarvis_embeddings as embeddings
+import jarvis_daily_plan as daily_plan
+import jarvis_ollama as ollama
 import jarvis_filewatcher as filewatcher
 import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
@@ -2194,7 +2196,7 @@ AGENT_TOOLS = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"provider": {"type": "string", "enum": ["claude", "gemini"]}},
+            "properties": {"provider": {"type": "string", "enum": ["claude", "gemini", "ollama"]}},
             "required": ["provider"],
         },
     },
@@ -3048,6 +3050,14 @@ BATCH_TOOLS = [
             "action": {"type": "string", "enum": ["list", "history", "cancel"]}, "id": {"type": "integer"}}},
     },
     {
+        "name": "daily_plan",
+        "description": ("Today's plan (made each morning from commitments, reminders, calendar and what was carried "
+                        "over) and the evening review. action=get (read it out), refresh (rebuild now), review "
+                        "(check what's done now)."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["get", "refresh", "review"]}}, "required": ["action"]},
+    },
+    {
         "name": "lessons",
         "description": ("Lessons Jarvis learned from its own mistakes (a tool that failed, or the user correcting "
                         "it). action=list; add (lesson: one short how-to line the user wants kept); forget (id). "
@@ -3179,10 +3189,14 @@ def _pick_model(transcript: str) -> str:
 def _llm_configured() -> bool:
     if _llm_provider() == "gemini":
         return bool(gemini.api_key())
+    if _llm_provider() == "ollama":
+        return bool(ollama.model_name())
     return bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip())
 
 
 def _llm_unavailable_reply() -> str:
+    if _llm_provider() == "ollama":
+        return "Sorry, I couldn't reach the local brain just now. Is Ollama running?"
     return "Sorry, I couldn't reach Gemini just now." if _llm_provider() == "gemini" else CLAUDE_UNAVAILABLE_REPLY
 
 
@@ -3193,6 +3207,8 @@ def _llm_status() -> dict:
         "claude_model": CLAUDE_MODEL,
         "claude_configured": bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip()),
         "gemini_configured": bool(gemini.api_key()),
+        "ollama_model": ollama.model_name(),
+        "ollama_url": ollama.base_url(),
     }
 
 
@@ -3201,7 +3217,11 @@ def set_llm_provider(provider: str) -> str:
     key isn't configured, so a typo can't leave Jarvis with no working brain."""
     provider = (provider or "").strip().lower()
     if provider not in gemini.PROVIDERS:
-        return f"Unknown brain {provider!r}; choose claude or gemini."
+        return f"Unknown brain {provider!r}; choose claude, gemini or ollama (local)."
+    if provider == "ollama":
+        problem = ollama.available()
+        if problem:
+            return f"The local brain isn't ready: {problem}."
     if provider == "gemini" and not gemini.api_key():
         return "Gemini isn't set up: add GEMINI_API_KEY to the .env file and restart Jarvis."
     if provider == "claude" and not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
@@ -3213,6 +3233,10 @@ def set_llm_provider(provider: str) -> str:
             f"Switched to Gemini ({gemini.model_name()}). Note: on Google's free tier, your "
             "prompts and Jarvis's tool results may be used by Google to improve its products."
         )
+    if provider == "ollama":
+        return (f"Switched to the local brain ({ollama.model_name()} on Ollama). Commands and memory now stay on "
+                "your network, but it's slower and less capable than the cloud brains, and it never falls back to "
+                "the cloud if it's down.")
     return f"Switched to Claude ({CLAUDE_MODEL})."
 
 
@@ -3306,6 +3330,11 @@ def _claude_failure_reason(code: int, detail: str) -> tuple[str, bool]:
 
 
 def _claude_request(body: dict, timeout: int) -> dict | None:
+    if _llm_provider() == "ollama":
+        result = ollama.call(body, timeout)  # never fails over to a cloud brain: that would defeat the point
+        if result is not None:
+            _record_api_usage(body, result)
+        return result
     if _llm_provider() == "gemini":
         result = gemini.call(body, timeout, _urlopen_hard_timeout)
         if result is not None:
@@ -4756,6 +4785,11 @@ def cancel_reminder(reminder_id: int) -> str:
             conn.commit()
         finally:
             conn.close()
+    if cur.rowcount and _current_command_source():
+        try:  # autonomy made this one? then that was a wrong call: raise its bar for reminders
+            autonomy.note_reminder_cancelled(reminder_id)
+        except Exception as e:
+            log.debug("autonomy calibration note failed: %s", e)
     return f"Cancelled reminder #{reminder_id}." if cur.rowcount else f"No active reminder #{reminder_id}."
 
 
@@ -5205,6 +5239,7 @@ def _scheduler_loop() -> None:
             _meeting_tick()
             _agents_tick(now)
             _deferred_tick(now)
+            _daily_plan_tick(now)
             _cascade_tick()
             _kg_sync_tick()
             _digest_tick()
@@ -5489,6 +5524,174 @@ LESSONS_PER_HOUR = 12
 _lesson_calls: list[float] = []
 
 
+# --- Daily plan + evening review (smarter batch, 2026-09-28) -----------------------------------
+_daily_plan_running = threading.Lock()
+
+
+def _daily_plan_db():
+    conn = _memory_db_connect()
+    conn.execute("CREATE TABLE IF NOT EXISTS daily_plans (day TEXT PRIMARY KEY, items_json TEXT NOT NULL, "
+                 "created_at TEXT NOT NULL, review_json TEXT, reviewed_at TEXT)")
+    return conn
+
+
+def _daily_plan_row(day: str) -> dict | None:
+    with _memory_db_lock:
+        conn = _daily_plan_db()
+        try:
+            r = conn.execute("SELECT day, items_json, created_at, review_json, reviewed_at FROM daily_plans WHERE day=?",
+                             (day,)).fetchone()
+        finally:
+            conn.close()
+    if not r:
+        return None
+    return {"day": r[0], "items": json.loads(r[1] or "[]"), "created_at": r[2],
+            "review": json.loads(r[3]) if r[3] else None, "reviewed_at": r[4]}
+
+
+def _daily_plan_gather(now: datetime) -> list[dict]:
+    day = now.date().isoformat()
+    commitments = []
+    try:
+        soon = (now + timedelta(hours=36)).isoformat(timespec="seconds")
+        old = (now - timedelta(days=3)).isoformat(timespec="seconds")
+        for c in autonomy.status()["commitments"]:
+            meta = autonomy._meta(c) if isinstance(c, dict) else {}
+            if c.get("quarantined") or c.get("who_is_responsible") != "user" or meta.get("covered_by"):
+                continue
+            dl = c.get("deadline_iso") or ""
+            if dl and old <= dl <= soon:
+                commitments.append(c)
+    except Exception as e:
+        log.debug("daily plan: commitments unavailable: %s", e)
+    end = datetime.combine(now.date(), datetime.max.time()).isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            reminders = [{"id": r[0], "text": r[1], "due_at": r[2]} for r in conn.execute(
+                "SELECT id, text, due_at FROM reminders WHERE delivered_at IS NULL AND cancelled_at IS NULL "
+                "AND due_at <= ? ORDER BY due_at LIMIT 10", (end,)).fetchall()]
+        finally:
+            conn.close()
+    events = []
+    try:
+        raw = _calendar_events_raw(now, datetime.combine(now.date(), datetime.max.time()))
+        events = daily_plan.events_from_calendar_json(raw) if raw else []
+    except Exception as e:
+        log.debug("daily plan: calendar unavailable: %s", e)
+    yesterday = _daily_plan_row((now.date() - timedelta(days=1)).isoformat())
+    carried = ((yesterday or {}).get("review") or {}).get("carried") or []
+    return daily_plan.candidates(commitments, reminders, events, carried, now)
+
+
+def build_daily_plan(now: datetime | None = None) -> list[dict]:
+    now = now or datetime.now()
+    items = _daily_plan_gather(now)
+    plan = None
+    if items:
+        text = _sleep_mail_claude(daily_plan.PLAN_SYSTEM, daily_plan.data_block(items, now), 400)
+        plan = daily_plan.parse_plan(text or "", items)
+    plan = plan or daily_plan.fallback_order(items, now)
+    with _memory_db_lock:
+        conn = _daily_plan_db()
+        try:
+            conn.execute("INSERT OR REPLACE INTO daily_plans (day, items_json, created_at) VALUES (?,?,?)",
+                         (now.date().isoformat(), json.dumps(plan), now.isoformat(timespec="seconds")))
+            conn.commit()
+        finally:
+            conn.close()
+    log.info("Daily plan for %s: %d item(s)", now.date(), len(plan))
+    return plan
+
+
+def _daily_item_done(item: dict, now: datetime) -> bool:
+    kind, _, ref = item.get("ref", "").partition(":")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            if kind == "reminder":
+                r = conn.execute("SELECT delivered_at, cancelled_at FROM reminders WHERE id=?", (ref,)).fetchone()
+                return bool(r and (r[0] or r[1]))
+            if kind == "commitment":
+                r = conn.execute("SELECT status FROM commitments WHERE id=?", (ref,)).fetchone()
+                return bool(r and r[0] in ("completed", "cancelled", "expired"))
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+    if kind == "event":
+        return bool(item.get("due")) and item["due"] <= now.isoformat(timespec="seconds")
+    return False
+
+
+def review_daily_plan(now: datetime | None = None, announce: bool = True) -> str:
+    now = now or datetime.now()
+    row = _daily_plan_row(now.date().isoformat())
+    if not row:
+        return "There's no plan for today to review."
+    done, carried = daily_plan.review(row["items"], lambda i: _daily_item_done(i, now))
+    with _memory_db_lock:
+        conn = _daily_plan_db()
+        try:
+            conn.execute("UPDATE daily_plans SET review_json=?, reviewed_at=? WHERE day=?",
+                         (json.dumps({"done": done, "carried": carried}), now.isoformat(timespec="seconds"), row["day"]))
+            conn.commit()
+        finally:
+            conn.close()
+    line = daily_plan.review_line(done, carried)
+    if announce and line:
+        queue_or_deliver_notification(line)  # non-urgent: sleep/focus/safe-mode/meeting holds all apply
+    return line or "Nothing was on today's plan."
+
+
+def _clock_setting(name: str, default: str) -> tuple[int, int] | None:
+    raw = (os.environ.get(name) or default).strip()
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _daily_plan_tick(now: datetime) -> None:
+    """From the scheduler: build today's plan once after the plan time, review it once after the review time."""
+    if (os.environ.get("JARVIS_DAILY_PLAN") or "1").strip().lower() in ("0", "off", "false", "no"):
+        return
+    plan_at, review_at = _clock_setting("JARVIS_DAILY_PLAN_TIME", "07:45"), _clock_setting("JARVIS_DAILY_REVIEW_TIME", "21:00")
+    row = _daily_plan_row(now.date().isoformat())
+    want_plan = plan_at and not row and (now.hour, now.minute) >= plan_at and not (review_at and (now.hour, now.minute) >= review_at)
+    want_review = review_at and row and not row.get("reviewed_at") and (now.hour, now.minute) >= review_at
+    if not (want_plan or want_review) or not _daily_plan_running.acquire(blocking=False):
+        return
+
+    def work():
+        try:
+            build_daily_plan(now) if want_plan else review_daily_plan(now)
+        except Exception as e:
+            log.warning("Daily plan %s failed: %s", "build" if want_plan else "review", e)
+        finally:
+            _daily_plan_running.release()
+    threading.Thread(target=work, name="jarvis-daily-plan", daemon=True).start()
+
+
+def _feature_daily_plan(action: str, payload: dict):
+    if action == "refresh":
+        build_daily_plan()
+    elif action != "get":
+        return None
+    row = _daily_plan_row(datetime.now().date().isoformat()) or {"items": [], "review": None}
+    rv = row.get("review") or {}
+    row["review_line"] = daily_plan.review_line(rv.get("done") or [], rv.get("carried") or []) if rv else ""
+    return row
+
+
+def _daily_plan_tool(inp: dict) -> str:
+    action = (inp.get("action") or "get").lower()
+    if action == "refresh":
+        return daily_plan.spoken_plan(build_daily_plan())
+    if action == "review":
+        return review_daily_plan(announce=False)
+    row = _daily_plan_row(datetime.now().date().isoformat())
+    return daily_plan.spoken_plan(row["items"]) if row else daily_plan.spoken_plan(build_daily_plan())
+
+
 def _lessons_tool(inp: dict) -> str:
     action = (inp.get("action") or "list").lower()
     if action == "list":
@@ -5541,6 +5744,8 @@ def _learn_lesson(transcript: str, steps: list, correction: str = "", previous_r
 
 
 def _spawn_lesson(*args) -> None:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return  # never a background model call from a test (tests call _learn_lesson directly)
     threading.Thread(target=lambda: _learn_lesson(*args), name="jarvis-lesson", daemon=True).start()
 
 
@@ -5698,6 +5903,9 @@ def _as_dashboard(fn, *args):
         return fn(*args)
     finally:
         _command_ctx.source = prev
+
+
+_feature("daily_plan")(_feature_daily_plan)
 
 
 @_feature("clipboard")
@@ -6427,6 +6635,7 @@ def _state_line() -> str:
 
 _BATCH_TOOL_HANDLERS.update({"schedule_jarvis_task": _schedule_jarvis_task_tool, "scheduled_jobs": _deferred_tool})
 _BATCH_TOOL_HANDLERS["lessons"] = _lessons_tool
+_BATCH_TOOL_HANDLERS["daily_plan"] = _daily_plan_tool
 
 
 @_feature("deferred")
@@ -6596,6 +6805,21 @@ dashboard.providers["memory"] = {
 }
 
 
+def _autonomy_create_reminder(text: str, due_iso: str) -> str:
+    """create_reminder for autonomy, with the new reminder's id appended ("(#12)") so autonomy can remember
+    which reminders it made: cancelling one of those later counts as feedback (autonomy.note_reminder_cancelled)."""
+    res = create_reminder(text, due_at=due_iso)
+    if not str(res).startswith("Reminder set"):
+        return res
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            row = conn.execute("SELECT MAX(id) FROM reminders WHERE cancelled_at IS NULL").fetchone()
+        finally:
+            conn.close()
+    return f"{res} (#{row[0]})" if row and row[0] else res
+
+
 def _autonomy_callbacks() -> dict:
     return {
         "claude": _sleep_mail_claude,
@@ -6603,7 +6827,7 @@ def _autonomy_callbacks() -> dict:
         "user_busy": lambda: user_is_actively_working() or jarvis_speaking.is_set() or _commands_in_flight() > 0,
         "quiet": lambda: sleep_mode.should_suppress(False) or focus_mode.should_suppress(False),
         "audit": _log_action_audit,
-        "create_reminder": lambda text, due_iso: create_reminder(text, due_at=due_iso),
+        "create_reminder": _autonomy_create_reminder,
         "run_agent": _autonomy_run_agent,
         "queue_task": lambda description, instructions, priority="normal", deadline=None: task_scheduler.queue_task(
             description, priority=priority if priority in task_scheduler.PRIORITY_LEVELS else "normal",
@@ -11213,6 +11437,11 @@ def _handle_text_command_impl(
     macro_reply = shortcut_reply if shortcut_reply is not None else (None if tagged else _macro_reply(transcript))
     intent = "macro" if macro_reply is not None else ("complex" if tagged else latency.classify_intent(transcript))
     deterministic_reply = macro_reply if macro_reply is not None else _deterministic_intent_reply(intent, transcript)
+    if intent == "undo":
+        try:  # an undo right after an autonomous action counts against that action type
+            autonomy.note_user_undo()
+        except Exception as e:
+            log.debug("autonomy undo note failed: %s", e)
     loop_transcript = (_undo_instruction(transcript) if intent == "undo" else None) or transcript
     reduced_tools = _reduced_tools_for_intent(intent, transcript) if deterministic_reply is None else None
     intent_path = "deterministic" if deterministic_reply is not None else ("reduced_tools" if reduced_tools else "full")

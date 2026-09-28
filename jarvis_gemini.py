@@ -36,7 +36,7 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 # until the reset. Default is back to 3.1-flash-lite (confirmed working live). No automatic
 # model fallback (removed 2026-09-25, user request): the user picks the model in Settings.
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
-PROVIDERS = ("claude", "gemini")
+PROVIDERS = ("claude", "gemini", "ollama")  # ollama: local brain (jarvis_ollama)
 MAX_RETRY_WAIT_S = 30.0  # longest 429 "retry after" Jarvis will sit through mid-command
 
 

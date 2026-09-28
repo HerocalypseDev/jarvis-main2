@@ -709,9 +709,10 @@ function renderLlm(llm) {
     return;
   }
   currentLlm = llm;
-  const model = llm.provider === "gemini" ? llm.gemini_model : llm.claude_model;
-  chip.textContent = `brain: ${llm.provider}`;
-  chip.title = `Model: ${model}. Click to switch to ${llm.provider === "gemini" ? "Claude" : "Gemini"}.`;
+  const model = llm.provider === "gemini" ? llm.gemini_model
+    : llm.provider === "ollama" ? llm.ollama_model : llm.claude_model;
+  chip.textContent = `brain: ${llm.provider === "ollama" ? "local" : llm.provider}`;
+  chip.title = `Model: ${model}. Click to switch brain (Claude, Gemini or local).`;
   chip.classList.toggle("llm-gemini", llm.provider === "gemini");
 }
 
@@ -726,7 +727,12 @@ async function fetchLlm() {
 
 document.getElementById("llm-chip").addEventListener("click", async () => {
   if (!currentLlm) return;
-  const target = currentLlm.provider === "gemini" ? "claude" : "gemini";
+  const next = { claude: "gemini", gemini: "claude", ollama: "claude" }[currentLlm.provider] || "claude";
+  let target = window.prompt("Switch Jarvis's brain to: claude, gemini or local", next);
+  if (!target) return;
+  target = target.trim().toLowerCase();
+  if (target === "local") target = "ollama";
+  if (target === currentLlm.provider) return;
   if (target === "gemini" && !window.confirm(
     "Switch Jarvis's brain to Gemini?\n\nOn Google's free tier, your prompts and tool results " +
     "(emails, screen contents, shell output) may be used by Google to improve its products."

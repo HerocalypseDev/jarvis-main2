@@ -324,3 +324,27 @@ document.getElementById("tb-jobs-list")?.addEventListener("click", async (e) => 
   await featurePost("deferred", "cancel", { id: Number(e.target.dataset.jobCancel) }).catch(() => {});
   refreshJobs();
 });
+
+// --- Home: today's plan + evening review (smarter batch 2026-09-28) ----------------------------
+async function refreshDailyPlan() {
+  const list = document.getElementById("home-plan");
+  if (!list) return;
+  const data = await featureGet("daily_plan").catch(() => null);
+  if (!data) { list.innerHTML = `<li class="empty-state">Plan unavailable.</li>`; return; }
+  const done = new Set(((data.review || {}).done || []).map((i) => i.ref));
+  list.innerHTML = (data.items || []).length ? data.items.map((i) => `
+    <li class="list-item compact${done.has(i.ref) ? " done" : ""}">
+      <span class="src-badge">${esc(i.kind || "")}</span> ${esc(i.text)}
+      ${i.due ? `<span class="muted">${fmtWhen(i.due)}</span>` : ""}
+      ${i.why ? `<div class="muted">${esc(i.why)}</div>` : ""}</li>`).join("")
+    : `<li class="empty-state">No plan yet today. It's made each morning, or press Rebuild.</li>`;
+  document.getElementById("home-plan-review").textContent = data.review_line || "";
+}
+document.getElementById("plan-refresh")?.addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  await featurePost("daily_plan", "refresh").catch(() => {});
+  e.target.disabled = false;
+  refreshDailyPlan().catch(() => {});
+});
+refreshDailyPlan().catch(() => {});
+setInterval(() => refreshDailyPlan().catch(() => {}), 300000);

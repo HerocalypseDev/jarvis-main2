@@ -22,3 +22,4 @@ face.key
 # run logs (contain transcripts and third-party addresses)
 *.log
 .env.tmp
+evals/results/
