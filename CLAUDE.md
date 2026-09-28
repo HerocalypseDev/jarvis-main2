@@ -161,6 +161,13 @@ Rules:
   pre-fetch-never-plays safety property, and every Autonomy control still wired after the
   restructure. Full suite: 736 tests (2 new), same 4 pre-existing unrelated failures.
 
+- **Detail panel kept jumping to the top (2026-09-28, user report)**: `render()` re-ran `showDetail()` for the
+  followed session on every poll/WS message (metrics every 5 s), rebuilding the panel with `innerHTML` and
+  resetting the scroll of the reply box. `showDetail` now skips a background (`navigate:false`) rebuild when
+  nothing about the item changed (`renderKey`: id/status/end/reply length), and saves/restores every scroll
+  offset (panel, its ancestors, each `.detail-code`) when it does rebuild. Checked in headless Chromium: old
+  code reset scroll 400 -> 0, new code keeps 400 through an unchanged and a changed refresh.
+
 ## Speech shaping (2026-09-18)
 
 - `_finish_background_task` now reports completion with `urgent=True` — a background
@@ -1563,7 +1570,8 @@ row there each phase rather than only stating the total in chat.
 | 70 (smarter batch Phases 5-7: eval runner + 30 real-failure cases (live-run on Gemini/Gemma), autonomy source dedupe + learning confidence + daily plan/review with Home card, local Ollama brain; 16 new tests) | Opus 5.5 | ~70 min | ~$6.00–$8.40 |
 | 71 (smarter batch audit: 14 bugs fixed incl. read-only tools backing fake claims, silent reply after streamed nudge, dropped reminder requests, proxy leak on the local brain, blocking embeddings; 21 new tests + 2 stale tests fixed) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
 | 72 (Gemini overload fix: 5xx backoff 2/4/8 s + opt-in overload-only backup model; live-verified 5/5 on 3.1-flash-lite; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
-| **Running total (final)** | | **~2389 min** | **~$139.25–$195.35** |
+| 73 (dashboard detail panel: no rebuild on unchanged refresh + scroll preserved; headless before/after check) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~2399 min** | **~$139.85–$196.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
