@@ -1436,6 +1436,9 @@ Rules to keep:
   only): the model sees core tools + BM25 matches + `find_tools`. `find_tools` is loop-internal and
   side-effect free; never give it side effects. Don't turn narrowing on for Claude by default (breaks the
   cached tool prefix).
+- **Claim checker + escalation**: a final reply claiming an action no matching tool ran gets one nudge
+  round, then a "Correction: I didn't actually ..." line (`_ACTION_CLAIMS`). Tool failure / unbacked claim /
+  repeated command switches to `_escalation_model()`; a mid-command Claude switch never sends `thinking`.
 
 ### Cost reporting
 
@@ -1525,7 +1528,8 @@ row there each phase rather than only stating the total in chat.
 | 64 (duplicate overdue burst: skip nudges a reminder covers, drop unrelated "Related:" facts, dedupe the held backlog; 3 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
 | 65 (removed quiet hours: gate, helpers, Settings entry; test now pins that a leftover setting holds nothing) | Opus 5.5 | ~8 min | ~$0.60–$0.90 |
 | 66 (smarter batch Phase 1: tool narrowing with BM25 ranker + find_tools, Gemini-only by default; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~2189 min** | **~$123.05–$172.65** |
+| 67 (smarter batch Phase 2: claim checker for reminders/sends/calendar/files/memory + escalate to the smart model on failure/repeat, Gemini override with fallback; 14 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~2214 min** | **~$125.05–$175.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

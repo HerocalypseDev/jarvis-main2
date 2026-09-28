@@ -77,3 +77,73 @@ def test_find_tools_widens_the_next_round_without_running_anything(jarvis, monke
     assert "guided_breathing_exercise" in second
     assert ran == ["guided_breathing_exercise"]  # find_tools itself never reaches _execute_tool
     assert reply == "Breathing exercise started."
+
+
+# --- Phase 2: claim checker + escalate on failure ------------------------------------------------
+@pytest.mark.parametrize("text,used,expected", [
+    ("I've set a reminder for 5pm.", [], ["set that reminder"]),
+    ("I've set a reminder for 5pm.", ["create_reminder"], []),
+    ("Done, I sent the email to Sam.", [], ["send that"]),
+    ("Done, I sent the email to Sam.", ["mcp_gmail_send_email"], []),
+    ("I've added the meeting to your calendar.", [], ["add that to your calendar"]),
+    ("Shall I set a reminder for that?", [], []),
+    ("Do you want me to send it?", [], []),
+    ("I can set a reminder if you like.", [], []),
+    ("I've saved the notes to a document.", ["write_file"], []),
+])
+def test_unbacked_claims(jarvis, text, used, expected):
+    assert jarvis._unbacked_claims(text, used) == expected
+
+
+def test_unbacked_claim_is_nudged_into_the_real_call(jarvis, monkeypatch):
+    ran = []
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda name, *a, **k: ran.append(name) or "Reminder #4 set for 17:00.")
+    seen = _script(monkeypatch, jarvis, [
+        _text("I've set a reminder for 5pm to call mum."),
+        _call("create_reminder", {"text": "call mum", "due_at": "17:00"}),
+        _text("Reminder set for 5pm."),
+    ])
+    reply = jarvis.run_agent_loop("remind me to call mum at 5")
+    assert ran == ["create_reminder"] and reply == "Reminder set for 5pm."
+    assert "did NOT happen" in str(seen[1]["messages"][-1]["content"])
+
+
+def test_claim_still_unbacked_after_nudge_is_corrected(jarvis, monkeypatch):
+    _script(monkeypatch, jarvis, [_text("I've sent the email to Sam."), _text("I've sent the email to Sam.")])
+    reply = jarvis.run_agent_loop("email sam the report")
+    assert "didn't actually send that" in reply
+
+
+def test_tool_failure_escalates_rest_of_command_without_thinking(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "SMART_MODEL", "claude-sonnet-5")
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "Error: folder not found")
+    seen = _script(monkeypatch, jarvis, [_call("read_file", {"path": "x"}), _text("That folder doesn't exist.")])
+    jarvis.run_agent_loop("open my notes")
+    assert seen[0]["model"] == jarvis.CLAUDE_MODEL
+    assert seen[1]["model"] == "claude-sonnet-5" and "thinking" not in seen[1]
+
+
+def test_repeated_command_starts_on_the_smart_model(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "SMART_MODEL", "claude-sonnet-5")
+    seen = _script(monkeypatch, jarvis, [_text("Here it is.")])
+    jarvis.run_agent_loop("open my notes", tone={"repeated": True})
+    assert seen[0]["model"] == "claude-sonnet-5"
+
+
+def test_gemini_escalation_model_falls_back_to_the_configured_one(monkeypatch):
+    import urllib.error
+    import jarvis_gemini as g
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("JARVIS_GEMINI_MODEL", "gemini-3.1-flash-lite")
+    asked = []
+
+    def http(req, timeout):
+        asked.append(req.full_url.split("/models/")[1].split(":")[0])
+        if "3.6" in req.full_url:
+            raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+        return b'{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}'
+
+    out = g.call({"model": "gemini-3.6-flash", "messages": [{"role": "user", "content": "hi"}]}, 5, http,
+                 sleep=lambda s: None)
+    assert out["content"][0]["text"] == "ok"
+    assert asked == ["gemini-3.6-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"]

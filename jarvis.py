@@ -9362,6 +9362,66 @@ _HANDOFF_NUDGE = (
 _FAILED_RESULT_PREFIXES = ("couldn't", "could not", "no results", "unrecognized", "error", "failed", "skipped")
 
 
+# --- Claim checker (smarter batch, 2026-09-28) -------------------------------------------------
+# The hand-off guard above, generalised: a final reply that claims an action in the past tense
+# ("I've set a reminder", "I sent the email") when no tool that does that ran this turn gets one
+# extra round to actually do it; if it still doesn't, the reply says plainly that it didn't happen.
+# Each entry: (what it claims, claim regex, regex over the names of tools that would back it).
+_ACTION_CLAIMS = [
+    ("set that reminder",
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:set|created|added|scheduled|made)\b[^.!?]{0,30}\breminders?\b"
+                r"|\breminders?\b (?:is |has been |was )?(?:set|created|scheduled)\b|\bi'?ll remind you\b", re.I),
+     re.compile(r"remind|timer|schedule|alarm", re.I)),
+    ("send that",
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:sent|emailed|messaged|texted|replied|forwarded)\b"
+                r"|\b(?:email|message|reply|text)\b (?:has been |was |is )?sent\b", re.I),
+     re.compile(r"send|reply|mail|whatsapp|telegram|message|type|click", re.I)),
+    ("add that to your calendar",
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:added|put|scheduled|booked|created)\b[^.!?]{0,40}\b(?:calendar|event|meeting)\b"
+                r"|\b(?:event|meeting)\b (?:has been |was |is )?(?:created|added|scheduled|booked)\b", re.I),
+     re.compile(r"calendar|event", re.I)),
+    ("save that file",
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:saved|written|wrote|created)\b[^.!?]{0,40}"
+                r"\b(?:file|document|doc|docx|note|notes|folder|presentation|spreadsheet|pptx)\b", re.I),
+     re.compile(r"write|save|file|doc|pptx|folder|note|create|delegate|james", re.I)),
+    ("remember that",
+     re.compile(r"\bi'?ll remember\b|\b(?:i'?ve|i have)\s+(?:noted|remembered|saved)\b[^.!?]{0,20}\b(?:that|it|this)\b"
+                r"[^.!?]{0,20}\b(?:memory|remember)?", re.I),
+     re.compile(r"remember|memory|note|fact|profile", re.I)),
+]
+
+
+def _unbacked_claims(reply_text: str, used_tool_names: list[str]) -> list[str]:
+    """What the reply claims to have done, past tense, with no tool of that kind run this turn.
+    Questions and offers ("Shall I set a reminder?") are ignored."""
+    used = " ".join(used_tool_names)
+    out = []
+    for sentence in re.split(r"(?<=[.!?])\s+", reply_text or ""):
+        if sentence.rstrip().endswith("?") or re.search(r"\b(?:want me to|shall i|should i|can i|could i|would you like)\b", sentence, re.I):
+            continue
+        for what, claim, backing in _ACTION_CLAIMS:
+            if what not in out and claim.search(sentence) and not backing.search(used):
+                out.append(what)
+    return out
+
+
+def _claim_nudge(what: list[str]) -> str:
+    return ("[system check] Your reply says you did this: " + "; ".join(what) + ". But no tool that does "
+            "that ran this turn, so it did NOT happen. If the user wants it, call the right tool now (use "
+            "find_tools if you can't see one). If you can't do it, reply again and say so plainly, without "
+            "claiming it was done.")
+
+
+def _escalation_model() -> str | None:
+    """The stronger model to switch to when a command is going wrong, or None if none is set up.
+    Claude: JARVIS_SMART_MODEL. Gemini: JARVIS_GEMINI_SMART_MODEL (empty by default: the user picks
+    Gemini models themselves)."""
+    if _llm_provider() == "claude":
+        return SMART_MODEL if SMART_MODEL and SMART_MODEL != CLAUDE_MODEL else None
+    m = (os.environ.get("JARVIS_GEMINI_SMART_MODEL") or "").strip()
+    return m if m and m != gemini.model_name() else None
+
+
 def _looks_failed(result: str) -> bool:
     r = (result or "").strip().lower()
     return not r or r.startswith(_FAILED_RESULT_PREFIXES) or "unavailable" in r[:60]
@@ -10257,6 +10317,15 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     smart = model != CLAUDE_MODEL
     if smart:
         log.info("Routing to %s (effort %s): %r", model, SMART_MODEL_EFFORT, transcript[:80])
+    # Escalate on failure (smarter batch): a repeated command means the last answer missed, so this
+    # one starts on the stronger model; a failed tool or an unbacked claim switches mid-command.
+    escalated = False
+    esc_model = _escalation_model() if tools_override is None else None
+    if esc_model and not smart and tone and tone.get("repeated"):
+        model, escalated = esc_model, True
+        smart = _llm_provider() == "claude"  # Claude's smart model gets thinking from round one
+        log.info("Repeated command: escalating to %s: %r", model, transcript[:80])
+    claim_nudged = False
     for iteration in range(MAX_AGENT_ITERATIONS):
         request_body = {
             "model": model,
@@ -10348,6 +10417,18 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 continue
             if handoff_nudged and not set(used_tool_names) & _DELEGATION_TOOLS and _HANDOFF_CLAIM_RE.search(claim):
                 reply_parts.append("Correction: I did not actually start a background task for that. Ask me again to start it.")
+            unbacked = _unbacked_claims(claim, used_tool_names)
+            if unbacked and not claim_nudged and iteration < MAX_AGENT_ITERATIONS - 1:
+                claim_nudged = True
+                log.warning("Reply claims %s with no backing tool call; nudging: %r", unbacked, claim[:120])
+                del reply_parts[len(reply_parts) - len(texts):]
+                messages.append({"role": "user", "content": _claim_nudge(unbacked)})
+                if esc_model and model != esc_model and not smart:
+                    model, escalated = esc_model, True
+                    log.info("Escalating to %s after an unbacked claim", model)
+                continue
+            if claim_nudged and unbacked:
+                reply_parts.append("Correction: I didn't actually " + " or ".join(unbacked) + ". Ask me again if you want it done.")
             if data.get("stop_reason") == "max_tokens" and tool_uses:
                 # The tool call was cut off mid-input, so it never ran; never end in silence.
                 log.warning("Agent round hit max_tokens inside a %s call; it was not run.", tool_uses[-1].get("name"))
@@ -10384,6 +10465,10 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             used_tool_names.append(tu.get("name", ""))
             any_tool_failed = any_tool_failed or _looks_failed(result_text)
         messages.append({"role": "user", "content": tool_results})
+        if any_tool_failed and esc_model and model != esc_model and not smart:
+            # Switched without thinking: earlier assistant turns have no thinking blocks to echo back.
+            model, escalated = esc_model, True
+            log.info("A tool failed; escalating the rest of this command to %s", model)
 
     reply = " ".join(p.strip() for p in reply_parts if p.strip())
     if (

@@ -40,6 +40,9 @@ SETTINGS: list[dict] = [
      "live": ("jarvis", "SMART_MODEL_EFFORT", str)},
     {"key": "JARVIS_SMART_MODEL_MIN_WORDS", "label": "Words that count as a long request", "kind": "number", "default": "40",
      "help": "Requests at least this long go to the smart model.", "live": ("jarvis", "SMART_MODEL_MIN_WORDS", int)},
+    {"key": "JARVIS_GEMINI_SMART_MODEL", "label": "Gemini model to escalate to", "kind": "text", "default": "",
+     "help": "When a command goes wrong on Gemini (tool failed, repeated command, claimed action that didn't "
+             "happen), the rest of it runs on this model, e.g. gemini-3.6-flash. Empty = off.", "live": "env"},
     {"key": "JARVIS_TOOL_NARROWING", "label": "Tool narrowing", "kind": "choice", "default": "auto",
      "choices": ["auto", "on", "off"],
      "help": "Send the brain only the ~28 tools a command needs (+ a find_tools helper). auto = Gemini only "
