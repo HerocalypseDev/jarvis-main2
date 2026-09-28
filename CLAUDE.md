@@ -184,6 +184,23 @@ Rules:
   `--color-border-strong`); a disabled `.btn-primary` would have shown dark text on a dark page; Home KPI strips
   stacked one per row and stretched whole rows (now 2-up); last hard-coded hexes tokenised; DASHBOARD.md corrected.
 
+## Public release: Jarvis4U (2026-09-28)
+
+- This repo stays **private** (full history, personal notes, own skills). The public repo **Jarvis4U** is a
+  separate repo with its own fresh history, built by `python tools/export_public.py <folder>` (never publish
+  this repo itself: old commits contain run logs). The script takes only `git ls-files` (so nothing gitignored
+  can leak), drops `EXCLUDE` (CLAUDE.md, README.md, Later.md, skills/, graphify-out, brag/snake folders,
+  .claude, the Discord self-bot), scrubs personal words (`REPLACE`), swaps machine-specific defaults
+  (`DEFAULTS`: workspace path, Opera media app, and **autonomy default OFF** for strangers), overlays
+  `public/` (README, LICENSE MIT, .env.example, generic CLAUDE.md, examples/skills), then privacy-scans the
+  output (deny words + gitignored `public_export_denylist.txt`, personal-mail domains, key/token shapes,
+  Windows user paths) and exits 1 on any hit. It never commits or pushes. A `DEFAULTS` count mismatch aborts,
+  so a refactor can't silently leave a personal default in.
+- When adding personal data anywhere tracked (a name, a place, an address), add it to `REPLACE`/`DENY_WORDS`
+  or the local denylist. Public-facing docs changes go in `public/`.
+- Verified: scan clean; the public copy's test suite fails exactly the same 85 tests as this repo in the
+  Linux container (Windows-only/camera/missing-package), no new failures.
+
 ## Speech shaping (2026-09-18)
 
 - `_finish_background_task` now reports completion with `urgent=True` — a background
@@ -1589,7 +1606,8 @@ row there each phase rather than only stating the total in chat.
 | 73 (dashboard detail panel: no rebuild on unchanged refresh + scroll preserved; headless before/after check) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 74 (dashboard visual polish: design tokens, shell/components restyle, skeleton/error/Retry states, phone layout, network-card recursion fix; headless checks at 1440/390 px) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
 | 75 (visual polish audit: approval-bar replay/focus fix, input contrast, disabled primary button, Home KPI density, tokens, docs; full headless route/approve/WS/settings/autonomy check) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~2474 min** | **~$145.85–$204.65** |
+| 76 (public release prep: export tool with privacy scan, public README/LICENSE/.env.example/CLAUDE.md/example skills, autonomy off by default for the public copy; public test suite matches private) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
+| **Running total (final)** | | **~2519 min** | **~$149.35–$209.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

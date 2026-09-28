@@ -23,3 +23,6 @@ face.key
 *.log
 .env.tmp
 evals/results/
+
+# private words the public export must block (tools/export_public.py)
+public_export_denylist.txt
