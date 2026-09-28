@@ -67,7 +67,9 @@ def run(cases: list[dict], verbose: bool = False, delay: float = 0.0) -> dict:
 
     jarvis._execute_tool_impl = recorder
     jarvis._tool_result_cache.clear()
-    jarvis.cache.enabled = lambda layer: False  # no tool/reply cache: every call reaches the recorder
+    # No tool/reply cache (every call must reach the recorder), but keep the prompt cache: without it every
+    # round of a Claude run re-bills the ~30k-token prefix.
+    jarvis.cache.enabled = lambda layer: layer == "prompt"
     jarvis.get_mcp_tool_schemas = lambda: []   # never start MCP servers from an eval
     jarvis.LLM_SETTINGS_PATH = Path(tempfile.mkdtemp()) / "llm_provider.json"  # --provider wins over the saved switch
     jarvis._append_history = lambda *a, **k: None

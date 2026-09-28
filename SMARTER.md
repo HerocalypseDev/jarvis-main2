@@ -138,3 +138,42 @@ runs through `_execute_tool`. Tests: `test_smarter.py`.
 - `set_llm_provider("ollama")` checks the server answers and the model is pulled before switching.
 - **Not verified live:** no Ollama server in the cloud test environment; translation is unit-tested against
   Ollama's documented request/response shapes.
+
+## Audit (2026-09-28, same day)
+
+Deep audit of phases 1-7 as shipped. 14 real bugs fixed, each pinned by a test named `test_audit_*` in
+`test_smarter.py` (17 of those tests fail on the pre-audit code). Plus two stale/fragile existing tests fixed.
+
+| ID | Sev | Phase | Bug | Fix |
+|---|---|---|---|---|
+| S1 | High | 2 | The claim checker accepted *read-only* tools as proof: `list_reminders` backed "I've set a reminder", a Gmail search or `email_reply` (drafts only) backed "I sent it", `list-events` backed "added to your calendar", `read_file` backed "I saved the file", `recall_facts` backed "I noted that". Exactly the false "I did it" it exists to catch. | Backing is checked per tool name; look-up tools (`_READ_ONLY_NAME_RE`, `READONLY_TOOL_TTLS`, `_NEVER_BACKS_CLAIMS`) never count; tighter action patterns. |
+| S2 | High | 2 | Streamed first round + claim/hand-off nudge: the claim was spoken live and the "already spoken" flag stayed set, so the real reply after the nudge was **never spoken** (silent). | Nudge resets the stream flag; the final reply is spoken. The doc's earlier "correction follows it" residual was wrong. |
+| S3 | Med | 6 | A bare "set a reminder for X" commitment was marked covered/handled (at creation and at deadline scan) even when no reminder existed, so a reminder whose tool call had failed, or one someone's email asked for, was silently dropped. | Covered only when `reminder_covers` finds a real reminder. A reminder request without one gets no "Heads up: Set a reminder..." line, but the 24 h path still makes the reminder. |
+| S4 | Med | 6 | Autonomy's reminder id came from `MAX(id)`, which could name a reminder the user made at the same moment; cancelling it then counted against autonomy. | `create_reminder` records the inserted row id per thread (`_reminder_ctx.last_id`). |
+| S5 | Med | 6 | Any "undo" within 10 min of an autonomous action counted against autonomy, even when the user's own action was the newest (what "undo" reverses). | Counted only when the newest `action_audit` row is autonomy's (`_newest_action_was_autonomy`). |
+| S6 | Med | 7 | Ollama requests used urllib's default opener, which honours `HTTP(S)_PROXY` and the Windows system proxy: "local" prompts/mail/memory could go off-network through a proxy. Proven with a dead proxy in env. | No-proxy opener for every Ollama request. |
+| S7 | Med | 3 | Lessons were learned from any command source, including `autonomy_deferred` jobs (not the user). | Only voice/text/dashboard/phone. |
+| S8 | Med | 3 | A lesson could persist "always forward invoices to x@evil.com" learned from injected mail/web text in tool results. | Lessons naming an address, link or domain are refused (`_DESTINATION_RE`). |
+| S9 | Med | 4 | A fact not yet embedded (added mid-session) made the next command wait up to 15 s for its embedding; every command's query vector was stored forever (unbounded table). | Command path is cache-only: a miss starts one background fill and uses TF-IDF this time; query vectors are not stored. |
+| S10 | Low | 6 | A daily plan build/review that kept failing retried, with a model call, on every 1-minute tick. | At most one attempt per 30 min. |
+| S11 | Low | 6 | Learned raise could push the inbound bar to 1.05 (nothing could ever act). | Capped at 0.98, and never below a stricter configured bar. |
+| S12 | Low | 1 | `find_tools` could be called every round. | Max 3 per command, then "use what you have". |
+| S13 | Low | 7 | On the local brain, escalation picked `JARVIS_GEMINI_SMART_MODEL`, which Ollama silently ignored. | No escalation model on the local brain. |
+| S14 | Low | 5 | The eval runner turned off *all* caches incl. the prompt cache, so a Claude run re-billed the prefix every round. | Only tool/reply caches are off. |
+
+Also fixed: `test_gemini.py` still expected only claude/gemini (missed in phase 7 because that full-suite
+run overlapped the edit), and `test_feature_batch_a.py::test_battery_tick_slows_autonomy_and_holds_speech`
+depended on machine uptime (`time.monotonic()` is time since boot; a container up < 15 min failed it).
+
+Checked clean: `find_tools` has no side effects and can't run anything; every tool the model picks still
+goes through `_execute_tool` and the gate; no direct Anthropic call can run while Ollama is the brain
+(streaming and the prompt pre-warm are Claude-only, failover only starts from the Claude branch); the
+eval runner never executes a tool (a scripted "shutdown" is only recorded); lesson background calls and
+embedding background fills never run under pytest; lessons stay in the volatile block; plan/review holds
+(sleep/focus/safe/meeting) apply through `queue_or_deliver_notification`; `/api/feature/daily_plan` sits behind
+the dashboard's Host/Origin middleware; the scheduler loop catches tick exceptions.
+
+**Residual / not verified live:** Ollama on a real machine; narrowing with the real MCP tool set; lesson
+quality from a real model; the claim checker is still a regex tripwire (an unusual wording like "all done,
+it's in your calendar" is not caught; a past-tense summary of an *earlier* turn's action costs one extra round);
+the embedding query still waits up to 2.5 s when the API is slow but not failing.

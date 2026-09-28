@@ -4702,6 +4702,9 @@ def _reminder_content(text: str) -> str:
     return t[:1].upper() + t[1:] if t else ""
 
 
+_reminder_ctx = threading.local()
+
+
 def create_reminder(
     text: str,
     due_at: str = "",
@@ -4736,12 +4739,13 @@ def create_reminder(
     with _memory_db_lock:
         conn = _memory_db_connect()
         try:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO reminders (text, due_at, repeat_every_minutes, urgent, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (text, when.isoformat(timespec="seconds"), repeat, int(bool(urgent)), now_iso),
             )
             conn.commit()
+            _reminder_ctx.last_id = cur.lastrowid  # per thread: which row THIS call made
         finally:
             conn.close()
     when_desc = (
@@ -5526,6 +5530,7 @@ _lesson_calls: list[float] = []
 
 # --- Daily plan + evening review (smarter batch, 2026-09-28) -----------------------------------
 _daily_plan_running = threading.Lock()
+_daily_plan_last_try = {"t": 0.0}
 
 
 def _daily_plan_db():
@@ -5658,8 +5663,13 @@ def _daily_plan_tick(now: datetime) -> None:
     row = _daily_plan_row(now.date().isoformat())
     want_plan = plan_at and not row and (now.hour, now.minute) >= plan_at and not (review_at and (now.hour, now.minute) >= review_at)
     want_review = review_at and row and not row.get("reviewed_at") and (now.hour, now.minute) >= review_at
-    if not (want_plan or want_review) or not _daily_plan_running.acquire(blocking=False):
+    if not (want_plan or want_review):
         return
+    # One attempt per 30 min at most (audit 2026-09-28: a build/review that kept failing retried - with a
+    # model call - on every one-minute tick).
+    if time.time() - _daily_plan_last_try["t"] < 1800 or not _daily_plan_running.acquire(blocking=False):
+        return
+    _daily_plan_last_try["t"] = time.time()
 
     def work():
         try:
@@ -6808,16 +6818,12 @@ dashboard.providers["memory"] = {
 def _autonomy_create_reminder(text: str, due_iso: str) -> str:
     """create_reminder for autonomy, with the new reminder's id appended ("(#12)") so autonomy can remember
     which reminders it made: cancelling one of those later counts as feedback (autonomy.note_reminder_cancelled)."""
+    _reminder_ctx.last_id = None
     res = create_reminder(text, due_at=due_iso)
-    if not str(res).startswith("Reminder set"):
-        return res
-    with _memory_db_lock:
-        conn = _memory_db_connect()
-        try:
-            row = conn.execute("SELECT MAX(id) FROM reminders WHERE cancelled_at IS NULL").fetchone()
-        finally:
-            conn.close()
-    return f"{res} (#{row[0]})" if row and row[0] else res
+    rid = getattr(_reminder_ctx, "last_id", None)
+    # The id of the row this very call inserted (audit: MAX(id) could name a reminder the user made at the
+    # same moment, and cancelling that one would then count against autonomy).
+    return f"{res} (#{rid})" if rid and str(res).startswith("Reminder set") else res
 
 
 def _autonomy_callbacks() -> dict:
@@ -7423,9 +7429,11 @@ def _semantic_ranker():
         return None
 
     def rank(query: str, texts: list[str]) -> list[int] | None:
-        docs = embeddings.embed(_memory_db_connect, _memory_db_lock, texts, "RETRIEVAL_DOCUMENT")
+        docs = embeddings.embed(_memory_db_connect, _memory_db_lock, texts, "RETRIEVAL_DOCUMENT", cached_only=True)
+        if docs is None:
+            return None  # a fact isn't embedded yet (being fetched in the background): TF-IDF this time
         q = embeddings.embed(_memory_db_connect, _memory_db_lock, [query], "RETRIEVAL_QUERY",
-                             timeout=embeddings.QUERY_TIMEOUT_S)
+                             timeout=embeddings.QUERY_TIMEOUT_S, store=False)
         if docs is None or q is None:
             return None
         return [i for _, i in embeddings.rank(q[0], docs)]
@@ -9702,36 +9710,44 @@ _ACTION_CLAIMS = [
     ("set that reminder",
      re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:set|created|added|scheduled|made)\b[^.!?]{0,30}\breminders?\b"
                 r"|\breminders?\b (?:is |has been |was )?(?:set|created|scheduled)\b|\bi'?ll remind you\b", re.I),
-     re.compile(r"remind|timer|schedule|alarm", re.I)),
+     re.compile(r"create_reminder|schedule_jarvis_task|queue_task|timer|alarm|background_agents", re.I)),
     ("send that",
      re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:sent|emailed|messaged|texted|replied|forwarded)\b"
                 r"|\b(?:email|message|reply|text)\b (?:has been |was |is )?sent\b", re.I),
-     re.compile(r"send|reply|mail|whatsapp|telegram|message|type|click", re.I)),
+     re.compile(r"send|forward|type|click|press|shortcut", re.I)),
     ("add that to your calendar",
      re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:added|put|scheduled|booked|created)\b[^.!?]{0,40}\b(?:calendar|event|meeting)\b"
                 r"|\b(?:event|meeting)\b (?:has been |was |is )?(?:created|added|scheduled|booked)\b", re.I),
-     re.compile(r"calendar|event", re.I)),
+     re.compile(r"(?:calendar|event).*(?:create|insert|add|update|quick)|(?:create|insert|add|update|quick).*(?:calendar|event)", re.I)),
     ("save that file",
      re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:saved|written|wrote|created)\b[^.!?]{0,40}"
                 r"\b(?:file|document|doc|docx|note|notes|folder|presentation|spreadsheet|pptx)\b", re.I),
-     re.compile(r"write|save|file|doc|pptx|folder|note|create|delegate|james", re.I)),
+     re.compile(r"write|save|create|delegate|change_jarvis_code|move|copy|rename|organise|edit", re.I)),
     ("remember that",
      re.compile(r"\bi'?ll remember\b|\b(?:i'?ve|i have)\s+(?:noted|remembered|saved)\b[^.!?]{0,20}\b(?:that|it|this)\b"
                 r"[^.!?]{0,20}\b(?:memory|remember)?", re.I),
-     re.compile(r"remember|memory|note|fact|profile", re.I)),
+     re.compile(r"remember|edit_fact|lessons|save", re.I)),
 ]
+
+
+_READ_ONLY_NAME_RE = re.compile(r"(?:^|_|-)(?:list|search|get|read|recall|find|query|status|fetch|lookup|snapshot|screenshot)"
+                                r"(?:_|-|$)|^(?:list|search|get|read|recall|find|query)", re.I)
+_NEVER_BACKS_CLAIMS = {"email_reply", "find_tools", "lessons", "list_background_tasks"}  # drafts / look-ups only
 
 
 def _unbacked_claims(reply_text: str, used_tool_names: list[str]) -> list[str]:
     """What the reply claims to have done, past tense, with no tool of that kind run this turn.
     Questions and offers ("Shall I set a reminder?") are ignored."""
-    used = " ".join(used_tool_names)
+    # Only tools that DO something count as proof (audit 2026-09-28): list_reminders, read_file,
+    # recall_facts, a Gmail search or a calendar list used to "back" a fake "I've set / sent / saved it".
+    doers = [n for n in used_tool_names if n and not _READ_ONLY_NAME_RE.search(n)
+             and n not in READONLY_TOOL_TTLS and n not in _NEVER_BACKS_CLAIMS]
     out = []
     for sentence in re.split(r"(?<=[.!?])\s+", reply_text or ""):
         if sentence.rstrip().endswith("?") or re.search(r"\b(?:want me to|shall i|should i|can i|could i|would you like)\b", sentence, re.I):
             continue
         for what, claim, backing in _ACTION_CLAIMS:
-            if what not in out and claim.search(sentence) and not backing.search(used):
+            if what not in out and claim.search(sentence) and not any(backing.search(n) for n in doers):
                 out.append(what)
     return out
 
@@ -9749,6 +9765,8 @@ def _escalation_model() -> str | None:
     Gemini models themselves)."""
     if _llm_provider() == "claude":
         return SMART_MODEL if SMART_MODEL and SMART_MODEL != CLAUDE_MODEL else None
+    if _llm_provider() != "gemini":
+        return None  # the local brain has one model; a Gemini name here would be silently ignored
     m = (os.environ.get("JARVIS_GEMINI_SMART_MODEL") or "").strip()
     return m if m and m != gemini.model_name() else None
 
@@ -10621,6 +10639,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     any_tool_failed = False
     handoff_nudged = False
     steps: list[tuple[str, str, str]] = []  # (tool, input, result) for lessons memory
+    find_calls = 0
     # tools_override (Speed Upgrade cloud-latency pass, Phase D): a handful of simple intents
     # (see _reduced_tools_for_intent) pass a small hand-picked list here instead of the full
     # ~100+ tool schema set, cutting the prompt Claude has to read for a trivial command. This
@@ -10745,6 +10764,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 handoff_nudged = True
                 log.warning("Reply claims a hand-off but no delegation tool was called; nudging: %r", claim[:120])
                 del reply_parts[len(reply_parts) - len(texts):]
+                if streamed_this_round:
+                    _reset_reply_stream_spoken()  # the real follow-up reply must still be spoken
                 messages.append({"role": "user", "content": _HANDOFF_NUDGE})
                 continue
             if handoff_nudged and not set(used_tool_names) & _DELEGATION_TOOLS and _HANDOFF_CLAIM_RE.search(claim):
@@ -10754,6 +10775,10 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 claim_nudged = True
                 log.warning("Reply claims %s with no backing tool call; nudging: %r", unbacked, claim[:120])
                 del reply_parts[len(reply_parts) - len(texts):]
+                if streamed_this_round:
+                    # Audit 2026-09-28: the claim was already spoken live and the flag stayed set, so
+                    # the corrected/real reply after this nudge was never spoken at all.
+                    _reset_reply_stream_spoken()
                 messages.append({"role": "user", "content": _claim_nudge(unbacked)})
                 if esc_model and model != esc_model and not smart:
                     model, escalated = esc_model, True
@@ -10777,9 +10802,14 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             if tu.get("name") == tool_router.FIND_TOOLS_NAME:
                 # Loop-internal and side-effect free: it only widens what the model may pick from
                 # next round (every picked tool still runs through _execute_tool and its gate).
+                find_calls += 1
                 offered = {t.get("name") for t in tools}
-                added, result_text = tool_router.find_more(str((tu.get("input") or {}).get("query", "")),
-                                                           full_tools, offered)
+                if find_calls > tool_router.MAX_FIND_CALLS:
+                    added, result_text = [], ("You've searched for tools enough this turn. Use the tools you have, "
+                                              "or tell the user plainly that you can't do it.")
+                else:
+                    added, result_text = tool_router.find_more(str((tu.get("input") or {}).get("query", "")),
+                                                               full_tools, offered)
                 if added:
                     tools = tools[:-1] + added + tools[-1:]
                     cached_tools = _cached_tools(tools)
@@ -10828,7 +10858,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         _append_history(transcript, reply)
     # Lessons memory: learn from a failed tool or from the user correcting the previous answer.
     # Only for real user commands (not autonomy/scheduled runs), off the reply path.
-    if _current_command_source() and tools_override is None:
+    if _current_command_source() in ("voice", "text", "dashboard", "phone") and tools_override is None:
         correction = transcript if (lessons.CORRECTION_RE.search(transcript) or (tone and tone.get("repeated"))) else ""
         if any_tool_failed or correction:
             prev = ""
@@ -11178,6 +11208,20 @@ def _last_actions_reply() -> str:
     return "Most recent first: " + "; ".join(lines) + "."
 
 
+def _newest_action_was_autonomy() -> bool:
+    """Is the newest audited action one autonomy took? "undo" reverses the newest action, so only then does
+    it say anything about autonomy (audit: a user undoing their own action used to count against it)."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            row = conn.execute("SELECT tool_name, transcript FROM action_audit ORDER BY id DESC LIMIT 1").fetchone()
+        except sqlite3.Error:
+            row = None
+        finally:
+            conn.close()
+    return bool(row) and (str(row[1] or "") == "(autonomy)" or str(row[0] or "").startswith("autonomy_"))
+
+
 def _undo_instruction(transcript: str) -> str | None:
     rows = _recent_actions(5)
     if not rows:
@@ -11437,8 +11481,8 @@ def _handle_text_command_impl(
     macro_reply = shortcut_reply if shortcut_reply is not None else (None if tagged else _macro_reply(transcript))
     intent = "macro" if macro_reply is not None else ("complex" if tagged else latency.classify_intent(transcript))
     deterministic_reply = macro_reply if macro_reply is not None else _deterministic_intent_reply(intent, transcript)
-    if intent == "undo":
-        try:  # an undo right after an autonomous action counts against that action type
+    if intent == "undo" and _newest_action_was_autonomy():
+        try:  # an undo whose target is an autonomous action counts against that action type
             autonomy.note_user_undo()
         except Exception as e:
             log.debug("autonomy undo note failed: %s", e)

@@ -104,9 +104,17 @@ def _fetch(texts: list[str], task: str, timeout: float, http) -> list[list[float
     return [e["values"] for e in data["embeddings"]]
 
 
+_bg_fetch = threading.Lock()
+
+
 def embed(connect: Callable, lock, texts: list[str], task: str = "RETRIEVAL_DOCUMENT",
-          timeout: float = DOC_TIMEOUT_S, http=None) -> list[list[float]] | None:
-    """Vectors for `texts` (cached), or None on any failure."""
+          timeout: float = DOC_TIMEOUT_S, http=None, cached_only: bool = False,
+          store: bool = True) -> list[list[float]] | None:
+    """Vectors for `texts` (cached), or None on any failure.
+    cached_only: never fetch on the caller's thread - if anything is missing, start ONE background fetch and
+    return None (the caller falls back to TF-IDF this time). Used on the command path (audit 2026-09-28: a
+    fact added mid-session made the next command wait up to 15 s for its embedding).
+    store=False: don't keep the vectors (per-command queries; caching every command grew the table forever)."""
     now = time.time()
     with _breaker_lock:
         if _breaker["until"] > now:
@@ -126,9 +134,23 @@ def embed(connect: Callable, lock, texts: list[str], task: str = "RETRIEVAL_DOCU
             finally:
                 conn.close()
         missing = [(h, t) for h, t in zip(hashes, texts) if h not in found]
+        if missing and cached_only:
+            if http is _default_http and os.environ.get("PYTEST_CURRENT_TEST"):
+                return None  # never a real background network call from a test
+            if _bg_fetch.acquire(blocking=False):
+                def _bg():
+                    try:
+                        embed(connect, lock, [t for _, t in missing], task, DOC_TIMEOUT_S, http)
+                    finally:
+                        _bg_fetch.release()
+                threading.Thread(target=_bg, name="jarvis-embed-fill", daemon=True).start()
+            return None
         for i in range(0, len(missing), BATCH):
             part = missing[i:i + BATCH]
             vecs = _fetch([t for _, t in part], task, timeout, http)
+            if not store:
+                found.update({h: v for (h, _), v in zip(part, vecs)})
+                continue
             stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
             with lock:
                 conn = connect()

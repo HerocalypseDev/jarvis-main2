@@ -275,7 +275,7 @@ def test_set_llm_provider_tool_is_registered_and_dispatches(jarvis, monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     tool = next(t for t in jarvis.AGENT_TOOLS if t["name"] == "set_llm_provider")
-    assert tool["input_schema"]["properties"]["provider"]["enum"] == ["claude", "gemini"]
+    assert tool["input_schema"]["properties"]["provider"]["enum"] == ["claude", "gemini", "ollama"]  # + local brain
     assert jarvis._execute_tool_impl("set_llm_provider", {"provider": "gemini"}, "switch to gemini").startswith("Switched to Gemini")
     assert jarvis._llm_status()["provider"] == "gemini"
 

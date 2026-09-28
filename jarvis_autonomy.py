@@ -781,9 +781,11 @@ def _insert_commitment(c: dict, ctype: str, desc: str, who: str, deadline: str |
         meta["executor"], meta["instruction"] = "jarvis", _clean(c["instruction"], 1000)
     if c.get("handled_by_tool"):
         meta["handled_by_tool"] = meta["actioned"] = True
-    elif _REMINDER_ABOUT_RE.search(desc) or _call("reminder_covers", desc, default=False):
-        # Stopped at the source (2026-09-28): a commitment that is itself a reminder request, or one a real
-        # reminder already covers, is stored for tracking but never actioned or nudged (the reminder speaks).
+    elif _call("reminder_covers", desc, default=False):
+        # Stopped at the source (2026-09-28): a commitment a real reminder already covers is stored for tracking
+        # but never actioned or nudged (the reminder speaks). Audit: only when a reminder really exists - a bare
+        # "set a reminder ..." wording with no reminder behind it (the tool call failed, or someone else's mail
+        # asked for it) must still get its reminder made by the 24 h action path.
         meta["handled_by_tool"] = meta["actioned"] = True
         meta["covered_by"] = "reminder"
     now = _iso()
@@ -905,6 +907,7 @@ def _sender_matches(rule_value: str, sender: str) -> bool:
 
 CALIBRATION_STEP = 0.05
 CALIBRATION_MAX_RAISE = 0.2
+MAX_CALIBRATED_BAR = 0.98
 
 
 def record_outcome(action_type: str | None, good: bool) -> None:
@@ -928,6 +931,13 @@ def learned_raise(action_type: str | None) -> float:
         return 0.0
     net = rows[0]["bad"] - rows[0]["good"] / 2
     return round(max(0.0, min(CALIBRATION_MAX_RAISE, CALIBRATION_STEP * net)), 3)
+
+
+def _raised(bar: float, action_type: str | None) -> float:
+    """A configured bar plus the learned raise, capped below 1.0 so a confident item can still act at all
+    (0.85 inbound + 0.2 used to be 1.05: nothing could ever pass)."""
+    extra = learned_raise(action_type)
+    return max(bar, min(MAX_CALIBRATED_BAR, bar + extra)) if extra else bar  # never below the configured bar
 
 
 def note_created(kind: str, ref: Any, action_type: str) -> None:
@@ -983,7 +993,7 @@ def _evaluate_base(category: str, sender: str, text: str, confidence: float,
             matched.append(r)
         elif kind == "keyword" and mv and mv in text_l and (not r["category"] or r["category"] == category):
             matched.append(r)
-    default_floor = _env_float("JARVIS_AUTONOMY_AUTO_MIN_CONF", MIN_AUTO_CONF_DEFAULT) + learned_raise(action_type)
+    default_floor = _raised(_env_float("JARVIS_AUTONOMY_AUTO_MIN_CONF", MIN_AUTO_CONF_DEFAULT), action_type)
     if not matched:
         if confidence < default_floor:
             return "record", f"no rule; confidence {confidence:.2f} < {default_floor:.2f}, recorded only"
@@ -1022,7 +1032,7 @@ def evaluate_policy(category: str, sender: str, text: str, confidence: float, ac
         return verdict, reason
     if not (action_type in INBOUND_GUARDED or suspicious):
         return verdict, reason
-    bar = _env_float("JARVIS_AUTONOMY_INBOUND_AUTO_MIN_CONF", INBOUND_AUTO_MIN_CONF_DEFAULT) + learned_raise(action_type)
+    bar = _raised(_env_float("JARVIS_AUTONOMY_INBOUND_AUTO_MIN_CONF", INBOUND_AUTO_MIN_CONF_DEFAULT), action_type)
     if confidence >= bar:
         return verdict, reason
     if not suspicious and _structured_meeting(action_type, details):
@@ -2107,13 +2117,22 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
         meta = _meta(c)
         if meta.get("executor") == "jarvis" or meta.get("handled_by_tool"):
             continue  # its job runs by itself / the reminder the tool made fires by itself
-        if _REMINDER_ABOUT_RE.search(c["description"] or "") or _call("reminder_covers", c["description"], default=False):
+        if _call("reminder_covers", c["description"], default=False):
             # A real reminder already covers it: it speaks by itself, a "Heads up" on top is a duplicate.
-            _set_commitment_meta(c["id"], handled_by_tool=True, actioned=True)
+            _set_commitment_meta(c["id"], handled_by_tool=True, actioned=True, covered_by="reminder")
             continue
+        reminder_request = bool(_REMINDER_ABOUT_RE.search(c["description"] or ""))
         # In dry-run nothing really happens, so it keeps its own bookkeeping and never uses up a real nudge.
         nkey, akey = ("dry_notified", "dry_actioned") if dry_run() else ("notified", "actioned")
-        if bucket in (meta.get(nkey) or []):
+        if bucket in (meta.get(nkey) or []) or reminder_request:
+            # A "set a reminder for X" item with no reminder yet: no "Heads up: Set a reminder ..." line, but
+            # fall through so the 24 h bucket still creates the reminder it asks for.
+            if reminder_request and bucket == "24h" and not meta.get(akey) and not meta.get("actioned"):
+                action_type, details = _action_for_commitment(c)
+                if action_type == "reminder":
+                    _route("deadline:reminder", "", c["description"], c["source_quote"] or "", action_type,
+                           details, 0.9, "deadline", c["id"], gated_ok=gated_ok)
+                    _set_commitment_meta(c["id"], **{akey: True})
             continue
         when = "is overdue" if bucket == "overdue" else f"is due {due.strftime('%A %H:%M')}"
         text = f"Heads up: {_clean(c['description'], 200)} {when}."

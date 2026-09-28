@@ -1455,6 +1455,14 @@ Rules to keep:
   hosts. Keep both properties.
 - Background model calls must not run under pytest (`_spawn_lesson` returns early on
   `PYTEST_CURRENT_TEST`); tests call the synchronous function directly.
+- **Audit (2026-09-28)**: 14 bugs fixed (table in SMARTER.md, tests `test_audit_*`). Rules: a claim is only
+  backed by a tool that *acts* (never list/search/get/read/recall tools, never `email_reply`); a nudge after a
+  streamed round must reset the stream-spoken flag; "covered by a reminder" needs a real reminder
+  (`reminder_covers`), never just the wording; autonomy's reminder id is the inserted row
+  (`_reminder_ctx.last_id`), never `MAX(id)`; "undo" counts against autonomy only if autonomy's action is the
+  newest audit row; Ollama traffic never uses a proxy; lessons only from voice/text/dashboard/phone and never
+  name an address/link/domain; the command path never fetches embeddings (cache-only + background fill);
+  find_tools max 3 per command; daily plan retries at most every 30 min.
 
 ### Cost reporting
 
@@ -1548,7 +1556,8 @@ row there each phase rather than only stating the total in chat.
 | 68 (smarter batch Phase 3: lessons memory from failures/corrections, filtered + sanitised, top 3 in volatile prompt, lessons tool; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 69 (smarter batch Phase 4: Gemini embeddings for memory retrieval, hybrid with strong word matches, thresholds tuned live, cached + breaker; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 70 (smarter batch Phases 5-7: eval runner + 30 real-failure cases (live-run on Gemini/Gemma), autonomy source dedupe + learning confidence + daily plan/review with Home card, local Ollama brain; 16 new tests) | Opus 5.5 | ~70 min | ~$6.00–$8.40 |
-| **Running total (final)** | | **~2329 min** | **~$134.65–$188.95** |
+| 71 (smarter batch audit: 14 bugs fixed incl. read-only tools backing fake claims, silent reply after streamed nudge, dropped reminder requests, proxy leak on the local brain, blocking embeddings; 21 new tests + 2 stale tests fixed) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
+| **Running total (final)** | | **~2374 min** | **~$138.25–$193.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
