@@ -196,6 +196,9 @@ Rules:
   output (deny words + gitignored `public_export_denylist.txt`, personal-mail domains, key/token shapes,
   Windows user paths) and exits 1 on any hit. It never commits or pushes. A `DEFAULTS` count mismatch aborts,
   so a refactor can't silently leave a personal default in.
+- **Published 2026-09-28**: https://github.com/HerocalypseDev/jarvis4u (public, one commit `038f719`, 124 files).
+  To publish an update: clone it next to this repo, run `python tools/export_public.py ../jarvis4u`, review
+  `git -C ../jarvis4u status`/`diff`, then commit and push there. Never push this repo's history to it.
 - When adding personal data anywhere tracked (a name, a place, an address), add it to `REPLACE`/`DENY_WORDS`
   or the local denylist. Public-facing docs changes go in `public/`.
 - Verified: scan clean; the public copy's test suite fails exactly the same 85 tests as this repo in the
