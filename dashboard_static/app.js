@@ -490,6 +490,16 @@ function showDetail(kind, item, opts) {
     location.hash = kind === "session" ? "#/sessions" : "#/tasks";
   }
   const el = document.getElementById("detail-panel");
+  // Background refreshes (every poll / WS message, metrics every 5 s) used to rebuild the panel each
+  // time, which jumped the reader back to the top mid-read (user report 2026-09-28). Now: skip the
+  // rebuild when nothing about the item changed, and keep the scroll position when it does.
+  const renderKey = `${kind}|${item.id}|${item.status}|${item.ended_at || ""}|${(item.reply || "").length}|${item.result_summary ? item.result_summary.length : ""}`;
+  const sameItem = el.dataset.kind === kind && el.dataset.itemId === String(item.id);
+  if (!navigate && sameItem && el.dataset.renderKey === renderKey) return;
+  const scrolls = sameItem ? saveScrolls(el) : null;
+  el.dataset.kind = kind;
+  el.dataset.itemId = String(item.id);
+  el.dataset.renderKey = renderKey;
   if (kind === "session") {
     state.followedSessionId = item.id;
     el.innerHTML = `
@@ -559,7 +569,23 @@ function showDetail(kind, item, opts) {
       document.getElementById("audit-view-session-btn").addEventListener("click", () => showDetail("session", linkedSession));
     }
   }
+  if (scrolls) restoreScrolls(el, scrolls);
   syncContextVisibility();
+}
+
+// The detail panel, its scrolling ancestors and each code block inside it can all scroll; remember
+// every offset before a rebuild and put them back after, so an update never moves what you're reading.
+function saveScrolls(el) {
+  const saved = { chain: [], blocks: [] };
+  for (let n = el; n && n !== document.body; n = n.parentElement) saved.chain.push([n, n.scrollTop]);
+  el.querySelectorAll(".detail-code").forEach((b, i) => saved.blocks.push([i, b.scrollTop]));
+  return saved;
+}
+
+function restoreScrolls(el, saved) {
+  saved.chain.forEach(([n, top]) => { n.scrollTop = top; });
+  const blocks = el.querySelectorAll(".detail-code");
+  saved.blocks.forEach(([i, top]) => { if (blocks[i]) blocks[i].scrollTop = top; });
 }
 
 async function fetchAuditResults() {
