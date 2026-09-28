@@ -63,11 +63,18 @@ if (!location.hash) location.hash = "#/home";
   const appBody = document.querySelector(".app-body");
   const btn = document.getElementById("sidebar-toggle-btn");
   if (!appBody || !btn) return;
-  let collapsed = false;
+  // On a narrow screen the sidebar is an overlay, so it starts closed unless the user saved a choice.
+  const narrow = () => window.matchMedia && window.matchMedia("(max-width: 800px)").matches;
+  let collapsed = narrow();
   try {
-    collapsed = localStorage.getItem("jarvis-sidebar-collapsed") === "1";
+    const saved = localStorage.getItem("jarvis-sidebar-collapsed");
+    if (saved !== null) collapsed = saved === "1";
   } catch (e) { /* ignore */ }
   appBody.classList.toggle("sidebar-collapsed", collapsed);
+  // ...and picking a route there closes the overlay again (not saved: it's not a preference).
+  document.getElementById("nav")?.addEventListener("click", (e) => {
+    if (narrow() && e.target.closest(".nav-link")) appBody.classList.add("sidebar-collapsed");
+  });
   btn.addEventListener("click", () => {
     collapsed = !appBody.classList.contains("sidebar-collapsed");
     appBody.classList.toggle("sidebar-collapsed", collapsed);
@@ -92,11 +99,27 @@ document.addEventListener("keydown", (e) => {
 async function fetchState() {
   try {
     const res = await fetch("/api/state");
+    if (!res.ok) throw new Error("HTTP " + res.status);
     state.data = await res.json();
+    setLoadError(false);
     render();
   } catch (e) {
     console.error("Failed to fetch dashboard state", e);
+    setLoadError(true);
   }
+}
+
+// Banner under the metrics strip when /api/state can't be fetched; the last good data stays on
+// screen underneath it. Retry just re-runs fetchState (the 15s poll keeps trying too).
+function setLoadError(on) {
+  const el = document.getElementById("load-error");
+  if (el) el.classList.toggle("hidden", !on);
+}
+document.getElementById("load-error-retry")?.addEventListener("click", () => fetchState());
+
+// Failed-list placeholder with a Retry button (used by the Audit and Daily routes).
+function errorStateHtml(message, retryId) {
+  return `<li class="empty-state error-state">${esc(message)} <button class="btn btn-small" type="button" id="${retryId}">Retry</button></li>`;
 }
 
 function render() {
@@ -601,10 +624,12 @@ async function fetchAuditResults() {
   if (q) params.set("q", q);
   try {
     const res = await fetch(`/api/audit?${params.toString()}`);
+    if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     renderAuditResults(data.rows || []);
   } catch (e) {
-    el.innerHTML = '<li class="empty-state">Failed to load audit trail.</li>';
+    el.innerHTML = errorStateHtml("Couldn't load the audit trail.", "audit-retry");
+    document.getElementById("audit-retry")?.addEventListener("click", () => fetchAuditResults());
   }
 }
 
@@ -627,10 +652,12 @@ async function fetchDailyItems() {
   const el = document.getElementById("daily-list");
   try {
     const res = await fetch("/api/daily");
+    if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     renderDailyItems(data.items || []);
   } catch (e) {
-    el.innerHTML = '<li class="empty-state">Failed to load daily items.</li>';
+    el.innerHTML = errorStateHtml("Couldn't load daily items.", "daily-retry");
+    document.getElementById("daily-retry")?.addEventListener("click", () => fetchDailyItems());
   }
 }
 

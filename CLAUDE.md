@@ -167,6 +167,15 @@ Rules:
   nothing about the item changed (`renderKey`: id/status/end/reply length), and saves/restores every scroll
   offset (panel, its ancestors, each `.detail-code`) when it does rebuild. Checked in headless Chromium: old
   code reset scroll 400 -> 0, new code keeps 400 through an unchanged and a changed refresh.
+- **Visual polish (2026-09-28)**: CSS-first pass, full write-up + "do not regress" list in DASHBOARD.md
+  "Visual system". Design tokens in `style.css` `:root` (`--color-*`, `--space-*`, `--radius-*`, `--shadow-*`,
+  `--transition-*`, `--font-*`); the old short names (`--bg`, `--cyan`, ...) are kept as aliases because JS inline
+  styles use them. Minimal JS only: `#load-error` banner + Retry when `/api/state` fails, Retry on failed
+  Audit/Daily lists, skeleton placeholders in `index.html`, and on <= 800 px the sidebar starts collapsed and the
+  Detail panel stacks under the page. Approval UI kept loud and still Review-only (checked with a stubbed pending
+  action: no Approve before Review, Approve posts `/api/pending/approve`). Also fixed a real bug: `qol.js`'s
+  `window.refreshNetwork = () => refreshNetwork()` recursed forever, so the Home Network devices card never loaded.
+  Not checked in the user's real browser.
 
 ## Speech shaping (2026-09-18)
 
@@ -1571,7 +1580,8 @@ row there each phase rather than only stating the total in chat.
 | 71 (smarter batch audit: 14 bugs fixed incl. read-only tools backing fake claims, silent reply after streamed nudge, dropped reminder requests, proxy leak on the local brain, blocking embeddings; 21 new tests + 2 stale tests fixed) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
 | 72 (Gemini overload fix: 5xx backoff 2/4/8 s + opt-in overload-only backup model; live-verified 5/5 on 3.1-flash-lite; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
 | 73 (dashboard detail panel: no rebuild on unchanged refresh + scroll preserved; headless before/after check) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~2399 min** | **~$139.85–$196.25** |
+| 74 (dashboard visual polish: design tokens, shell/components restyle, skeleton/error/Retry states, phone layout, network-card recursion fix; headless checks at 1440/390 px) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
+| **Running total (final)** | | **~2449 min** | **~$143.85–$201.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

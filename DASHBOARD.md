@@ -234,6 +234,78 @@ policy, Add rule, Revoke/Disable skills and dynamic tools, organise rules/roots,
 approve/reject) through the exact same handlers, just regrouped into the new sections — none were
 dropped or duplicated. Full suite: 736 tests (2 new here, same 4 pre-existing unrelated failures).
 
+## Visual system (2026-09-28 polish)
+
+CSS-first pass over the whole dashboard. Vanilla only: no framework, no build step, no new
+module layer. The hash router, WebSocket client, element IDs and API paths are unchanged.
+
+### Tokens (`:root` in `style.css`)
+- **Colour**: `--color-bg-primary/secondary/tertiary/inset`, `--color-border(-strong)`,
+  `--color-text-primary/secondary/muted`, `--color-accent` (cyan) + `-dim`/`-soft`,
+  `--color-success/warning/error` (+ `-soft` washes), `--color-nap`.
+- **Space** `--space-1..8` (4px scale), **radius** `--radius-sm/md/lg/pill`, **depth**
+  `--shadow-sm/md/lg`, `--shadow-glow` (accent only), `--focus-ring`, **motion**
+  `--transition-fast/base`, **type** `--font-sans` (system stack), `--font-mono`, `--text-xs..xl`,
+  **layout** `--sidebar-w(-collapsed)`, `--context-w`, `--view-max-w`.
+- The old short names (`--bg`, `--bg-panel`, `--cyan`, `--text-muted`, `--danger`, `--warn`, `--ok`,
+  `--radius`, `--glow`, `--accent`) are **aliases** of the new tokens. Keep them: older rules and
+  inline styles written by JS (`voice.js`, `app.js` charts) use them.
+
+### Global rules
+- One focus ring: `:focus-visible` = 2px accent outline (buttons use `--focus-ring`). Mouse clicks
+  don't show it.
+- All inputs/selects/textareas inside `#view` and the context panel share one look (tertiary bg,
+  accent border + soft halo on focus). Route-specific rules only adjust size.
+- Thin dark scrollbars (Firefox `scrollbar-color` + WebKit), `::selection` in accent.
+
+### Components
+- **Cards**: `.home-block` = secondary bg, hairline border, `--shadow-sm`, a 1px accent highlight on
+  the top edge only. Home cards sit in `.home-grid` (`auto-fit, minmax(min(100%, 280px), 1fr)`).
+- **KPI cards** (`.usage-card`, shared by Home/Usage/Sleep/Identity/Voice): label on top, tabular
+  number below, **no glow** (colour carries good/danger).
+- **Buttons**: `.btn` (accent outline), `.btn-primary` (filled, used on every form's submit button),
+  `.btn-ghost`, `.btn-danger`, `.btn-review`, `.btn-stop`, `.btn-small`.
+- **Pills/chips**: `.pill-*` status colours now have a soft wash; `.src-badge` is a small chip.
+- **Empty states**: `.empty-state` has a dashed outline; `.empty-state.error-state` (amber) carries a
+  Retry button (Audit and Daily routes, via `errorStateHtml()` in app.js).
+- **Skeletons**: `li.skeleton` / `.skeleton-line` placeholders sit in `index.html` inside lists that
+  JS fully replaces on first render (Home lists, Sessions, Tasks, Activity, Victory, briefing,
+  Autonomy root). Their pulse runs 3 times then stops; none with reduced motion.
+- **Connection status**: `#conn-status` shows a dot (green `live`, amber `reconnecting…`).
+- **Load error**: `#load-error` banner under the metrics strip when `/api/state` fails; the last
+  data stays on screen; Retry re-runs `fetchState()`.
+
+### Motion (all one-shot, no rAF loops, no infinite animations)
+- Route switch: `.view.active` fades/slides in once (160 ms).
+- Pending approval item and the command palette slide in once.
+- `prefers-reduced-motion: reduce` cuts every transition/animation to ~0 and to one iteration.
+
+### Phone (<= 800 px)
+- Sidebar is an overlay that **starts collapsed** unless the user saved a choice, and closes after a
+  route is picked (not saved). The Detail panel **stacks under the page** instead of covering it.
+  The approval bar takes a full-width row and is hidden when empty.
+
+### Do not regress
+- The pending-confirmation UI must stay loud: red border (4px left edge), red wash, red glow, red
+  badge; Approve/Reject exist **only** inside the Review detail view. Verified with a stubbed
+  `/api/state`: no `#approve-btn` before Review, Approve posts `POST /api/pending/approve`.
+- Glow is an accent (active nav, focused input, primary-button hover, live dot, followed list row).
+  Don't add it to every card or KPI.
+- No `backdrop-filter`, no site-wide blur, no permanent animation or chart rAF loop.
+- Don't rename an ID/class that JS reads; add classes instead.
+- `.home-alert` is `display: block` on purpose (flex split its sentence into columns).
+- `qol.js` must not wrap a top-level function as `window.fn = () => fn()`. In a classic script
+  that *replaces* the function with itself and recurses forever. It did, for `refreshNetwork`,
+  so the Network devices card never loaded (found in this pass, fixed).
+
+### Parity checklist (verified in headless Chromium, 1440 px and 390 px, against `_build_app`)
+All 15 routes activate (`home, sessions, tasks, autonomy, identity, sleep, usage, activity, audit,
+victory, daily, voice, memory, toolbox, settings`) with no page errors and no horizontal scroll;
+Home cards, Settings list, Toolbox sections, Audit filters render; the approval flow above; the
+load-error banner appears on a failing `/api/state` and clears after Retry; the live WebSocket dot
+reads `live`. **Not verified**: the real running Jarvis in the user's own browser (Edge/Chrome on
+Windows); give it a look before calling it final.
+
 ## How to preview without running full Jarvis
 
 `jarvis_dashboard._build_app(...)` builds the FastAPI app standalone (same helper `test_dashboard.py`

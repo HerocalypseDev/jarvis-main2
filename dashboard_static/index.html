@@ -27,6 +27,10 @@
 </header>
 
 <div id="metrics-strip" class="metrics-strip"></div>
+<div id="load-error" class="load-error hidden" role="alert">
+  <span id="load-error-text">Can't reach Jarvis &mdash; showing the last data I had.</span>
+  <button class="btn btn-small" id="load-error-retry" type="button">Retry</button>
+</div>
 
 <div class="app-body">
   <aside class="sidebar" id="sidebar">
@@ -34,7 +38,7 @@
       <a href="#/home" data-route="home" class="nav-link"><span class="nav-icon">&#8962;</span><span class="nav-label">Home</span></a>
       <a href="#/sessions" data-route="sessions" class="nav-link"><span class="nav-icon">&#9679;</span><span class="nav-label">Sessions</span></a>
       <a href="#/tasks" data-route="tasks" class="nav-link"><span class="nav-icon">&#9776;</span><span class="nav-label">Tasks</span></a>
-      <a href="#/autonomy" data-route="autonomy" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Autonomy</span></a>
+      <a href="#/autonomy" data-route="autonomy" class="nav-link"><span class="nav-icon">&#9672;</span><span class="nav-label">Autonomy</span></a>
       <a href="#/identity" data-route="identity" class="nav-link"><span class="nav-icon">&#9788;</span><span class="nav-label">Identity</span></a>
       <a href="#/sleep" data-route="sleep" class="nav-link"><span class="nav-icon">&#9789;</span><span class="nav-label">Sleep</span></a>
       <a href="#/usage" data-route="usage" class="nav-link"><span class="nav-icon">$</span><span class="nav-label">Usage</span></a>
@@ -57,7 +61,7 @@
         <h3 class="block-title">Send a command</h3>
         <form id="home-compose-form" class="compose-form">
           <input type="text" id="home-compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
-          <button class="btn" type="submit">Send</button>
+          <button class="btn btn-primary" type="submit">Send</button>
         </form>
         <p id="home-compose-status" class="muted compose-status"></p>
       </div>
@@ -70,7 +74,7 @@
             <button class="btn btn-ghost" id="briefing-refresh" type="button" title="Refresh">&#8635;</button>
           </div>
         </div>
-        <div id="home-briefing" aria-live="polite"><p class="muted">Loading&hellip;</p></div>
+        <div id="home-briefing" aria-live="polite"><span class="skeleton-line w-80" aria-hidden="true"></span><span class="skeleton-line w-60" aria-hidden="true"></span><span class="sr-only">Loading&hellip;</span></div>
       </div>
       <div class="home-block home-plan">
         <div class="briefing-head">
@@ -79,7 +83,7 @@
             <button class="btn btn-ghost" id="plan-refresh" type="button" title="Rebuild today's plan">Rebuild</button>
           </div>
         </div>
-        <ol id="home-plan" class="list compact plan-list" aria-live="polite"></ol>
+        <ol id="home-plan" class="list compact plan-list" aria-live="polite"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ol>
         <p id="home-plan-review" class="muted"></p>
       </div>
       <div class="home-grid">
@@ -93,11 +97,11 @@
         </div>
         <div class="home-block">
           <h3 class="block-title">Needs you</h3>
-          <ul id="home-needs" class="list compact"></ul>
+          <ul id="home-needs" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
         </div>
         <div class="home-block">
           <h3 class="block-title">Now</h3>
-          <ul id="home-now" class="list compact"></ul>
+          <ul id="home-now" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
         </div>
         <div class="home-block">
           <h3 class="block-title">Today</h3>
@@ -105,11 +109,11 @@
         </div>
         <div class="home-block">
           <h3 class="block-title">Recent sessions</h3>
-          <ul id="home-recent-sessions" class="list compact"></ul>
+          <ul id="home-recent-sessions" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
         </div>
         <div class="home-block">
           <h3 class="block-title">Recent autonomy activity</h3>
-          <ul id="home-recent-autonomy" class="list compact"></ul>
+          <ul id="home-recent-autonomy" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
         </div>
         <div class="home-block">
           <h3 class="block-title">Voice speed</h3>
@@ -136,20 +140,20 @@
       </div>
       <form id="compose-form" class="compose-form">
         <input type="text" id="compose-input" placeholder="Send a command to Jarvis&hellip;" autocomplete="off" />
-        <button class="btn" type="submit">Send</button>
+        <button class="btn btn-primary" type="submit">Send</button>
       </form>
       <p id="compose-status" class="muted compose-status"></p>
-      <ul id="sessions-list" class="list"></ul>
+      <ul id="sessions-list" class="list"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
     </section>
 
     <section id="view-tasks" class="view">
       <div class="view-head"><h1 class="view-title">Tasks</h1></div>
-      <ul id="tasks-list" class="list"></ul>
+      <ul id="tasks-list" class="list"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
     </section>
 
     <section id="view-autonomy" class="view">
       <div class="view-head"><h1 class="view-title">Autonomy</h1></div>
-      <div id="autonomy-root"><p class="muted">Loading...</p></div>
+      <div id="autonomy-root"><span class="skeleton-line w-80" aria-hidden="true"></span><span class="skeleton-line w-60" aria-hidden="true"></span><span class="sr-only">Loading&hellip;</span></div>
     </section>
 
     <section id="view-identity" class="view">
@@ -205,7 +209,7 @@
 
     <section id="view-activity" class="view">
       <div class="view-head"><h1 class="view-title">Activity</h1></div>
-      <ul id="activity-list" class="list compact"></ul>
+      <ul id="activity-list" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
     </section>
 
     <section id="view-audit" class="view">
@@ -224,7 +228,7 @@
     <section id="view-victory" class="view">
       <div class="view-head"><h1 class="view-title">Victory Log</h1></div>
       <div id="victory-counts" class="victory-counts"></div>
-      <ul id="victory-list" class="list compact"></ul>
+      <ul id="victory-list" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
     </section>
 
     <section id="view-daily" class="view">
@@ -267,13 +271,13 @@
       <form id="memory-profile-form" class="settings-add">
         <input id="memory-profile-key" placeholder="name, e.g. home_town" maxlength="60" required aria-label="Profile field name">
         <input id="memory-profile-value" placeholder="value" maxlength="500" required aria-label="Profile field value">
-        <button class="btn" type="submit">Save</button>
+        <button class="btn btn-primary" type="submit">Save</button>
       </form>
       <h2 class="settings-h">Facts</h2>
       <form id="memory-add-form" class="settings-add">
         <select id="memory-add-category" aria-label="Category"></select>
         <input id="memory-add-content" placeholder="Something Jarvis should remember" maxlength="1000" required aria-label="New fact">
-        <button class="btn" type="submit">Remember</button>
+        <button class="btn btn-primary" type="submit">Remember</button>
         <span id="memory-status" class="muted" aria-live="polite"></span>
       </form>
       <div class="memory-filter">
@@ -310,7 +314,7 @@
         <div id="tb-macro-steps"></div>
         <div class="macro-form-actions">
           <button id="tb-macro-add-step" class="btn btn-ghost" type="button">+ Step</button>
-          <button class="btn" type="submit">Save macro</button>
+          <button class="btn btn-primary" type="submit">Save macro</button>
           <span id="tb-macro-status" class="muted" aria-live="polite"></span>
         </div>
       </form>
@@ -341,7 +345,7 @@
         <div id="tb-agent-steps"></div>
         <div class="macro-form-actions">
           <button id="tb-agent-add-step" class="btn btn-ghost" type="button">+ Step</button>
-          <button class="btn" type="submit">Save agent</button>
+          <button class="btn btn-primary" type="submit">Save agent</button>
           <span id="tb-agent-status" class="muted" aria-live="polite"></span>
         </div>
       </form>
@@ -356,7 +360,7 @@
       <p class="muted">People, projects, tasks and meetings Jarvis knows about, and how they link.</p>
       <form id="tb-graph-form" class="memory-filter">
         <input id="tb-graph-q" type="search" placeholder="A name, e.g. Racheal or a project" aria-label="Look up a person or project">
-        <button class="btn" type="submit">Look up</button>
+        <button class="btn btn-primary" type="submit">Look up</button>
         <button id="tb-graph-sync" class="btn btn-ghost" type="button">Refresh</button>
       </form>
       <ul id="tb-graph-out" class="list"></ul>
@@ -377,7 +381,7 @@
       <form id="settings-add-form" class="settings-add">
         <input id="settings-add-key" placeholder="NEW_SETTING_NAME" autocomplete="off" required aria-label="Setting name">
         <input id="settings-add-value" placeholder="value" autocomplete="off" aria-label="Setting value">
-        <button class="btn" type="submit">Add / update</button>
+        <button class="btn btn-primary" type="submit">Add / update</button>
         <span id="settings-add-status" class="muted" aria-live="polite"></span>
       </form>
     </section>
