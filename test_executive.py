@@ -361,3 +361,40 @@ def test_notify_user_job_speaks_and_runs_no_tools(J, monkeypatch):
     J._deferred_tick(datetime.now())
     assert J._test_said[-1][0] == "Reminder: Call mom"
     assert J._deferred_store.q("SELECT status FROM autonomy_deferred_jobs WHERE id=?", (jid,))[0]["status"] == "done"
+
+
+# --- 2026-09-28 live report: a burst of duplicate "Reminder"/"Heads up ... is overdue" lines -------------
+def test_overdue_nudges_skip_items_a_reminder_already_covers(J):
+    a = J.autonomy
+    notes = []
+    a.configure(dict(J._autonomy_callbacks(), notify=lambda t, u=False: notes.append(t)))
+    a.set_enabled(True)
+    J.create_reminder("Wash my clothes", due_at=(datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds"))
+    past = (datetime.now() - timedelta(hours=1)).isoformat(timespec="seconds")
+    for desc in ("Wash clothes", "Set a reminder for PPM tomorrow",
+                 "Wash clothes reminder set to repeat every twenty minutes starting tomorrow at noon",
+                 "Submit the physics report"):
+        a.add_commitment({"type": "task", "description": desc, "deadline_iso": past, "confidence": 0.9}, "conversation")
+    a._deadline_scan(datetime.now(), True)
+    spoken = " | ".join(notes + [t for t, _ in J._test_said])
+    assert "Wash clothes" not in spoken and "PPM" not in spoken   # the reminder speaks by itself
+    assert "physics report" in spoken                              # a real, uncovered deadline still nudges
+
+
+def test_deadline_context_drops_unrelated_facts(J, monkeypatch):
+    block = ("- [fact] Billing check 2026-09-27: billing monitoring isn't set up yet\n"
+             "- [fact] Hero slept for three hours\n- [fact] The PPM exam is in room 4")
+    monkeypatch.setattr(J.memory_enhance, "relevant_memory_line", lambda d, skip_newest=0: block)
+    out = J._deadline_context("Set a reminder for PPM tomorrow", "overdue")
+    assert "room 4" in out and "Billing" not in out and "slept" not in out
+
+
+def test_backlog_reads_each_distinct_message_once(J, monkeypatch):
+    spoken = []
+    monkeypatch.setattr(J, "_speak_shaped", lambda t: spoken.append(t))
+    with J._session_context_lock:
+        J._session_context["pending_notifications"] = [
+            {"text": t} for t in ("Reminder: Wash my clothes", "Reminder: Wash my clothes", "Reminder: wash my clothes.",
+                                  "Reminder: PPM at noon")]
+    J.flush_pending_notifications()
+    assert spoken == ["Reminder: Wash my clothes", "Reminder: PPM at noon"]

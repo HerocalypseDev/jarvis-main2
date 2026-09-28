@@ -4231,7 +4231,14 @@ def flush_pending_notifications() -> None:
         pending = [i for i in everything if not _stays(i)]
         _session_context["pending_notifications"] = [i for i in everything if _stays(i)]
         _save_session_context_locked()
+    seen: set[str] = set()
     for item in pending:
+        # The same reminder can be queued many times while held (a repeating one fires every N minutes);
+        # read each distinct message once, not once per copy.
+        key = re.sub(r"[^a-z0-9]+", " ", str(item.get("text", "")).lower()).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
         try:
             _speak_shaped(item.get("text", ""))
         except Exception as e:
@@ -5497,6 +5504,45 @@ _deadline_ctx_budget = {"minute": "", "used": 0}
 _EMAIL_ADDR_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
+_GENERIC_TASK_WORDS = {
+    "reminder", "reminders", "remind", "set", "tomorrow", "today", "tonight", "every", "minutes", "minute",
+    "hours", "hour", "repeat", "repeating", "starting", "start", "noon", "overdue", "due", "need", "needs",
+    "please", "make", "sure", "about", "that", "this", "with", "from", "have", "will", "morning", "evening",
+    "twenty", "thirty", "fifteen", "ten", "five", "week", "daily", "time", "later",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    """Words that say what a task is about ("wash", "clothes", "ppm"), without the scheduling filler
+    ("reminder", "tomorrow", "every twenty minutes") that made unrelated things look related."""
+    words = {w.lower() for w in re.findall(r"[A-Za-z0-9]{3,}", text or "")}
+    return {w for w in words if w not in _GENERIC_TASK_WORDS and w not in memory_enhance._QUERY_STOPWORDS}
+
+
+def _reminder_covers(description: str) -> bool:
+    """Is there already a reminder (active, or created in the last 3 days) about the same thing? Then the
+    reminder speaks by itself and an autonomy "Heads up: ... is overdue" would just repeat it."""
+    want = _content_words(description)
+    if not want:
+        return False
+    since = (datetime.now() - timedelta(days=3)).isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            rows = conn.execute(
+                "SELECT text FROM reminders WHERE cancelled_at IS NULL AND (delivered_at IS NULL OR created_at >= ?)",
+                (since,)).fetchall()
+        except sqlite3.Error:
+            rows = []
+        finally:
+            conn.close()
+    for (text,) in rows:
+        have = _content_words(text)
+        if have and len(want & have) / len(want) >= 0.6:
+            return True
+    return False
+
+
 def _deadline_context(description: str, bucket: str) -> str:
     """Spoken with the nudge, so: plain sentences, no prompt headers, no email addresses read aloud.
     All facts are ranked (not only the older ones the system prompt leaves out), and at most
@@ -5507,6 +5553,10 @@ def _deadline_context(description: str, bucket: str) -> str:
     except Exception:
         block = ""
     facts = [re.sub(r"^- \[[^\]]*\]\s*", "", ln).strip() for ln in block.splitlines() if ln.startswith("- ")]
+    # Only facts that share a real word with the task: plain TF-IDF on "set a reminder for PPM tomorrow"
+    # pulled in billing and sleep facts, which were then read aloud as "Related: ...".
+    want = _content_words(description)
+    facts = [f for f in facts if want & _content_words(f)]
     facts = [_EMAIL_ADDR_RE.sub("their address", f) for f in facts][:2]
     if facts:
         parts.append(("Related: " + "; ".join(facts))[:260])
@@ -6486,6 +6536,7 @@ def _autonomy_callbacks() -> dict:
         "organise": autonomy_organise.handle_new_file,   # file organising: on whenever autonomy is on
         "watch_path": lambda p: filewatcher.watcher.add_path(p, baseline=True),
         "deadline_context": _deadline_context,
+        "reminder_covers": _reminder_covers,
         "schedule_deferred": _schedule_deferred_cb,
         "state_line": _state_line,
         "own_addresses": lambda: sleep_mail.own_addresses(),
