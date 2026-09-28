@@ -1377,6 +1377,9 @@ Full write-up: `FEATURES.md` (per-feature defaults, env vars, residual risks). R
   - Residual (accepted): macros can still be triggered by a hands-free follow-up capture (same class as the
     agent loop; the catastrophic gate still holds); clipboard secret detection is a heuristic; the
     announcement-priority signal is weak (barge-in = dismiss). Not verified live: same list as FEATURES.md.
+- **Toolbox trimmed (2026-09-28, user request: "too cluttered")**: the App shortcuts, Meeting notes and Email
+  replies panels were removed from the Toolbox page only; the features, tools and API routes are unchanged
+  and still work by voice/typed command. Don't re-add those panels without asking.
 - Shell heredocs in this environment can turn `\b` into a real backspace byte: write patch scripts with
   the Write tool, and scan for control characters after scripted edits.
 - `_macro_known_tools()` uses connected MCP tools only - never `get_mcp_tool_schemas()`, which starts
@@ -1494,7 +1497,8 @@ row there each phase rather than only stating the total in chat.
 | 60 (feature batch audit-and-fix: 17 bugs fixed incl. mail-agent NameError, agent placeholder injection, fuzzy macro flips, meeting speech loss; 18 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 61 (executive autonomy: deferred jobs that run, schedule_jarvis_task, reminder content cleanup, tool-handled turns not re-saved, minimal autonomy speech, untrusted-origin code block, email caps, cascades, live state; 20 new tests) | Opus 5.5 | ~55 min | ~$4.50–$6.30 |
 | 62 (executive-autonomy audit: 8 bugs fixed incl. second-person reminders becoming jobs, tz crash / run-now on bad times, paraphrase fallback nag, parallel jobs, bedtime release; 8 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~2121 min** | **~$118.05–$165.55** |
+| 63 (Toolbox trimmed: removed App shortcuts / Meeting notes / Email replies panels, features kept) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~2131 min** | **~$118.65–$166.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

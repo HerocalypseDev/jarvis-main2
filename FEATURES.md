@@ -208,6 +208,14 @@ voice replies over 6 s.
   mail_match agent against Gmail, app-shortcut keys into a real app, battery thresholds on a laptop.
 - Tool prefix grew by 14 tools (~2.5k tokens of the cached prefix); one-time cache re-write per restart.
 
+## Toolbox trimmed (2026-09-28)
+
+At the user's request the App shortcuts, Meeting notes and Email replies panels were removed from the
+Toolbox page (HTML + features.js only) because it looked cluttered. The features still work by voice/typed
+command and through their agent tools (`app_shortcuts`, `meeting_notes`, `email_reply`); their
+`/api/feature/{shortcuts,meetings,email}` routes still exist, just with no panel. App shortcuts still show
+first in the Alt+K palette.
+
 ## Audit (2026-09-27)
 
 17 bugs found and fixed in this batch; details and the rules they imply are in CLAUDE.md ("Feature batch

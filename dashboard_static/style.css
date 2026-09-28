@@ -730,7 +730,6 @@ p.consent-list { padding-left: 0; }
 .chip.active { outline: 1px solid var(--accent, #4dd0ff); }
 .drafts { white-space: pre-wrap; max-width: 760px; }
 .drafts:empty { display: none; }
-#tb-email-text { width: 100%; box-sizing: border-box; }
 #view-toolbox input, #view-toolbox select, #view-toolbox textarea {
   background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font: inherit; }
 #view-toolbox input:focus-visible, #view-toolbox select:focus-visible, #view-toolbox textarea:focus-visible {
