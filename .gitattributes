@@ -1,0 +1,2 @@
+# graphify-out/ is generated (its .sig file made GitHub report "Standard ML"); keep it out of language stats
+graphify-out/** linguist-generated
