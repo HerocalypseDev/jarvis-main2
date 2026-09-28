@@ -264,3 +264,178 @@ def test_relevant_memory_line_uses_semantic_ranker_else_tfidf():
         assert "Billing" in M.relevant_memory_line("billing check status", semantic=lambda q, texts: None)
     finally:
         M._connect = orig
+
+
+# --- Phase 5: eval runner ---------------------------------------------------------------------
+def test_eval_scoring_and_cases_file_is_valid():
+    import json as _json
+    import jarvis_eval as E
+    case = {"expect_any": [{"tool": "run_shell", "input_re": "shutdown"}], "forbid": [{"tool": "quick_search"}],
+            "reply_not_re": "OpenJarvis"}
+    assert E.score(case, [("run_shell", {"command": "shutdown /s /t 0"})], "Staged.") == []
+    assert E.score(case, [], "Say yes to shut down.")[0].startswith("expected a call to run_shell")
+    assert any("forbidden" in p for p in E.score(case, [("run_shell", {"command": "shutdown"}), ("quick_search", {})], ""))
+    assert any("OpenJarvis" in p for p in E.score(case, [("run_shell", {"command": "shutdown"})], "It's in OpenJarvis"))
+    cases = _json.loads(E.CASES.read_text(encoding="utf-8"))
+    import jarvis
+    names = {t["name"] for t in jarvis.AGENT_TOOLS}
+    assert len(cases) >= 30 and len({c["id"] for c in cases}) == len(cases)
+    for c in cases:  # every expected/forbidden tool must exist, or the case can never pass
+        for r in c.get("expect_any", []) + c.get("forbid", []):
+            assert r["tool"] in names, (c["id"], r["tool"])
+
+
+# --- Phase 6: autonomy upgrades ---------------------------------------------------------------
+@pytest.fixture()
+def auto(jarvis, monkeypatch):
+    monkeypatch.delenv("JARVIS_AUTONOMY_DISABLED", raising=False)
+    monkeypatch.delenv("JARVIS_SAFE_MODE", raising=False)
+    jarvis.autonomy._initialized_paths.clear()
+    jarvis.autonomy.init_autonomy_tables()
+    jarvis.autonomy.configure(jarvis._autonomy_callbacks())
+    return jarvis
+
+
+def test_calibration_only_ever_raises_the_bar(auto):
+    a = auto.autonomy
+    assert a.learned_raise("reminder") == 0.0
+    a.record_outcome("reminder", False)
+    a.record_outcome("reminder", False)
+    assert a.learned_raise("reminder") == 0.1
+    for _ in range(10):
+        a.record_outcome("reminder", True)
+    assert a.learned_raise("reminder") == 0.0  # approvals bring it back down to the default, never below
+    for _ in range(20):
+        a.record_outcome("email", False)
+    assert a.learned_raise("email") == a.CALIBRATION_MAX_RAISE
+    verdict, why = a._evaluate_base("x", "", "text", 0.8, "email", "conversation")
+    assert verdict == "record" and "0.90" in why  # 0.7 default + 0.2 learned
+
+
+def test_cancelling_an_autonomy_reminder_counts_against_reminders(auto, monkeypatch):
+    a = auto.autonomy
+    monkeypatch.setattr(auto, "_current_command_source", lambda: "voice")
+    monkeypatch.setattr(a, "dry_run", lambda: False)
+    monkeypatch.setattr(a, "enabled", lambda: True)
+    ok, res = a._run_action("reminder", {"text": "drink water", "due_iso": "2099-01-01T10:00:00"})
+    rid = int(__import__("re").search(r"#(\d+)", res).group(1))
+    auto.cancel_reminder(rid)
+    assert a.learned_raise("reminder") > 0
+    auto.create_reminder("my own thing", due_in_minutes=30)
+    conn = auto._memory_db_connect()
+    own_id = conn.execute("SELECT MAX(id) FROM reminders").fetchone()[0]
+    conn.close()
+    auto.cancel_reminder(own_id)
+    assert a.learned_raise("reminder") == 0.05  # cancelling the user's own reminder changes nothing
+
+
+def test_commitment_that_is_a_reminder_request_is_marked_covered_at_source(auto):
+    a = auto.autonomy
+    auto.create_reminder("Wash my clothes", due_in_minutes=60)
+    cid = a.add_commitment({"type": "task", "description": "Wash clothes", "confidence": 0.9}, "conversation")
+    cid2 = a.add_commitment({"type": "task", "description": "Set a reminder for PPM tomorrow", "confidence": 0.9}, "conversation")
+    cid3 = a.add_commitment({"type": "task", "description": "Submit the physics report", "confidence": 0.9}, "conversation")
+    metas = {cid: a._meta(a._commitment(cid)), cid2: a._meta(a._commitment(cid2)), cid3: a._meta(a._commitment(cid3))}
+    assert metas[cid].get("covered_by") == "reminder" and metas[cid2].get("covered_by") == "reminder"
+    assert "covered_by" not in metas[cid3]
+
+
+def test_daily_plan_build_fallback_review_and_carry_over(auto, monkeypatch):
+    from datetime import datetime, timedelta
+    import jarvis_daily_plan as P
+    a = auto.autonomy
+    now = datetime(2026, 9, 28, 8, 0)
+    monkeypatch.setattr(auto, "_calendar_events_raw", lambda s, e: '[{"id":"e1","summary":"Standup","start":{"dateTime":"2026-09-28T09:30:00"}}]')
+    monkeypatch.setattr(auto, "_sleep_mail_claude", lambda *a_: None)  # model down -> deterministic order
+    cid = a.add_commitment({"type": "task", "description": "Submit the physics report",
+                            "deadline_iso": "2026-09-28T17:00:00", "confidence": 0.9}, "conversation")
+    auto.create_reminder("take vitamins", due_at="2026-09-28T12:00:00")
+    plan = auto.build_daily_plan(now)
+    refs = [i["ref"] for i in plan]
+    assert refs == ["event:e1", "reminder:1", f"commitment:{cid}"]  # by time
+    a._exec("UPDATE commitments SET status='completed' WHERE id=?", (cid,))
+    spoken = []
+    monkeypatch.setattr(auto, "queue_or_deliver_notification", lambda t, **k: spoken.append(t))
+    line = auto.review_daily_plan(datetime(2026, 9, 28, 21, 5))
+    assert "2 of 3 done" in line and "vitamins" in line.lower() and spoken == [line]
+    tomorrow = auto._daily_plan_gather(datetime(2026, 9, 29, 8, 0))
+    assert any(i["ref"] == "reminder:1" for i in tomorrow)  # carried over
+
+
+def test_plan_parse_only_accepts_real_refs():
+    import jarvis_daily_plan as P
+    items = [{"ref": "commitment:1", "text": "a", "due": "", "kind": "task"}, {"ref": "reminder:2", "text": "b", "due": "", "kind": "reminder"}]
+    got = P.parse_plan('Sure: [{"ref":"reminder:2","why":"at noon"},{"ref":"made:up","why":"x"},{"ref":"commitment:1"}]', items)
+    assert [i["ref"] for i in got] == ["reminder:2", "commitment:1"] and got[0]["why"] == "at noon"
+    assert P.parse_plan("no json here", items) is None
+
+
+def test_daily_plan_tick_times(auto, monkeypatch):
+    from datetime import datetime
+    built, reviewed = [], []
+    monkeypatch.setattr(auto, "build_daily_plan", lambda now=None: built.append(now) or [])
+    monkeypatch.setattr(auto, "review_daily_plan", lambda now=None, announce=True: reviewed.append(now) or "")
+    monkeypatch.setattr(auto.threading, "Thread", lambda target, **k: type("T", (), {"start": lambda self: target()})())
+    auto._daily_plan_tick(datetime(2026, 9, 28, 7, 30))
+    assert built == []  # before 07:45
+    auto._daily_plan_tick(datetime(2026, 9, 28, 7, 50))
+    assert len(built) == 1
+
+
+def test_daily_plan_feature_route(auto, monkeypatch):
+    from fastapi.testclient import TestClient
+    import jarvis_dashboard
+    monkeypatch.setattr(auto, "_sleep_mail_claude", lambda *a_: None)
+    monkeypatch.setattr(auto, "_calendar_events_raw", lambda s, e: "")
+    client = TestClient(jarvis_dashboard._build_app(), base_url="http://127.0.0.1:8765")
+    r = client.post("/api/feature/daily_plan/refresh", json={})
+    assert r.status_code == 200 and "items" in r.json()
+    assert client.get("/api/feature/daily_plan").status_code == 200
+
+
+# --- Phase 7: local brain (Ollama) -------------------------------------------------------------
+def test_ollama_translation_round_trip():
+    import jarvis_ollama as O
+    body = {"model": "x", "max_tokens": 300, "system": [{"type": "text", "text": "You are Jarvis."}],
+            "tools": [{"name": "open_app", "description": "Open an app", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}}}}],
+            "messages": [{"role": "user", "content": "open notepad"},
+                         {"role": "assistant", "content": [{"type": "text", "text": "Opening."},
+                                                           {"type": "tool_use", "id": "t1", "name": "open_app", "input": {"app": "notepad"}}]},
+                         {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Opened notepad."}]}]}
+    req = O.to_request(body, "qwen3:8b")
+    assert req["messages"][0] == {"role": "system", "content": "You are Jarvis."}
+    assert req["messages"][2]["tool_calls"][0]["function"] == {"name": "open_app", "arguments": {"app": "notepad"}}
+    assert req["messages"][3] == {"role": "tool", "content": "Opened notepad.", "tool_name": "open_app"}
+    assert req["tools"][0]["function"]["name"] == "open_app" and req["options"]["num_predict"] == 300
+    out = O.from_response({"message": {"content": "<think>hmm</think>Done.",
+                                       "tool_calls": [{"function": {"name": "weather", "arguments": '{"place": "Lagos"}'}}]},
+                           "prompt_eval_count": 10, "eval_count": 5}, "qwen3:8b")
+    assert out["content"][0] == {"type": "text", "text": "Done."}  # thinking is never spoken
+    assert out["content"][1]["name"] == "weather" and out["content"][1]["input"] == {"place": "Lagos"}
+    assert out["stop_reason"] == "tool_use" and out["usage"] == {"input_tokens": 10, "output_tokens": 5}
+
+
+def test_ollama_refuses_public_hosts(monkeypatch):
+    import jarvis_ollama as O
+    assert O.host_problem("http://127.0.0.1:11434") is None
+    assert O.host_problem("http://192.168.1.20:11434") is None
+    assert "public" in O.host_problem("http://8.8.8.8:11434")
+    monkeypatch.setenv("JARVIS_OLLAMA_URL", "http://8.8.8.8:11434")
+    assert O.call({"messages": []}, 5, http=lambda *a: (_ for _ in ()).throw(AssertionError("sent!"))) is None
+
+
+def test_switching_to_ollama_checks_it_is_ready_and_never_fails_over(jarvis, monkeypatch):
+    import jarvis_ollama as O
+    monkeypatch.setattr(O, "available", lambda http=None: "Ollama isn't running")
+    assert "isn't ready" in jarvis.set_llm_provider("ollama")
+    monkeypatch.setattr(O, "available", lambda http=None: None)
+    assert "local brain" in jarvis.set_llm_provider("ollama")
+    assert jarvis._llm_provider() == "ollama" and jarvis._tool_narrowing_on() is True
+    import jarvis_embeddings as E
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    assert E.enabled(jarvis._llm_provider()) is False  # auto: memory text never goes to Google on the local brain
+    failover = []
+    monkeypatch.setattr(jarvis, "_failover_to_gemini", lambda *a, **k: failover.append(a))
+    monkeypatch.setattr(O, "call", lambda body, timeout, http=None: None)
+    assert jarvis._claude_request({"model": "x", "messages": []}, 5) is None and failover == []
+    assert "local brain" in jarvis._llm_unavailable_reply()

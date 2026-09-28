@@ -72,6 +72,16 @@
         </div>
         <div id="home-briefing" aria-live="polite"><p class="muted">Loading&hellip;</p></div>
       </div>
+      <div class="home-block home-plan">
+        <div class="briefing-head">
+          <h3 class="block-title">Today's plan</h3>
+          <div class="briefing-controls">
+            <button class="btn btn-ghost" id="plan-refresh" type="button" title="Rebuild today's plan">Rebuild</button>
+          </div>
+        </div>
+        <ol id="home-plan" class="list compact plan-list" aria-live="polite"></ol>
+        <p id="home-plan-review" class="muted"></p>
+      </div>
       <div class="home-grid">
         <div class="home-block">
           <div class="briefing-head">

@@ -85,3 +85,56 @@ runs through `_execute_tool`. Tests: `test_smarter.py`.
   embeddings for 5 minutes.
 - **Data exposure:** on Gemini's free tier, fact text sent for embedding may be used by Google, same as the
   prompts themselves.
+
+## Phase 5: eval set from real failures (`jarvis_eval.py`, `evals/cases.json`)
+
+- 30 cases, most taken from real incidents in CLAUDE.md (shutdown never staged, fake James hand-off,
+  "where is your code" -> OpenJarvis, deferred jobs, fake "I sent it"), plus everyday tool routing.
+- `python jarvis_eval.py [--provider claude|gemini] [--model NAME] [--case ID] [--delay S] [--verbose]`.
+  Uses the real model, but **no tool ever runs**: `_execute_tool_impl` is replaced by a recorder, MCP is
+  never started, a throwaway DB is used, caches and lessons are off. Results go to `evals/results/`
+  (gitignored). A case where the model was unreachable (quota/overload) is reported as ERR, not scored.
+- Case checks: `expect_any` (one of these tool calls, optional `input_re`), `forbid`, `reply_not_re`,
+  `reply_re`. A unit test checks every named tool exists, so a renamed tool can't silently make a case
+  impossible.
+- **First live run (2026-09-28, the user's Gemini key):** `gemini-3.6-flash` free tier allows only 5
+  requests/minute (5/8 before the quota hit); `gemma-4-31b-it`: 6/6 scored cases passed, 24 not scored
+  (free-tier rate limit), and each case took 30-180 s. So neither is a good full-time brain on the free
+  tier; a real comparison needs Claude or a paid Gemini tier, or `--delay 15` and patience.
+
+## Phase 6: autonomy upgrades
+
+- **Duplicates stopped at the source:** `_insert_commitment` marks a commitment that is itself a reminder
+  request (`_REMINDER_ABOUT_RE`) or that an existing reminder covers (`reminder_covers`) as
+  `covered_by=reminder` + handled, so it is tracked but never actioned or nudged (the 2026-09-28 overdue
+  burst, fixed earlier at nudge time, is now also prevented at creation).
+- **Confidence that learns** (`autonomy_calibration` table, `record_outcome`, `learned_raise`): per action
+  type, bad outcomes (a dismissed card, a cancelled reminder that autonomy created - tracked in
+  `autonomy_created` via `_autonomy_create_reminder`, which appends the new id - or "undo" within 10 min
+  of an autonomous action, `note_user_undo`) raise the auto-act bar by 0.05 each, capped at +0.2; two
+  approvals cancel one bad. It is added to both the default floor and the third-party bar. **It can only
+  raise the bar, never lower it below the configured default.** Cancelling your own reminder changes nothing.
+- **Daily plan + evening review** (`jarvis_daily_plan.py` + glue in jarvis.py, table `daily_plans`):
+  at `JARVIS_DAILY_PLAN_TIME` (07:45) one small model call orders today's candidates (open commitments
+  due within 36 h or overdue up to 3 days, today's reminders, today's calendar events, yesterday's
+  carried-over items) into <= 6 items; model down -> deterministic order. Only refs that really exist are
+  accepted from the model. At `JARVIS_DAILY_REVIEW_TIME` (21:00) each item is checked (commitment
+  completed, reminder delivered/cancelled, event time passed); unfinished items carry over and one short
+  non-urgent line is announced (so sleep/focus/safe-mode/meeting holds apply). Home has a "Today's plan"
+  card (`/api/feature/daily_plan`, Rebuild button); voice: `daily_plan` tool ("what's my plan today").
+  `JARVIS_DAILY_PLAN=0` turns both off. Verified in headless Chromium against stubbed data.
+
+## Phase 7: local brain via Ollama (`jarvis_ollama.py`)
+
+- The private option: "switch to the local brain" / the brain chip -> `local`. Every model call goes to
+  Ollama's `/api/chat` on `JARVIS_OLLAMA_URL` (default `http://127.0.0.1:11434`) with
+  `JARVIS_OLLAMA_MODEL` (default `qwen3:8b`; `ollama pull qwen3:8b` first). Anthropic-shaped requests are
+  translated like the Gemini adapter (tools -> function specs, tool_use/tool_result -> tool_calls/tool
+  messages, `<think>` text stripped so reasoning is never spoken).
+- **Privacy rules:** public hosts are refused (loopback/private/link-local only); it **never fails over to a
+  cloud brain**; with it active, tool narrowing is on (small models need it) and embeddings stay off
+  (auto = Gemini only), so memory text isn't sent to Google either. Speech still uses whatever STT/TTS is
+  configured (Deepgram/Fish are cloud; local Whisper/Piper are the private options).
+- `set_llm_provider("ollama")` checks the server answers and the model is pulled before switching.
+- **Not verified live:** no Ollama server in the cloud test environment; translation is unit-tested against
+  Ollama's documented request/response shapes.

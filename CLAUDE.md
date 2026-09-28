@@ -1445,6 +1445,16 @@ Rules to keep:
 - **Embeddings** (`jarvis_embeddings.py`, `JARVIS_EMBEDDINGS` auto|on|off, auto = Gemini brain only): hybrid
   meaning + strong-word retrieval for memory facts. Selection thresholds were tuned on live scores; re-measure
   before changing `MIN_SCORE`/`MIN_GAP`/`NEAR_TOP`. Any failure must fall back to TF-IDF, never block a command.
+- **Evals** (`jarvis_eval.py`, `evals/cases.json`): real model, recorded (never executed) tools. Add a case
+  for every new live-found failure. Free Gemini tiers are too rate-limited for a full run (see SMARTER.md).
+- **Autonomy calibration** only ever *raises* the auto-act bar (`learned_raise` >= 0); never let feedback
+  lower it below the configured default. Commitments covered by a reminder are marked at creation.
+- **Daily plan/review**: plan not spoken unprompted; review is one non-urgent line; model output limited to
+  real refs.
+- **Local brain** (`jarvis_ollama.py`, provider `ollama`): never fails over to the cloud, refuses public
+  hosts. Keep both properties.
+- Background model calls must not run under pytest (`_spawn_lesson` returns early on
+  `PYTEST_CURRENT_TEST`); tests call the synchronous function directly.
 
 ### Cost reporting
 
@@ -1537,7 +1547,8 @@ row there each phase rather than only stating the total in chat.
 | 67 (smarter batch Phase 2: claim checker for reminders/sends/calendar/files/memory + escalate to the smart model on failure/repeat, Gemini override with fallback; 14 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 68 (smarter batch Phase 3: lessons memory from failures/corrections, filtered + sanitised, top 3 in volatile prompt, lessons tool; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 69 (smarter batch Phase 4: Gemini embeddings for memory retrieval, hybrid with strong word matches, thresholds tuned live, cached + breaker; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~2259 min** | **~$128.65–$180.55** |
+| 70 (smarter batch Phases 5-7: eval runner + 30 real-failure cases (live-run on Gemini/Gemma), autonomy source dedupe + learning confidence + daily plan/review with Home card, local Ollama brain; 16 new tests) | Opus 5.5 | ~70 min | ~$6.00–$8.40 |
+| **Running total (final)** | | **~2329 min** | **~$134.65–$188.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
