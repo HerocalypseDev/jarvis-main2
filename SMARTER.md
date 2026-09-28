@@ -65,3 +65,23 @@ runs through `_execute_tool`. Tests: `test_smarter.py`.
   turns the whole thing off.
 - **Cost:** one ~120-token call per failed or corrected command, capped at 12/hour.
 - **Not verified live:** lesson quality from a real model.
+
+## Phase 4: meaning-based memory retrieval (`jarvis_embeddings.py`)
+
+- **Why:** TF-IDF matched filler words; that is how billing and sleep facts were read out as "Related:".
+- **What:** Gemini `gemini-embedding-001` vectors (256 dims) for memory facts and the command, cached per
+  text in a new `embeddings` table (sha256 key, float32 blob). `jarvis_memory_enhance.relevant_memory_line`
+  takes an optional `semantic` ranker; jarvis passes `_semantic_ranker()` from both per-command retrieval
+  and the deadline-nudge context. Hybrid: meaning matches first, plus strong word matches (TF-IDF >= 0.3,
+  e.g. "open my browser" -> "Opera GX as the main browser", which the embedding ranked below its cut-off).
+- **Selection** (tuned on live scores): >= 0.70, >= 0.07 above the median of all facts, and within 0.05 of the
+  best match. Live check on 9 sample facts: 8/8 queries right, including "wash clothes" no longer pulling in
+  the PPM exam and "what's the weather" returning nothing.
+- **Default:** `JARVIS_EMBEDDINGS=auto` = only while the Gemini brain is active (fact text then goes to the
+  same vendor that already sees every prompt); `on` also with Claude (sends fact text to Google for
+  embedding); `off`. Needs a Gemini key. `JARVIS_EMBED_MODEL` overrides the model.
+- **Speed/failure:** facts are embedded once in the background at startup (`_warm_embeddings`); a command
+  pays one small query request (2.5 s timeout). Any failure -> TF-IDF as before; 3 failures in a row pause
+  embeddings for 5 minutes.
+- **Data exposure:** on Gemini's free tier, fact text sent for embedding may be used by Google, same as the
+  prompts themselves.

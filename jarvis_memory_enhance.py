@@ -351,7 +351,10 @@ _QUERY_STOPWORDS = frozenset(
 )
 
 
-def relevant_memory_line(query: str, skip_newest: int = 0) -> str:
+HYBRID_LEXICAL_MIN = 0.3  # word-match score a fact needs to join the meaning-based picks
+
+
+def relevant_memory_line(query: str, skip_newest: int = 0, semantic=None) -> str:
     """Per-command retrieval (the "retrieve on demand, don't inject wholesale" idea): the stable
     system block only carries the newest `skip_newest` active facts, so older ones were invisible
     unless the model thought to call recall. This ranks the *rest* against the command with the
@@ -374,10 +377,25 @@ def relevant_memory_line(query: str, skip_newest: int = 0) -> str:
             conn.close()
     if not rows:
         return ""
+    # semantic(query, texts) -> indices of relevant texts, best first, or None (unavailable -> TF-IDF).
+    picked = None
+    if semantic is not None:
+        try:
+            picked = semantic(query, [c for _, c in rows])
+        except Exception as e:
+            log.debug("semantic memory ranking failed: %s", e)
+            picked = None
     vectors, idf = _tfidf_vectors([_tokenize(c) for _, c in rows])
     q_tf = Counter(q_tokens)
     q_vector = {t: (n / len(q_tokens)) * idf.get(t, 0.0) for t, n in q_tf.items()}
-    scored = sorted(((_cosine(q_vector, v), cat, c) for v, (cat, c) in zip(vectors, rows)), reverse=True)
+    lexical = sorted(((_cosine(q_vector, v), i) for i, v in enumerate(vectors)), reverse=True)
+    if picked is not None:
+        # Hybrid: meaning matches first, then only *strong* word matches (a rare shared word such as
+        # "browser" -> "Opera GX as the main browser" that the embedding ranked below its cut-off).
+        order = list(picked) + [i for sc, i in lexical if sc >= HYBRID_LEXICAL_MIN and i not in picked]
+        scored = [(1.0, rows[i][0], rows[i][1]) for i in order]
+    else:
+        scored = [(sc, rows[i][0], rows[i][1]) for sc, i in lexical]
     lines, used = [], 0
     for score, cat, content in scored[:RELEVANT_MEMORY_LIMIT]:
         if score < RELEVANT_MEMORY_MIN_SCORE:
