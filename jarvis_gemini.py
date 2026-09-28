@@ -255,9 +255,22 @@ def call(
     waiting the server-advised delay (capped) instead of failing a multi-step command outright;
     drops thinkingConfig once if the model rejects it."""
     key, model = api_key(), model_name()
+    # Escalation (smarter batch): the loop may ask for a stronger Gemini/Gemma model by name. If that
+    # model fails, the same request is retried once on the configured model.
+    override = str(body.get("model") or "")
+    if override.startswith(("gemini-", "gemma-")) and override != model and key:
+        result = _call_model(body, timeout, http, key, override, max_attempts=2, sleep=sleep)
+        if result is not None:
+            return result
+        log.warning("Escalation model %s failed; retrying on %s", override, model)
     if not key:
         log.warning("Set GEMINI_API_KEY in .env to use Gemini.")
         return None
+    return _call_model(body, timeout, http, key, model, max_attempts=max_attempts, sleep=sleep)
+
+
+def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attempts: int = 3,
+                sleep: Callable[[float], None] = time.sleep) -> dict | None:
     think = True
     for attempt in range(1, max_attempts + 1):
         payload = json.dumps(to_request(body, model, think)).encode()
