@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -247,7 +248,7 @@ def call(
     body: dict,
     timeout: int,
     http: Callable[[urllib.request.Request, int], bytes],
-    max_attempts: int = 3,
+    max_attempts: int = 4,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict | None:
     """Runs one Anthropic-shaped body against Gemini; returns an Anthropic-shaped dict, or None
@@ -266,12 +267,33 @@ def call(
     if not key:
         log.warning("Set GEMINI_API_KEY in .env to use Gemini.")
         return None
-    return _call_model(body, timeout, http, key, model, max_attempts=max_attempts, sleep=sleep)
+    result = _call_model(body, timeout, http, key, model, max_attempts=max_attempts, sleep=sleep)
+    if result is None and getattr(_last_fail, "code", None) in OVERLOAD_CODES:
+        # Opt-in backup for OVERLOAD only (503 "high demand" and other 5xx), never for quota (429): the
+        # user chose (2026-09-25) to change models themselves when a daily quota runs out.
+        backup = fallback_model_name()
+        if backup and backup != model:
+            log.warning("Gemini %s is overloaded; trying the backup model %s once", model, backup)
+            result = _call_model(body, timeout, http, key, backup, max_attempts=2, sleep=sleep)
+    return result
 
 
-def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attempts: int = 3,
+OVERLOAD_CODES = (500, 502, 503, 504)
+# Waits between tries when Google is overloaded (2026-09-28, found live: 3 tries 1.5 s apart all hit the
+# same short 503 spell on gemini-3.1-flash-lite, and the command failed while the next one worked).
+OVERLOAD_BACKOFF_S = (2.0, 4.0, 8.0)
+_last_fail = threading.local()
+
+
+def fallback_model_name() -> str:
+    """JARVIS_GEMINI_FALLBACK_MODEL: tried once when the main model is overloaded. Empty (default) = off."""
+    return (os.environ.get("JARVIS_GEMINI_FALLBACK_MODEL") or "").strip()
+
+
+def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attempts: int = 4,
                 sleep: Callable[[float], None] = time.sleep) -> dict | None:
     think = True
+    _last_fail.code = None
     for attempt in range(1, max_attempts + 1):
         payload = json.dumps(to_request(body, model, think)).encode()
         req = urllib.request.Request(
@@ -286,6 +308,7 @@ def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attemp
             except Exception:
                 detail = ""
             log.warning("Gemini request failed (attempt %d): HTTP %d: %s", attempt, e.code, detail[:400])
+            _last_fail.code = e.code
             if e.code == 400 and think and "thinking" in detail.lower():
                 think = False
                 continue
@@ -296,8 +319,8 @@ def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attemp
                     continue
                 log.warning("Gemini quota exhausted (retry delay %s) — not waiting.", wait)
                 return None
-            if e.code in (500, 502, 503, 504) and attempt < max_attempts:
-                sleep(1.5)
+            if e.code in OVERLOAD_CODES and attempt < max_attempts:
+                sleep(OVERLOAD_BACKOFF_S[min(attempt - 1, len(OVERLOAD_BACKOFF_S) - 1)])
                 continue
             return None
         except Exception as e:
