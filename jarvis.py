@@ -58,6 +58,7 @@ import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
 import jarvis_tool_router as tool_router
 import jarvis_lessons as lessons
+import jarvis_embeddings as embeddings
 import jarvis_filewatcher as filewatcher
 import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
@@ -5638,7 +5639,7 @@ def _deadline_context(description: str, bucket: str) -> str:
     DEADLINE_MAIL_LOOKUPS_PER_MIN Gmail searches run per minute however many deadlines come due at once."""
     parts = []
     try:
-        block = memory_enhance.relevant_memory_line(description, skip_newest=0)
+        block = memory_enhance.relevant_memory_line(description, skip_newest=0, semantic=_semantic_ranker())
     except Exception:
         block = ""
     facts = [re.sub(r"^- \[[^\]]*\]\s*", "", ln).strip() for ln in block.splitlines() if ln.startswith("- ")]
@@ -7191,13 +7192,47 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
     return [stable_block, {"type": "text", "text": volatile}]
 
 
+def _semantic_ranker():
+    """A meaning-based ranker for memory_enhance.relevant_memory_line, or None (-> TF-IDF) when
+    embeddings are off (JARVIS_EMBEDDINGS, default auto = Gemini brain only)."""
+    if not embeddings.enabled(_llm_provider()):
+        return None
+
+    def rank(query: str, texts: list[str]) -> list[int] | None:
+        docs = embeddings.embed(_memory_db_connect, _memory_db_lock, texts, "RETRIEVAL_DOCUMENT")
+        q = embeddings.embed(_memory_db_connect, _memory_db_lock, [query], "RETRIEVAL_QUERY",
+                             timeout=embeddings.QUERY_TIMEOUT_S)
+        if docs is None or q is None:
+            return None
+        return [i for _, i in embeddings.rank(q[0], docs)]
+    return rank
+
+
+def _warm_embeddings() -> None:
+    """Embed every active fact once in the background at startup, so the first command doesn't pay for it."""
+    if not embeddings.enabled(_llm_provider()):
+        return
+    try:
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                texts = [r[0] for r in conn.execute("SELECT content FROM memory_facts WHERE superseded_at IS NULL")]
+            finally:
+                conn.close()
+        if texts and embeddings.embed(_memory_db_connect, _memory_db_lock, texts, "RETRIEVAL_DOCUMENT") is not None:
+            log.info("Embedded %d memory facts for meaning-based recall.", len(texts))
+    except Exception as e:
+        log.debug("embedding warm-up failed: %s", e)
+
+
 def _relevant_memory_line(query: str) -> str:
     """Older facts relevant to this command (the stable block only holds the newest
     MAX_ACTIVE_FACTS_IN_PROMPT). Never allowed to break a command."""
     if not query:
         return ""
     try:
-        return memory_enhance.relevant_memory_line(query, skip_newest=MAX_ACTIVE_FACTS_IN_PROMPT)
+        return memory_enhance.relevant_memory_line(query, skip_newest=MAX_ACTIVE_FACTS_IN_PROMPT,
+                                                   semantic=_semantic_ranker())
     except Exception as e:
         log.debug("relevant memory lookup failed: %s", e)
         return ""
@@ -11730,6 +11765,7 @@ def main() -> int:
             log.warning("Dashboard failed to start; Jarvis continues without it: %s", e)
 
     _preload_mcp_async()
+    threading.Thread(target=_warm_embeddings, name="jarvis-embed-warm", daemon=True).start()
     clip_history.start(_memory_db_connect, _memory_db_lock)  # A1; JARVIS_CLIPBOARD_HISTORY=0 turns it off
     _fg_tracker.start()  # B3: last real app window, for app shortcuts and meeting auto-start
     filewatcher.watcher.listeners.append(_file_index.on_event)  # B2: index new files in watched folders

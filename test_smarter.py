@@ -194,3 +194,73 @@ def test_lessons_tool_changes_only_when_attended(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "_current_command_source", lambda: "voice")
     assert "Saved lesson" in jarvis._lessons_tool({"action": "add", "lesson": "Use the School folder for notes."})
     assert "School folder" in jarvis._lessons_tool({"action": "list"})
+
+
+# --- Phase 4: embedding retrieval -----------------------------------------------------------------
+def _fake_embed_http(vectors):
+    import json as _json
+
+    def http(req, timeout):
+        body = _json.loads(req.data)
+        return _json.dumps({"embeddings": [{"values": vectors(r["content"]["parts"][0]["text"])} for r in body["requests"]]}).encode()
+    return http
+
+
+def test_embeddings_cache_and_relative_ranking(jarvis, monkeypatch):
+    import jarvis_embeddings as E
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    E._breaker.update(fails=0, until=0)
+    calls = []
+    axes = {"ppm": [1, 0, 0], "sister": [0, 1, 0]}
+
+    def vec(t):
+        calls.append(t)
+        for k, v in axes.items():
+            if k in t.lower():
+                return v + [0.2] * 5
+        return [0.3, 0.3, 0.3] + [0.2] * 5
+    http = _fake_embed_http(vec)
+    c, lk = jarvis._memory_db_connect, jarvis._memory_db_lock
+    docs = ["The PPM exam is in room 4", "Racheal is my sister", "Billing check pending", "Slept 3 hours"]
+    d = E.embed(c, lk, docs, http=http)
+    n = len(calls)
+    again = E.embed(c, lk, docs, http=http)
+    assert len(calls) == n and again[0] == pytest.approx(d[0], abs=1e-6)  # cached: no second request
+    q = E.embed(c, lk, ["when is my ppm test"], "RETRIEVAL_QUERY", http=http)[0]
+    assert [i for _, i in E.rank(q, d)] == [0]
+
+
+def test_embeddings_off_by_default_on_claude_and_failures_fall_back(jarvis, monkeypatch):
+    import jarvis_embeddings as E
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    assert E.enabled("claude") is False and E.enabled("gemini") is True
+    monkeypatch.setenv("JARVIS_EMBEDDINGS", "off")
+    assert E.enabled("gemini") is False
+    E._breaker.update(fails=0, until=0)
+
+    def boom(req, timeout):
+        raise TimeoutError()
+    for _ in range(3):
+        assert E.embed(jarvis._memory_db_connect, jarvis._memory_db_lock, ["x"], http=boom) is None
+    assert E._breaker["until"] > 0  # tripped: the next commands skip it instantly
+    E._breaker.update(fails=0, until=0)
+
+
+def test_relevant_memory_line_uses_semantic_ranker_else_tfidf():
+    import jarvis_memory_enhance as M
+    import sqlite3, tempfile, os
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "m.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE memory_facts (id INTEGER PRIMARY KEY, category TEXT, content TEXT, created_at TEXT, superseded_at TEXT)")
+    conn.executemany("INSERT INTO memory_facts (category, content, created_at) VALUES (?,?,?)",
+                     [("fact", "The PPM exam is in room 4", "2026-01-01"), ("fact", "Billing check pending", "2026-01-02")])
+    conn.commit(); conn.close()
+    orig = M._connect
+    M._connect = lambda: sqlite3.connect(path)
+    try:
+        assert "PPM" in M.relevant_memory_line("when is my test", semantic=lambda q, texts: [texts.index("The PPM exam is in room 4")])
+        assert M.relevant_memory_line("when is my test", semantic=lambda q, texts: []) == ""
+        assert "Billing" in M.relevant_memory_line("billing check status", semantic=lambda q, texts: None)
+    finally:
+        M._connect = orig
