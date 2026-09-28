@@ -1255,8 +1255,9 @@ through it, not around it. Tests: `test_qol.py` (isolated temp DB, never the rea
   - *"Stop talking"* (intent `hush`: "stop", "stop talking", "be quiet"...; whole utterance only, so
     "stop the music" still reaches the agent): `_interrupt_speech()` and no reply. Other in-flight
     commands keep running; only their remaining speech is dropped (barge-in semantics).
-  - *Quiet hours* `JARVIS_QUIET_HOURS` ("22:00-07:00", wraps midnight; empty = off): non-urgent
-    proactive speech is queued and delivered when the user next talks to Jarvis; urgent still speaks.
+  - *Quiet hours*: **removed 2026-09-28 at the user's request** (it held reminders all afternoon and they
+    then came out as one long burst). The gate, `chief.parse_quiet_hours`/`in_quiet_hours` and the Settings
+    entry are gone; a `JARVIS_QUIET_HOURS` left in `.env` does nothing. Don't re-add without asking.
   - *Daily spend alert* `JARVIS_DAILY_BUDGET_USD` (default 5, 0 = off): checked every 5 min from the
     scheduler tick against the local `api_usage` estimate; once per day (`budget_alerted_on` in
     session state, so a restart doesn't repeat it).
@@ -1425,7 +1426,7 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   `jarvis._reminder_covers`, 60% content-word overlap, active or created in the last 3 days); `_deadline_context`
   keeps only facts sharing a real word with the task (`_content_words` drops scheduling filler); and
   `flush_pending_notifications` reads each distinct queued message once (a repeating reminder held for an
-  hour queued the same line several times). Quiet hours still holds non-urgent reminders by design.
+  hour queued the same line several times). Quiet hours itself was removed right after (see the chief-of-staff notes).
 
 ### Cost reporting
 
@@ -1513,7 +1514,8 @@ row there each phase rather than only stating the total in chat.
 | 62 (executive-autonomy audit: 8 bugs fixed incl. second-person reminders becoming jobs, tz crash / run-now on bad times, paraphrase fallback nag, parallel jobs, bedtime release; 8 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 63 (Toolbox trimmed: removed App shortcuts / Meeting notes / Email replies panels, features kept) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 64 (duplicate overdue burst: skip nudges a reminder covers, drop unrelated "Related:" facts, dedupe the held backlog; 3 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~2156 min** | **~$120.45–$168.95** |
+| 65 (removed quiet hours: gate, helpers, Settings entry; test now pins that a leftover setting holds nothing) | Opus 5.5 | ~8 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~2164 min** | **~$121.05–$169.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

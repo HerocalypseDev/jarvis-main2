@@ -1,5 +1,5 @@
-"""Chief-of-staff second wave (2026-09-23): pure helpers for reply style, quiet hours, the daily
-spend alert and meeting heads-ups. jarvis.py does the wiring (prompt line, notification gate,
+"""Chief-of-staff second wave (2026-09-23): pure helpers for reply style, the daily
+spend alert and meeting heads-ups. jarvis.py does the wiring (prompt line,
 scheduler tick, calendar/Gmail calls); everything here is side-effect free and unit-tested.
 """
 
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime, timedelta
 
 # --- sticky reply style --------------------------------------------------------------------------
 REPLY_STYLES = ("normal", "brief", "detailed")
@@ -31,27 +31,6 @@ def parse_reply_style(text: str) -> str | None:
     if re.search(r"\b(detailed|longer|thorough|more detail|explain more)\b", low):
         return "detailed"
     return None
-
-
-# --- quiet hours ---------------------------------------------------------------------------------
-def parse_quiet_hours(spec: str | None) -> tuple[dtime, dtime] | None:
-    """"22:00-07:00" or "22-7" -> (start, end); None when empty or malformed."""
-    m = re.fullmatch(r"\s*(\d{1,2})(?::(\d{2}))?\s*-\s*(\d{1,2})(?::(\d{2}))?\s*", spec or "")
-    if not m:
-        return None
-    h1, m1, h2, m2 = int(m[1]), int(m[2] or 0), int(m[3]), int(m[4] or 0)
-    if not (h1 < 24 and h2 < 24 and m1 < 60 and m2 < 60) or (h1, m1) == (h2, m2):
-        return None
-    return dtime(h1, m1), dtime(h2, m2)
-
-
-def in_quiet_hours(spec: str | None, now: datetime) -> bool:
-    span = parse_quiet_hours(spec)
-    if not span:
-        return False
-    start, end = span
-    t = now.time()
-    return start <= t < end if start < end else (t >= start or t < end)  # crosses midnight
 
 
 # --- daily spend alert ---------------------------------------------------------------------------
