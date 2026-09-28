@@ -4141,16 +4141,6 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Held non-urgent notification (battery critical): %r", text)
         return
-    if not urgent and chief.in_quiet_hours(os.environ.get("JARVIS_QUIET_HOURS"), datetime.now()):
-        # Delivered the next time the user talks to Jarvis (flush_pending_notifications), like the
-        # busy-hours queue: someone talking to Jarvis at night is awake.
-        with _session_context_lock:
-            _session_context.setdefault("pending_notifications", []).append(
-                {"text": text, "queued_at": datetime.now().isoformat(timespec="seconds")}
-            )
-            _save_session_context_locked()
-        log.info("Queued non-urgent notification (quiet hours): %r", text)
-        return
     if is_reminder and _reminders_held_now(urgent):
         forwarded = guest_reminders.should_forward()
         with _session_context_lock:

@@ -1,4 +1,4 @@
-"""Chief-of-staff second wave: reply style, "stop talking", quiet hours, daily spend alert,
+"""Chief-of-staff second wave: reply style, "stop talking", daily spend alert,
 meeting heads-up, voice-speed route, STT language. Temp DB/.env only, no network."""
 
 import json
@@ -9,15 +9,6 @@ import pytest
 import jarvis_chief as chief
 
 NOW = datetime(2026, 9, 23, 9, 50)
-
-
-def test_quiet_hours_parsing_and_midnight_wrap():
-    assert chief.in_quiet_hours("22:00-07:00", datetime(2026, 9, 23, 23, 30))
-    assert chief.in_quiet_hours("22-7", datetime(2026, 9, 23, 6, 59))
-    assert not chief.in_quiet_hours("22-7", datetime(2026, 9, 23, 7, 0))
-    assert chief.in_quiet_hours("13:00-14:30", datetime(2026, 9, 23, 14, 0))
-    for bad in ("", "soon", "25-7", "22-22"):
-        assert not chief.in_quiet_hours(bad, datetime(2026, 9, 23, 23, 0))
 
 
 def test_budget_alert_once_per_day():
@@ -88,7 +79,8 @@ def test_stop_talking_interrupts_and_says_nothing(jarvis, monkeypatch):
     assert stopped and spoken == []
 
 
-def test_quiet_hours_queue_non_urgent_only(jarvis, monkeypatch):
+def test_quiet_hours_were_removed_a_leftover_setting_holds_nothing(jarvis, monkeypatch):
+    # Removed 2026-09-28 at the user's request: a JARVIS_QUIET_HOURS left in .env must not queue anything.
     spoken = []
     monkeypatch.setenv("JARVIS_QUIET_HOURS", "00:00-23:59")
     monkeypatch.setattr(jarvis, "_speak_shaped", lambda t: spoken.append(t))
@@ -99,7 +91,7 @@ def test_quiet_hours_queue_non_urgent_only(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.sleep_mode, "is_active", lambda: False)
     jarvis.queue_or_deliver_notification("Your build finished.")
     jarvis.queue_or_deliver_notification("Timer done.", urgent=True)
-    assert spoken == ["Timer done."] and jarvis._session_context["pending_notifications"][0]["text"] == "Your build finished."
+    assert spoken == ["Your build finished.", "Timer done."]
 
 
 def test_budget_check_alerts_once(jarvis, monkeypatch):
