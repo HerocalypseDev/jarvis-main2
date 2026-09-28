@@ -265,8 +265,15 @@ function statusPill(status) {
   return `<span class="pill pill-${esc(status || "unknown")}">${esc(status || "unknown")}</span>`;
 }
 
+// render() runs on every WebSocket message and poll (metrics alone every 5 s). Rebuilding the bar
+// each time replayed its slide-in animation and dropped keyboard focus from the Review button, so
+// it is only rebuilt when the pending action actually changes.
+let lastApprovalKey = null;
 function renderApproval(pending) {
   const el = document.getElementById("approval-queue");
+  const key = pending ? JSON.stringify(pending) : "";
+  if (key === lastApprovalKey) return;
+  lastApprovalKey = key;
   if (!pending) {
     el.innerHTML = '<span class="approval-empty">No pending confirmations</span>';
     return;

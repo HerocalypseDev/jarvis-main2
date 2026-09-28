@@ -14,12 +14,17 @@
   --color-bg-inset: #030810;       /* code blocks */
   --color-border: #143249;
   --color-border-strong: #1f4b68;
+  --color-bg-hover: #112033;       /* list-row hover */
+  --color-bg-shine: #13233a;       /* skeleton highlight */
   --color-text-primary: #dcedf5;
   --color-text-secondary: #a9c4d3;
   --color-text-muted: #7394a8;     /* >= 4.5:1 on bg-secondary */
   --color-accent: #2fd8ff;
   --color-accent-dim: #1a6b85;
   --color-accent-soft: rgba(47, 216, 255, 0.10);
+  --color-accent-hover: #5fe2ff;
+  --color-on-accent: #04131c;      /* text on a filled accent button */
+  --color-on-error: #1a0006;       /* text on a filled red badge */
   --color-success: #35e39c;
   --color-warning: #ffb020;
   --color-error: #ff5470;
@@ -135,13 +140,13 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .context-panel input, .context-panel select, .context-panel textarea {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
   font-size: var(--text-sm);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
-#view input:hover, #view select:hover, #view textarea:hover { border-color: var(--color-border-strong); }
+#view input:hover, #view select:hover, #view textarea:hover { border-color: var(--color-accent-dim); }
 #view input:focus-visible, #view select:focus-visible, #view textarea:focus-visible,
 .context-panel input:focus-visible, .context-panel textarea:focus-visible {
   outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-soft);
@@ -225,7 +230,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
 @keyframes approval-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .approval-badge {
   background: var(--color-error);
-  color: #1a0006;
+  color: var(--color-on-error);
   font-weight: 700;
   font-size: var(--text-xs);
   padding: 2px 8px;
@@ -426,7 +431,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
 .nav-badge {
   margin-left: auto;
   background: var(--color-error);
-  color: #1a0006;
+  color: var(--color-on-error);
   font-size: 0.7em;
   font-weight: 700;
   border-radius: var(--radius-pill);
@@ -559,6 +564,8 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
 }
 .home-block:hover { border-color: var(--color-border-strong); }
 #view-home > .home-block { margin-bottom: var(--space-4); }
+.home-grid .usage-cards { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: var(--space-2); }
+.home-grid .usage-card { padding: var(--space-2) var(--space-3); }
 .home-grid .home-block { height: 100%; }
 
 /* --- shared list/pill/button components (used across every view) ------------------------ */
@@ -587,7 +594,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
   overflow-wrap: anywhere;
   transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
 }
-.list-item:hover { border-color: var(--color-accent-dim); background: #112033; }
+.list-item:hover { border-color: var(--color-accent-dim); background: var(--color-bg-hover); }
 .list-item.active { border-color: var(--color-accent); box-shadow: var(--shadow-glow); }
 /* "being viewed in the context panel" — distinct from .active ("in progress"), since an older
    finished session can be the one you're currently looking at while a different one is running. */
@@ -669,8 +676,10 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; box-shadow: none; background: transparent; transform: none; }
-.btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: #04131c; font-weight: 600; }
-.btn-primary:hover { background: #5fe2ff; border-color: #5fe2ff; box-shadow: var(--shadow-glow); }
+.btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); font-weight: 600; }
+.btn-primary:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); box-shadow: var(--shadow-glow); }
+/* a disabled primary keeps a (dim) fill: the generic .btn:disabled transparent bg would leave dark text on a dark page */
+.btn-primary:disabled { background: var(--color-accent-dim); border-color: var(--color-accent-dim); color: var(--color-text-primary); }
 .btn-review { border-color: var(--color-error); color: var(--color-error); background: var(--color-error-soft); font-weight: 600; }
 .btn-review:hover { background: rgba(255, 84, 112, 0.18); border-color: var(--color-error); }
 .btn-danger { border-color: var(--color-error); color: var(--color-error); background: var(--color-error-soft); }
@@ -694,7 +703,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
   flex: 1;
   min-width: 0;
   background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   color: var(--color-text-primary);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
@@ -799,7 +808,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
 .skeleton, .skeleton-line {
   display: block;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--color-bg-tertiary), #13233a, var(--color-bg-tertiary));
+  background: linear-gradient(90deg, var(--color-bg-tertiary), var(--color-bg-shine), var(--color-bg-tertiary));
   background-size: 200% 100%;
   border: 0;
   cursor: default;
@@ -1042,7 +1051,7 @@ p.consent-list { padding-left: 0; }
 .drafts { white-space: pre-wrap; max-width: 760px; }
 .drafts:empty { display: none; }
 #view-toolbox input, #view-toolbox select, #view-toolbox textarea {
-  background: var(--color-bg-tertiary); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px;
+  background: var(--color-bg-tertiary); color: var(--text); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); padding: 5px 8px;
   font-family: inherit; font-size: var(--text-sm); }
 /* Toolbox is one long page of h2-separated sections: a hairline divider between them. */
 #view-toolbox .settings-h ~ .settings-h { border-top: 1px solid var(--color-border); padding-top: var(--space-5); margin-top: var(--space-6); }

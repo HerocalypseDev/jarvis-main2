@@ -98,8 +98,10 @@ change).
 
 Click the &#9776; button at the left of the top bar, or press it again to expand. State persists
 per-browser via `localStorage` (`jarvis-sidebar-collapsed`) — a viewer convenience, not shared
-state; wrapped in `try/catch` so a private window or blocked storage degrades to "always
-expanded" instead of breaking navigation.
+state; wrapped in `try/catch` so a private window or blocked storage degrades to the default
+instead of breaking navigation. Default (no saved choice): expanded on desktop, collapsed at
+<= 800 px, where the sidebar is an overlay that also closes after a route is picked (that close is
+not saved).
 
 ## Keyboard
 
@@ -255,12 +257,16 @@ module layer. The hash router, WebSocket client, element IDs and API paths are u
 - One focus ring: `:focus-visible` = 2px accent outline (buttons use `--focus-ring`). Mouse clicks
   don't show it.
 - All inputs/selects/textareas inside `#view` and the context panel share one look (tertiary bg,
-  accent border + soft halo on focus). Route-specific rules only adjust size.
+  `--color-border-strong` edge so the box is visible, accent border + soft halo on focus).
+  Route-specific rules only adjust size.
+- Colours outside `:root` are tokens only (hover/shine/on-accent/on-error shades included); the
+  remaining literals are `rgba()` washes of the same accent/success/warning/error hues.
 - Thin dark scrollbars (Firefox `scrollbar-color` + WebKit), `::selection` in accent.
 
 ### Components
 - **Cards**: `.home-block` = secondary bg, hairline border, `--shadow-sm`, a 1px accent highlight on
-  the top edge only. Home cards sit in `.home-grid` (`auto-fit, minmax(min(100%, 280px), 1fr)`).
+  the top edge only. Home cards sit in `.home-grid` (`auto-fit, minmax(min(100%, 280px), 1fr)`). KPI strips inside a Home card go
+  2-up (`minmax(118px, 1fr)`) so one tall card (Today) doesn't stretch its whole row into empty boxes.
 - **KPI cards** (`.usage-card`, shared by Home/Usage/Sleep/Identity/Voice): label on top, tabular
   number below, **no glow** (colour carries good/danger).
 - **Buttons**: `.btn` (accent outline), `.btn-primary` (filled, used on every form's submit button),
@@ -277,7 +283,9 @@ module layer. The hash router, WebSocket client, element IDs and API paths are u
 
 ### Motion (all one-shot, no rAF loops, no infinite animations)
 - Route switch: `.view.active` fades/slides in once (160 ms).
-- Pending approval item and the command palette slide in once.
+- Pending approval item slides in once per *new* pending action (`renderApproval` skips unchanged
+  rebuilds, so the 5 s metrics refresh doesn't replay it or steal focus from Review); the command
+  palette slides in once per open.
 - `prefers-reduced-motion: reduce` cuts every transition/animation to ~0 and to one iteration.
 
 ### Phone (<= 800 px)
@@ -289,7 +297,8 @@ module layer. The hash router, WebSocket client, element IDs and API paths are u
 - The pending-confirmation UI must stay loud: red border (4px left edge), red wash, red glow, red
   badge; Approve/Reject exist **only** inside the Review detail view. Verified with a stubbed
   `/api/state`: no `#approve-btn` before Review, Approve posts `POST /api/pending/approve`.
-- Glow is an accent (active nav, focused input, primary-button hover, live dot, followed list row).
+- Glow is an accent (active nav icon, primary-button hover, live dot, in-progress `.list-item.active`,
+  the approval bar). Focused inputs get a soft accent halo, not a glow.
   Don't add it to every card or KPI.
 - No `backdrop-filter`, no site-wide blur, no permanent animation or chart rAF loop.
 - Don't rename an ID/class that JS reads; add classes instead.
