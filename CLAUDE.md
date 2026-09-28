@@ -176,6 +176,13 @@ Rules:
   action: no Approve before Review, Approve posts `/api/pending/approve`). Also fixed a real bug: `qol.js`'s
   `window.refreshNetwork = () => refreshNetwork()` recursed forever, so the Home Network devices card never loaded.
   Not checked in the user's real browser.
+- **Visual polish audit (2026-09-28)**: re-checked in headless Chromium (15 routes at 390/1280/1440/1920 px, Approve
+  and Reject each only after Review and posting the same endpoints, real + mocked WebSocket incl. live auto-focus,
+  audit click-through + Retry, Settings save POST, Autonomy controls, sidebar collapse, keyboard focus ring, reduced
+  motion). Fixed: the approval bar was rebuilt on every refresh, replaying its slide-in every ~5 s and dropping
+  keyboard focus from Review (`renderApproval` now skips unchanged rebuilds); input borders were ~1.3:1 (now
+  `--color-border-strong`); a disabled `.btn-primary` would have shown dark text on a dark page; Home KPI strips
+  stacked one per row and stretched whole rows (now 2-up); last hard-coded hexes tokenised; DASHBOARD.md corrected.
 
 ## Speech shaping (2026-09-18)
 
@@ -1581,7 +1588,8 @@ row there each phase rather than only stating the total in chat.
 | 72 (Gemini overload fix: 5xx backoff 2/4/8 s + opt-in overload-only backup model; live-verified 5/5 on 3.1-flash-lite; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
 | 73 (dashboard detail panel: no rebuild on unchanged refresh + scroll preserved; headless before/after check) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 74 (dashboard visual polish: design tokens, shell/components restyle, skeleton/error/Retry states, phone layout, network-card recursion fix; headless checks at 1440/390 px) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
-| **Running total (final)** | | **~2449 min** | **~$143.85–$201.85** |
+| 75 (visual polish audit: approval-bar replay/focus fix, input contrast, disabled primary button, Home KPI density, tokens, docs; full headless route/approve/WS/settings/autonomy check) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~2474 min** | **~$145.85–$204.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
