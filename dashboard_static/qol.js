@@ -416,7 +416,8 @@ if (typeof currentRoute === "function" && currentRoute() === "home") refreshLate
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshLatency(); }, 30000);
 
 // --- Home network devices: GET /api/network_devices (scanned server-side every 60s) --------------
-window.refreshNetwork = () => refreshNetwork();
+// (a top-level function declaration is already window.refreshNetwork; a `window.refreshNetwork = () => refreshNetwork()`
+// wrapper here replaced that binding with itself and recursed forever, so the card never loaded)
 async function refreshNetwork() {
   const list = document.getElementById("home-network");
   const meta = document.getElementById("home-network-meta");
