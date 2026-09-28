@@ -57,6 +57,7 @@ import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
 import jarvis_tool_router as tool_router
+import jarvis_lessons as lessons
 import jarvis_filewatcher as filewatcher
 import jarvis_window_control as window_control
 import jarvis_task_scheduler as task_scheduler
@@ -3045,6 +3046,15 @@ BATCH_TOOLS = [
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "history", "cancel"]}, "id": {"type": "integer"}}},
     },
+    {
+        "name": "lessons",
+        "description": ("Lessons Jarvis learned from its own mistakes (a tool that failed, or the user correcting "
+                        "it). action=list; add (lesson: one short how-to line the user wants kept); forget (id). "
+                        "Adding/forgetting only works from the PC."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "add", "forget"]},
+            "lesson": {"type": "string"}, "id": {"type": "integer"}}, "required": ["action"]},
+    },
 ]
 AGENT_TOOLS.extend(BATCH_TOOLS)
 
@@ -5473,6 +5483,66 @@ def _looks_staged(result: str) -> bool:
     return "staged, not run" in (result or "") or "already pending" in (result or "")
 
 
+# --- Lessons memory (smarter batch, 2026-09-28) -------------------------------------------------
+LESSONS_PER_HOUR = 12
+_lesson_calls: list[float] = []
+
+
+def _lessons_tool(inp: dict) -> str:
+    action = (inp.get("action") or "list").lower()
+    if action == "list":
+        rows = lessons.all_lessons(_memory_db_connect, _memory_db_lock)
+        if not rows:
+            return "No lessons yet."
+        return "Lessons: " + " ".join(f"#{r['id']} {r['lesson']}" for r in rows[:15])
+    if not _attended():
+        return "Changing lessons only works from the PC (voice, typed or dashboard)."
+    if action == "add":
+        rid = lessons.add(_memory_db_connect, _memory_db_lock, str(inp.get("lesson", "")), source="user")
+        return f"Saved lesson #{rid}." if rid else "That can't be saved as a lesson (too short, or about rules/safety)."
+    if action == "forget":
+        return "Forgot it." if lessons.forget(_memory_db_connect, _memory_db_lock, int(inp.get("id") or 0)) else "No such lesson."
+    return f"Unknown action {action}."
+
+
+def _lessons_line(query: str) -> str:
+    """The most relevant lessons for this command, for the volatile system block. Never breaks a command."""
+    if not query or os.environ.get("JARVIS_LESSONS", "1").strip().lower() in ("0", "off", "false"):
+        return ""
+    try:
+        rows = lessons.relevant(_memory_db_connect, _memory_db_lock, query)
+        lessons.mark_used(_memory_db_connect, _memory_db_lock, [r["id"] for r in rows])
+        return lessons.prompt_line(rows)
+    except Exception as e:
+        log.debug("lessons lookup failed: %s", e)
+        return ""
+
+
+def _learn_lesson(transcript: str, steps: list, correction: str = "", previous_reply: str = "") -> int | None:
+    """One small model call that turns a failed command (or a correction) into a stored lesson.
+    Rate-limited (LESSONS_PER_HOUR); runs off the reply path."""
+    if os.environ.get("JARVIS_LESSONS", "1").strip().lower() in ("0", "off", "false"):
+        return None
+    now = time.time()
+    _lesson_calls[:] = [t for t in _lesson_calls if now - t < 3600]
+    if len(_lesson_calls) >= LESSONS_PER_HOUR:
+        return None
+    _lesson_calls.append(now)
+    digest = lessons.failure_digest(transcript, steps, correction, previous_reply)
+    text = _sleep_mail_claude(lessons.LESSON_SYSTEM, digest, 120)
+    if not text:
+        return None
+    rid = lessons.add(_memory_db_connect, _memory_db_lock, text, trigger=transcript,
+                      source="correction" if correction else "failure")
+    if rid:
+        log.info("Learned lesson #%s: %r", rid, text[:120])
+    return rid
+
+
+def _spawn_lesson(*args) -> None:
+    threading.Thread(target=lambda: _learn_lesson(*args), name="jarvis-lesson", daemon=True).start()
+
+
 def _macros_tool(inp: dict) -> str:
     transcript = f"(macro tool) {inp.get('name') or ''}"
     return macros.handle_tool(_memory_db_connect, _memory_db_lock, inp, _macro_known_tools(), _attended(),
@@ -6355,6 +6425,7 @@ def _state_line() -> str:
 
 
 _BATCH_TOOL_HANDLERS.update({"schedule_jarvis_task": _schedule_jarvis_task_tool, "scheduled_jobs": _deferred_tool})
+_BATCH_TOOL_HANDLERS["lessons"] = _lessons_tool
 
 
 @_feature("deferred")
@@ -7112,6 +7183,7 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
         + autonomy.agent_context_line()
         + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
         + _relevant_memory_line(query)
+        + _lessons_line(query)
     )
     stable_block: dict = {"type": "text", "text": stable}
     if cache.enabled("prompt"):
@@ -10289,6 +10361,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     used_tool_names: list[str] = []
     any_tool_failed = False
     handoff_nudged = False
+    steps: list[tuple[str, str, str]] = []  # (tool, input, result) for lessons memory
     # tools_override (Speed Upgrade cloud-latency pass, Phase D): a handful of simple intents
     # (see _reduced_tools_for_intent) pass a small hand-picked list here instead of the full
     # ~100+ tool schema set, cutting the prompt Claude has to read for a trivial command. This
@@ -10463,6 +10536,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             )
             last_tool_result_text = result_text
             used_tool_names.append(tu.get("name", ""))
+            steps.append((tu.get("name", ""), json.dumps(tu.get("input") or {}, default=str)[:300], str(result_text)[:400]))
             any_tool_failed = any_tool_failed or _looks_failed(result_text)
         messages.append({"role": "user", "content": tool_results})
         if any_tool_failed and esc_model and model != esc_model and not smart:
@@ -10493,6 +10567,20 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         reply = last_tool_result_text
     if record_history:
         _append_history(transcript, reply)
+    # Lessons memory: learn from a failed tool or from the user correcting the previous answer.
+    # Only for real user commands (not autonomy/scheduled runs), off the reply path.
+    if _current_command_source() and tools_override is None:
+        correction = transcript if (lessons.CORRECTION_RE.search(transcript) or (tone and tone.get("repeated"))) else ""
+        if any_tool_failed or correction:
+            prev = ""
+            for m in reversed(_history_snapshot()):
+                if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+                    prev = m["content"]
+                    break
+            try:
+                _spawn_lesson(transcript, steps, correction, prev)
+            except Exception as e:
+                log.debug("lesson spawn failed: %s", e)
     return reply
 
 

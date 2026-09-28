@@ -43,3 +43,25 @@ runs through `_execute_tool`. Tests: `test_smarter.py`.
   own prompt-cache write (~$0.08-0.13 the first time each hour).
 - **Residual:** a streamed first-round reply is already spoken before the check runs; the correction then
   follows it. Only when the Claude brain streams a tool-less first reply (rare for action commands).
+
+## Phase 3: lessons memory (`jarvis_lessons.py`)
+
+- **Why:** the Reflexion pattern: agents improve fastest when each failure leaves a short written lesson
+  that is read back next time. The weekly improvement report found failures but nothing fed them back.
+- **When a lesson is written:** at the end of a real user command (`_current_command_source()` set, not
+  autonomy/scheduled runs, not the reduced-tools fast path) where a tool result looked failed, or the
+  user's words correct the previous answer (`CORRECTION_RE`: "no, ...", "I meant ...", "that didn't
+  work", ...) or voice_tone flagged a repeated command. One small model call (`_sleep_mail_claude`, the
+  normal model, 120 tokens) on its own thread, at most `LESSONS_PER_HOUR` (12).
+- **Input framing:** the command, each tool call + result and the correction go in a `<<<DATA ... DATA>>>`
+  block, sanitised; the stored lesson is sanitised again, one line, <= 200 chars.
+- **Refused lessons:** anything mentioning confirmations/approvals/skipping/permissions/safety/gates/
+  secrets/disabling checks (`_FORBIDDEN_RE`), or where the sanitiser found injection-like text. The prompt
+  line also says lessons never override rules or confirmations.
+- **Use:** the top 3 lessons by word match (lesson + the command that caused it) go in the *volatile*
+  system block (`_lessons_line`), never the cached prefix. Near-duplicates (>= 70% word overlap) refresh
+  the old row; 200 rows max, least-used pruned. Table `lessons` in `jarvis_memory.db`.
+- **Control:** `lessons` tool (list / add / forget; add and forget are attended-only), `JARVIS_LESSONS=0`
+  turns the whole thing off.
+- **Cost:** one ~120-token call per failed or corrected command, capped at 12/hour.
+- **Not verified live:** lesson quality from a real model.

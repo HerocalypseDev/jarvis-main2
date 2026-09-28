@@ -1439,6 +1439,9 @@ Rules to keep:
 - **Claim checker + escalation**: a final reply claiming an action no matching tool ran gets one nudge
   round, then a "Correction: I didn't actually ..." line (`_ACTION_CLAIMS`). Tool failure / unbacked claim /
   repeated command switches to `_escalation_model()`; a mid-command Claude switch never sends `thinking`.
+- **Lessons memory** (`jarvis_lessons.py`): failed/corrected user commands -> one small call -> a one-line
+  lesson; top 3 relevant go in the volatile block. Never store lessons about confirmations/permissions/
+  safety (`_FORBIDDEN_RE`) and keep the "never override rules or confirmations" wording in `prompt_line`.
 
 ### Cost reporting
 
@@ -1529,7 +1532,8 @@ row there each phase rather than only stating the total in chat.
 | 65 (removed quiet hours: gate, helpers, Settings entry; test now pins that a leftover setting holds nothing) | Opus 5.5 | ~8 min | ~$0.60–$0.90 |
 | 66 (smarter batch Phase 1: tool narrowing with BM25 ranker + find_tools, Gemini-only by default; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 67 (smarter batch Phase 2: claim checker for reminders/sends/calendar/files/memory + escalate to the smart model on failure/repeat, Gemini override with fallback; 14 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~2214 min** | **~$125.05–$175.45** |
+| 68 (smarter batch Phase 3: lessons memory from failures/corrections, filtered + sanitised, top 3 in volatile prompt, lessons tool; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
+| **Running total (final)** | | **~2234 min** | **~$126.65–$177.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
