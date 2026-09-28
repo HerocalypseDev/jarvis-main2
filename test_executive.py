@@ -384,7 +384,7 @@ def test_overdue_nudges_skip_items_a_reminder_already_covers(J):
 def test_deadline_context_drops_unrelated_facts(J, monkeypatch):
     block = ("- [fact] Billing check 2026-09-27: billing monitoring isn't set up yet\n"
              "- [fact] Hero slept for three hours\n- [fact] The PPM exam is in room 4")
-    monkeypatch.setattr(J.memory_enhance, "relevant_memory_line", lambda d, skip_newest=0: block)
+    monkeypatch.setattr(J.memory_enhance, "relevant_memory_line", lambda d, skip_newest=0, **k: block)
     out = J._deadline_context("Set a reminder for PPM tomorrow", "overdue")
     assert "room 4" in out and "Billing" not in out and "slept" not in out
 
