@@ -17,6 +17,7 @@ import re
 from collections import Counter
 
 FIND_TOOLS_NAME = "find_tools"
+MAX_FIND_CALLS = 3  # per command: a model stuck searching can't burn every round on find_tools
 
 FIND_TOOLS_SCHEMA = {
     "name": FIND_TOOLS_NAME,

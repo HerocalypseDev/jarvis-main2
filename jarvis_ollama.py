@@ -54,8 +54,13 @@ def host_problem(url: str | None = None) -> str | None:
     return None
 
 
+# Never through a proxy (audit 2026-09-28): urllib's default opener honours HTTP(S)_PROXY and the Windows
+# system proxy, which could carry "local" traffic - every prompt, mail and memory - off the network.
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _default_http(req: urllib.request.Request, timeout: float) -> bytes:
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _NO_PROXY_OPENER.open(req, timeout=timeout) as r:
         return r.read()
 
 

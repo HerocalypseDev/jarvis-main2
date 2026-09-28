@@ -233,7 +233,8 @@ def test_battery_tick_slows_autonomy_and_holds_speech(jarvis, monkeypatch):
     assert battery.current() == "critical" and jarvis._test_said[-1][1] is True
     ticks = []
     monkeypatch.setattr(jarvis.autonomy, "tick", ticks.append)
-    monkeypatch.setattr(jarvis, "_battery_state", {"autonomy_last": 0.0})
+    # "Long ago", not 0.0: time.monotonic() counts from boot, so on a machine up < 15 min 0.0 is "just now".
+    monkeypatch.setattr(jarvis, "_battery_state", {"autonomy_last": -1e9})
     jarvis._autonomy_tick_battery_aware(datetime.now())
     jarvis._autonomy_tick_battery_aware(datetime.now())
     assert len(ticks) == 1  # second call within 15 min skipped
