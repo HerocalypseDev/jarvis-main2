@@ -1417,6 +1417,16 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   work needs a deadline; stale reset skips jobs still running; one job at a time; cascade release runs off
   the scheduler thread and goes to the wake-up recap during sleep; email reply cap falls back to the sender.
 
+- **Duplicate overdue burst (2026-09-28, found live)**: after quiet hours held speech, one command read out
+  "Reminder: Wash clothes", "Reminder: Wash my clothes", "Heads up: Wash clothes is overdue", "Heads up: Set a
+  reminder for PPM tomorrow is overdue. Related: <billing and sleep facts>"... Three fixes (tests at the end of
+  `test_executive.py`): `_deadline_scan` skips a commitment that is itself about setting a reminder
+  (`_REMINDER_ABOUT_RE`) or that an existing reminder already covers (`reminder_covers` callback ->
+  `jarvis._reminder_covers`, 60% content-word overlap, active or created in the last 3 days); `_deadline_context`
+  keeps only facts sharing a real word with the task (`_content_words` drops scheduling filler); and
+  `flush_pending_notifications` reads each distinct queued message once (a repeating reminder held for an
+  hour queued the same line several times). Quiet hours still holds non-urgent reminders by design.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1502,7 +1512,8 @@ row there each phase rather than only stating the total in chat.
 | 61 (executive autonomy: deferred jobs that run, schedule_jarvis_task, reminder content cleanup, tool-handled turns not re-saved, minimal autonomy speech, untrusted-origin code block, email caps, cascades, live state; 20 new tests) | Opus 5.5 | ~55 min | ~$4.50–$6.30 |
 | 62 (executive-autonomy audit: 8 bugs fixed incl. second-person reminders becoming jobs, tz crash / run-now on bad times, paraphrase fallback nag, parallel jobs, bedtime release; 8 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 63 (Toolbox trimmed: removed App shortcuts / Meeting notes / Email replies panels, features kept) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~2131 min** | **~$118.65–$166.45** |
+| 64 (duplicate overdue burst: skip nudges a reminder covers, drop unrelated "Related:" facts, dedupe the held backlog; 3 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~2156 min** | **~$120.45–$168.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

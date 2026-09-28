@@ -206,6 +206,11 @@ HUMAN_ONLY_ACTIONS = ("enable", "dry_run_off", "set_policy")
 ATTENDED_ONLY_ACTIONS = ("approve", "dismiss", "never", "add_action", "approve_campaign", "add_project",
                          "accept_commitment", "complete_commitment", "cancel_commitment")
 # Tools that already schedule something: a turn that used one is recorded, not re-actioned by extraction.
+# A commitment that is really "set a reminder ..." (the reminder itself fires on its own; nudging about it
+# too made Jarvis say "Heads up: Set a reminder for PPM tomorrow is overdue" on top of the reminder).
+_REMINDER_ABOUT_RE = re.compile(
+    r"\b(set|create|make|add|schedule)\b[^.]{0,20}\breminders?\b|\breminders?\b[^.]{0,40}\b(set|repeat|repeating)\b",
+    re.I)
 _SCHEDULING_TOOL_RE = re.compile(r"^(create_reminder|schedule_jarvis_task|queue_task|set_plan)$|calendar.*(create|insert|add)")
 _FUTURE_RE = re.compile(
     r"\b(will|shall|i'll|we'll|let's|upcoming|later|soon|before|after|until|deadline|due|"
@@ -2027,6 +2032,10 @@ def _deadline_scan(now: datetime, gated_ok: bool) -> int:
         meta = _meta(c)
         if meta.get("executor") == "jarvis" or meta.get("handled_by_tool"):
             continue  # its job runs by itself / the reminder the tool made fires by itself
+        if _REMINDER_ABOUT_RE.search(c["description"] or "") or _call("reminder_covers", c["description"], default=False):
+            # A real reminder already covers it: it speaks by itself, a "Heads up" on top is a duplicate.
+            _set_commitment_meta(c["id"], handled_by_tool=True, actioned=True)
+            continue
         # In dry-run nothing really happens, so it keeps its own bookkeeping and never uses up a real nudge.
         nkey, akey = ("dry_notified", "dry_actioned") if dry_run() else ("notified", "actioned")
         if bucket in (meta.get(nkey) or []):
