@@ -354,6 +354,11 @@ Rules:
   `JARVIS_GEMINI_MODEL` (default `gemini-3.1-flash-lite`); `JARVIS_GEMINI_THINKING` (default
   `minimal` — thinking tokens bill as output and count toward free-tier limits; `default` leaves
   the model's own).
+- **Overload retries (2026-09-28, found live)**: "couldn't reach Gemini" with 3.1-flash-lite selected was Google
+  returning short 503 "high demand" spells; 3 tries 1.5 s apart all landed in one. Now 5xx waits 2/4/8 s (4 tries,
+  ~14 s), and an opt-in `JARVIS_GEMINI_FALLBACK_MODEL` (Settings, empty = off) is tried once after an *overload*
+  only - never after a 429 quota error (the 2026-09-25 decision below still holds). Verified live: 5/5 commands
+  answered, one recovered from a 503. Test in `test_smarter.py`.
 - **Model (2026-09-24/25)**: default is `gemini-3.1-flash-lite` (3.5-flash-lite's 500/day free tier ran
   out). The automatic daily-quota model fallback was **removed 2026-09-25 at the user's request**: the user
   changes the model themselves in Settings; a daily-quota 429 now just fails fast.
@@ -1557,7 +1562,8 @@ row there each phase rather than only stating the total in chat.
 | 69 (smarter batch Phase 4: Gemini embeddings for memory retrieval, hybrid with strong word matches, thresholds tuned live, cached + breaker; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 70 (smarter batch Phases 5-7: eval runner + 30 real-failure cases (live-run on Gemini/Gemma), autonomy source dedupe + learning confidence + daily plan/review with Home card, local Ollama brain; 16 new tests) | Opus 5.5 | ~70 min | ~$6.00–$8.40 |
 | 71 (smarter batch audit: 14 bugs fixed incl. read-only tools backing fake claims, silent reply after streamed nudge, dropped reminder requests, proxy leak on the local brain, blocking embeddings; 21 new tests + 2 stale tests fixed) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
-| **Running total (final)** | | **~2374 min** | **~$138.25–$193.95** |
+| 72 (Gemini overload fix: 5xx backoff 2/4/8 s + opt-in overload-only backup model; live-verified 5/5 on 3.1-flash-lite; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
+| **Running total (final)** | | **~2389 min** | **~$139.25–$195.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

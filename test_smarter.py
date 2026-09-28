@@ -632,3 +632,41 @@ def test_audit_eval_keeps_prompt_cache_but_never_runs_tools(monkeypatch, tmp_pat
     out = E.run([{"id": "x", "say": "shut down", "expect_any": [{"tool": "run_shell", "input_re": "shutdown"}]}])
     assert out["cases"][0]["pass"] and ran == []
     assert jarvis.cache.enabled("prompt") and not jarvis.cache.enabled("tool")
+
+
+# --- 2026-09-28 live: "couldn't reach Gemini" from short 503 spells on gemini-3.1-flash-lite ---------------
+def test_gemini_overload_backs_off_and_uses_optional_backup_only_for_overload(monkeypatch):
+    import urllib.error
+    import jarvis_gemini as g
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("JARVIS_GEMINI_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.delenv("JARVIS_GEMINI_FALLBACK_MODEL", raising=False)
+    ok = b'{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}'
+    asked, slept = [], []
+
+    def busy_then_ok(req, timeout):
+        asked.append(req.full_url.split("/models/")[1].split(":")[0])
+        if len(asked) < 4:
+            raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+        return ok
+    out = g.call({"messages": [{"role": "user", "content": "hi"}]}, 5, busy_then_ok, sleep=slept.append)
+    assert out["content"][0]["text"] == "ok" and slept == [2.0, 4.0, 8.0]  # ~14 s of patience, not 3 s
+
+    def always_busy(req, timeout):
+        asked.append(req.full_url.split("/models/")[1].split(":")[0])
+        if "flash-lite-latest" in req.full_url:
+            return ok
+        raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+    asked.clear()
+    assert g.call({"messages": [{"role": "user", "content": "hi"}]}, 5, always_busy, sleep=lambda s: None) is None
+    monkeypatch.setenv("JARVIS_GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
+    asked.clear()
+    out = g.call({"messages": [{"role": "user", "content": "hi"}]}, 5, always_busy, sleep=lambda s: None)
+    assert out["content"][0]["text"] == "ok" and asked[-1] == "gemini-flash-lite-latest"
+
+    def quota(req, timeout):  # a daily-quota 429 never switches models (user decision 2026-09-25)
+        asked.append(req.full_url.split("/models/")[1].split(":")[0])
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", {}, None)
+    asked.clear()
+    assert g.call({"messages": [{"role": "user", "content": "hi"}]}, 5, quota, sleep=lambda s: None) is None
+    assert "gemini-flash-lite-latest" not in asked
