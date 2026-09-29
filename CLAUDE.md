@@ -1726,7 +1726,8 @@ row there each phase rather than only stating the total in chat.
 | 93 (full codebase audit: task-queue deadlock, scheduler step isolation + single-flight skills, Approve bound to the reviewed action, failed tool backing a claim, crash on non-integer settings, daily plan listing handled items, 3 flaky/time-bomb tests; 9 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
 | 94 (on-screen form opened a new Opera window: prompt routes on-screen pages to Windows-MCP, code guard refuses mcp_browser_* for on-screen requests; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
 | 95 (on-screen form: typing tools always offered for screen commands under narrowing, read_screen says nothing was typed, new "typed/filled it in" claim check; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~2984 min** | **~$184.25–$258.55** |
+| 96 ("do it again" keeps the on-screen rules, debug-report collector with secret masking; 2 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~2999 min** | **~$185.45–$260.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1826,6 +1827,12 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   fill (`_WANTS_TEXT_PUT_IN_RE`), and its description says it only reads; new claim-checker entry "type that in"
   ("I've written/typed/filled ... form/field/box/space/page/screen", "the form has been filled") backed only by a
   type/fill/multiedit/paste tool. Test: `test_cache.py::test_on_screen_command_gets_typing_tools_and_no_fake_written_claim`.
+- **"Do it again" opened a new window every time (2026-09-29, found live)**: both on-screen rules looked only at the current
+  sentence. `_on_screen_command(transcript, history)` also counts a short follow-up (<= 14 words, no URL/open/go to) to an
+  on-screen command; `run_agent_loop` stores it in `_command_ctx.on_screen` for the `mcp_browser_*` guard and passes it to
+  `_narrowing_core`. Still open, waiting on the owner's logs: the first attempt typed but skipped questions and put answers
+  under the wrong questions. Log collector: `python tools/collect_debug.py [--hours N]` -> `debug_report.txt` (gitignored;
+  commands + replies, every tool call with input/result, log lines; .env secret values, key shapes and emails masked).
 
 ## Web search engine (2026-09-29)
 
