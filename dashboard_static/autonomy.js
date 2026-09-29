@@ -366,4 +366,7 @@
   // tab button left to attach one to.
   window.refreshAutonomy = () => { if (panel.classList.contains("active")) refresh(); };
   setInterval(window.refreshAutonomy, 10000);
+  // A direct #/autonomy load routes before this file has run, so the router's call found no
+  // refreshAutonomy yet and the page sat on its skeleton until the 10 s timer: load now instead.
+  window.refreshAutonomy();
 })();
