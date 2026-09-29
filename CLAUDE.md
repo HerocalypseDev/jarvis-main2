@@ -1537,6 +1537,12 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   keeps only facts sharing a real word with the task (`_content_words` drops scheduling filler); and
   `flush_pending_notifications` reads each distinct queued message once (a repeating reminder held for an
   hour queued the same line several times). Quiet hours itself was removed right after (see the chief-of-staff notes).
+- **Cleared reminder still "overdue" on the dashboard (2026-09-29, user report)**: the briefing/urgent cards'
+  Deadlines section listed open autonomy commitments, including ones a reminder already covered, so "overdue: X"
+  stayed after the reminder fired or was cancelled. Now `_briefing_fetchers.deadlines` skips commitments handled
+  elsewhere (`handled_by_tool`/`covered_by`/`executor=jarvis`; the reminder/calendar/job shows them while live),
+  and `cancel_reminder` also cancels the open commitment about the same thing (`_close_commitments_for_reminder`,
+  same 60% content-word rule). Test at the end of `test_executive.py`.
 
 ## Smarter + autonomous batch (2026-09-28)
 
@@ -1682,7 +1688,8 @@ row there each phase rather than only stating the total in chat.
 | 84 (P3 Routines: pack macro loader with allowlist, user-first matching, Toolbox Pro rows + toggle, spoken info results, 7 routines; 3 new tests, headless check) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 85 (P4: 3 more themes with contrast checks, accent-token glows in the free stylesheet; headless check of each with an approval pending) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 86 (P5: Research pack (4 skills) + 3 autonomy email recipes that start switched off; 2 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
-| **Running total (final)** | | **~2719 min** | **~$165.05–$231.85** |
+| 87 (cleared overdue reminder stayed in the briefing/urgent cards: skip covered commitments, close the commitment on cancel; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
+| **Running total (final)** | | **~2729 min** | **~$165.85–$232.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

@@ -4791,10 +4791,31 @@ def list_reminders(include_delivered: bool = False) -> str:
     return "\n".join(lines)
 
 
+def _commitment_handled_elsewhere(c: dict) -> bool:
+    meta = autonomy._meta(c)
+    return bool(meta.get("handled_by_tool") or meta.get("covered_by") or meta.get("executor") == "jarvis")
+
+
+def _close_commitments_for_reminder(text: str) -> int:
+    """The user cleared a reminder: the open autonomy commitment about the same thing (same 60% content-word
+    rule as _reminder_covers) is cancelled too, so it stops showing as overdue in the Autonomy tab/briefing."""
+    have = _content_words(text)
+    if not have:
+        return 0
+    closed = 0
+    for c in autonomy.status()["commitments"]:
+        want = _content_words(c.get("description") or "")
+        if want and len(want & have) / len(want) >= 0.6:
+            autonomy.set_commitment_status(int(c["id"]), "cancelled")
+            closed += 1
+    return closed
+
+
 def cancel_reminder(reminder_id: int) -> str:
     with _memory_db_lock:
         conn = _memory_db_connect()
         try:
+            row = conn.execute("SELECT text FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
             cur = conn.execute(
                 "UPDATE reminders SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL",
                 (datetime.now().isoformat(timespec="seconds"), reminder_id),
@@ -4807,6 +4828,10 @@ def cancel_reminder(reminder_id: int) -> str:
             autonomy.note_reminder_cancelled(reminder_id)
         except Exception as e:
             log.debug("autonomy calibration note failed: %s", e)
+        try:
+            _close_commitments_for_reminder(row[0] if row else "")
+        except Exception as e:
+            log.debug("closing the reminder's commitment failed: %s", e)
     return f"Cancelled reminder #{reminder_id}." if cur.rowcount else f"No active reminder #{reminder_id}."
 
 
@@ -6812,7 +6837,10 @@ def _briefing_fetchers(kind: str, now: datetime) -> dict:
     def deadlines():
         if not autonomy.enabled():
             return []
-        rows = [c for c in autonomy.status()["commitments"] if not c.get("quarantined")]
+        # A commitment a reminder / calendar event / Jarvis job already handles is shown by that thing while
+        # it is live; listing it here too kept "overdue: X" up after the reminder fired or was cleared.
+        rows = [c for c in autonomy.status()["commitments"] if not c.get("quarantined")
+                and not _commitment_handled_elsewhere(c)]
         return briefing.deadline_items(rows, now, 24)
 
     def needs_you():
