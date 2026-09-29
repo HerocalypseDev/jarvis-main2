@@ -1,0 +1,21 @@
+/* Jarvis4U Pro theme: Emerald. Token overrides only. */
+/* name: Emerald */
+:root {
+  --color-bg-primary: #04100b;
+  --color-bg-secondary: #081a12;
+  --color-bg-tertiary: #0c2419;
+  --color-bg-inset: #030b07;
+  --color-bg-hover: #10301f;
+  --color-bg-shine: #133824;
+  --color-border: #15402b;
+  --color-border-strong: #1f5e3f;
+  --color-text-primary: #e3f7ec;
+  --color-text-secondary: #b0d9c2;
+  --color-text-muted: #7fae94;
+  --color-accent: #3ee08f;
+  --color-accent-dim: #1c7a4c;
+  --color-accent-hover: #6ceaaa;
+  --color-on-accent: #03170c;
+  --color-accent-soft: rgba(62, 224, 143, 0.12);
+  --shadow-glow: 0 0 12px rgba(62, 224, 143, 0.35);
+}

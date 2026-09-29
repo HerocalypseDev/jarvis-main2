@@ -31,7 +31,8 @@ Thank you for supporting Jarvis4U!
    You should end up with a folder called "pro" next to jarvis.py.
 2. Start Jarvis, open the dashboard (http://127.0.0.1:8765) -> Settings -> Jarvis4U Pro.
 3. Paste the license key you received by email and press Activate.
-4. Still in Settings -> Jarvis4U Pro, pick a Pro theme if you like.
+4. Still in Settings -> Jarvis4U Pro, pick a Pro theme if you like: Stark, Ultraviolet, Emerald,
+   Solar or Mono (high contrast).
 
 Student pack - just ask Jarvis:
   "Start a study session on chemistry for 50 minutes"

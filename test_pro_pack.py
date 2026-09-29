@@ -38,7 +38,7 @@ def test_student_pack_loads_through_the_normal_loader(monkeypatch):
     # the evening check-in is the only scheduled one, and it must stay silent when nothing is due
     checkin = json.loads((PACK / "skills" / "study_checkin.json").read_text(encoding="utf-8"))
     assert checkin["schedule"] == {"daily_at": "20:00"} and "NO spoken reply" in checkin["instructions"]
-    assert [t["id"] for t in pro.themes()] == ["stark", "ultraviolet"]
+    assert [t["id"] for t in pro.themes()] == ["emerald", "mono", "solar", "stark", "ultraviolet"]
     for t in pro.themes():
         css = pro.theme_css(t["id"])
         assert "--color-accent" in css and "--color-error" not in css

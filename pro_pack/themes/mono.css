@@ -1,0 +1,21 @@
+/* Jarvis4U Pro theme: Mono (high contrast). Token overrides only. */
+/* name: Mono (high contrast) */
+:root {
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #0b0b0b;
+  --color-bg-tertiary: #141414;
+  --color-bg-inset: #000000;
+  --color-bg-hover: #1f1f1f;
+  --color-bg-shine: #262626;
+  --color-border: #3a3a3a;
+  --color-border-strong: #6a6a6a;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #dcdcdc;
+  --color-text-muted: #b0b0b0;
+  --color-accent: #ffffff;
+  --color-accent-dim: #8a8a8a;
+  --color-accent-hover: #e6e6e6;
+  --color-on-accent: #000000;
+  --color-accent-soft: rgba(255, 255, 255, 0.10);
+  --shadow-glow: 0 0 0 transparent;
+}

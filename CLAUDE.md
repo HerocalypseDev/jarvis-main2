@@ -253,6 +253,9 @@ Rules:
   (`JARVIS_PRO_ROUTINES_OFF`, via `/api/feature/macros/pack_toggle`). A pack routine speaks the results of its
   `SPEAK_RESULT_TOOLS` steps (briefing/daily_plan/weather/system_status); user macros still just say "Done".
   `build_pro_pack.py` also checks each routine step's required inputs and enum values.
+- P4 themes shipped (pack 1.4.0): + Emerald, Solar, Mono (high contrast); text/accent/on-accent/error contrast checked.
+  The free stylesheet's last hard-coded cyan glows are now `color-mix(var(--color-accent) N%)` (same look in the
+  default theme), so themes recolour the brand glow, active nav, card highlight, selection and usage bars too.
 - Not built yet (don't advertise): early access, the installer, and anything past the phase last shipped.
 
 ## Speech shaping (2026-09-18)
@@ -1669,7 +1672,8 @@ row there each phase rather than only stating the total in chat.
 | 82 (Pro roadmap + P1 Developer pack: 7 dev skills, stricter pack validator; 2 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 83 (P2 Work pack: 6 work skills, validator accepts tool actions; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 84 (P3 Routines: pack macro loader with allowlist, user-first matching, Toolbox Pro rows + toggle, spoken info results, 7 routines; 3 new tests, headless check) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~2684 min** | **~$162.25–$227.85** |
+| 85 (P4: 3 more themes with contrast checks, accent-token glows in the free stylesheet; headless check of each with an approval pending) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~2699 min** | **~$163.45–$229.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
