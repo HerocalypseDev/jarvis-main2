@@ -1,0 +1,5 @@
+{
+  "name": "exam_countdown",
+  "description": "Student pack: tracks exam dates and counts down to them. Use for 'my chemistry exam is on Friday', 'add my exams', 'how many days until my exams', 'what exams do I have'.",
+  "instructions": "When the user tells you about an exam: 1. Work out the subject and the exact date/time (ask one short question only if the date is really unclear). 2. Call remember_fact with category 'goal' and content 'Exam: <subject> on <YYYY-MM-DD> <time if known><, room if given>'. 3. Call create_reminder several times for that exam, at 9:00 local time unless they said otherwise: 7 days before ('<subject> exam in one week. Time to start revising.'), 3 days before, the day before ('<subject> exam tomorrow. Early night!'), and on the morning of the exam ('Good luck in <subject> today!'). Skip any date that is already in the past. When they ask what exams they have or how long is left: call recall_facts (or memory_search for 'Exam:'), ignore exams whose date has passed, and answer with each exam and the number of days left, nearest first. Keep spoken answers short."
+}

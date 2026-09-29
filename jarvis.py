@@ -5962,6 +5962,9 @@ def _feature_license(action: str, payload: dict):
         _skills_cache = None
         _log_action_audit("pro_license", {"action": "activate", "email": check.get("email")}, "(dashboard)", "activated")
         return {"ok": True, **pro.status()}
+    if action == "theme_css":
+        css = pro.theme_css(str(payload.get("id") or ""))
+        return {"ok": css is not None, "css": css or ""}
     if action == "deactivate":
         settings.set_setting(license_mod.ENV_KEY, "")
         _skills_cache = None

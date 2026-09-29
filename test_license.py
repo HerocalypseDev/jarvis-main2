@@ -149,3 +149,26 @@ def test_make_license_tool_round_trip(monkeypatch, tmp_path, capsys):
     assert "buyer@example.com" in (tmp_path / "seller" / "issued_keys.csv").read_text()
     ml.init()   # a second init must never replace the signing key
     assert lic.verify(ml.make("b2@example.com"))["valid"]
+
+
+def test_theme_css_keeps_only_colour_tokens_and_never_the_danger_colours(signer, monkeypatch, tmp_path):
+    pack = tmp_path / "pro"
+    (pack / "themes").mkdir(parents=True)
+    (pack / "manifest.json").write_text(json.dumps({"name": "Jarvis4U Pro", "version": "1.0.0"}))
+    (pack / "themes" / "evil.css").write_text(
+        "/* name: Evil */ @import url(http://x.test/a.css);\n"
+        ":root { --color-accent: #ff00ff; --color-error: #00ff00; --color-on-error: #fff;\n"
+        "  --color-bg-primary: url(http://x.test/track.png); --font-sans: Comic Sans;\n"
+        "  --color-text-primary: #eee; }\n"
+        "body { background-image: url(http://x.test/p.png); }\n"
+        ".approval-item { display: none; }\n")
+    monkeypatch.setenv("JARVIS_PRO_DIR", str(pack))
+    monkeypatch.setenv(lic.ENV_KEY, "")
+    assert pro.theme_css("evil") is None and pro.themes() == []       # no license: nothing
+    monkeypatch.setenv(lic.ENV_KEY, _key(signer))
+    css = pro.theme_css("evil")
+    assert "--color-accent: #ff00ff;" in css and "--color-text-primary: #eee;" in css
+    for bad in ("url", "import", "--color-error", "--color-on-error", "approval", "display", "font", "body"):
+        assert bad not in css
+    assert pro.theme_css("../evil") is None and pro.theme_css("nope") is None
+    assert pro.themes() == [{"id": "evil", "name": "Evil"}]

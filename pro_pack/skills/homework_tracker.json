@@ -1,0 +1,5 @@
+{
+  "name": "homework_tracker",
+  "description": "Student pack: keeps track of homework and assignments with due dates. Use for 'I have maths homework due Thursday', 'what homework do I have', 'I finished my history essay'.",
+  "instructions": "Adding homework: 1. Get the subject, what the task is, and the due date. 2. Call create_reminder with due_at = 18:00 the day before it is due (or 2 hours before if it is due today), text '<subject> homework due tomorrow: <task>'. 3. Call remember_fact with category 'goal' and content 'Homework: <subject> - <task> - due <YYYY-MM-DD>'. Listing homework: call list_reminders and recall_facts (or memory_search 'Homework:'), and list what is still due, soonest first, with how many days are left. Finishing homework: find the matching reminder with list_reminders and call cancel_reminder for it, then call remember_fact with content 'Homework done: <subject> - <task> - <today>'. Congratulate them in one short sentence."
+}

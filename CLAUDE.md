@@ -227,7 +227,18 @@ Rules:
 - Free features are never gated, safety/privacy features stay free. Tests: `test_license.py` (8).
 - Owner ran `--init` 2026-09-29; `PUBLIC_KEY_B64` = `JIvxSUPK_7GUrS5m6YsP0ATjXQq_DKlWB79gLXOVc_0` (public, safe). The private
   `.pem` is on the owner's PC only; changing the public key would invalidate every key already sold.
-  Not done yet: the Pro pack content (Student pack, themes).
+- **Pro pack v1.0.0 (2026-09-29)**: source in `pro_pack/` (PRIVATE: in `export_public.py` EXCLUDE together with
+  `tools/build_pro_pack.py`, `test_pro_pack.py`, `dist/`; `test_pro_pack.py` pins that). Student pack = 7 skills
+  (study_session, exam_countdown, homework_tracker, quiz_me, revision_timetable, make_notes, study_checkin
+  daily 20:00, silent unless something is due) using only existing tools; themes `stark`, `ultraviolet`.
+  `python tools/build_pro_pack.py` validates (JSON, tool names exist, themes survive the rebuild) and writes
+  `dist/Jarvis4U-Pro-<ver>.zip` (top-level `pro/` + INSTALL.txt) for the Selar product file.
+- **Themes are sanitised by rebuilding** (`jarvis_pro.theme_css`): only `--color-*`/`--shadow-glow` with plain
+  colour values, no url()/@import/selectors, and `--color-error`/`--color-on-error`/`--color-warning` can never be
+  themed (the approval bar must stay red). Served via `POST /api/feature/license/theme_css` only with a valid
+  key; the choice is per-browser localStorage. Known cosmetic gap: a few hard-coded cyan rgba glows (brand
+  text-shadow, card top highlight) don't follow the theme.
+- Not built yet (don't advertise): early access, other packs (streamer/developer/home), the installer.
 
 ## Speech shaping (2026-09-18)
 
@@ -1638,7 +1649,9 @@ row there each phase rather than only stating the total in chat.
 | 77 (published Jarvis4U: fresh single-commit public repo, remote contents verified) | Opus 5.5 | ~5 min | ~$0.40–$0.60 |
 | 78 (form filling via UI tools + never a guessed python.exe path: prompt rules, run_python description, test + eval case; also removed snake game folders) | Opus 5.5 | ~10 min | ~$0.70–$1.00 |
 | 79 (Jarvis4U Pro: offline signed license keys + seller key tool, Pro pack loader into the skill list, Settings Pro card, sidebar Get Pro/Support, README + FUNDING.yml, Selar product covers; 8 new tests) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
-| **Running total (final)** | | **~2579 min** | **~$153.95–$216.05** |
+| 80 (embedded owner public key; published Pro/license/donation update to Jarvis4U) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
+| 81 (Pro pack v1.0.0: 7 Student skills, 2 sanitised themes + picker, pack builder/validator, export exclusion; 5 new tests, headless theme check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
+| **Running total (final)** | | **~2624 min** | **~$157.45–$221.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

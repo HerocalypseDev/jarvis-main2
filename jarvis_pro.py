@@ -5,6 +5,7 @@ download buyers get on Selar:
 
     pro/manifest.json      {"name": "Jarvis4U Pro", "version": "1.0.0"}
     pro/skills/*.json      extra skills, same format as skills/*.json
+    pro/themes/*.css       dashboard colour themes (only :root colour tokens are used, see theme_css)
 
 It only switches on with a valid license key (jarvis_license). Without one, Jarvis runs exactly as
 the free version: nothing here changes behaviour. Pro skills go through the normal skill path, so
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import jarvis_license as license_mod
@@ -48,6 +50,46 @@ def skill_paths() -> list[Path]:
     return sorted(folder.glob("*.json")) if folder.is_dir() else []
 
 
+_THEME_ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
+_DECL_RE = re.compile(r"(--[a-z0-9-]+)\s*:\s*([^;{}]+);")
+_SAFE_VALUE_RE = re.compile(r"^[#a-zA-Z0-9(),.\s%-]{1,120}$")
+# Never themeable: the red of the pending-confirmation bar and error text must always read as danger.
+_LOCKED = ("--color-error", "--color-on-error", "--color-warning")
+
+
+def themes() -> list[dict]:
+    if not active():
+        return []
+    folder = pro_dir() / "themes"
+    out = []
+    for path in sorted(folder.glob("*.css")) if folder.is_dir() else []:
+        if not _THEME_ID_RE.match(path.stem):
+            continue
+        m = re.search(r"/\*\s*name:\s*([^*]{1,40})\*/", path.read_text(encoding="utf-8", errors="replace"))
+        out.append({"id": path.stem, "name": (m.group(1).strip() if m else path.stem.title())})
+    return out
+
+
+def theme_css(theme_id: str) -> str | None:
+    """A theme rebuilt from its colour-token declarations only: `--color-*` / `--shadow-glow` with
+    plain colour values. Anything else in the file (url(), @import, selectors, other properties) is
+    dropped, and the danger colours can't be changed. None if Pro isn't active or the id is unknown."""
+    if not active() or not _THEME_ID_RE.match(theme_id or ""):
+        return None
+    path = pro_dir() / "themes" / f"{theme_id}.css"
+    if not path.is_file():
+        return None
+    decls = []
+    for name, value in _DECL_RE.findall(path.read_text(encoding="utf-8", errors="replace")):
+        value = value.strip()
+        if not (name.startswith("--color-") or name == "--shadow-glow"):
+            continue
+        if name.startswith(_LOCKED) or "url" in value.lower() or not _SAFE_VALUE_RE.match(value):
+            continue
+        decls.append(f"  {name}: {value};")
+    return ":root {\n" + "\n".join(decls) + "\n}\n" if decls else None
+
+
 def status() -> dict:
     lic = license_mod.status()
     man = manifest()
@@ -58,6 +100,7 @@ def status() -> dict:
         "pack": {"name": man.get("name"), "version": man.get("version")} if man else None,
         "active": bool(lic.get("valid")) and man is not None,
         "skills": len(list(folder.glob("*.json"))) if man and folder.is_dir() else 0,
+        "themes": themes(),
         "store_url": STORE_URL,
         "support_url": SUPPORT_URL,
     }

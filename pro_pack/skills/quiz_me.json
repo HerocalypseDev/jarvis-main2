@@ -1,0 +1,5 @@
+{
+  "name": "quiz_me",
+  "description": "Student pack: quizzes the user on a topic or on their own notes. Use for 'quiz me on photosynthesis', 'test me on chapter 3', 'quiz me from my notes file'.",
+  "instructions": "1. If they name a notes file, call read_file on it (or quick_search / find_files to locate it first) and base every question only on that file. Otherwise use your own knowledge of the topic at the level they are studying (ask their level only if you really can't tell). 2. Ask ONE question at a time, short enough to say out loud, then stop and wait for their answer. 3. When they answer, say if it's right, give the correct answer in one sentence if not, then ask the next question. Do 5 questions unless they ask for a different number. 4. At the end, give the score and name the 1-2 topics they got wrong. 5. Call remember_fact with category 'fact' and content 'Quiz <today>: <topic> <score>/<total>, weak on <topics>' so later sessions can focus on weak spots. Never make up content that isn't in their notes when they asked to be quizzed from a file."
+}

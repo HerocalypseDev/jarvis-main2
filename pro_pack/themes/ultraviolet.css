@@ -1,0 +1,21 @@
+/* Jarvis4U Pro theme: Ultraviolet (purple + magenta). Token overrides only. */
+/* name: Ultraviolet */
+:root {
+  --color-bg-primary: #0a0714;
+  --color-bg-secondary: #110c21;
+  --color-bg-tertiary: #18112d;
+  --color-bg-inset: #07050f;
+  --color-bg-hover: #201739;
+  --color-bg-shine: #251a42;
+  --color-border: #2c2050;
+  --color-border-strong: #45337a;
+  --color-text-primary: #ece6ff;
+  --color-text-secondary: #c4b8e8;
+  --color-text-muted: #9486c0;
+  --color-accent: #c77dff;
+  --color-accent-dim: #6a3d99;
+  --color-accent-soft: rgba(199, 125, 255, 0.12);
+  --color-accent-hover: #d9a3ff;
+  --color-on-accent: #16062a;
+  --shadow-glow: 0 0 12px rgba(199, 125, 255, 0.4);
+}
