@@ -78,6 +78,12 @@ SETTINGS: list[dict] = [
      "options_from": "gemini",
      "help": "Chat models your Gemini key can use (list refreshed hourly). If this one's daily free quota runs out, pick another here.",
      "live": "env"},
+    {"key": "PERPLEXITY_API_KEY", "label": "Perplexity API key (web search)", "kind": "text", "default": "",
+     "help": "When set, every web search and research task uses Perplexity (answers with sources). "
+             "Empty = DuckDuckGo. Get a key at perplexity.ai/account/api.", "live": "env"},
+    {"key": "JARVIS_PERPLEXITY_MODEL", "label": "Perplexity model", "kind": "choice", "default": "sonar",
+     "choices": ["sonar", "sonar-pro", "sonar-reasoning", "sonar-reasoning-pro"],
+     "help": "sonar = fast and cheapest; sonar-pro = deeper searches, more sources, costs more.", "live": "env"},
     {"key": "JARVIS_FOLLOWUP_S", "label": "Follow-up listening window (seconds)", "kind": "number", "default": "5",
      "help": "Keep listening this long after a spoken reply. 0 = off.", "live": ("jarvis", "followup.window_s", float)},
     {"key": "JARVIS_FOLLOWUP_MIN_RMS", "label": "Follow-up mic sensitivity", "kind": "number", "default": "0.01",

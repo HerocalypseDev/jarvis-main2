@@ -1721,7 +1721,9 @@ row there each phase rather than only stating the total in chat.
 | 88 (Pro audit: open_url file-launch hole, routine core-phrase hijack, scheduled Pro skills gated, agents created off, theme readability, builder rules, data framing in 16 skills; 12 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
 | 89 (feature video: demo dashboard with made-up data, 18 captioned scenes, 57 s 1080p MP4; Autonomy direct-load fix) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
 | 90 (feature video v2: frame-stepped motion (camera moves, scrolling, cursor, animated cards/captions, varied transitions), Piper voice-over, original synthesized music ducked under speech; 118 s 1080p) | Opus 5.5 | ~45 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~2849 min** | **~$174.45–$244.95** |
+| 91 (feature video v3 with the owner's Deepgram Draco narration) | Opus 5.5 | ~25 min | ~$1.00–$1.40 |
+| 92 (Perplexity as the web search/research engine with DuckDuckGo fallback, Settings key/model; Gemini help text fix; 4 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.20 |
+| **Running total (final)** | | **~2894 min** | **~$177.05–$248.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1805,6 +1807,18 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   a guessed path. `run_python`'s description says the same. Prompt-level, so not deterministic: pinned by
   `test_cache.py::test_prompt_fills_forms_with_ui_tools_and_never_guesses_a_python_path` and eval case
   `form-fill-no-guessed-python`. If it recurs, add a code-level check in `run_shell` for a nonexistent python.exe.
+
+## Perplexity web search (2026-09-29, user request: "always use Perplexity for web research")
+
+- `jarvis_perplexity.py` (Sonar API, stdlib urllib). When `PERPLEXITY_API_KEY` is set, the `web_search` tool asks
+  Perplexity (answer + up to 6 source URLs) instead of DuckDuckGo + a summarising brain call. Every web-research path
+  goes through `web_search` (quick questions, research skills, background `delegate_research`), so all use it.
+  Research-ish wording (`_DETAILED_SEARCH_RE`) asks for a detailed answer. Any failure falls back to DuckDuckGo;
+  `JARVIS_WEB_SEARCH=duckduckgo` opts out. Model `JARVIS_PERPLEXITY_MODEL` (default `sonar`; Settings offers
+  sonar/sonar-pro/sonar-reasoning(-pro)). Key is write-only in Settings (name contains KEY), never logged.
+- Cost/data: Perplexity bills per request + tokens on the owner's API credits (separate from a Perplexity Pro
+  subscription); only the search query goes to Perplexity. The 10-min `web_search` tool cache still applies.
+- Tests: `test_perplexity.py` (4, urlopen faked). **Not verified live** (no key in the cloud session).
 
 ## Hand-off guard (2026-09-25)
 
