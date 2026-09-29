@@ -5546,6 +5546,19 @@ def _macro_known_tools() -> set[str]:
     return {t["name"] for t in AGENT_TOOLS + dyn_tools.schemas() + list(_mcp_tool_schemas)}
 
 
+PRO_MACROS_OFF_KEY = "JARVIS_PRO_ROUTINES_OFF"
+
+
+def _pack_macros() -> list[dict]:
+    """Pro routine macros (read-only, low-risk tools only); [] without a valid key or pack."""
+    try:
+        off = [n for n in (os.environ.get(PRO_MACROS_OFF_KEY) or "").split(",") if n.strip()]
+        return macros.pack_macros(pro.macro_specs(), _macro_known_tools(), off)
+    except Exception as e:
+        log.warning("Pro routines skipped: %s", e)
+        return []
+
+
 def _looks_staged(result: str) -> bool:
     return "staged, not run" in (result or "") or "already pending" in (result or "")
 
@@ -5796,7 +5809,7 @@ def _macro_reply(transcript: str) -> str | None:
     """A command that is exactly a macro's trigger phrase runs its steps with no LLM call.
     None = no macro matched (normal routing continues)."""
     try:
-        m = macros.match(_memory_db_connect, _memory_db_lock, transcript)
+        m = macros.match(_memory_db_connect, _memory_db_lock, transcript, extra=_pack_macros())
     except Exception as e:
         log.warning("Macro lookup failed: %s", e)
         return None
@@ -6012,7 +6025,17 @@ def _feature_devices(action: str, payload: dict):
 def _feature_macros(action: str, payload: dict):
     if action == "get":
         return {"macros": macros.list_macros(_memory_db_connect, _memory_db_lock),
-                "tools": sorted(_macro_known_tools())}
+                "pack": _pack_macros(), "tools": sorted(_macro_known_tools())}
+    if action == "pack_toggle":
+        # Pro routines are read-only; switching one off/on only edits a setting (names, comma-separated).
+        name = str((payload or {}).get("name") or "").strip()
+        known = {m["name"].lower(): m["name"] for m in _pack_macros()}
+        if name.lower() not in known:
+            return {"result": "No Pro routine by that name."}
+        off = {n.strip().lower() for n in (os.environ.get(PRO_MACROS_OFF_KEY) or "").split(",") if n.strip()}
+        off.symmetric_difference_update({name.lower()})
+        settings.set_setting(PRO_MACROS_OFF_KEY, ",".join(sorted(off)))
+        return {"result": f"Pro routine {known[name.lower()]!r} is now {'off' if name.lower() in off else 'on'}."}
     inp = dict(payload or {}, action=action)
     res = _as_dashboard(_macros_tool, inp)
     _log_action_audit("macros", {k: v for k, v in inp.items() if k != "steps"}, "(dashboard)", res)

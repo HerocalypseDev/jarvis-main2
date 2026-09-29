@@ -1,0 +1,186 @@
+[
+  {
+    "name": "Start my work day",
+    "phrases": [
+      "start my work day",
+      "start my day",
+      "good morning work mode"
+    ],
+    "steps": [
+      {
+        "tool": "briefing",
+        "input": {
+          "kind": "morning"
+        }
+      },
+      {
+        "tool": "daily_plan",
+        "input": {
+          "action": "get"
+        }
+      },
+      {
+        "tool": "open_app",
+        "input": {
+          "app": "chrome"
+        }
+      },
+      {
+        "tool": "focus_mode",
+        "input": {
+          "action": "on"
+        }
+      }
+    ]
+  },
+  {
+    "name": "Deep focus",
+    "phrases": [
+      "deep focus",
+      "deep focus mode",
+      "time to focus"
+    ],
+    "steps": [
+      {
+        "tool": "focus_mode",
+        "input": {
+          "action": "on"
+        }
+      },
+      {
+        "tool": "system_action",
+        "input": {
+          "system_action": "minimize_all"
+        }
+      },
+      {
+        "tool": "play_ambient_sound",
+        "input": {
+          "kind": "lofi"
+        }
+      },
+      {
+        "tool": "create_reminder",
+        "input": {
+          "text": "Deep focus block done. Take a 10 minute break.",
+          "due_in_minutes": 50
+        }
+      }
+    ]
+  },
+  {
+    "name": "Leave desk",
+    "phrases": [
+      "leave desk",
+      "im stepping away",
+      "going away from my desk"
+    ],
+    "steps": [
+      {
+        "tool": "system_action",
+        "input": {
+          "system_action": "media_stop"
+        }
+      },
+      {
+        "tool": "system_action",
+        "input": {
+          "system_action": "lock"
+        }
+      }
+    ]
+  },
+  {
+    "name": "End of day",
+    "phrases": [
+      "end of day",
+      "end my work day",
+      "im done for today"
+    ],
+    "steps": [
+      {
+        "tool": "focus_mode",
+        "input": {
+          "action": "off"
+        }
+      },
+      {
+        "tool": "daily_plan",
+        "input": {
+          "action": "review"
+        }
+      },
+      {
+        "tool": "system_action",
+        "input": {
+          "system_action": "minimize_all"
+        }
+      }
+    ]
+  },
+  {
+    "name": "Movie mode",
+    "phrases": [
+      "movie mode",
+      "movie time"
+    ],
+    "steps": [
+      {
+        "tool": "focus_mode",
+        "input": {
+          "action": "on"
+        }
+      },
+      {
+        "tool": "system_action",
+        "input": {
+          "system_action": "minimize_all"
+        }
+      }
+    ]
+  },
+  {
+    "name": "Wind down",
+    "phrases": [
+      "wind down",
+      "time to wind down",
+      "help me wind down"
+    ],
+    "steps": [
+      {
+        "tool": "focus_mode",
+        "input": {
+          "action": "off"
+        }
+      },
+      {
+        "tool": "play_ambient_sound",
+        "input": {
+          "kind": "rain"
+        }
+      },
+      {
+        "tool": "create_reminder",
+        "input": {
+          "text": "Screens off soon. Time to get ready for bed.",
+          "due_in_minutes": 30
+        }
+      }
+    ]
+  },
+  {
+    "name": "Weather check",
+    "phrases": [
+      "whats the weather like today",
+      "do i need an umbrella"
+    ],
+    "steps": [
+      {
+        "tool": "weather",
+        "input": {
+          "days": 1
+        }
+      }
+    ]
+  }
+]

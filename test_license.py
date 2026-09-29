@@ -172,3 +172,40 @@ def test_theme_css_keeps_only_colour_tokens_and_never_the_danger_colours(signer,
         assert bad not in css
     assert pro.theme_css("../evil") is None and pro.theme_css("nope") is None
     assert pro.themes() == [{"id": "evil", "name": "Evil"}]
+
+
+def test_pro_routines_only_load_low_risk_tools_and_the_users_macros_win():
+    import jarvis_macros as macros
+
+    known = {"open_app", "focus_mode", "run_shell", "briefing", "type_text", "safe_mode"}
+    specs = [
+        {"name": "ok", "phrases": ["start my day"], "steps": [{"tool": "focus_mode", "input": {"action": "on"}}]},
+        {"name": "shell", "phrases": ["clean up now"], "steps": [{"tool": "run_shell", "input": {"command": "x"}}]},
+        {"name": "typer", "phrases": ["type my name"], "steps": [{"tool": "type_text", "input": {"text": "x"}}]},
+        {"name": "unsafe", "phrases": ["relax safety"], "steps": [{"tool": "safe_mode", "input": {"action": "off"}}]},
+        {"name": "short", "phrases": ["go"], "steps": [{"tool": "open_app", "input": {"app": "chrome"}}]},
+        {"name": "reserved", "phrases": ["stop talking"], "steps": [{"tool": "open_app", "input": {"app": "chrome"}}]},
+    ]
+    loaded = macros.pack_macros(specs, known, disabled=[])
+    assert [m["name"] for m in loaded] == ["ok"] and loaded[0]["pack"] and loaded[0]["id"] is None
+    assert macros.pack_macros(specs, known, disabled=["OK"])[0]["enabled"] is False
+
+
+def test_user_macro_beats_a_pro_routine_with_the_same_phrase(tmp_path):
+    import sqlite3
+    import threading
+
+    import jarvis_macros as macros
+
+    db = tmp_path / "m.db"
+    connect, lock = (lambda: sqlite3.connect(db)), threading.Lock()
+    macros.save(connect, lock, "mine", ["start my day"], [{"tool": "open_app", "input": {"app": "notepad"}}], {"open_app"})
+    pack = macros.pack_macros([{"name": "pro", "phrases": ["start my day", "deep focus"],
+                                "steps": [{"tool": "focus_mode", "input": {"action": "on"}}]}], {"focus_mode"})
+    assert macros.match(connect, lock, "Jarvis, start my day", extra=pack)["name"] == "mine"
+    assert macros.match(connect, lock, "deep focus", extra=pack)["name"] == "pro"
+    assert macros.match(connect, lock, "deep focus", extra=[dict(pack[0], enabled=False)]) is None
+    said = macros.run(connect, lock, pack[0], lambda tool, inp: "Focus mode is on.")
+    assert said == "Done: pro."                     # acting tools just confirm
+    info = dict(pack[0], steps=[{"tool": "weather", "input": {}}])
+    assert macros.run(connect, lock, info, lambda tool, inp: "Sunny, 30 degrees.") == "Sunny, 30 degrees."
