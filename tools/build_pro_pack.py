@@ -50,6 +50,13 @@ Developer pack - just ask Jarvis:
   "Watch <folder> for code health" (then a quiet 9am check that only speaks if something risky shows up)
   Developer skills only ever run read-only git commands; they never commit, push or edit your code.
 
+Routines - just say the phrase (runs instantly, no AI call; see Toolbox -> Voice macros to switch any off):
+  "Start my work day"  - morning briefing, today's plan, opens Chrome, focus mode on
+  "Deep focus"         - focus mode, minimise windows, lofi, a 50-minute break reminder
+  "Leave desk"         - stops media and locks the PC
+  "End of day"         - focus off, reviews today's plan, minimises windows
+  "Movie mode"  /  "Wind down" (rain sounds + a bedtime reminder)  /  "Do I need an umbrella?"
+
 Work pack (needs the Gmail / Google Calendar connections for the mail and calendar parts):
   "Triage my inbox"            (drafts replies; never sends unless you say "send it")
   "Prep me for my next meeting" / "What am I waiting on?"
@@ -64,6 +71,12 @@ Need help? Reply to your purchase email.
 
 # Generic names of the user's own MCP servers (their exact tool names differ per install).
 IGNORE_WORDS: set[str] = {"mcp_gmail", "mcp_calendar", "mcp_browser", "mcp_windows"}
+
+
+def _agent_tools() -> list[dict]:
+    import jarvis  # noqa: E402  (already imported by _known_tools)
+
+    return jarvis.AGENT_TOOLS
 
 
 def _known_tools() -> tuple[set[str], set[str]]:
@@ -106,8 +119,28 @@ def check() -> dict:
         unknown = mentioned - tools - params - skill_names - IGNORE_WORDS
         if unknown:
             raise SystemExit(f"{path.name}: names tools Jarvis doesn't have: {sorted(unknown)}")
+    import jarvis_macros
     import jarvis_pro
 
+    specs = []
+    for path in sorted((SRC / "macros").glob("*.json")) if (SRC / "macros").is_dir() else []:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        specs.extend(data if isinstance(data, list) else [data])
+    loaded = jarvis_macros.pack_macros(specs, tools)
+    if len(loaded) != len(specs):
+        bad = {str(s.get("name")) for s in specs} - {m["name"] for m in loaded}
+        raise SystemExit(f"routines rejected by the loader (bad phrase/step, or a tool outside the "
+                         f"routine allowlist): {sorted(bad)}")
+    for m in loaded:
+        for st in m["steps"]:
+            schema = next(t for t in _agent_tools() if t["name"] == st["tool"])["input_schema"]
+            for key in schema.get("required") or []:
+                if key not in st["input"]:
+                    raise SystemExit(f"routine {m['name']!r}: step {st['tool']} is missing {key!r}")
+            for key, val in st["input"].items():
+                enum = ((schema.get("properties") or {}).get(key) or {}).get("enum")
+                if key not in (schema.get("properties") or {}) or (enum and val not in enum):
+                    raise SystemExit(f"routine {m['name']!r}: step {st['tool']} has a bad {key!r}={val!r}")
     real_active = jarvis_pro.active
     os.environ["JARVIS_PRO_DIR"] = str(SRC)
     jarvis_pro.active = lambda: True

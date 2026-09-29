@@ -111,11 +111,45 @@ def set_enabled(connect, lock, name: str, on: bool) -> bool:
     return bool(_q(connect, lock, "UPDATE macros SET enabled=? WHERE name=?", (int(on), str(name or "").strip()), write=True))
 
 
-def match(connect, lock, transcript: str) -> dict | None:
+# Jarvis4U Pro routine packs (pro/macros/*.json) may only use these low-risk tools. Never shell/python,
+# typing, web requests, email, delegation, closing windows or switching a safety feature (Safe Mode) off.
+PACK_ALLOWED_TOOLS = {
+    "open_app", "open_url", "play_media", "play_ambient_sound", "focus_mode", "create_reminder", "weather",
+    "briefing", "daily_plan", "system_status", "system_action", "arrange_windows", "restore_window_layout",
+}
+
+
+# Tools whose result a Pro routine reads back to you (the rest just act, so "Done" is enough).
+SPEAK_RESULT_TOOLS = {"briefing", "daily_plan", "weather", "system_status"}
+
+
+def pack_macros(specs: list[dict], known_tools: set[str], disabled=()) -> list[dict]:
+    """Validated, read-only macros from an installed Pro pack. A spec that fails the normal checks or
+    uses a tool outside PACK_ALLOWED_TOOLS is skipped (never partially loaded)."""
+    out, seen = [], set()
+    off = {str(n).strip().lower() for n in disabled}
+    for spec in specs or []:
+        name = str((spec or {}).get("name") or "").strip()[:60]
+        phrases, steps = spec.get("phrases"), spec.get("steps")
+        if validate(name, phrases, steps, known_tools):
+            continue
+        if any(str(st.get("tool")) not in PACK_ALLOWED_TOOLS for st in steps):
+            continue
+        if name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append({"id": None, "name": name, "pack": True, "enabled": name.lower() not in off,
+                    "phrases": sorted({normalize(str(p)) for p in phrases if normalize(str(p))}),
+                    "steps": [{"tool": st["tool"], "input": dict(st.get("input") or {})} for st in steps]})
+    return out
+
+
+def match(connect, lock, transcript: str, extra: list[dict] | None = None) -> dict | None:
+    """The user's own macros first; then `extra` (Pro pack macros), so a user's phrase always wins."""
     t = normalize(transcript)
     if not t or len(t.split()) > 12:
         return None
-    for m in list_macros(connect, lock):
+    for m in list(list_macros(connect, lock)) + list(extra or []):
         if m["enabled"] and any(normalize(p) == t for p in m["phrases"]):
             return m
     return None
@@ -124,9 +158,11 @@ def match(connect, lock, transcript: str) -> dict | None:
 def run(connect, lock, macro: dict, execute: Callable[[str, dict], str],
         staged: Callable[[str], bool] | None = None) -> str:
     """Runs the steps in order; stops at a step whose result is a staged confirmation or a failure."""
-    done, stopped = [], False
+    done, stopped, spoken = [], False, []
     for i, s in enumerate(macro["steps"], 1):
         result = execute(s["tool"], dict(s.get("input") or {})) or ""
+        if s["tool"] in SPEAK_RESULT_TOOLS and result.strip():
+            spoken.append(result.strip())
         if staged and staged(result):
             done.append(f"step {i} ({s['tool']}) needs your confirmation: {result}")
             stopped = True
@@ -137,10 +173,14 @@ def run(connect, lock, macro: dict, execute: Callable[[str, dict], str],
             done.append(f"{s['tool']}: {result[:160]}")
         if stopped:
             break
-    _q(connect, lock, "UPDATE macros SET last_run=?, runs=runs+1 WHERE id=?",
-       (datetime.now().isoformat(timespec="seconds"), macro["id"]), write=True)
+    if macro.get("id") is not None:  # pack macros aren't stored in the table
+        _q(connect, lock, "UPDATE macros SET last_run=?, runs=runs+1 WHERE id=?",
+           (datetime.now().isoformat(timespec="seconds"), macro["id"]), write=True)
     if stopped:
         return f"Macro {macro['name']} stopped. " + "; ".join(done)
+    if macro.get("pack") and spoken:
+        # Pro routines exist to tell you something (briefing, plan, weather): say those results.
+        return "\n\n".join(spoken)
     return f"Done: {macro['name']}."
 
 

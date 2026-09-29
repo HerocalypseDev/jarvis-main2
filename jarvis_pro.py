@@ -6,6 +6,7 @@ download buyers get on Selar:
     pro/manifest.json      {"name": "Jarvis4U Pro", "version": "1.0.0"}
     pro/skills/*.json      extra skills, same format as skills/*.json
     pro/themes/*.css       dashboard colour themes (only :root colour tokens are used, see theme_css)
+    pro/macros/*.json      routines: voice macros limited to low-risk tools (jarvis_macros.PACK_ALLOWED_TOOLS)
 
 It only switches on with a valid license key (jarvis_license). Without one, Jarvis runs exactly as
 the free version: nothing here changes behaviour. Pro skills go through the normal skill path, so
@@ -48,6 +49,21 @@ def skill_paths() -> list[Path]:
         return []
     folder = pro_dir() / "skills"
     return sorted(folder.glob("*.json")) if folder.is_dir() else []
+
+
+def macro_specs() -> list[dict]:
+    """Raw routine specs from pro/macros/*.json (validated by jarvis_macros.pack_macros)."""
+    if not active():
+        return []
+    folder = pro_dir() / "macros"
+    out = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        out.extend(d for d in (data if isinstance(data, list) else [data]) if isinstance(d, dict))
+    return out
 
 
 _THEME_ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")

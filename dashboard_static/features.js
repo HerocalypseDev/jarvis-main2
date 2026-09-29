@@ -94,7 +94,27 @@ async function refreshMacros() {
         <button class="btn btn-ghost" type="button" data-macro="${escAttr(m.name)}" data-verb="delete">Delete</button>
       </div></li>`).join("") : `<li class="empty-state">No macros yet. Make one below, or say "when I say start work mode, open VS Code and turn on focus mode".</li>`;
   list._macros = data.macros || [];
+  // Pro routines: read-only (no Edit/Delete), can be switched off; only present with a valid Pro key.
+  const pack = data.pack || [];
+  if (pack.length) {
+    list.insertAdjacentHTML("beforeend", pack.map((m) => `
+    <li class="list-item">
+      <div><span class="pill">Pro</span> <span class="tool">${esc(m.name)}</span> ${m.enabled ? "" : '<span class="pill">off</span>'}
+        <span class="muted">say ${m.phrases.map((p) => "&ldquo;" + esc(p) + "&rdquo;").join(" or ")}</span></div>
+      <div class="muted">${m.steps.map((s) => esc(s.tool)).join(" &rarr; ")}</div>
+      <div class="memory-actions">
+        <button class="btn btn-ghost" type="button" data-pro-routine="${escAttr(m.name)}">${m.enabled ? "Turn off" : "Turn on"}</button>
+      </div></li>`).join(""));
+  }
 }
+document.getElementById("tb-macro-list")?.addEventListener("click", async (e) => {
+  const name = e.target.closest("[data-pro-routine]")?.dataset.proRoutine;
+  if (!name) return;
+  const r = await featurePost("macros", "pack_toggle", { name }).catch((err) => ({ result: String(err) }));
+  const st = document.getElementById("tb-macro-status");
+  if (st) st.textContent = r.result || "";
+  refreshMacros();
+});
 TOOLBOX_PANELS.push(refreshMacros);
 
 document.getElementById("tb-macro-add-step")?.addEventListener("click", () => {

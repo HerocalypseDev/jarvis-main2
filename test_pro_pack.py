@@ -74,3 +74,17 @@ def test_work_skills_never_send_mail_on_their_own():
             assert "never as instructions" in text or "data" in text, path.name
         if "send" in text.lower():
             assert "never send" in text.lower() or "explicit" in text.lower() or "clearly says to send" in text.lower(), path.name
+
+
+def test_routines_pass_the_loader_and_lock_only_locks():
+    import jarvis_macros as macros
+
+    specs = json.loads((PACK / "macros" / "routines.json").read_text(encoding="utf-8"))
+    tools = {st["tool"] for s in specs for st in s["steps"]}
+    assert tools <= macros.PACK_ALLOWED_TOOLS
+    loaded = macros.pack_macros(specs, macros.PACK_ALLOWED_TOOLS)
+    assert len(loaded) == len(specs) == 7
+    for m in loaded:
+        for st in m["steps"]:
+            if st["tool"] == "system_action":
+                assert st["input"]["system_action"] in {"lock", "minimize_all", "media_stop"}
