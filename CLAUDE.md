@@ -1728,8 +1728,8 @@ row there each phase rather than only stating the total in chat.
 | 95 (on-screen form: typing tools always offered for screen commands under narrowing, read_screen says nothing was typed, new "typed/filled it in" claim check; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 96 ("do it again" keeps the on-screen rules, debug-report collector with secret masking; 2 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 97 (debug-report fixes: blind UI scripts refused, form-filling procedure, run_python alias, no raw-output replies, wider fill claim, agent required inputs, gmail_watch memory spam; 4 new tests + eval case) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
-| 98 (Gemini speed pass: streaming into speech on every round, stall protection + backup racing, connection reuse, spoken-length cap, spoken lead-in; live-verified against the real API; 36 new tests) | n/a | ~50 min | ~$4.00–$6.00 |
-| **Running total (final)** | | **~3084 min** | **~$192.45–$270.45** |
+| 98 (Gemini speed pass: streaming into speech on every round, stall protection + backup racing, connection reuse, spoken-length cap, spoken lead-in; live-verified against the real API; 36 new tests) | n/a | ~55 min | ~$3.50–$4.50 |
+| **Running total (final)** | | **~3089 min** | **~$191.95–$268.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
