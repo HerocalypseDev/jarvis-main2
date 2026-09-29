@@ -838,6 +838,34 @@ def test_on_screen_form_never_opens_a_separate_browser(jarvis, monkeypatch):
     assert jarvis._means_what_is_on_screen("type this into the form I'm looking at")
 
 
+def test_on_screen_command_gets_typing_tools_and_no_fake_written_claim(jarvis, monkeypatch):
+    # Found live 2026-09-29 (Gemini, tool narrowing on): the command was offered read_screen/click_at/scroll_screen
+    # but no typing tool, so Jarvis read the questions and then said it had written the answers. Nothing was typed.
+    import jarvis_tool_router as R
+    said = ("on my screen right now are 2 scenario questions for a staff application form. "
+            "answer the questions and write it in the provided space on my screen")
+    fake = [{"name": f"mcp_windows_{n}", "description": d, "input_schema": {"type": "object", "properties": {}}}
+            for n, d in (("Click", "Click on UI elements."), ("Type", "Type text into input fields."),
+                         ("Snapshot", "Captures the desktop state."))]
+    names = {t["name"] for t in R.select(said, jarvis.AGENT_TOOLS + fake, core=jarvis._narrowing_core(said))}
+    assert {"mcp_windows_Type", "mcp_windows_Click", "mcp_windows_Snapshot", "type_text", "read_screen"} <= names
+    assert "type_text" not in {t["name"] for t in R.select("what's the weather", jarvis.AGENT_TOOLS + fake,
+                                                         core=jarvis._narrowing_core("what's the weather"))}
+    # read_screen says nothing was typed when the user wanted text put in.
+    monkeypatch.setattr(jarvis, "read_screen", lambda tr: ("Suggested answers: ...", ""))
+    monkeypatch.setattr(jarvis, "_log_action_audit", lambda *a, **k: None)
+    out = jarvis._execute_tool_impl("read_screen", {}, said)
+    assert "NOTHING has been typed yet" in out and "mcp_windows_Type" in out
+    assert "NOTHING" not in jarvis._execute_tool_impl("read_screen", {}, "what does my screen say?")
+    # "I've written it in the provided space" is a claim only a typing tool can back.
+    claim = "I've written the answers in the provided space on your screen."
+    assert jarvis._unbacked_claims(claim, ["read_screen"])
+    assert not jarvis._unbacked_claims(claim, ["read_screen", "mcp_windows_Type"])
+    assert not jarvis._unbacked_claims(claim, ["type_text"])
+    assert jarvis._unbacked_claims("The form has been filled.", [])
+    assert not jarvis._unbacked_claims("Here are answers you can type into the form.", [])
+
+
 def test_whatsapp_uses_desktop_app_never_web(jarvis, monkeypatch):
     ran, ensured = [], []
     monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "ok")
