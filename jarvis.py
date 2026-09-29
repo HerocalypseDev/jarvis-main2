@@ -3263,7 +3263,10 @@ def _llm_configured() -> bool:
 def _llm_unavailable_reply() -> str:
     if _llm_provider() == "ollama":
         return "Sorry, I couldn't reach the local brain just now. Is Ollama running?"
-    return "Sorry, I couldn't reach Gemini just now." if _llm_provider() == "gemini" else CLAUDE_UNAVAILABLE_REPLY
+    if _llm_provider() == "gemini":
+        why = gemini.last_error_reason()  # quota, overload, rejected key, blocked connection...: say which
+        return f"Sorry, I couldn't reach Gemini: {why}." if why else "Sorry, I couldn't reach Gemini just now."
+    return CLAUDE_UNAVAILABLE_REPLY
 
 
 def _llm_status() -> dict:

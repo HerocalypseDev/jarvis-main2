@@ -43,7 +43,9 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 # model fallback (removed 2026-09-25, user request): the user picks the model in Settings.
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
 PROVIDERS = ("claude", "gemini", "ollama")  # ollama: local brain (jarvis_ollama)
-MAX_RETRY_WAIT_S = 15.0  # longest 429 "retry after" Jarvis will sit through mid-command (was 30; a spoken command should not sit half a minute)
+MAX_RETRY_WAIT_S = 30.0  # longest 429 "retry after" Jarvis will sit through mid-command. Free-tier per-minute limits are
+# ~5 requests/min per model and Google asks for 17-27 s: failing at once (tried with 15 s, 2026-09-29) turned every burst
+# into "couldn't reach Gemini", while waiting it out gets the answer.
 
 
 # --- provider choice -----------------------------------------------------------------------
@@ -247,6 +249,61 @@ def retry_delay_s(error_body: str) -> float | None:
     """Seconds from a 429's google.rpc.RetryInfo ("retryDelay": "12s"), if present."""
     m = re.search(r'"retryDelay"\s*:\s*"([\d.]+)s"', error_body or "")
     return float(m.group(1)) if m else None
+
+
+# --- why a call failed, in words a person can act on ------------------------------------------
+# (2026-09-29) Every failure used to end in the same "couldn't reach Gemini". The real cause (quota,
+# overload, a rejected key, a blocked connection) is now kept as `last_error_reason()` and spoken.
+_last_error: dict = {"reason": "", "ts": 0.0}
+
+
+def _note_error(reason: str) -> None:
+    _last_error["reason"] = reason
+    _last_error["ts"] = time.time()
+
+
+def _clear_error() -> None:
+    _last_error["reason"] = ""
+
+
+def last_error_reason(max_age_s: float = 120.0) -> str:
+    """The most recent failure's plain-language reason, or "" if the last call worked / it is stale."""
+    if _last_error["reason"] and time.time() - _last_error["ts"] <= max_age_s:
+        return _last_error["reason"]
+    return ""
+
+
+def reason_from_http(code: int, detail: str, model: str) -> str:
+    low = (detail or "").lower()
+    if code == 429:
+        wait = retry_delay_s(detail)
+        if wait is not None and wait <= 120:
+            return f"{model} is rate limited, try again in about {int(wait) + 1} seconds"
+        return f"the quota for {model} is used up, pick another model in Settings"
+    if code in (500, 502, 503, 504):
+        return f"Google says {model} is overloaded right now"
+    if code == 404:
+        return f"{model} isn't available to this API key, pick another model in Settings"
+    if code == 401 or (code == 400 and ("api key" in low or "api_key_invalid" in low)):
+        return "Google rejected the API key"
+    if code == 403:
+        return "Google denied access with this API key (permissions, billing or country)"
+    if code == 400:
+        return f"Google refused the request ({(detail or '').strip()[:80] or 'HTTP 400'})"
+    return f"Google returned HTTP {code}"
+
+
+def reason_from_exception(e: BaseException) -> str:
+    text = str(e)
+    if "CERTIFICATE_VERIFY_FAILED" in text or "certificate" in text.lower():
+        return "the secure connection to Google failed its certificate check (antivirus or a proxy?)"
+    if _is_timeout(e):
+        return "the request to Google timed out"
+    reason = getattr(e, "reason", None)
+    name = type(reason if reason is not None else e).__name__
+    if isinstance(e, (ConnectionError, socket.gaierror)) or "getaddrinfo" in text or name == "gaierror":
+        return "couldn't connect to Google (no internet, DNS or a firewall?)"
+    return f"couldn't connect to Google ({name})"
 
 
 # --- transport: one reusable HTTPS connection instead of a new TLS handshake per round --------
@@ -470,18 +527,25 @@ def call(
         log.warning("Escalation model %s failed; retrying on %s", override, model)
     if not key:
         log.warning("Set GEMINI_API_KEY in .env to use Gemini.")
+        _note_error("no Gemini API key is set")
         return None
     backup = fallback_model_name()
     if backup == model:
         backup = ""
     hedge = hedge_after_s()
     backup_tried = False
+    swap_on_429 = bool(backup) and backup_on_rate_limit()  # opt-in: a 429 hands over instead of waiting
     if backup and hedge > 0:
-        result, code, backup_tried = _hedged(body, timeout, http, key, model, backup, hedge, max_attempts, sleep)
+        result, code, backup_tried = _hedged(body, timeout, http, key, model, backup, hedge, max_attempts, sleep,
+                                             wait_on_429=not swap_on_429)
         _last_fail.code = code
     else:
-        result = _call_model(body, timeout, http, key, model, max_attempts=max_attempts, sleep=sleep)
+        result = _call_model(body, timeout, http, key, model, max_attempts=max_attempts, sleep=sleep,
+                             wait_on_429=not swap_on_429)
         code = getattr(_last_fail, "code", None)
+    if result is None and code == 429 and swap_on_429 and not backup_tried:
+        log.warning("Gemini %s is rate limited; trying the backup model %s.", model, backup)
+        return _call_model(body, timeout, http, key, backup, max_attempts=2, sleep=sleep)
     if result is None and code in OVERLOAD_CODES and backup and not backup_tried:
         # Opt-in backup for OVERLOAD only (503 "high demand" and other 5xx), never for quota (429): the
         # user chose (2026-09-25) to change models themselves when a daily quota runs out.
@@ -490,13 +554,14 @@ def call(
     return result
 
 
-def _hedged(body, timeout, http, key, model, backup, hedge_s, max_attempts, sleep):
+def _hedged(body, timeout, http, key, model, backup, hedge_s, max_attempts, sleep, wait_on_429=True):
     """Primary model now; the backup joins after hedge_s seconds if the primary has not answered.
     Returns (result, last_fail_code, backup_was_started). The slower call is abandoned (daemon thread)."""
     results: queue.Queue = queue.Queue()
 
     def _run(name: str, mdl: str, attempts: int) -> None:
-        r = _call_model(body, timeout, http, key, mdl, max_attempts=attempts, sleep=sleep)
+        r = _call_model(body, timeout, http, key, mdl, max_attempts=attempts, sleep=sleep,
+                        wait_on_429=wait_on_429 if name == "primary" else True)
         results.put((name, r, getattr(_last_fail, "code", None)))
 
     threading.Thread(target=_run, args=("primary", model, max_attempts), daemon=True).start()
@@ -531,6 +596,14 @@ _last_fail = threading.local()
 MAX_TIMEOUT_ATTEMPTS = 2  # a timed-out call is retried once, not max_attempts times
 
 
+def backup_on_rate_limit() -> bool:
+    """JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT (default off): when the model answers 429 (its own per-minute or daily
+    limit) ask the backup model at once instead of waiting or failing. Each model has its own limit, so two models
+    roughly double the headroom on a free tier. Off by default: on 2026-09-25 the user chose to change models
+    themselves rather than have quota fall back automatically; this is the explicit opt-in."""
+    return (os.environ.get("JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT") or "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 def fallback_model_name() -> str:
     """JARVIS_GEMINI_FALLBACK_MODEL: tried once when the main model is overloaded (and raced against it
     when it is slow). Empty (default) = off."""
@@ -545,7 +618,7 @@ def _is_timeout(e: BaseException) -> bool:
 
 
 def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attempts: int = 4,
-                sleep: Callable[[float], None] = time.sleep) -> dict | None:
+                sleep: Callable[[float], None] = time.sleep, wait_on_429: bool = True) -> dict | None:
     think = True
     _last_fail.code = None
     timeouts = 0
@@ -557,17 +630,23 @@ def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attemp
             headers={"x-goog-api-key": key, "content-type": "application/json"},
         )
         try:
-            return from_response(json.loads(http(req, per_attempt)), model)
+            result = from_response(json.loads(http(req, per_attempt)), model)
+            _clear_error()
+            return result
         except urllib.error.HTTPError as e:
             try:
                 detail = e.read().decode(errors="replace")
             except Exception:
                 detail = ""
             log.warning("Gemini request failed (attempt %d): HTTP %d: %s", attempt, e.code, detail[:400])
+            _note_error(reason_from_http(e.code, detail, model))
             _last_fail.code = e.code
             if e.code == 400 and think and "thinking" in detail.lower():
                 think = False
                 continue
+            if e.code == 429 and not wait_on_429:
+                log.warning("Gemini %s hit its rate limit; handing over to the backup model instead of waiting.", model)
+                return None
             if e.code == 429 and attempt < max_attempts:
                 wait = retry_delay_s(detail)
                 if wait is not None and wait <= MAX_RETRY_WAIT_S:
@@ -581,6 +660,7 @@ def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attemp
             return None
         except Exception as e:
             log.warning("Gemini request failed (attempt %d): %s", attempt, e)
+            _note_error(reason_from_exception(e))
             if _is_timeout(e):
                 timeouts += 1
                 if timeouts >= MAX_TIMEOUT_ATTEMPTS:
@@ -617,8 +697,14 @@ def _merge_chunks(chunks: list[dict]) -> dict:
             "usageMetadata": usage}
 
 
+class _HttpFail(Exception):
+    def __init__(self, code: int, detail: str) -> None:
+        super().__init__(f"HTTP {code}: {detail[:200]}")
+        self.code, self.detail = code, detail
+
+
 def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on_first_token=None,
-                 opener=None) -> dict | None:
+                 opener=None, _retry: bool = True) -> dict | None:
     """One Gemini round trip over streamGenerateContent (SSE). on_text(delta) is called for every piece
     of answer text that arrives BEFORE the first function call of the message (the same rule the Claude
     stream follows: text next to a tool call is narration, spoken as it comes); on_text_done() fires once
@@ -671,10 +757,10 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
                 clean = not stop.is_set()
         except urllib.error.HTTPError as e:
             try:
-                detail = e.read().decode(errors="replace")[:300]
+                detail = e.read().decode(errors="replace")[:2000]
             except Exception:
                 detail = ""
-            lines.put(RuntimeError(f"HTTP {e.code}: {detail}"))
+            lines.put(_HttpFail(e.code, detail))
         except Exception as e:
             lines.put(e)
         finally:
@@ -733,7 +819,21 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
                 return _partial_or_none("no data for %.0fs" % wait)
             if item is None:
                 break
+            if (isinstance(item, _HttpFail) and item.code == 429 and _retry and not handed_text
+                    and not (backup_on_rate_limit() and fallback_model_name())):  # opted in: hand over, don't wait
+                # A per-minute limit: Google says how long. Wait it out and try the stream once more instead of
+                # spending a second request on the fallback path (free tiers allow only ~5 per minute).
+                delay = retry_delay_s(item.detail)
+                if delay is not None and delay <= MAX_RETRY_WAIT_S and delay + 0.5 < budget:
+                    stop.set()
+                    _note_error(reason_from_http(429, item.detail, model))
+                    log.warning("Gemini rate limit on the stream; waiting %.0fs and retrying once.", delay)
+                    time.sleep(delay + 0.5)
+                    return stream_round(body, max(5.0, budget - delay - 0.5), on_text, on_text_done, on_first_token,
+                                        opener, _retry=False)
             if isinstance(item, Exception):
+                if isinstance(item, _HttpFail):
+                    _note_error(reason_from_http(item.code, item.detail, model))
                 return _partial_or_none(str(item)[:200])
             line = item.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -776,3 +876,156 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
     result = from_response(_merge_chunks(chunks), model)
     log.debug("Gemini stream: first data after %.2fs, complete in %.2fs.", first_at, time.monotonic() - started)
     return result
+
+
+# --- "why can't Jarvis reach Gemini?" ---------------------------------------------------------
+def _env_file_values(path: Path) -> dict[str, str]:
+    """KEY=value lines of a .env file (no quotes handling beyond stripping); never raises."""
+    out: dict[str, str] = {}
+    try:
+        for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip().removeprefix("export ").strip()] = v.strip().strip("'\"")
+    except OSError:
+        pass
+    return out
+
+
+def _mask(value: str) -> str:
+    return f"{value[:4]}...{value[-4:]} ({len(value)} characters)" if len(value) > 8 else "(too short to be a key)"
+
+
+def diagnose(env_path: Path | None = None, out=print) -> list[str]:
+    """Checks, step by step, everything between Jarvis and Gemini and prints what it finds. Sends two tiny
+    requests to the configured model, one over Jarvis's own transport and one over plain urllib, so a
+    problem in either shows up. Never prints the full key. Returns the list of problems found."""
+    problems: list[str] = []
+    env_path = Path(env_path) if env_path else Path(__file__).resolve().parent / ".env"
+    file_vals = _env_file_values(env_path)
+    out(f"Jarvis Gemini check  (folder: {env_path.parent})")
+
+    # 1. the key
+    out("\n1. API key")
+    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        proc = (os.environ.get(name) or "").strip()
+        filev = (file_vals.get(name) or "").strip()
+        if proc or filev:
+            out(f"   {name}: environment={_mask(proc) if proc else 'not set'} | .env file={_mask(filev) if filev else 'not set'}")
+            if proc and filev and proc != filev:
+                problems.append(f"{name} in the Windows environment differs from the one in .env; Jarvis keeps the "
+                                "Windows one. Remove that Windows environment variable (or make them match).")
+    key = api_key()
+    if not key:
+        key = (file_vals.get("GEMINI_API_KEY") or file_vals.get("GOOGLE_API_KEY") or "").strip()
+        if key:
+            os.environ["GEMINI_API_KEY"] = key  # what Jarvis's own startup does with .env
+    if not key:
+        problems.append("No Gemini key found (environment or .env). Add GEMINI_API_KEY=... to .env and restart Jarvis.")
+        out("   NO KEY FOUND")
+        for pr in problems:
+            out("\nPROBLEM: " + pr)
+        return problems
+    out(f"   using: {_mask(key)}" + ("" if key.startswith(("AIza", "AQ.")) else "   <- unusual key shape"))
+
+    # 2. the model
+    out("\n2. Model")
+    env_model = (os.environ.get("JARVIS_GEMINI_MODEL") or "").strip()
+    file_model = (file_vals.get("JARVIS_GEMINI_MODEL") or "").strip()
+    model = env_model or file_model or DEFAULT_MODEL
+    if not env_model and file_model:
+        os.environ["JARVIS_GEMINI_MODEL"] = file_model
+    out(f"   using: {model}   (environment={env_model or 'not set'} | .env={file_model or 'not set'})")
+    if env_model and file_model and env_model != file_model:
+        problems.append(f"JARVIS_GEMINI_MODEL is {env_model} in the environment but {file_model} in .env; "
+                        "the environment one wins until Jarvis restarts.")
+    backup = fallback_model_name() or (file_vals.get("JARVIS_GEMINI_FALLBACK_MODEL") or "")
+    out(f"   backup model: {backup or 'none set'}")
+
+    # 3. connection settings
+    out("\n3. Connection")
+    proxies = {k: v for k, v in os.environ.items() if k.lower() in ("https_proxy", "http_proxy", "all_proxy")}
+    out(f"   proxy variables: {', '.join(proxies) or 'none'}   |   connection reuse: "
+        + ("off (proxy or switched off)" if (not keepalive_enabled() or _proxied('https://generativelanguage.googleapis.com/')) else "on"))
+
+    # 4. can the key list models?
+    out("\n4. Key check (lists the models this key can use)")
+    listed: list[str] = []
+    try:
+        req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                                     headers={"x-goog-api-key": key})
+        t0 = time.time()
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.load(r)
+        listed = [m["name"].split("/", 1)[1] for m in data.get("models", [])
+                  if "generateContent" in m.get("supportedGenerationMethods", [])]
+        out(f"   OK in {time.time() - t0:.1f}s: {len(listed)} usable models")
+        if model not in listed:
+            problems.append(f"{model} is not in this key's model list; pick one from Settings.")
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode(errors="replace")
+        except Exception:
+            detail = ""
+        reason = reason_from_http(e.code, detail, model)
+        out(f"   FAILED: HTTP {e.code}: {reason}")
+        problems.append(reason)
+    except Exception as e:
+        reason = reason_from_exception(e)
+        out(f"   FAILED: {reason}  [{type(e).__name__}: {str(e)[:120]}]")
+        problems.append(reason)
+
+    # 5. a real request, two ways
+    out(f"\n5. Test request to {model}")
+    body = {"max_tokens": 60, "system": "Be brief.", "messages": [{"role": "user", "content": "Say hi in three words."}]}
+    url = GEMINI_URL.format(model=model)
+    payload = json.dumps(to_request(body, model, True)).encode()
+
+    def _try(label: str, fn) -> None:
+        req = urllib.request.Request(url, data=payload, method="POST",
+                                     headers={"x-goog-api-key": key, "content-type": "application/json"})
+        t0 = time.time()
+        try:
+            data = json.loads(fn(req, 30))
+            text = "".join(p.get("text", "") for p in (data.get("candidates") or [{}])[0].get("content", {}).get("parts", []))
+            out(f"   {label}: OK in {time.time() - t0:.2f}s -> {text.strip()[:40]!r}")
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode(errors="replace")
+            except Exception:
+                detail = ""
+            reason = reason_from_http(e.code, detail, model)
+            out(f"   {label}: FAILED HTTP {e.code}: {reason}")
+            out(f"      Google said: {detail.strip()[:220]}")
+            problems.append(f"{label}: {reason}")
+        except Exception as e:
+            reason = reason_from_exception(e)
+            out(f"   {label}: FAILED: {reason}  [{type(e).__name__}: {str(e)[:120]}]")
+            problems.append(f"{label}: {reason}")
+
+    def _plain(req, timeout):
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+
+    _try("plain urllib   ", _plain)
+    _try("Jarvis transport", http_post)
+    started, first = time.time(), []
+    res = stream_round(body, 30, on_text=lambda d: first.append(time.time() - started))
+    out("   streaming      : " + (f"OK, first words after {first[0]:.2f}s" if res is not None and first
+                                  else "did not stream (Jarvis then falls back to a normal request)"))
+
+    out("\nRESULT")
+    if problems:
+        for pr in dict.fromkeys(problems):
+            out("   PROBLEM: " + pr)
+    else:
+        out("   Everything works from here. If Jarvis still says it can't reach Gemini, restart Jarvis (so it "
+            "reloads this code and .env) and read jarvis_standalone.log for the line starting 'Gemini request failed'.")
+    return problems
+
+
+if __name__ == "__main__":
+    diagnose()
+
