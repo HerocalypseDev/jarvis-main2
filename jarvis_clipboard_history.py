@@ -19,6 +19,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+
+from jarvis_env import env_float, env_int
 import re
 import sqlite3
 import sys
@@ -30,7 +32,7 @@ from typing import Callable
 log = logging.getLogger("jarvis.clipboard")
 
 try:
-    CLIP_MAX = max(1, int(os.environ.get("JARVIS_CLIPBOARD_HISTORY_MAX") or 50))
+    CLIP_MAX = max(1, env_int("JARVIS_CLIPBOARD_HISTORY_MAX", 50))
 except ValueError:  # a typo in .env must not stop Jarvis from starting
     CLIP_MAX = 50
 MAX_TEXT = 20000  # longer copies are stored truncated

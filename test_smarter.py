@@ -348,21 +348,23 @@ def test_daily_plan_build_fallback_review_and_carry_over(auto, monkeypatch):
     from datetime import datetime, timedelta
     import jarvis_daily_plan as P
     a = auto.autonomy
-    now = datetime(2026, 9, 28, 8, 0)
-    monkeypatch.setattr(auto, "_calendar_events_raw", lambda s, e: '[{"id":"e1","summary":"Standup","start":{"dateTime":"2026-09-28T09:30:00"}}]')
+    # Relative to today: add_commitment drops a deadline in the past, so fixed dates made this a time bomb.
+    now = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    d = now.strftime("%Y-%m-%d")
+    monkeypatch.setattr(auto, "_calendar_events_raw", lambda s, e: '[{"id":"e1","summary":"Standup","start":{"dateTime":"' + d + 'T09:30:00"}}]')
     monkeypatch.setattr(auto, "_sleep_mail_claude", lambda *a_: None)  # model down -> deterministic order
     cid = a.add_commitment({"type": "task", "description": "Submit the physics report",
-                            "deadline_iso": "2026-09-28T17:00:00", "confidence": 0.9}, "conversation")
-    auto.create_reminder("take vitamins", due_at="2026-09-28T12:00:00")
+                            "deadline_iso": d + "T17:00:00", "confidence": 0.9}, "conversation")
+    auto.create_reminder("take vitamins", due_at=d + "T12:00:00")
     plan = auto.build_daily_plan(now)
     refs = [i["ref"] for i in plan]
     assert refs == ["event:e1", "reminder:1", f"commitment:{cid}"]  # by time
     a._exec("UPDATE commitments SET status='completed' WHERE id=?", (cid,))
     spoken = []
     monkeypatch.setattr(auto, "queue_or_deliver_notification", lambda t, **k: spoken.append(t))
-    line = auto.review_daily_plan(datetime(2026, 9, 28, 21, 5))
+    line = auto.review_daily_plan(now.replace(hour=21, minute=5))
     assert "2 of 3 done" in line and "vitamins" in line.lower() and spoken == [line]
-    tomorrow = auto._daily_plan_gather(datetime(2026, 9, 29, 8, 0))
+    tomorrow = auto._daily_plan_gather(now + timedelta(days=1))
     assert any(i["ref"] == "reminder:1" for i in tomorrow)  # carried over
 
 
@@ -670,3 +672,18 @@ def test_gemini_overload_backs_off_and_uses_optional_backup_only_for_overload(mo
     asked.clear()
     assert g.call({"messages": [{"role": "user", "content": "hi"}]}, 5, quota, sleep=lambda s: None) is None
     assert "gemini-flash-lite-latest" not in asked
+
+
+def test_audit2_a_failed_send_never_backs_an_i_sent_it_claim(jarvis, monkeypatch):
+    """Audit 2026-09-29: every CALLED tool backed a claim, even one that failed ("MCP tool call failed: ..."),
+    so a failed Gmail send followed by "I've sent the email" reached the user as if it had worked."""
+    monkeypatch.setattr(jarvis, "_execute_tool_impl", lambda *a, **k: "MCP tool call failed: invalid_grant")
+    _script(monkeypatch, jarvis, [
+        _call("mcp_gmail_send_email", {"to": ["sam@example.com"], "subject": "Report", "body": "hi"}),
+        _text("I've sent the email to Sam."),
+        _text("I've sent the email to Sam."),
+    ])
+    reply = jarvis.run_agent_loop("email sam the report")
+    assert "didn't actually send that" in reply
+    assert jarvis._looks_failed("MCP tool reported an error: 403") and jarvis._looks_failed("Refused: web links only")
+    assert not jarvis._looks_failed("Email sent to sam@example.com (id 42).")

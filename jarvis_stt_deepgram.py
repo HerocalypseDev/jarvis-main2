@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+
+from jarvis_env import env_float, env_int
 import queue
 import threading
 import urllib.request
@@ -39,16 +41,16 @@ DEEPGRAM_API_KEY = (os.environ.get("DEEPGRAM_API_KEY") or "").strip()
 DEEPGRAM_STT_MODEL = (os.environ.get("JARVIS_DEEPGRAM_STT_MODEL") or "nova-3").strip() or "nova-3"
 # "en" (default), another language code, or "multi" (Nova-3's code-switching mode for mixed speech).
 DEEPGRAM_LANGUAGE = (os.environ.get("JARVIS_DEEPGRAM_LANGUAGE") or "en").strip() or "en"
-DEEPGRAM_STT_TIMEOUT_S = float(os.environ.get("JARVIS_DEEPGRAM_STT_TIMEOUT_S") or 8.0)
-CONFIDENCE_MIN = float(os.environ.get("JARVIS_DEEPGRAM_STT_MIN_CONFIDENCE") or 0.6)
+DEEPGRAM_STT_TIMEOUT_S = env_float("JARVIS_DEEPGRAM_STT_TIMEOUT_S", 8.0)
+CONFIDENCE_MIN = env_float("JARVIS_DEEPGRAM_STT_MIN_CONFIDENCE", 0.6)
 
 _LISTEN_URL = "https://api.deepgram.com/v1/listen"
 _LISTEN_WS_URL = "wss://api.deepgram.com/v1/listen"
 STREAM_ENABLED = (os.environ.get("JARVIS_DEEPGRAM_STT_STREAM") or "1").strip().lower() not in (
     "0", "false", "no", "off",
 )
-STREAM_SOCKET_TIMEOUT_S = float(os.environ.get("JARVIS_DEEPGRAM_STREAM_TIMEOUT_S") or 15.0)
-STREAM_FINALIZE_TIMEOUT_S = float(os.environ.get("JARVIS_DEEPGRAM_STREAM_FINALIZE_TIMEOUT_S") or 5.0)
+STREAM_SOCKET_TIMEOUT_S = env_float("JARVIS_DEEPGRAM_STREAM_TIMEOUT_S", 15.0)
+STREAM_FINALIZE_TIMEOUT_S = env_float("JARVIS_DEEPGRAM_STREAM_FINALIZE_TIMEOUT_S", 5.0)
 
 
 def _urlopen_bounded(req: urllib.request.Request, timeout: float) -> bytes:

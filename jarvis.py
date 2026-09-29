@@ -23,6 +23,8 @@ import io
 import json
 import logging
 import os
+
+from jarvis_env import env_float, env_int
 import queue
 import re
 import shutil
@@ -145,7 +147,7 @@ CLAUDE_MODEL = (
 # model; everything else stays on CLAUDE_MODEL. JARVIS_SMART_MODEL= (empty) turns routing off.
 SMART_MODEL = (os.environ.get("JARVIS_SMART_MODEL", "claude-sonnet-5") or "").strip()
 SMART_MODEL_EFFORT = (os.environ.get("JARVIS_SMART_MODEL_EFFORT") or "medium").strip()
-SMART_MODEL_MIN_WORDS = int(os.environ.get("JARVIS_SMART_MODEL_MIN_WORDS") or 40)
+SMART_MODEL_MIN_WORDS = env_int("JARVIS_SMART_MODEL_MIN_WORDS", 40)
 
 # Selection hotkey (QOL pass): select text anywhere, hold this key and speak ("summarize this",
 # "reply to this") — works like push-to-talk with the selected text attached. Empty disables.
@@ -170,7 +172,7 @@ JARVIS_TEXT_HOTKEY_ENABLED = True
 JARVIS_TEXT_HOTKEY_KEY = (
     os.environ.get("JARVIS_TEXT_HOTKEY_KEY") or "left alt"
 ).strip() or "left alt"
-JARVIS_TEXT_HOTKEY_HOLD_S = float(os.environ.get("JARVIS_TEXT_HOTKEY_HOLD_S") or 2.0)
+JARVIS_TEXT_HOTKEY_HOLD_S = env_float("JARVIS_TEXT_HOTKEY_HOLD_S", 2.0)
 
 # Phone integration: two independent, optionally-both-enabled channels. Both push every
 # proactive notification (reminders, background-task completions, health-check suggestions —
@@ -212,7 +214,7 @@ JARVIS_PHONE_PROACTIVE_NOTIFICATIONS = (
 JARVIS_DASHBOARD_ENABLED = (
     os.environ.get("JARVIS_DASHBOARD_ENABLED") or ""
 ).strip().lower() in ("1", "true", "yes")
-JARVIS_DASHBOARD_PORT = int(os.environ.get("JARVIS_DASHBOARD_PORT") or 8765)
+JARVIS_DASHBOARD_PORT = env_int("JARVIS_DASHBOARD_PORT", 8765)
 JARVIS_DASHBOARD_AUTO_OPEN = (
     os.environ.get("JARVIS_DASHBOARD_AUTO_OPEN") or "1"
 ).strip().lower() in ("1", "true", "yes")
@@ -412,9 +414,21 @@ def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -
     return True
 
 
-def _take_pending_action() -> dict | None:
+def _pending_matches(step: dict | None, expect) -> bool:
+    try:
+        return step is not None and abs(float(step.get("queued_at")) - float(expect)) < 1e-6
+    except (TypeError, ValueError):
+        return False
+
+
+def _take_pending_action(expect=None) -> dict | None:
+    """Takes the staged action. With `expect` (the queued_at of the action the dashboard's Review view showed),
+    only takes it if it is still that exact action: approving must never run a different action that was
+    staged after the one the user reviewed (audit 2026-09-29)."""
     global _pending_action
     with _pending_action_lock:
+        if expect is not None and not _pending_matches(_pending_action, expect):
+            return None
         step, _pending_action = _pending_action, None
     return step
 
@@ -439,15 +453,17 @@ def _dashboard_get_pending() -> dict | None:
         return dict(_pending_action) if _pending_action is not None else None
 
 
-def _dashboard_approve_pending() -> str | None:
+def _dashboard_approve_pending(expect=None) -> str | None:
     """Phase 2: the dashboard's one-click Approve. Per the Phase 0 risk review, the user
     explicitly accepted (2026-09-18, recorded in CLAUDE.md's Dashboard section) that this can
     approve catastrophic-tier actions from the UI — on the condition that the click only ever
     happens from the mandatory detail/review view (see dashboard_static/app.js), never a bare
     list-row button. This calls the *exact same* _execute_confirmed_action used by the spoken
     "yes" path — never a reimplementation — so there is no second, weaker confirmation logic."""
-    step = _take_pending_action()
+    step = _take_pending_action(expect)
     if not step:
+        if expect is not None:
+            return "Nothing ran: the confirmation you reviewed is no longer the one waiting. Review the current one."
         return None
     log.info(
         "Dashboard approved pending action: %s(%r)", step.get("tool_name"), step.get("tool_input")
@@ -886,7 +902,7 @@ def _play_pcm_bytes(raw: bytes, sample_rate: int) -> None:
 # pre-fix behavior). Chunks after the first write are never re-buffered — PortAudio's own
 # latency="high" internal buffer already absorbs ordinary jitter from there on, so buffering twice
 # would only add latency for no extra smoothness.
-TTS_JITTER_BUFFER_MS = float(os.environ.get("JARVIS_TTS_JITTER_BUFFER_MS") or 120)
+TTS_JITTER_BUFFER_MS = env_float("JARVIS_TTS_JITTER_BUFFER_MS", 120)
 
 
 def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
@@ -1012,11 +1028,11 @@ _dg_tts_breaker = cache.CircuitBreaker(threshold=3, cooldown_s=120.0)
 # the current one plays — real overlap using only stdlib threading, no token-level streaming
 # from Claude needed (run_agent_loop still returns the full reply text; see SPEED.md for why
 # real SSE streaming of the Claude response itself was left out).
-SENTENCE_STREAM_MIN_CHARS = int(os.environ.get("JARVIS_TTS_SENTENCE_STREAM_MIN_CHARS") or 120)
+SENTENCE_STREAM_MIN_CHARS = env_int("JARVIS_TTS_SENTENCE_STREAM_MIN_CHARS", 120)
 PIPELINE_JOIN_TIMEOUT_S = 90.0  # generous outer backstop; see the join() call below
 # Below this length, speak_text() uses the REST/cache TTS cascade instead of the live streaming
 # WebSocket — see the comment at its one call site in speak_text() (voice-bug pass, 2026-09-22).
-TTS_LIVE_STREAM_MIN_CHARS = int(os.environ.get("JARVIS_TTS_LIVE_STREAM_MIN_CHARS") or 40)
+TTS_LIVE_STREAM_MIN_CHARS = env_int("JARVIS_TTS_LIVE_STREAM_MIN_CHARS", 40)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -3176,7 +3192,7 @@ _HARD_TASK_RE = re.compile(
 )
 
 
-TOOL_NARROWING_LIMIT = int(os.environ.get("JARVIS_TOOL_NARROWING_LIMIT", "28") or 28)
+TOOL_NARROWING_LIMIT = env_int("JARVIS_TOOL_NARROWING_LIMIT", 28)
 
 
 def _tool_narrowing_on() -> bool:
@@ -5323,31 +5339,78 @@ def _sleep_mail_tick(now: datetime) -> None:
     threading.Thread(target=_run, daemon=True, name="sleep-mail").start()
 
 
+_single_flight_running: set[str] = set()
+_single_flight_lock = threading.Lock()
+
+
+def _run_single_flight(name: str, fn, *args) -> bool:
+    """Runs fn(*args) on a daemon thread unless a job with this name is still running. False = skipped."""
+    with _single_flight_lock:
+        if name in _single_flight_running:
+            return False
+        _single_flight_running.add(name)
+
+    def _job():
+        try:
+            fn(*args)
+        except Exception as e:
+            log.warning("%s failed: %s", name, e)
+        finally:
+            with _single_flight_lock:
+                _single_flight_running.discard(name)
+
+    threading.Thread(target=_job, name=name, daemon=True).start()
+    return True
+
+
+def _scheduler_steps(now: datetime) -> list:
+    return [
+        ("scheduled skills", _start_due_skills, (now,)),
+        ("reminders", _check_due_reminders, (now,)),
+        ("background tasks", _check_background_tasks, (now,)),
+        ("mcp retry", _retry_failed_mcp_servers, (now,)),
+        # Queued tasks run a full agent loop: off this thread, one tick at a time.
+        ("task queue", lambda n: _run_single_flight(
+            "task-queue", task_scheduler.tick, n, _run_queued_task, queue_or_deliver_notification), (now,)),
+        ("sleep mail", _sleep_mail_tick, (now,)),
+        ("focus", lambda: focus_mode.tick(_launch_focus_app, queue_or_deliver_notification), ()),
+        ("roblox", lambda: roblox.tick(queue_or_deliver_notification), ()),
+        ("battery", _battery_tick, ()),
+        ("autonomy", _autonomy_tick_battery_aware, (now,)),
+        ("chief", _chief_tick, (now,)),
+        ("netscan", _netscan_tick, ()),
+        ("meeting", _meeting_tick, ()),
+        ("agents", _agents_tick, (now,)),
+        ("deferred", _deferred_tick, (now,)),
+        ("daily plan", _daily_plan_tick, (now,)),
+        ("cascades", _cascade_tick, ()),
+        ("knowledge graph", _kg_sync_tick, ()),
+        ("digest", _digest_tick, ()),
+    ]
+
+
+def _start_due_skills(now: datetime) -> None:
+    for skill in _load_skills():
+        if _skill_is_due(skill, now):
+            # A scheduled skill is a full agent loop (often 30-120 s): run it on its own thread, one run per
+            # skill at a time, so reminders/timers/deferred jobs on this thread aren't held up behind it.
+            _run_single_flight(f"skill:{skill['name']}", _run_scheduled_skill, skill)
+
+
+def _scheduler_tick(now: datetime) -> None:
+    """One scheduler pass. Each step is isolated (audit 2026-09-29): a step that raises used to abort the
+    whole tick, so e.g. a failing skill lookup silently stopped reminders and deferred jobs every minute."""
+    for name, fn, args in _scheduler_steps(now):
+        try:
+            fn(*args)
+        except Exception as e:
+            log.warning("Scheduler step %r failed: %s", name, e)
+
+
 def _scheduler_loop() -> None:
     while True:
         try:
-            now = datetime.now()
-            for skill in _load_skills():
-                if _skill_is_due(skill, now):
-                    _run_scheduled_skill(skill)
-            _check_due_reminders(now)
-            _check_background_tasks(now)
-            _retry_failed_mcp_servers(now)
-            task_scheduler.tick(now, _run_queued_task, queue_or_deliver_notification)
-            _sleep_mail_tick(now)
-            focus_mode.tick(_launch_focus_app, queue_or_deliver_notification)
-            roblox.tick(queue_or_deliver_notification)
-            _battery_tick()
-            _autonomy_tick_battery_aware(now)
-            _chief_tick(now)
-            _netscan_tick()
-            _meeting_tick()
-            _agents_tick(now)
-            _deferred_tick(now)
-            _daily_plan_tick(now)
-            _cascade_tick()
-            _kg_sync_tick()
-            _digest_tick()
+            _scheduler_tick(datetime.now())
         except Exception as e:
             log.warning("Scheduler tick failed: %s", e)
         time.sleep(SCHEDULER_TICK_S)
@@ -5684,8 +5747,9 @@ def _daily_plan_gather(now: datetime) -> list[dict]:
         soon = (now + timedelta(hours=36)).isoformat(timespec="seconds")
         old = (now - timedelta(days=3)).isoformat(timespec="seconds")
         for c in autonomy.status()["commitments"]:
-            meta = autonomy._meta(c) if isinstance(c, dict) else {}
-            if c.get("quarantined") or c.get("who_is_responsible") != "user" or meta.get("covered_by"):
+            # Same rule as the briefing: something a reminder / calendar event / Jarvis job already handles is
+            # shown by that thing, not repeated here as a task for the user (audit 2026-09-29).
+            if c.get("quarantined") or c.get("who_is_responsible") != "user" or _commitment_handled_elsewhere(c):
                 continue
             dl = c.get("deadline_iso") or ""
             if dl and old <= dl <= soon:
@@ -7734,7 +7798,7 @@ def start_prompt_cache_warmup() -> None:
         return  # Anthropic prompt caching only; Gemini caches implicitly, no pre-warm needed
     threading.Thread(target=_prompt_cache_warm_request, daemon=True).start()
     try:
-        minutes = float(os.environ.get("JARVIS_PROMPT_CACHE_KEEPWARM_MIN") or 0)
+        minutes = env_float("JARVIS_PROMPT_CACHE_KEEPWARM_MIN", 0)
     except ValueError:
         minutes = 0
     if minutes > 0:
@@ -7796,7 +7860,7 @@ def _launch_app_spotify() -> None:
 
 # WhatsApp desktop (WebView2) exposes DevTools on this local port via the per-app WebView2
 # policy (see CLAUDE.md "WhatsApp over DevTools"); the `whatsapp` Playwright MCP attaches to it.
-WHATSAPP_CDP_PORT = int(os.environ.get("JARVIS_WHATSAPP_CDP_PORT") or 9333)
+WHATSAPP_CDP_PORT = env_int("JARVIS_WHATSAPP_CDP_PORT", 9333)
 WHATSAPP_APP_URI = os.environ.get("JARVIS_WHATSAPP_APP_URI") or (
     r"shell:AppsFolder\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App"
 )
@@ -9941,7 +10005,13 @@ def _escalation_model() -> str | None:
 
 def _looks_failed(result: str) -> bool:
     r = (result or "").strip().lower()
-    return not r or r.startswith(_FAILED_RESULT_PREFIXES) or "unavailable" in r[:60]
+    # MCP errors and refusals start with their own words (audit 2026-09-29): they counted as successes, so a
+    # failed Gmail send still "backed" an "I've sent it" claim and never triggered escalation.
+    return not r or r.startswith(_FAILED_RESULT_PREFIXES + _EXTRA_FAILED_PREFIXES) or "unavailable" in r[:60]
+
+
+_EXTRA_FAILED_PREFIXES = ("mcp tool call failed", "mcp tool reported an error", "unknown mcp tool", "refused",
+                          "tool failed", "not available")
 
 
 def _invalidate_read_caches() -> None:
@@ -10808,6 +10878,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
     narrated = 0
     used_tool_names: list[str] = []
+    succeeded_tool_names: list[str] = []   # tools that ran without failing: the only proof a claim can use
     any_tool_failed = False
     handoff_nudged = False
     steps: list[tuple[str, str, str]] = []  # (tool, input, result) for lessons memory
@@ -10942,7 +11013,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 continue
             if handoff_nudged and not set(used_tool_names) & _DELEGATION_TOOLS and _HANDOFF_CLAIM_RE.search(claim):
                 reply_parts.append("Correction: I did not actually start a background task for that. Ask me again to start it.")
-            unbacked = _unbacked_claims(claim, used_tool_names)
+            unbacked = _unbacked_claims(claim, succeeded_tool_names)
             if unbacked and not claim_nudged and iteration < MAX_AGENT_ITERATIONS - 1:
                 claim_nudged = True
                 log.warning("Reply claims %s with no backing tool call; nudging: %r", unbacked, claim[:120])
@@ -10997,6 +11068,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             )
             last_tool_result_text = result_text
             used_tool_names.append(tu.get("name", ""))
+            if not _looks_failed(result_text) and not _looks_staged(result_text):
+                succeeded_tool_names.append(tu.get("name", ""))   # only these can back an "I did it" claim
             steps.append((tu.get("name", ""), json.dumps(tu.get("input") or {}, default=str)[:300], str(result_text)[:400]))
             any_tool_failed = any_tool_failed or _looks_failed(result_text)
         messages.append({"role": "user", "content": tool_results})
@@ -12043,7 +12116,7 @@ def _acquire_single_instance_lock() -> bool:
     global _single_instance_sock
     import socket
 
-    port = int(os.environ.get("JARVIS_SINGLE_INSTANCE_PORT", "48765"))
+    port = env_int("JARVIS_SINGLE_INSTANCE_PORT", 48765)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)

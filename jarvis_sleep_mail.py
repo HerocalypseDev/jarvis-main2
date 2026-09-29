@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+
+from jarvis_env import env_float, env_int
 import re
 import sqlite3
 import threading
@@ -33,17 +35,17 @@ from jarvis_untrusted import frame_untrusted, neutralize_injection
 
 log = logging.getLogger("jarvis.sleep_mail")
 
-SLEEP_MAIL_INTERVAL_MIN = int(os.environ.get("JARVIS_SLEEP_MAIL_INTERVAL_MIN") or 15)
+SLEEP_MAIL_INTERVAL_MIN = env_int("JARVIS_SLEEP_MAIL_INTERVAL_MIN", 15)
 # Once a real message arrives, poll faster for a while so a back-and-forth doesn't crawl.
-ACTIVE_INTERVAL_MIN = int(os.environ.get("JARVIS_SLEEP_MAIL_ACTIVE_INTERVAL_MIN") or 2)
-ACTIVE_WINDOW_MIN = int(os.environ.get("JARVIS_SLEEP_MAIL_ACTIVE_WINDOW_MIN") or 20)
+ACTIVE_INTERVAL_MIN = env_int("JARVIS_SLEEP_MAIL_ACTIVE_INTERVAL_MIN", 2)
+ACTIVE_WINDOW_MIN = env_int("JARVIS_SLEEP_MAIL_ACTIVE_WINDOW_MIN", 20)
 MAX_ATTACHMENTS = 3
 MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
 MAX_ATTACHMENT_TEXT = 6000
 _IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                 ".gif": "image/gif", ".webp": "image/webp"}
 _TEXT_SUFFIXES = {".txt", ".md", ".csv", ".json", ".log"}
-MAX_REPLIES_PER_SENDER = int(os.environ.get("JARVIS_SLEEP_MAIL_MAX_REPLIES") or 6)
+MAX_REPLIES_PER_SENDER = env_int("JARVIS_SLEEP_MAIL_MAX_REPLIES", 6)
 SEND_RETRIES = 5  # after the first attempt
 SEND_RETRY_DELAY_S = 60
 MAX_MESSAGES_PER_CYCLE = 25

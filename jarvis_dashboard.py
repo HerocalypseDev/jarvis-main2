@@ -782,10 +782,17 @@ def _build_app(
         return {"ok": True, "removed": clear_finished_sessions()}
 
     @app.post("/api/pending/approve")
-    def api_approve():
+    async def api_approve(request: Request):
         if not approve_pending:
             return JSONResponse({"error": "not available yet"}, status_code=501)
-        reply = approve_pending()
+        expect = None
+        try:
+            body = await request.json()
+            expect = body.get("expect") if isinstance(body, dict) else None
+        except Exception:
+            expect = None
+        # expect = the queued_at of the action shown in the Review view: never approve a different one.
+        reply = approve_pending(expect) if expect is not None else approve_pending()
         return {"ok": True, "reply": reply}
 
     @app.post("/api/pending/reject")

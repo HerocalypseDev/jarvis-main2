@@ -311,11 +311,12 @@ function showPendingDetail(pending) {
       </div>
       <p id="pending-action-status" class="muted"></p>
     </div>`;
-  document.getElementById("approve-btn").addEventListener("click", () => actOnPending("approve"));
+  // Send which action was reviewed, so Approve can never run a different one staged in the meantime.
+  document.getElementById("approve-btn").addEventListener("click", () => actOnPending("approve", pending.queued_at));
   document.getElementById("reject-btn").addEventListener("click", () => actOnPending("reject"));
 }
 
-async function actOnPending(action) {
+async function actOnPending(action, expect) {
   const statusEl = document.getElementById("pending-action-status");
   const approveBtn = document.getElementById("approve-btn");
   const rejectBtn = document.getElementById("reject-btn");
@@ -323,7 +324,12 @@ async function actOnPending(action) {
   if (rejectBtn) rejectBtn.disabled = true;
   if (statusEl) statusEl.textContent = action === "approve" ? "Approving…" : "Rejecting…";
   try {
-    const res = await fetch(`/api/pending/${action}`, { method: "POST" });
+    const opts = { method: "POST" };
+    if (action === "approve" && expect !== undefined && expect !== null) {
+      opts.headers = { "Content-Type": "application/json" };
+      opts.body = JSON.stringify({ expect });
+    }
+    const res = await fetch(`/api/pending/${action}`, opts);
     const data = await res.json();
     if (statusEl) statusEl.textContent = data.ok ? (data.reply || "Done.") : (data.error || "Failed.");
   } catch (e) {

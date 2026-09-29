@@ -25,6 +25,8 @@ import io
 import json
 import logging
 import os
+
+from jarvis_env import env_float, env_int
 import threading
 import urllib.request
 import wave
@@ -40,12 +42,12 @@ DEEPGRAM_API_KEY = (os.environ.get("DEEPGRAM_API_KEY") or "").strip()
 DEEPGRAM_TTS_MODEL = (
     os.environ.get("JARVIS_DEEPGRAM_TTS_MODEL") or "aura-2-thalia-en"
 ).strip() or "aura-2-thalia-en"
-DEEPGRAM_TTS_TIMEOUT_S = float(os.environ.get("JARVIS_DEEPGRAM_TTS_TIMEOUT_S") or 15.0)
+DEEPGRAM_TTS_TIMEOUT_S = env_float("JARVIS_DEEPGRAM_TTS_TIMEOUT_S", 15.0)
 DEEPGRAM_TTS_SAMPLE_RATE = 24000
 STREAM_ENABLED = (os.environ.get("JARVIS_DEEPGRAM_TTS_STREAM") or "1").strip().lower() not in (
     "0", "false", "no", "off",
 )
-STREAM_CONNECT_TIMEOUT_S = float(os.environ.get("JARVIS_DEEPGRAM_TTS_STREAM_TIMEOUT_S") or 15.0)
+STREAM_CONNECT_TIMEOUT_S = env_float("JARVIS_DEEPGRAM_TTS_STREAM_TIMEOUT_S", 15.0)
 
 _SPEAK_URL = "https://api.deepgram.com/v1/speak"
 _SPEAK_WS_URL = "wss://api.deepgram.com/v1/speak"

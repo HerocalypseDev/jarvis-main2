@@ -242,3 +242,42 @@ def test_mcp_tool_text_goes_through_catastrophic_gate(jarvis, monkeypatch):
     assert jarvis._execute_tool_impl("mcp_windows_Type", {"text": "hello world"}, "t") == "ok"
     assert jarvis._execute_tool_impl("mcp_windows_Type", {"text": "shutdown /s"}, "t", skip_confirmation=True) == "ok"
     assert ran == ["mcp_windows_Type", "mcp_windows_Type"]
+
+
+def test_dashboard_approve_only_runs_the_action_that_was_reviewed(monkeypatch, tmp_path):
+    """Audit 2026-09-29: Approve carried no reference to the reviewed action, so if that action was cleared
+    and a new one staged while its Review view was still open, Approve ran the NEW one unreviewed."""
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "t.db"))
+    import jarvis
+    ran = []
+    monkeypatch.setattr(jarvis, "_execute_confirmed_action", lambda step, sink=None: ran.append(step["tool_input"]))
+    monkeypatch.setattr(jarvis.threading, "Thread",
+                        lambda target, args=(), daemon=None, **k: type("T", (), {"start": lambda self: target(*args)})())
+    jarvis._take_pending_action()
+    assert jarvis._queue_pending_confirmation("run_shell", {"command": "shutdown /s /t 0"}, "shut down") is not False
+    reviewed = jarvis._dashboard_get_pending()["queued_at"]
+    jarvis._take_pending_action()                                   # rejected / expired...
+    jarvis._queue_pending_confirmation("run_shell", {"command": "format D:"}, "format a drive")   # ...a new one staged
+    msg = jarvis._dashboard_approve_pending(reviewed)
+    assert ran == [] and "Nothing ran" in msg and jarvis._dashboard_get_pending() is not None   # still staged
+    current = jarvis._dashboard_get_pending()["queued_at"]
+    assert jarvis._dashboard_approve_pending(current).startswith("Approved")
+    assert ran == [{"command": "format D:"}] and jarvis._dashboard_get_pending() is None
+
+
+def test_approve_endpoint_passes_the_reviewed_action_through():
+    import importlib
+    import jarvis_dashboard as d
+    importlib.reload(d)
+    from fastapi.testclient import TestClient
+    seen = []
+
+    def approve(expect=None):
+        seen.append(expect)
+        return "ok"
+    client = TestClient(d._build_app(approve_pending=approve), base_url="http://127.0.0.1:8765")
+    assert client.post("/api/pending/approve", json={"expect": 1234.5}).json()["ok"] is True
+    assert client.post("/api/pending/approve").json()["ok"] is True          # old clients still work
+    assert seen == [1234.5, None]
+    r = client.post("/api/pending/approve", json={"expect": 1}, headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403 and seen == [1234.5, None]
