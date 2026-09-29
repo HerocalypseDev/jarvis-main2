@@ -50,6 +50,11 @@ Developer pack - just ask Jarvis:
   "Watch <folder> for code health" (then a quiet 9am check that only speaks if something risky shows up)
   Developer skills only ever run read-only git commands; they never commit, push or edit your code.
 
+Work pack (needs the Gmail / Google Calendar connections for the mail and calendar parts):
+  "Triage my inbox"            (drafts replies; never sends unless you say "send it")
+  "Prep me for my next meeting" / "What am I waiting on?"
+  "Write my weekly update"     / "Find me focus time"  / "Wrap up my day"
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 
@@ -57,7 +62,8 @@ Need help? Reply to your purchase email.
 """
 
 
-IGNORE_WORDS: set[str] = set()
+# Generic names of the user's own MCP servers (their exact tool names differ per install).
+IGNORE_WORDS: set[str] = {"mcp_gmail", "mcp_calendar", "mcp_browser", "mcp_windows"}
 
 
 def _known_tools() -> tuple[set[str], set[str]]:
@@ -69,6 +75,12 @@ def _known_tools() -> tuple[set[str], set[str]]:
 
     tools = {t["name"] for t in jarvis.AGENT_TOOLS}
     params = {k for t in jarvis.AGENT_TOOLS for k in ((t.get("input_schema") or {}).get("properties") or {})}
+    # Action names a tool documents (enums, or listed in its description, like autonomy's
+    # 'list_commitments') are real values a skill may tell the model to pass.
+    for t in jarvis.AGENT_TOOLS:
+        params |= set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", t.get("description") or ""))
+        for spec in ((t.get("input_schema") or {}).get("properties") or {}).values():
+            params |= {str(v) for v in (spec.get("enum") or []) if isinstance(v, str)}
     return tools, params
 
 

@@ -1,0 +1,5 @@
+{
+  "name": "work_end_of_day",
+  "description": "Work pack: wraps up the day. Use for 'wrap up my day', 'end of day summary', 'what's left for tomorrow'.",
+  "instructions": "1. Call daily_plan with action 'review' to see what got done. 2. Call list_reminders for anything due tomorrow morning and briefing with kind 'urgent'. 3. Ask the user in one question if anything else got done or is stuck (skip if they already said). 4. Say: what got done (short), what moves to tomorrow, and your suggested top 3 for tomorrow. 5. Call remember_fact with category 'fact' and content 'Day wrap <date>: done <n>; tomorrow: <top 3>' so tomorrow's plan and the weekly update can use it."
+}

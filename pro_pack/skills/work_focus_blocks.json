@@ -1,0 +1,5 @@
+{
+  "name": "work_focus_blocks",
+  "description": "Work pack: finds free time in the calendar for deep work. Use for 'find me focus time', 'when can I get 2 hours to work', 'block time for the report'.",
+  "instructions": "1. Use the mcp_calendar tools to list events for the next 3 working days (or the range they said). 2. Find gaps of at least 60 minutes (or the length they asked for) between 9:00 and 18:00, avoiding lunch 12:30-13:30. 3. Suggest the best 2-3 slots out loud, soonest first. 4. Only if they pick one and say to book it: create the calendar event with the mcp_calendar tools, titled 'Focus: <what they'll work on>', and offer to switch on focus_mode at that time by calling create_reminder at the start time with text 'Focus block: <topic>. Say focus mode on to start.'"
+}
