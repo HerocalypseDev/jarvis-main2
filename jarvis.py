@@ -57,7 +57,6 @@ import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
 import jarvis_tool_router as tool_router
-import jarvis_perplexity as perplexity
 import jarvis_lessons as lessons
 import jarvis_embeddings as embeddings
 import jarvis_daily_plan as daily_plan
@@ -1585,11 +1584,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "web_search",
-        "description": (
-            "Search the live web and get an answer with its source URLs (Perplexity when configured, else "
-            "DuckDuckGo). Use for any web research. Cite the URLs in files or written replies; don't read "
-            "URLs aloud."
-        ),
+        "description": "Search the web and summarize the top results.",
         "input_schema": {
             "type": "object",
             "properties": {"query": {"type": "string"}},
@@ -8987,19 +8982,10 @@ def _duckduckgo_search(query: str, max_results: int = 5) -> list[tuple[str, str]
     return parser.results[:max_results]
 
 
-_DETAILED_SEARCH_RE = re.compile(r"research|in detail|in depth|compare|\bvs\b|versus|report|sources|background", re.I)
-
-
 def web_search_and_summarize(transcript: str, query: str) -> str:
     q = (query or transcript).strip()
     if not q:
         return "I don't have anything to search for."
-    if perplexity.enabled():
-        # The user's choice (2026-09-29): all web research goes through Perplexity. Any failure falls
-        # through to the DuckDuckGo path below, so a search never goes silent.
-        res = perplexity.search(q, detailed=bool(_DETAILED_SEARCH_RE.search(transcript or "")))
-        if res:
-            return perplexity.format_result(res)
     try:
         results = _duckduckgo_search(q)
     except Exception as e:
