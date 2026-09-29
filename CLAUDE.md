@@ -199,6 +199,14 @@ Rules:
 - **Published 2026-09-28**: https://github.com/HerocalypseDev/jarvis4u (public, one commit `038f719`, 124 files).
   To publish an update: clone it next to this repo, run `python tools/export_public.py ../jarvis4u`, review
   `git -C ../jarvis4u status`/`diff`, then commit and push there. Never push this repo's history to it.
+- **Standing rule (user, 2026-09-29): every change also goes to the public Jarvis4U repo.** After pushing a change
+  here, publish it there in the same session, no need to ask: clone/pull it next to this repo
+  (`../jarvis4u`), run `python tools/export_public.py ../jarvis4u` (must print "Privacy scan: clean"), review
+  `git -C ../jarvis4u status`/`diff --cached` by eye for anything sensitive the scan can't know about (names,
+  places, emails, keys/tokens/PINs, personal paths, private notes, paid Pro content from `pro_pack/`), run that
+  copy's tests for the changed area, then commit and push there. If anything looks sensitive, stop, fix the
+  export (`REPLACE`/`DENY_WORDS`/`EXCLUDE`/denylist) and re-export; never push a copy with a hit. Private-only
+  changes (CLAUDE.md, skills/, pro_pack/, PRO_ROADMAP.md...) produce no public diff, which is fine: nothing to push.
 - When adding personal data anywhere tracked (a name, a place, an address), add it to `REPLACE`/`DENY_WORDS`
   or the local denylist. Public-facing docs changes go in `public/`.
 - Verified: scan clean; the public copy's test suite fails exactly the same 85 tests as this repo in the
