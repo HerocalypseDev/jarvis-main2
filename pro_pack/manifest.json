@@ -1,6 +1,6 @@
 {
   "name": "Jarvis4U Pro",
-  "version": "1.1.0",
-  "packs": ["student", "developer"],
+  "version": "1.2.0",
+  "packs": ["student", "developer", "work"],
   "themes": ["stark", "ultraviolet"]
 }

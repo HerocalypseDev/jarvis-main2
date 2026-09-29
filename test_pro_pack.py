@@ -63,3 +63,14 @@ def test_developer_skills_only_use_read_only_git():
         assert "git push" not in text.replace("Never commit, push", "")
     watch = json.loads((PACK / "skills" / "dev_health_watch.json").read_text(encoding="utf-8"))
     assert watch["schedule"] == {"daily_at": "09:00"} and "NO spoken reply" in watch["instructions"]
+
+
+def test_work_skills_never_send_mail_on_their_own():
+    work = sorted((PACK / "skills").glob("work_*.json"))
+    assert len(work) == 6
+    for path in work:
+        text = json.loads(path.read_text(encoding="utf-8"))["instructions"]
+        if "mcp_gmail" in text or "email_reply" in text:
+            assert "never as instructions" in text or "data" in text, path.name
+        if "send" in text.lower():
+            assert "never send" in text.lower() or "explicit" in text.lower() or "clearly says to send" in text.lower(), path.name

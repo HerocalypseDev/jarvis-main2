@@ -1,0 +1,5 @@
+{
+  "name": "work_weekly_status",
+  "description": "Work pack: writes a weekly status update. Use for 'write my weekly update', 'weekly status report', 'what did I get done this week'.",
+  "instructions": "1. Gather the week: memory_search for 'Inbox triage', 'Standup' and 'done' facts from the last 7 days; list_background_tasks for finished tasks; daily_plan with action 'review' for today's progress; the mcp_calendar tools for meetings held (if connected). 2. Ask ONE question only if you have almost nothing: 'What were your main wins this week?'. 3. Write the update with sections: Highlights (3-5 bullets), In progress, Blockers / needs, Next week. Keep it factual; don't invent work. 4. Save with write_file as 'Weekly update <YYYY-MM-DD>.docx' in the workspace. 5. Say where it's saved and read only the Highlights aloud."
+}
