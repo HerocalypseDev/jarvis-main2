@@ -18,7 +18,7 @@ import jarvis_gemini as g
 def _gemini_env(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setenv("JARVIS_GEMINI_MODEL", "gemini-3.5-flash-lite")
-    for k in ("JARVIS_GEMINI_FALLBACK_MODEL", "JARVIS_GEMINI_HEDGE_S", "JARVIS_GEMINI_ATTEMPT_TIMEOUT_S",
+    for k in ("JARVIS_GEMINI_FALLBACK_MODEL", "JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT", "JARVIS_GEMINI_HEDGE_S", "JARVIS_GEMINI_ATTEMPT_TIMEOUT_S",
               "JARVIS_GEMINI_STREAM", "JARVIS_GEMINI_KEEPALIVE", "JARVIS_GEMINI_FIRST_TOKEN_S"):
         monkeypatch.delenv(k, raising=False)
 
@@ -240,8 +240,112 @@ def test_overload_still_falls_back_to_the_backup_once(monkeypatch):
     assert out["content"][0]["text"] == "from backup"
 
 
-def test_429_wait_cap_is_short_enough_for_a_spoken_command():
-    assert g.MAX_RETRY_WAIT_S <= 15
+def test_429_wait_cap_covers_real_free_tier_delays():
+    # Found live (2026-09-29): the free tier allows ~5 requests/min per model and Google asks for 17-27 s.
+    # A 15 s cap made every such burst fail with "couldn't reach Gemini".
+    assert g.MAX_RETRY_WAIT_S >= 27
+
+
+def test_a_short_429_is_waited_out_and_answered():
+    waits, calls = [], []
+
+    def http(req, timeout):
+        calls.append(1)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(req.full_url, 429, "quota", None,
+                                         __import__("io").BytesIO(b'{"error":{"details":[{"retryDelay":"26s"}]}}'))
+        return _ok("after the wait")
+
+    out = g.call(BODY, 180, http, sleep=waits.append)
+    assert out["content"][0]["text"] == "after the wait" and waits == [26.5] and len(calls) == 2
+
+
+def test_stream_waits_out_a_short_rate_limit_instead_of_wasting_a_request(monkeypatch):
+    slept, opens = [], []
+    monkeypatch.setattr(g.time, "sleep", slept.append)
+
+    def opener(req, t):
+        opens.append(1)
+        if len(opens) == 1:
+            raise urllib.error.HTTPError(req.full_url, 429, "quota", None,
+                                         __import__("io").BytesIO(b'{"error":{"details":[{"retryDelay":"17s"}]}}'))
+        return iter(_sse(_chunk({"text": "Hello there."}, finish="STOP")))
+
+    out = g.stream_round(BODY, 60, on_text=lambda d: None, opener=opener)
+    assert out is not None and out["content"][0]["text"] == "Hello there."
+    assert slept == [17.5] and len(opens) == 2
+
+
+def test_stream_does_not_wait_for_a_long_quota_reset(monkeypatch):
+    slept = []
+    monkeypatch.setattr(g.time, "sleep", slept.append)
+
+    def opener(req, t):
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", None,
+                                     __import__("io").BytesIO(b'{"error":{"details":[{"retryDelay":"3600s"}]}}'))
+
+    assert g.stream_round(BODY, 60, on_text=lambda d: None, opener=opener) is None
+    assert slept == [] and "used up" in g.last_error_reason()
+
+
+# --- readable failure reasons + the diagnostic --------------------------------------------------
+def test_failures_are_explained_in_plain_words():
+    m = "gemini-3.5-flash-lite"
+    assert "try again in about 27 seconds" in g.reason_from_http(429, '{"retryDelay":"26s"}', m)
+    assert "used up" in g.reason_from_http(429, '{"retryDelay":"3600s"}', m)
+    assert "overloaded" in g.reason_from_http(503, "", m)
+    assert "rejected the API key" in g.reason_from_http(400, "API key not valid. Please pass a valid API key.", m)
+    assert "rejected the API key" in g.reason_from_http(401, "", m)
+    assert "denied access" in g.reason_from_http(403, "", m)
+    assert "isn't available" in g.reason_from_http(404, "", m)
+    assert "timed out" in g.reason_from_exception(TimeoutError("x"))
+    assert "certificate" in g.reason_from_exception(OSError("CERTIFICATE_VERIFY_FAILED"))
+    assert "couldn't connect" in g.reason_from_exception(ConnectionResetError("reset"))
+
+
+def test_last_error_is_kept_until_a_call_works():
+    g._clear_error()
+
+    def bad(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 503, "busy", None, __import__("io").BytesIO(b"{}"))
+
+    assert g.call(BODY, 30, bad, sleep=lambda s: None) is None
+    assert "overloaded" in g.last_error_reason()
+    assert g.call(BODY, 30, lambda req, t: _ok(), sleep=lambda s: None) is not None
+    assert g.last_error_reason() == ""
+    g._note_error("old")
+    g._last_error["ts"] -= 500
+    assert g.last_error_reason() == ""  # stale reasons are not spoken
+
+
+def test_missing_key_is_a_reason_too(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY")
+    assert g.call(BODY, 30, lambda r, t: b"") is None
+    assert "no Gemini API key" in g.last_error_reason()
+
+
+def test_diagnose_reports_a_key_that_differs_between_windows_and_env_file(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=AIzaOLDKEY000000000000\nJARVIS_GEMINI_MODEL=gemini-3.1-flash-lite\n")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaNEWKEY111111111111")
+
+    def boom(*a, **k):
+        raise urllib.error.URLError("no network in tests")
+
+    monkeypatch.setattr(g.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(g, "_open", boom)
+    lines = []
+    problems = g.diagnose(tmp_path / ".env", out=lines.append)
+    text = "\n".join(lines)
+    assert any("differs" in p for p in problems)
+    assert "AIza...1111" in text and "OLDKEY" not in text  # never prints a full key
+    assert "gemini-3.5-flash-lite" in text  # the environment's model beats .env until a restart
+    assert any("couldn't connect" in p for p in problems)
+
+
+def test_diagnose_without_any_key_says_so(tmp_path, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY")
+    problems = g.diagnose(tmp_path / ".env", out=lambda *_: None)
+    assert problems and "No Gemini key" in problems[0]
 
 
 # --- connection reuse ---------------------------------------------------------------------------
@@ -586,3 +690,60 @@ def test_settings_page_lists_the_new_speed_knobs():
     for k in ("JARVIS_GEMINI_FALLBACK_MODEL", "JARVIS_GEMINI_HEDGE_S", "JARVIS_GEMINI_STREAM",
               "JARVIS_ACK_PHRASES", "JARVIS_LIVE_SPEECH_MAX_CHARS", "JARVIS_GEMINI_ATTEMPT_TIMEOUT_S"):
         assert k in keys, k
+
+
+def test_unavailable_reply_names_the_real_reason(jarvis, monkeypatch):
+    g._note_error("gemini-3.5-flash-lite is rate limited, try again in about 27 seconds")
+    assert jarvis._llm_unavailable_reply() == (
+        "Sorry, I couldn't reach Gemini: gemini-3.5-flash-lite is rate limited, try again in about 27 seconds.")
+    g._clear_error()
+    assert jarvis._llm_unavailable_reply() == "Sorry, I couldn't reach Gemini just now."
+
+
+def _rate_limited_primary(models):
+    def http(req, timeout):
+        model = req.full_url.split("/models/")[1].split(":")[0]
+        models.append(model)
+        if model == "gemini-3.5-flash-lite":
+            raise urllib.error.HTTPError(req.full_url, 429, "quota", None,
+                                         __import__("io").BytesIO(b'{"error":{"details":[{"retryDelay":"26s"}]}}'))
+        return _ok("from backup")
+    return http
+
+
+def test_opt_in_backup_answers_at_once_when_the_main_model_is_rate_limited(monkeypatch):
+    monkeypatch.setenv("JARVIS_GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
+    monkeypatch.setenv("JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT", "1")
+    models, waits = [], []
+    out = g.call(BODY, 180, _rate_limited_primary(models), sleep=waits.append)
+    assert out["content"][0]["text"] == "from backup"
+    assert models == ["gemini-3.5-flash-lite", "gemini-flash-lite-latest"] and waits == []  # no 26 s wait
+
+
+def test_backup_is_not_used_for_rate_limits_unless_switched_on(monkeypatch):
+    monkeypatch.setenv("JARVIS_GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
+    models, waits = [], []
+    out = g.call(BODY, 180, _rate_limited_primary(models), sleep=waits.append)
+    assert waits and set(waits) == {26.5}  # the old behaviour: wait it out on the same model, retrying
+    assert "gemini-flash-lite-latest" not in models and out is None
+
+
+def test_switch_without_a_backup_model_changes_nothing(monkeypatch):
+    monkeypatch.setenv("JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT", "1")
+    models, waits = [], []
+    g.call(BODY, 180, _rate_limited_primary(models), sleep=waits.append)
+    assert waits and set(waits) == {26.5} and set(models) == {"gemini-3.5-flash-lite"}
+
+
+def test_stream_does_not_wait_when_the_backup_is_switched_on_for_rate_limits(monkeypatch):
+    monkeypatch.setenv("JARVIS_GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
+    monkeypatch.setenv("JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT", "1")
+    slept = []
+    monkeypatch.setattr(g.time, "sleep", slept.append)
+
+    def opener(req, t):
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", None,
+                                     __import__("io").BytesIO(b'{"error":{"details":[{"retryDelay":"17s"}]}}'))
+
+    assert g.stream_round(BODY, 60, on_text=lambda d: None, opener=opener) is None  # call() then uses the backup
+    assert slept == []

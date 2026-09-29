@@ -1729,7 +1729,8 @@ row there each phase rather than only stating the total in chat.
 | 96 ("do it again" keeps the on-screen rules, debug-report collector with secret masking; 2 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 97 (debug-report fixes: blind UI scripts refused, form-filling procedure, run_python alias, no raw-output replies, wider fill claim, agent required inputs, gmail_watch memory spam; 4 new tests + eval case) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
 | 98 (Gemini speed pass: streaming into speech on every round, stall protection + backup racing, connection reuse, spoken-length cap, spoken lead-in; live-verified against the real API; 36 new tests) | n/a | ~55 min | ~$3.50–$4.50 |
-| **Running total (final)** | | **~3089 min** | **~$191.95–$268.95** |
+| 99 ("couldn't reach Gemini" root-caused: free tier = ~5 requests/min per model; spoken failure reasons, `python jarvis_gemini.py` diagnostic, in-stream 429 wait, restored 30 s cap, opt-in backup on rate limit; live burst test; 13 new tests) | n/a | ~60 min | ~$4.00–$5.50 |
+| **Running total (final)** | | **~3149 min** | **~$195.95–$274.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1891,8 +1892,12 @@ Full write-up: SPEED.md "Gemini speed pass". Rules to keep (tests: `test_speed_g
   (`_can_stream_round`); a streamed reply is cut for speech at `JARVIS_LIVE_SPEECH_MAX_CHARS` (dashboard/history keep
   the full text; "in detail" lifts it). Gemini only - Claude's path is unchanged.
 - A stream that breaks after speech began returns what arrived (never retry: it would repeat speech).
-- Stall protection: 60 s per attempt, timeouts retried once, 429 wait cap 15 s, and a **user-chosen** backup model is
-  raced after 8 s. Never race/swap on a 429 and never pick a backup automatically (2026-09-25 decision).
+- Stall protection: 60 s per attempt, timeouts retried once, 429 wait cap **30 s** (a 15 s cap broke free-tier use: Google asks
+  for 17-27 s), and a **user-chosen** backup model is raced after 8 s. Never pick a backup automatically (2026-09-25
+  decision); handing a 429 to the backup is the opt-in `JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT` (default off).
+- **Free-tier limit (found live 2026-09-29):** ~5 requests/min per model, per project. "Couldn't reach Gemini" was that, not
+  an outage. Failures now carry a spoken reason (`last_error_reason`), and `python jarvis_gemini.py` diagnoses key/model/
+  proxy/transport on the owner's PC. Details in SPEED.md "Free-tier rate limits".
 - The spoken lead-in ("On it.") is the old filler done safely: its own thread, but `speak_text` calls `_await_ack()`
   first, so speech stays in order. Keep that join if `speak_text` is refactored; never add a second ack path that
   speaks without it. Shared test fixtures set `JARVIS_ACK_PHRASES=0`.
