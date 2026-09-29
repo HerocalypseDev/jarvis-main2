@@ -91,6 +91,7 @@ def jarvis(monkeypatch, tmp_path):
     # call to Anthropic's streaming endpoint (the env var is read fresh per call, unlike the
     # Deepgram keys above, so setenv alone is enough here).
     monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "0")
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "0")  # no spoken lead-in thread in tests that capture speech
     monkeypatch.setattr(j, "get_mcp_tool_schemas", lambda: [])
     monkeypatch.setattr(j, "_history_snapshot", lambda: [])
     monkeypatch.setattr(j, "_append_history", lambda *a, **k: None)

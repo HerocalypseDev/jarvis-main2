@@ -1728,7 +1728,8 @@ row there each phase rather than only stating the total in chat.
 | 95 (on-screen form: typing tools always offered for screen commands under narrowing, read_screen says nothing was typed, new "typed/filled it in" claim check; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 96 ("do it again" keeps the on-screen rules, debug-report collector with secret masking; 2 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 97 (debug-report fixes: blind UI scripts refused, form-filling procedure, run_python alias, no raw-output replies, wider fill claim, agent required inputs, gmail_watch memory spam; 4 new tests + eval case) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~3034 min** | **~$188.45–$264.45** |
+| 98 (Gemini speed pass: streaming into speech on every round, stall protection + backup racing, connection reuse, spoken-length cap, spoken lead-in; live-verified against the real API; 36 new tests) | n/a | ~50 min | ~$4.00–$6.00 |
+| **Running total (final)** | | **~3084 min** | **~$192.45–$270.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1882,6 +1883,20 @@ Tests: `test_audit_scheduler.py` + additions to `test_hardening.py`, `test_execu
   crash startup). Use them for any new numeric env var.
 - Tests must not hard-code calendar dates near "now" (add_commitment drops past deadlines): build them from
   `datetime.now()`.
+
+## Gemini speed pass (2026-09-29)
+
+Full write-up: SPEED.md "Gemini speed pass". Rules to keep (tests: `test_speed_gemini.py`):
+- Gemini rounds stream into speech like Claude's first round, but for **every** round while narration lines remain
+  (`_can_stream_round`); a streamed reply is cut for speech at `JARVIS_LIVE_SPEECH_MAX_CHARS` (dashboard/history keep
+  the full text; "in detail" lifts it). Gemini only - Claude's path is unchanged.
+- A stream that breaks after speech began returns what arrived (never retry: it would repeat speech).
+- Stall protection: 60 s per attempt, timeouts retried once, 429 wait cap 15 s, and a **user-chosen** backup model is
+  raced after 8 s. Never race/swap on a 429 and never pick a backup automatically (2026-09-25 decision).
+- The spoken lead-in ("On it.") is the old filler done safely: its own thread, but `speak_text` calls `_await_ack()`
+  first, so speech stays in order. Keep that join if `speak_text` is refactored; never add a second ack path that
+  speaks without it. Shared test fixtures set `JARVIS_ACK_PHRASES=0`.
+- Connection reuse is skipped behind an HTTPS proxy. Gemini Live (native audio) was deliberately **not** built.
 
 ## Hand-off guard (2026-09-25)
 

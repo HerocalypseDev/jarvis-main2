@@ -489,3 +489,48 @@ transcript, since "hello" is now itself a deterministic intent. Full suite: 743 
 4 pre-existing, unrelated urgent-email-monitor failures untouched — see CLAUDE.md's "Audit
 hardening" section). No catastrophic-gate, autonomy-permission, or fallback-removal changes were
 made.
+
+## Gemini speed pass (2026-09-29)
+
+Why: on the Gemini brain nothing was spoken until the whole answer (and every tool round) was finished, a
+stalled model could hold one command for minutes (180 s round cap, several retries), and every round paid a
+fresh TLS handshake. Measured on a real key with a Jarvis-sized request (10k tokens, 60 tools): the steady
+models (`gemini-3.5-flash-lite`, `gemini-flash-lite-latest`) answered in ~1.3 s / first token ~0.9 s, while
+`gemini-3.5-flash` took 45-79 s and `gemini-3.1-flash-lite-preview`/`gemma-4-*` were slow and flaky. Model
+choice is the biggest lever; the rest is plumbing. Env vars are all on the Settings page.
+
+- **Streaming into speech** (`jarvis_gemini.stream_round`, `jarvis._gemini_stream_round`): `streamGenerateContent`
+  SSE, text before the first function call is spoken sentence by sentence through the same
+  `_extract_ready_sentences` the Claude path uses. Unlike Claude (first round only) Gemini streams **every** round
+  while narration lines remain (`_can_stream_round`), so the final answer after a tool call is also spoken as
+  written. Any failure returns None and the normal call runs; if a stream breaks *after* speech began, what arrived
+  is returned instead of retrying (a retry would speak it twice). `JARVIS_GEMINI_STREAM=0` turns it off.
+  Live: first sentence spoken ~0.65 s after the command.
+- **Spoken-length cap** (`_LiveSpeaker`, `JARVIS_LIVE_SPEECH_MAX_CHARS`, default 400): a streamed reply has no
+  "whole reply" to run `_summarize_for_speech` on, so it is cut while speaking (first sentence always), Jarvis says
+  "I can read the rest if you'd like." if >= 60 characters were dropped, and the dashboard/history keep the full text.
+  Lifted by "in detail"/"step by step" and `JARVIS_REPLY_STYLE=detailed`. Gemini only; Claude's streaming is unchanged.
+  The stable prompt also tells the model to put the answer in the first sentence.
+- **Stall protection** (`jarvis_gemini.call`): each attempt is capped at `JARVIS_GEMINI_ATTEMPT_TIMEOUT_S` (60, was the
+  loop's 180), a timed-out call is retried once (was up to four times), and the 429 wait cap is 15 s (was 30). With a
+  backup model set (`JARVIS_GEMINI_FALLBACK_MODEL`) the same request is also sent to it after
+  `JARVIS_GEMINI_HEDGE_S` (8) seconds and the first answer wins (a model call has no side effects). Never for quota
+  errors and never without a user-chosen backup (the 2026-09-25 "no automatic model switching" decision stands).
+  Streaming gives up and falls back after `JARVIS_GEMINI_FIRST_TOKEN_S` (8) with no data.
+- **Connection reuse** (`jarvis_gemini.http_post`, `_Pool`): idle HTTPS connections are kept 45 s and reused, a stale
+  one is replaced transparently, `warm()` opens one at startup. Skipped (plain urllib) when an HTTPS proxy is set or
+  `JARVIS_GEMINI_KEEPALIVE=0`. Live: 1 connection opened, 3 reused.
+- **Spoken lead-in** (`_start_ack`, `ACK_ACTION`/`ACK_LOOKUP`, `JARVIS_ACK_PHRASES`, default on): a short "On it." /
+  "Let me check." for work that will take a moment - before the model runs when the request starts with a task verb,
+  or right after a round that went straight to a tool with nothing said. It plays on its own thread but
+  `speak_text` waits for it first (`_await_ack`), so it can never overlap or trail the real reply (the bug that got
+  the old filler removed). Once per command, never in Sleep Mode, dropped on barge-in, skipped for reduced-tool
+  intents; the phrases are pre-synthesized at startup so the first one is a cache hit.
+- **Not built:** Gemini Live (native audio over a WebSocket): a rewrite of the whole voice path, see the cons in the
+  session notes; the lead-in cannot know a command needs tools before the model answers, so it is a verb heuristic.
+- Tests: `test_speed_gemini.py` (36; fake transports, a loopback server for connection reuse, no real network);
+  four shared test fixtures set `JARVIS_ACK_PHRASES=0`. Verified live against the real Gemini API: streaming,
+  a streamed tool call, connection reuse, and the whole agent loop with Jarvis's real prompt/tools (audio stubbed).
+  **Not verified live:** real audio playback of the lead-in and the streamed sentences, and the race against a
+  genuinely stalled model (unit-tested with a fake stalled transport).
+

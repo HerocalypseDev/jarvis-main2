@@ -12,13 +12,18 @@ unit-tested with fixtures; only `call` does I/O, and it takes the HTTP function 
 
 from __future__ import annotations
 
+import http.client
+import io
 import json
 import logging
 import os
+import queue
 import re
+import socket
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -38,7 +43,7 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 # model fallback (removed 2026-09-25, user request): the user picks the model in Settings.
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
 PROVIDERS = ("claude", "gemini", "ollama")  # ollama: local brain (jarvis_ollama)
-MAX_RETRY_WAIT_S = 30.0  # longest 429 "retry after" Jarvis will sit through mid-command
+MAX_RETRY_WAIT_S = 15.0  # longest 429 "retry after" Jarvis will sit through mid-command (was 30; a spoken command should not sit half a minute)
 
 
 # --- provider choice -----------------------------------------------------------------------
@@ -244,6 +249,200 @@ def retry_delay_s(error_body: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+# --- transport: one reusable HTTPS connection instead of a new TLS handshake per round --------
+# (2026-09-29, speed pass) urllib opens a fresh connection for every request, which costs a TCP+TLS
+# handshake (several round trips) on every one of the up to 12 rounds of a command. A small idle pool
+# keeps connections to generativelanguage.googleapis.com open between calls. It is skipped when an
+# HTTPS proxy is configured (http.client does not use proxies) or JARVIS_GEMINI_KEEPALIVE=0, in which
+# case plain urlopen is used exactly as before.
+POOL_IDLE_S = 45.0  # Google closes idle connections after about a minute; stay well under it
+_STALE_ERRORS = (ConnectionError, http.client.HTTPException, socket.timeout, TimeoutError, OSError)
+
+
+def keepalive_enabled() -> bool:
+    return (os.environ.get("JARVIS_GEMINI_KEEPALIVE") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _proxied(url: str) -> bool:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        proxies = urllib.request.getproxies()
+        return bool(proxies.get(parts.scheme)) and not urllib.request.proxy_bypass(parts.hostname or "")
+    except Exception:
+        return True  # unsure: take the plain urllib path
+
+
+class _Pool:
+    """Idle connections keyed by (scheme, host, port). acquire() hands out one exclusively; release()
+    puts a still-healthy one back. Nothing is shared between two requests at the same time."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._idle: dict[tuple, list] = {}
+        self.opened = 0  # connections created (tests + diagnostics)
+        self.reused = 0
+
+    def acquire(self, scheme: str, host: str, port: int, timeout: float):
+        key = (scheme, host, port)
+        now = time.monotonic()
+        with self._lock:
+            lst = self._idle.get(key, [])
+            while lst:
+                conn, stamp = lst.pop()
+                if now - stamp <= POOL_IDLE_S:
+                    self.reused += 1
+                    return key, conn, True
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self.opened += 1
+        cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+        return key, cls(host, port, timeout=timeout), False
+
+    def release(self, key: tuple, conn) -> None:
+        with self._lock:
+            self._idle.setdefault(key, []).append((conn, time.monotonic()))
+
+    def clear(self) -> None:
+        with self._lock:
+            for lst in self._idle.values():
+                for conn, _ in lst:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            self._idle.clear()
+
+
+_pool = _Pool()
+
+
+def _split(url: str):
+    p = urllib.parse.urlsplit(url)
+    scheme = p.scheme or "https"
+    port = p.port or (443 if scheme == "https" else 80)
+    path = (p.path or "/") + (("?" + p.query) if p.query else "")
+    return scheme, p.hostname or "", port, path
+
+
+def _open(req: urllib.request.Request, timeout: float):
+    """Sends `req` on a pooled connection; returns (key, conn, response). A reused connection the server
+    already closed is replaced once by a fresh one. Raises urllib.error.HTTPError for a non-2xx status."""
+    scheme, host, port, path = _split(req.full_url)
+    headers = {k: v for k, v in req.header_items()}
+    body = req.data
+    method = req.get_method()
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        key, conn, reused = _pool.acquire(scheme, host, port, timeout)
+        try:
+            conn.timeout = timeout
+            if conn.sock is not None:
+                conn.sock.settimeout(timeout)
+            conn.request(method, path, body=body, headers=headers)
+            resp = conn.getresponse()
+        except _STALE_ERRORS as e:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            last_exc = e
+            if isinstance(e, (socket.timeout, TimeoutError)):
+                raise  # slow, not stale: retrying here would only double the wait
+            if reused and attempt == 1:
+                continue  # a stale idle connection: retry once on a brand-new one
+            raise
+        if resp.status >= 400:
+            data = resp.read()
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise urllib.error.HTTPError(req.full_url, resp.status, resp.reason, resp.msg, io.BytesIO(data))
+        return key, conn, resp
+    raise last_exc or OSError("connection failed")
+
+
+def _finish(key: tuple, conn, resp) -> None:
+    """Return the connection to the pool only if the response was fully read and the server keeps it open."""
+    try:
+        if resp.isclosed() and not resp.will_close:
+            _pool.release(key, conn)
+            return
+    except Exception:
+        pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def http_post(req: urllib.request.Request, timeout: float) -> bytes:
+    """Drop-in for `urlopen(req).read()` with connection reuse; raises urllib.error.HTTPError like it."""
+    if not keepalive_enabled() or _proxied(req.full_url) or not req.full_url.startswith("https:"):
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+    key, conn, resp = _open(req, timeout)
+    try:
+        data = resp.read()
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
+    _finish(key, conn, resp)
+    return data
+
+
+def warm() -> bool:
+    """Open (and pool) a connection ahead of the first command with a free metadata GET; never raises."""
+    key_ = api_key()
+    if not key_ or not keepalive_enabled():
+        return False
+    try:
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model_name()}",
+            headers={"x-goog-api-key": key_}, method="GET")
+        http_post(req, 10)
+        return True
+    except Exception as e:
+        log.debug("Gemini connection warm-up skipped: %s", e)
+        return False
+
+
+# --- timing knobs ---------------------------------------------------------------------------
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float((os.environ.get(name) or "").strip() or default)
+    except ValueError:
+        return default
+
+
+def attempt_timeout_s() -> float:
+    """Longest one Gemini attempt may take (JARVIS_GEMINI_ATTEMPT_TIMEOUT_S, default 60). The agent loop's
+    180 s round cap was written for long Claude documents; a stalled Gemini call used to hold a command for
+    that long, up to four times over."""
+    return max(5.0, _env_float("JARVIS_GEMINI_ATTEMPT_TIMEOUT_S", 60.0))
+
+
+def hedge_after_s() -> float:
+    """After this many seconds without an answer, the same request is also sent to the backup model
+    (JARVIS_GEMINI_FALLBACK_MODEL) and whichever answers first wins. 0 = never race (default 8)."""
+    return max(0.0, _env_float("JARVIS_GEMINI_HEDGE_S", 8.0))
+
+
+def first_token_timeout_s() -> float:
+    """Streaming: give up (and fall back to a normal call) if nothing arrives within this long."""
+    return max(3.0, _env_float("JARVIS_GEMINI_FIRST_TOKEN_S", 8.0))
+
+
+def stream_enabled() -> bool:
+    return (os.environ.get("JARVIS_GEMINI_STREAM") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+# --- calls ----------------------------------------------------------------------------------
 def call(
     body: dict,
     timeout: int,
@@ -254,7 +453,12 @@ def call(
     """Runs one Anthropic-shaped body against Gemini; returns an Anthropic-shaped dict, or None
     on failure (the caller shows its own "couldn't reach" message). Handles free-tier 429s by
     waiting the server-advised delay (capped) instead of failing a multi-step command outright;
-    drops thinkingConfig once if the model rejects it."""
+    drops thinkingConfig once if the model rejects it.
+
+    Speed (2026-09-29): a stalled call no longer holds the command for minutes. Each attempt is capped
+    (attempt_timeout_s), timeouts are retried once rather than four times, and when a backup model is
+    configured the same request is raced on it after hedge_after_s seconds - a model call has no side
+    effects, so asking twice is safe; the first answer wins."""
     key, model = api_key(), model_name()
     # Escalation (smarter batch): the loop may ask for a stronger Gemini/Gemma model by name. If that
     # model fails, the same request is retried once on the configured model.
@@ -267,15 +471,56 @@ def call(
     if not key:
         log.warning("Set GEMINI_API_KEY in .env to use Gemini.")
         return None
-    result = _call_model(body, timeout, http, key, model, max_attempts=max_attempts, sleep=sleep)
-    if result is None and getattr(_last_fail, "code", None) in OVERLOAD_CODES:
+    backup = fallback_model_name()
+    if backup == model:
+        backup = ""
+    hedge = hedge_after_s()
+    backup_tried = False
+    if backup and hedge > 0:
+        result, code, backup_tried = _hedged(body, timeout, http, key, model, backup, hedge, max_attempts, sleep)
+        _last_fail.code = code
+    else:
+        result = _call_model(body, timeout, http, key, model, max_attempts=max_attempts, sleep=sleep)
+        code = getattr(_last_fail, "code", None)
+    if result is None and code in OVERLOAD_CODES and backup and not backup_tried:
         # Opt-in backup for OVERLOAD only (503 "high demand" and other 5xx), never for quota (429): the
         # user chose (2026-09-25) to change models themselves when a daily quota runs out.
-        backup = fallback_model_name()
-        if backup and backup != model:
-            log.warning("Gemini %s is overloaded; trying the backup model %s once", model, backup)
-            result = _call_model(body, timeout, http, key, backup, max_attempts=2, sleep=sleep)
+        log.warning("Gemini %s is overloaded; trying the backup model %s once", model, backup)
+        result = _call_model(body, timeout, http, key, backup, max_attempts=2, sleep=sleep)
     return result
+
+
+def _hedged(body, timeout, http, key, model, backup, hedge_s, max_attempts, sleep):
+    """Primary model now; the backup joins after hedge_s seconds if the primary has not answered.
+    Returns (result, last_fail_code, backup_was_started). The slower call is abandoned (daemon thread)."""
+    results: queue.Queue = queue.Queue()
+
+    def _run(name: str, mdl: str, attempts: int) -> None:
+        r = _call_model(body, timeout, http, key, mdl, max_attempts=attempts, sleep=sleep)
+        results.put((name, r, getattr(_last_fail, "code", None)))
+
+    threading.Thread(target=_run, args=("primary", model, max_attempts), daemon=True).start()
+    running, started_backup, primary_code = 1, False, None
+    while running:
+        try:
+            name, r, code = results.get(timeout=None if started_backup else hedge_s)
+        except queue.Empty:
+            log.warning("Gemini %s hasn't answered in %.0fs; racing the backup model %s", model, hedge_s, backup)
+            threading.Thread(target=_run, args=("backup", backup, 2), daemon=True).start()
+            running += 1
+            started_backup = True
+            continue
+        running -= 1
+        if name == "primary":
+            primary_code = code
+        if r is not None:
+            if name == "backup":
+                log.info("Gemini backup model %s answered first.", backup)
+            return r, code, started_backup
+        if name == "primary" and not started_backup:
+            # The primary failed outright before the hedge timer: the normal overload fallback handles it.
+            return None, primary_code, False
+    return None, primary_code, started_backup
 
 
 OVERLOAD_CODES = (500, 502, 503, 504)
@@ -283,17 +528,28 @@ OVERLOAD_CODES = (500, 502, 503, 504)
 # same short 503 spell on gemini-3.1-flash-lite, and the command failed while the next one worked).
 OVERLOAD_BACKOFF_S = (2.0, 4.0, 8.0)
 _last_fail = threading.local()
+MAX_TIMEOUT_ATTEMPTS = 2  # a timed-out call is retried once, not max_attempts times
 
 
 def fallback_model_name() -> str:
-    """JARVIS_GEMINI_FALLBACK_MODEL: tried once when the main model is overloaded. Empty (default) = off."""
+    """JARVIS_GEMINI_FALLBACK_MODEL: tried once when the main model is overloaded (and raced against it
+    when it is slow). Empty (default) = off."""
     return (os.environ.get("JARVIS_GEMINI_FALLBACK_MODEL") or "").strip()
+
+
+def _is_timeout(e: BaseException) -> bool:
+    if isinstance(e, (TimeoutError, socket.timeout)):
+        return True
+    reason = getattr(e, "reason", None)
+    return isinstance(e, urllib.error.URLError) and isinstance(reason, (TimeoutError, socket.timeout))
 
 
 def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attempts: int = 4,
                 sleep: Callable[[float], None] = time.sleep) -> dict | None:
     think = True
     _last_fail.code = None
+    timeouts = 0
+    per_attempt = min(float(timeout), attempt_timeout_s())
     for attempt in range(1, max_attempts + 1):
         payload = json.dumps(to_request(body, model, think)).encode()
         req = urllib.request.Request(
@@ -301,7 +557,7 @@ def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attemp
             headers={"x-goog-api-key": key, "content-type": "application/json"},
         )
         try:
-            return from_response(json.loads(http(req, timeout)), model)
+            return from_response(json.loads(http(req, per_attempt)), model)
         except urllib.error.HTTPError as e:
             try:
                 detail = e.read().decode(errors="replace")
@@ -325,7 +581,198 @@ def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attemp
             return None
         except Exception as e:
             log.warning("Gemini request failed (attempt %d): %s", attempt, e)
+            if _is_timeout(e):
+                timeouts += 1
+                if timeouts >= MAX_TIMEOUT_ATTEMPTS:
+                    return None
             if attempt == max_attempts:
                 return None
             sleep(1.5)
     return None
+
+
+# --- streaming ------------------------------------------------------------------------------
+def _merge_chunks(chunks: list[dict]) -> dict:
+    """Streamed GenerateContentResponse chunks -> one response that from_response() understands: parts
+    concatenated in order (adjacent plain-text parts joined), last finishReason and usage kept."""
+    parts: list[dict] = []
+    finish = None
+    usage: dict = {}
+    for ch in chunks:
+        cands = ch.get("candidates") or []
+        if cands:
+            for p in (cands[0].get("content") or {}).get("parts") or []:
+                plain = ("text" in p and not p.get("thought") and not p.get("thoughtSignature")
+                         and "functionCall" not in p)
+                last = parts[-1] if parts else None
+                if plain and last is not None and "text" in last and not last.get("thought") \
+                        and not last.get("thoughtSignature") and "functionCall" not in last:
+                    last["text"] += p.get("text", "")
+                else:
+                    parts.append(dict(p))
+            finish = cands[0].get("finishReason") or finish
+        if ch.get("usageMetadata"):
+            usage = ch["usageMetadata"]
+    return {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": finish}],
+            "usageMetadata": usage}
+
+
+def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on_first_token=None,
+                 opener=None) -> dict | None:
+    """One Gemini round trip over streamGenerateContent (SSE). on_text(delta) is called for every piece
+    of answer text that arrives BEFORE the first function call of the message (the same rule the Claude
+    stream follows: text next to a tool call is narration, spoken as it comes); on_text_done() fires once
+    when that leading text ends (a function call appears, or the stream finishes) so a caller can flush a
+    held-back fragment; on_first_token() fires when the first part of any kind arrives.
+
+    Returns the same Anthropic-shaped dict `call` returns, or None on any failure so the caller can run
+    the ordinary non-streaming call for this round. If the stream breaks AFTER something was already
+    handed to on_text, what arrived is returned as the answer instead of None: retrying would speak it
+    twice, and a truncated sentence beats repeating the whole reply. Never raises."""
+    key = api_key()
+    if not key or not stream_enabled():
+        return None
+    model = model_name()
+    override = str(body.get("model") or "")
+    if override.startswith(("gemini-", "gemma-")):
+        model = override
+    url = (GEMINI_URL.format(model=model).replace(":generateContent", ":streamGenerateContent")) + "?alt=sse"
+    req = urllib.request.Request(
+        url, data=json.dumps(to_request(body, model, True)).encode(), method="POST",
+        headers={"x-goog-api-key": key, "content-type": "application/json", "accept": "text/event-stream"})
+    lines: queue.Queue = queue.Queue()
+    stop = threading.Event()
+
+    def _reader() -> None:
+        conn = resp = pkey = None
+        clean = False
+        try:
+            if opener is not None:
+                resp = opener(req, timeout)
+                for raw in resp:
+                    if stop.is_set():
+                        break
+                    lines.put(raw)
+                clean = not stop.is_set()
+            elif keepalive_enabled() and not _proxied(url):
+                pkey, conn, resp = _open(req, timeout)
+                while not stop.is_set():
+                    raw = resp.readline()
+                    if not raw:
+                        break
+                    lines.put(raw)
+                clean = not stop.is_set()
+            else:
+                resp = urllib.request.urlopen(req, timeout=timeout)
+                for raw in resp:
+                    if stop.is_set():
+                        break
+                    lines.put(raw)
+                clean = not stop.is_set()
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode(errors="replace")[:300]
+            except Exception:
+                detail = ""
+            lines.put(RuntimeError(f"HTTP {e.code}: {detail}"))
+        except Exception as e:
+            lines.put(e)
+        finally:
+            try:
+                if conn is not None and clean:
+                    _finish(pkey, conn, resp)
+                elif conn is not None:
+                    conn.close()
+                elif resp is not None and hasattr(resp, "close"):
+                    resp.close()
+            except Exception:
+                pass
+            lines.put(None)
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    deadline = time.monotonic() + timeout
+    first_wait = first_token_timeout_s()
+    chunks: list[dict] = []
+    saw_call = False
+    text_done = False
+    handed_text = False
+    first_fired = False
+    started = time.monotonic()
+    first_at = 0.0
+
+    def _finish_leading_text() -> None:
+        nonlocal text_done
+        if text_done:
+            return
+        text_done = True
+        if on_text_done is not None:
+            try:
+                on_text_done()
+            except Exception as e:
+                log.warning("Gemini stream text-done hook failed: %s", e)
+
+    def _partial_or_none(reason: str):
+        stop.set()
+        if handed_text and chunks:
+            log.warning("Gemini stream broke after speech had started (%s); using what arrived.", reason)
+            _finish_leading_text()
+            return from_response(_merge_chunks(chunks), model)
+        log.warning("Gemini stream failed (%s); falling back to a normal call.", reason)
+        return None
+
+    try:
+        while True:
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                return _partial_or_none("timed out")
+            wait = min(budget, first_wait if not first_fired else max(first_wait, 15.0))
+            try:
+                item = lines.get(timeout=wait)
+            except queue.Empty:
+                return _partial_or_none("no data for %.0fs" % wait)
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                return _partial_or_none(str(item)[:200])
+            line = item.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            try:
+                chunk = json.loads(line[5:].strip())
+            except ValueError:
+                continue
+            if chunk.get("error"):
+                return _partial_or_none("error event " + str(chunk["error"])[:150])
+            chunks.append(chunk)
+            parts = ((chunk.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+            if parts and not first_fired:
+                first_fired = True
+                first_at = time.monotonic() - started
+                if on_first_token is not None:
+                    try:
+                        on_first_token()
+                    except Exception as e:
+                        log.debug("on_first_token failed (harmless): %s", e)
+            for p in parts:
+                if "functionCall" in p:
+                    saw_call = True
+                    _finish_leading_text()
+                elif p.get("text") and not p.get("thought") and not saw_call and not text_done:
+                    handed_text = True
+                    if on_text is not None:
+                        try:
+                            on_text(p["text"])
+                        except Exception as e:
+                            log.warning("Gemini stream text hook failed: %s", e)
+    except Exception as e:  # defensive: never let a hook bug escape into the agent loop
+        return _partial_or_none(repr(e)[:200])
+    finally:
+        stop.set()
+    _finish_leading_text()
+    if not chunks:
+        log.warning("Gemini stream returned no data; falling back to a normal call.")
+        return None
+    result = from_response(_merge_chunks(chunks), model)
+    log.debug("Gemini stream: first data after %.2fs, complete in %.2fs.", first_at, time.monotonic() - started)
+    return result
