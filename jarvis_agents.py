@@ -113,7 +113,9 @@ def validate(trigger_type: str, config: dict, steps, known_tools: set[str], forb
 
 
 def create(store: Store, name: str, trigger_type: str, config: dict, steps: list, known_tools: set[str],
-           forbidden: set[str], max_runs_per_day: int = 24) -> str:
+           forbidden: set[str], max_runs_per_day: int = 24, enabled: bool = True) -> str:
+    """Saves (or updates) an agent. `enabled` only applies to a NEW agent: re-saving one keeps its on/off
+    state, so a setup recipe run twice can neither switch a live agent off nor a stopped one on."""
     name = (name or "").strip()[:60]
     if not name:
         return "An agent needs a name."
@@ -124,13 +126,18 @@ def create(store: Store, name: str, trigger_type: str, config: dict, steps: list
         cap = max(1, min(int(max_runs_per_day or 24), 288))
     except (TypeError, ValueError):
         cap = 24
-    store.q("INSERT INTO agents (name, trigger_type, trigger_config, steps, max_runs_per_day, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET trigger_type=excluded.trigger_type, "
+    existed = store.get(name)
+    store.q("INSERT INTO agents (name, trigger_type, trigger_config, steps, max_runs_per_day, created_at, enabled) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET trigger_type=excluded.trigger_type, "
             "trigger_config=excluded.trigger_config, steps=excluded.steps, max_runs_per_day=excluded.max_runs_per_day",
             (name, trigger_type, json.dumps(config or {}),
              json.dumps([{"tool": s["tool"], "input": s.get("input") or {}} for s in steps]), cap,
-             datetime.now().isoformat(timespec="seconds")), write=True)
-    return f"Agent {name!r} saved ({trigger_type}, {len(steps)} step(s), at most {cap} runs a day)."
+             datetime.now().isoformat(timespec="seconds"), int(bool(enabled))), write=True)
+    if existed:
+        state = f"; an agent with that name already existed and stays {'on' if existed['enabled'] else 'off'}"
+    else:
+        state = "" if enabled else "; it is OFF until you switch it on"
+    return f"Agent {name!r} saved ({trigger_type}, {len(steps)} step(s), at most {cap} runs a day{state})."
 
 
 def _runs_today(a: dict, now: datetime) -> int:

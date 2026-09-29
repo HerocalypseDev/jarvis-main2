@@ -398,3 +398,28 @@ def test_backlog_reads_each_distinct_message_once(J, monkeypatch):
                                   "Reminder: PPM at noon")]
     J.flush_pending_notifications()
     assert spoken == ["Reminder: Wash my clothes", "Reminder: PPM at noon"]
+
+
+def test_cleared_overdue_reminder_leaves_briefing_and_urgent(J, monkeypatch):
+    """Live bug (2026-09-29): clearing an overdue reminder left "overdue: X" in the dashboard's briefing and
+    urgent cards, because the autonomy commitment behind it stayed open and the briefing listed it too."""
+    a = J.autonomy
+    a.configure(J._autonomy_callbacks())
+    a.set_enabled(True)
+    monkeypatch.setattr(J, "_mcp_tool_index", {})
+    monkeypatch.setattr(J, "_dashboard_get_pending", lambda: None)
+    monkeypatch.setattr(J, "_current_command_source", lambda: "voice")
+    past = (datetime.now() - timedelta(hours=3)).isoformat(timespec="seconds")
+    J.create_reminder("wash my clothes", due_at=past)
+    rid = J._memory_db_connect().execute("SELECT MAX(id) FROM reminders").fetchone()[0]
+    # created while the reminder exists -> marked as covered by it
+    a.add_commitment({"type": "task", "description": "wash clothes", "deadline_iso": past, "confidence": 0.9},
+                     "conversation")
+    # an unrelated open commitment still shows as overdue
+    a.add_commitment({"type": "task", "description": "submit the chemistry essay", "deadline_iso": past,
+                      "confidence": 0.9}, "conversation")
+    items = lambda: [i for s in J.briefing_report("urgent")["sections"] if s["key"] == "deadlines" for i in s["items"]]
+    assert items() == ["overdue: submit the chemistry essay"]   # the covered one is the reminder's job
+    assert "Cancelled" in J.cancel_reminder(rid)
+    assert [c["description"] for c in a.status()["commitments"]] == ["submit the chemistry essay"]
+    assert "wash" not in json.dumps(J.briefing_report("morning")).lower()

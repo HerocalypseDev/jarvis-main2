@@ -184,6 +184,10 @@ Rules:
   `--color-border-strong`); a disabled `.btn-primary` would have shown dark text on a dark page; Home KPI strips
   stacked one per row and stretched whole rows (now 2-up); last hard-coded hexes tokenised; DASHBOARD.md corrected.
 
+- **Autonomy page stuck loading on a direct link (2026-09-29, found while making the feature video)**: a direct
+  `#/autonomy` load routed before `autonomy.js` ran, so the router's `refreshAutonomy()` call was missed and the page
+  showed its skeleton until the 10 s timer. `autonomy.js` now calls it once when it loads (same fix as the Toolbox).
+
 ## Public release: Jarvis4U (2026-09-28)
 
 - This repo stays **private** (full history, personal notes, own skills). The public repo **Jarvis4U** is a
@@ -199,6 +203,14 @@ Rules:
 - **Published 2026-09-28**: https://github.com/HerocalypseDev/jarvis4u (public, one commit `038f719`, 124 files).
   To publish an update: clone it next to this repo, run `python tools/export_public.py ../jarvis4u`, review
   `git -C ../jarvis4u status`/`diff`, then commit and push there. Never push this repo's history to it.
+- **Standing rule (user, 2026-09-29): every change also goes to the public Jarvis4U repo.** After pushing a change
+  here, publish it there in the same session, no need to ask: clone/pull it next to this repo
+  (`../jarvis4u`), run `python tools/export_public.py ../jarvis4u` (must print "Privacy scan: clean"), review
+  `git -C ../jarvis4u status`/`diff --cached` by eye for anything sensitive the scan can't know about (names,
+  places, emails, keys/tokens/PINs, personal paths, private notes, paid Pro content from `pro_pack/`), run that
+  copy's tests for the changed area, then commit and push there. If anything looks sensitive, stop, fix the
+  export (`REPLACE`/`DENY_WORDS`/`EXCLUDE`/denylist) and re-export; never push a copy with a hit. Private-only
+  changes (CLAUDE.md, skills/, pro_pack/, PRO_ROADMAP.md...) produce no public diff, which is fine: nothing to push.
 - When adding personal data anywhere tracked (a name, a place, an address), add it to `REPLACE`/`DENY_WORDS`
   or the local denylist. Public-facing docs changes go in `public/`.
 - Verified: scan clean; the public copy's test suite fails exactly the same 85 tests as this repo in the
@@ -256,6 +268,31 @@ Rules:
 - P4 themes shipped (pack 1.4.0): + Emerald, Solar, Mono (high contrast); text/accent/on-accent/error contrast checked.
   The free stylesheet's last hard-coded cyan glows are now `color-mix(var(--color-accent) N%)` (same look in the
   default theme), so themes recolour the brand glow, active nav, card highlight, selection and usage bars too.
+- P5 Research + autonomy recipes shipped (pack 1.5.0): `research_deep_dive` (quick web_search rounds or
+  background `delegate_research`, .docx with a Sources list, never a fact without a source), `research_compare`,
+  `research_watch` (topics stored as `Research watch:` facts, max 5) + `research_weekly` (daily 18:00, silent unless
+  Monday; uses `delegate_research`, which scheduled runs may call - `delegate_to_claude_code` is refused there).
+  Recipes (`recipe_invoice_watch`, `recipe_job_alerts`, `recipe_deadline_mail`) create a `background_agents`
+  mail_match agent whose only step is `create_reminder` ({sender}/{subject} allowed there, FILL_TOOLS) and then
+  immediately disable it, so each starts OFF; the user tests with Run and enables it in the Toolbox. Pinned by
+  tests. Validator ignores Gmail operators `newer_than`/`older_than`. Suggested price now 10,000/$12/£10.
+- **Pro audit (2026-09-29)**, rules to keep (tests: `test_pro_pack.py` builder-refusal tests, `test_license.py` "Pro
+  audit" block):
+  - `open_url`/`play_media` only open `http(s)` (play_media also `spotify:`): `_open_uri` is `os.startfile`, so a
+    file path / `file:` / `shell:` target would launch a program (free core, found via pack routines).
+  - Pack routines (`jarvis_macros.pack_macros`) also refuse non-web `open_url`, and any phrase one of Jarvis's own
+    intents answers (checked with apostrophes restored: matching drops them, so "whats urgent" would have hijacked
+    "what's urgent"); a skipped routine is logged once.
+  - Scheduled Pro skills carry `schedule.requires_fact` (+ `days` for weekly): no model call until the user set the
+    feature up (before: 3 runs a day from activation, the weekly one every evening). Core `_schedule_gate_ok`
+    supports both keys for any skill.
+  - `background_agents` create takes `enabled=false`; re-saving an existing agent keeps its on/off state. Recipes use
+    it instead of create-then-disable (a skipped disable call left a live agent; a re-run switched a live one off).
+  - Themes are refused whole unless text-primary/secondary are hex with >= 4.5:1 on bg-primary/secondary (the approval
+    bar's text is body text); a signed key with a non-object payload is rejected, not raised.
+  - `build_pro_pack.py` now refuses: non-data files, reading skills without `DATA_SENTENCE`, scheduled skills without
+    `requires_fact`, agent recipes without `enabled false` or that switch one on, skills that write to autonomy, and
+    routines the loader would skip.
 - Not built yet (don't advertise): early access, the installer, and anything past the phase last shipped.
 
 ## Speech shaping (2026-09-18)
@@ -1529,6 +1566,12 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   keeps only facts sharing a real word with the task (`_content_words` drops scheduling filler); and
   `flush_pending_notifications` reads each distinct queued message once (a repeating reminder held for an
   hour queued the same line several times). Quiet hours itself was removed right after (see the chief-of-staff notes).
+- **Cleared reminder still "overdue" on the dashboard (2026-09-29, user report)**: the briefing/urgent cards'
+  Deadlines section listed open autonomy commitments, including ones a reminder already covered, so "overdue: X"
+  stayed after the reminder fired or was cancelled. Now `_briefing_fetchers.deadlines` skips commitments handled
+  elsewhere (`handled_by_tool`/`covered_by`/`executor=jarvis`; the reminder/calendar/job shows them while live),
+  and `cancel_reminder` also cancels the open commitment about the same thing (`_close_commitments_for_reminder`,
+  same 60% content-word rule). Test at the end of `test_executive.py`.
 
 ## Smarter + autonomous batch (2026-09-28)
 
@@ -1673,7 +1716,12 @@ row there each phase rather than only stating the total in chat.
 | 83 (P2 Work pack: 6 work skills, validator accepts tool actions; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 84 (P3 Routines: pack macro loader with allowlist, user-first matching, Toolbox Pro rows + toggle, spoken info results, 7 routines; 3 new tests, headless check) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 85 (P4: 3 more themes with contrast checks, accent-token glows in the free stylesheet; headless check of each with an approval pending) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~2699 min** | **~$163.45–$229.55** |
+| 86 (P5: Research pack (4 skills) + 3 autonomy email recipes that start switched off; 2 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
+| 87 (cleared overdue reminder stayed in the briefing/urgent cards: skip covered commitments, close the commitment on cancel; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
+| 88 (Pro audit: open_url file-launch hole, routine core-phrase hijack, scheduled Pro skills gated, agents created off, theme readability, builder rules, data framing in 16 skills; 12 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
+| 89 (feature video: demo dashboard with made-up data, 18 captioned scenes, 57 s 1080p MP4; Autonomy direct-load fix) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
+| 90 (feature video v2: frame-stepped motion (camera moves, scrolling, cursor, animated cards/captions, varied transitions), Piper voice-over, original synthesized music ducked under speech; 118 s 1080p) | Opus 5.5 | ~45 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~2849 min** | **~$174.45–$244.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

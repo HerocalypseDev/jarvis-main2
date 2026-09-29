@@ -3,6 +3,10 @@
   "description": "Student pack: a quiet evening check-in at 8pm. Speaks only when an exam or homework is due soon; otherwise stays silent.",
   "instructions": "This runs automatically every evening. 1. Call list_reminders and recall_facts (or memory_search for 'Exam:' and 'Homework:'). 2. Find homework due tomorrow and exams in the next 3 days that are not marked done. 3. If there is anything, give ONE short spoken line, e.g. 'Heads up: maths homework is due tomorrow, and your chemistry exam is in 2 days.' 4. If there is nothing due soon, give NO spoken reply at all (respond with empty text); this is a silent background check. Never create reminders or change anything in this check.",
   "schedule": {
-    "daily_at": "20:00"
+    "daily_at": "20:00",
+    "requires_fact": [
+      "Exam:",
+      "Homework:"
+    ]
   }
 }
