@@ -79,7 +79,8 @@ class Store:
         self.q(f"UPDATE agents SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?", (*cols.values(), aid), write=True)
 
 
-def validate(trigger_type: str, config: dict, steps, known_tools: set[str], forbidden: set[str]) -> str | None:
+def validate(trigger_type: str, config: dict, steps, known_tools: set[str], forbidden: set[str],
+             required: dict[str, list[str]] | None = None) -> str | None:
     if trigger_type not in TRIGGERS:
         return f"trigger_type must be one of {', '.join(TRIGGERS)}."
     if not isinstance(config, dict):
@@ -106,6 +107,10 @@ def validate(trigger_type: str, config: dict, steps, known_tools: set[str], forb
             return f"Step tool {tool!r} isn't an existing tool an agent may use."
         if not isinstance(s.get("input") or {}, dict):
             return f"Step {tool!r} input must be an object."
+        # Found live 2026-09-29: an agent saved with mcp_gmail_search_emails and no "query" failed on every run.
+        missing = [k for k in (required or {}).get(tool, []) if str((s.get("input") or {}).get(k) or "").strip() == ""]
+        if missing:
+            return f"Step {tool!r} needs {', '.join(missing)}."
         if tool not in FILL_TOOLS and _PLACEHOLDER_RE.search(json.dumps(s.get("input") or {})):
             return (f"Step {tool!r} can't use {{subject}}/{{sender}}/{{path}}: that text comes from other people "
                     f"(mail, downloaded file names). Placeholders only work in: {', '.join(sorted(FILL_TOOLS))}.")
@@ -113,13 +118,14 @@ def validate(trigger_type: str, config: dict, steps, known_tools: set[str], forb
 
 
 def create(store: Store, name: str, trigger_type: str, config: dict, steps: list, known_tools: set[str],
-           forbidden: set[str], max_runs_per_day: int = 24, enabled: bool = True) -> str:
+           forbidden: set[str], max_runs_per_day: int = 24, enabled: bool = True,
+           required: dict[str, list[str]] | None = None) -> str:
     """Saves (or updates) an agent. `enabled` only applies to a NEW agent: re-saving one keeps its on/off
     state, so a setup recipe run twice can neither switch a live agent off nor a stopped one on."""
     name = (name or "").strip()[:60]
     if not name:
         return "An agent needs a name."
-    err = validate(trigger_type, config or {}, steps, known_tools, forbidden)
+    err = validate(trigger_type, config or {}, steps, known_tools, forbidden, required)
     if err:
         return err
     try:

@@ -907,6 +907,56 @@ def test_collect_debug_report_masks_secrets(tmp_path, monkeypatch):
     assert "sk-ant-" not in out and "hunter2secret" not in out and out.count("[SECRET]") == 2
 
 
+def test_form_filling_by_blind_scripts_is_refused(jarvis, monkeypatch):
+    # From the owner's debug report (2026-09-29): pyautogui/pywinauto/SendKeys scripts clicked fixed positions,
+    # tab-counted and pasted answers in an assumed order, so answers landed under the wrong questions and the
+    # user's own answers were overwritten; SendKeys ^t opened new tabs.
+    ran = []
+    monkeypatch.setattr(jarvis, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis.subprocess, "run", lambda *a, **k: ran.append(a) or None)
+    real_logs = [
+        ("run_python", {"code": "import pyautogui, time\npyautogui.click(600, 300)\nfor _ in range(12):\n    pyautogui.press('tab')"}),
+        ("run_python", {"command": "import pyautogui\npyautogui.scroll(-500)\n"}),
+        ("run_python", {"code": "from pywinauto import Desktop\nedits = Desktop(backend='uia').windows()"}),
+        ("run_shell", {"command": "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\"^{t}\")"}),
+        ("run_shell", {"command": "python -c \"import pygetwindow as gw; [w.activate() for w in gw.getAllWindows()]\""}),
+        ("run_python", {"code": "import keyboard\nkeyboard.write('hi')"}),
+    ]
+    for tool, inp in real_logs:
+        out = jarvis._execute_tool_impl(tool, inp, "fill the form on my screen")
+        assert out.startswith("Refused: scripts that drive") and "mcp_windows_Snapshot" in out, (tool, inp)
+    assert ran == []
+    # Ordinary code still runs, and run_python now also accepts "command".
+    assert not jarvis._ui_script_problem("print(sum(range(10)))")
+    assert not jarvis._ui_script_problem("Get-ChildItem $env:USERPROFILE -Filter *.pdf")
+    text = " ".join(b.get("text", "") for b in jarvis.build_system_blocks(""))
+    assert "one question at a time" in text and "Never guess positions" in text
+    assert "Never \\\ninvent facts" not in text and "invent facts about the user" in text
+
+
+def test_no_reply_fallback_never_reads_out_raw_tool_output(jarvis):
+    # From the debug report: replies of "exit_code=0" and a whole screen dump (with an email address).
+    for raw in ("exit_code=0\nstdout:\nForm auto-filled via Tab navigation.",
+                "\n    Cursor Position: (722, 379)\nScreenshot Size: (1920,1080)",
+                '["\\n    Cursor Position: (934, 772)"]', "x" * 900):
+        out = jarvis._no_reply_fallback(raw, ["run_python", "mcp_windows_Snapshot"])
+        assert out.startswith("I didn't finish that") and "2 steps" in out
+    staged = 'That would shut down the computer — staged, not run. Say "yes" on your next turn to actually run it.'
+    assert jarvis._no_reply_fallback(staged, ["run_shell"]) == staged
+    assert jarvis._no_reply_fallback("Cancelled reminder #33.", ["cancel_reminder"]) == "Cancelled reminder #33."
+
+
+def test_filled_in_answers_claims_from_the_debug_report_need_a_typing_tool(jarvis):
+    for claim in ("I have filled in suitable, professional answers for both scenario questions on your application form.",
+                  "I have read the screen and written the answers to the scenario questions for you.",
+                  "I've written the answers out for you right into the form fields."):
+        assert jarvis._unbacked_claims(claim, ["read_screen", "run_python"]), claim
+        assert not jarvis._unbacked_claims(claim, ["mcp_windows_Click", "mcp_windows_Type"]), claim
+    note = "I've written the answer down and saved it as a note named Community Rules Balance Answer."
+    assert not jarvis._unbacked_claims(note, ["write_file"])
+    assert not jarvis._unbacked_claims("Here are answers you can type into the form.", [])
+
+
 def test_whatsapp_uses_desktop_app_never_web(jarvis, monkeypatch):
     ran, ensured = [], []
     monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "ok")

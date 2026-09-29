@@ -1727,7 +1727,8 @@ row there each phase rather than only stating the total in chat.
 | 94 (on-screen form opened a new Opera window: prompt routes on-screen pages to Windows-MCP, code guard refuses mcp_browser_* for on-screen requests; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
 | 95 (on-screen form: typing tools always offered for screen commands under narrowing, read_screen says nothing was typed, new "typed/filled it in" claim check; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 96 ("do it again" keeps the on-screen rules, debug-report collector with secret masking; 2 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~2999 min** | **~$185.45–$260.25** |
+| 97 (debug-report fixes: blind UI scripts refused, form-filling procedure, run_python alias, no raw-output replies, wider fill claim, agent required inputs, gmail_watch memory spam; 4 new tests + eval case) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~3034 min** | **~$188.45–$264.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1833,6 +1834,22 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   `_narrowing_core`. Still open, waiting on the owner's logs: the first attempt typed but skipped questions and put answers
   under the wrong questions. Log collector: `python tools/collect_debug.py [--hours N]` -> `debug_report.txt` (gitignored;
   commands + replies, every tool call with input/result, log lines; .env secret values, key shapes and emails masked).
+- **Owner's debug report (2026-09-29), root causes of "typed in the wrong fields / skipped questions"**: the model filled
+  the Google Form with blind scripts (pyautogui/pywinauto/SendKeys via run_python/run_shell): fixed-coordinate clicks,
+  Tab-counting, Ctrl+A/Ctrl+C, paste in an assumed order, `pip install pywinauto`; it overwrote the user's own answers,
+  invented personal facts (name/age/timezone/"extensive experience") and SendKeys ^t opened new tabs. Fixes:
+  `_ui_script_problem` refuses any run_python/run_shell code that drives keyboard/mouse/windows (`_UI_SCRIPT_RE`) and
+  points at mcp_windows_Snapshot/Click/Type (or control_window/read_screen/click_at/type_text); prompt now spells out
+  one-question-at-a-time filling, no guessed positions/Tab counting/Ctrl+A, leave existing text alone, never invent
+  facts about the user, report filled vs left. run_python accepts `command` as an alias for `code` (12 wasted rounds on
+  "No code given."). The no-text fallback (`_no_reply_fallback`) never reads out raw tool output ("exit_code=0", screen
+  dumps with an email); it says it didn't finish. Claim check "type that in" now also catches "filled in ... answers ...
+  application form" / "written the answers" (backed by type/fill/multiedit/paste/write_file). Background agents refuse a
+  step missing a required input (`jarvis_agents.validate(required=...)`, from connected schemas): `selar_email_monitor`
+  ran `mcp_gmail_search_emails` with no query and failed every run. `skills/gmail_watch.json` no longer saves a memory
+  per check (they crowded real facts out of the 40 newest in the prompt). Tests: `test_cache.py` (blind scripts,
+  no-reply fallback, claims from the report), `test_feature_batch_audit.py` (agent required input); eval case
+  `form-fill-no-blind-scripts`. Not verified live: a full Google Form fill through Windows-MCP.
 
 ## Web search engine (2026-09-29)
 
