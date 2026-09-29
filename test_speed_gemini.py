@@ -241,8 +241,7 @@ def test_overload_still_falls_back_to_the_backup_once(monkeypatch):
 
 
 def test_429_wait_cap_covers_real_free_tier_delays():
-    # Found live (2026-09-29): the free tier allows ~5 requests/min per model and Google asks for 17-27 s.
-    # A 15 s cap made every such burst fail with "couldn't reach Gemini".
+    # A per-MINUTE 429 asks for 17-27 s. A 15 s cap made every such burst fail with "couldn't reach Gemini".
     assert g.MAX_RETRY_WAIT_S >= 27
 
 
@@ -747,3 +746,87 @@ def test_stream_does_not_wait_when_the_backup_is_switched_on_for_rate_limits(mon
 
     assert g.stream_round(BODY, 60, on_text=lambda d: None, opener=opener) is None  # call() then uses the backup
     assert slept == []
+
+
+DAY_429 = (b'{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":['
+           b'{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests",'
+           b'"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaValue":"500"}]},'
+           b'{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"2s"}]}}')
+
+
+def test_daily_quota_is_recognised_and_explained():
+    detail = DAY_429.decode()
+    assert g.quota_kind(detail) == ("day", "500")
+    assert g.quota_violations(detail)[0][0].startswith("GenerateRequestsPerDay")
+    why = g.reason_from_http(429, detail, "gemini-3.5-flash-lite")
+    assert "daily limit of 500 requests" in why and "midnight Pacific" in why
+    assert g.quota_kind('{"quotaId":"GenerateRequestsPerMinutePerProjectPerModel"}')[0] == "minute"
+    assert g.quota_kind("{}") == ("", "")
+
+
+def test_a_daily_limit_is_never_waited_on_even_when_google_says_retry_in_2s():
+    waits, calls = [], []
+
+    def http(req, timeout):
+        calls.append(1)
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", None, __import__("io").BytesIO(DAY_429))
+
+    assert g.call(BODY, 180, http, sleep=waits.append) is None
+    assert waits == [] and len(calls) == 1  # one request, no pointless retries
+    assert "daily limit" in g.last_error_reason()
+
+
+def test_stream_does_not_wait_on_a_daily_limit(monkeypatch):
+    slept = []
+    monkeypatch.setattr(g.time, "sleep", slept.append)
+
+    def opener(req, t):
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", None, __import__("io").BytesIO(DAY_429))
+
+    assert g.stream_round(BODY, 60, on_text=lambda d: None, opener=opener) is None
+    assert slept == [] and "daily limit" in g.last_error_reason()
+
+
+def test_backup_takes_over_from_a_used_up_daily_quota_when_opted_in(monkeypatch):
+    monkeypatch.setenv("JARVIS_GEMINI_FALLBACK_MODEL", "gemma-4-26b-a4b-it")
+    monkeypatch.setenv("JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT", "1")
+    models = []
+
+    def http(req, timeout):
+        model = req.full_url.split("/models/")[1].split(":")[0]
+        models.append(model)
+        if model == "gemini-3.5-flash-lite":
+            raise urllib.error.HTTPError(req.full_url, 429, "quota", None, __import__("io").BytesIO(DAY_429))
+        return _ok("from gemma")
+
+    out = g.call(BODY, 180, http, sleep=lambda s: None)
+    assert out["content"][0]["text"] == "from gemma" and models == ["gemini-3.5-flash-lite", "gemma-4-26b-a4b-it"]
+
+
+def test_diagnose_names_the_limit_that_was_hit(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaTESTKEY0000000000")
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        if "/models?" in req.full_url:
+            class R:
+                def __enter__(s): return s
+                def __exit__(s, *a): return False
+                def read(s): return b'{"models":[{"name":"models/gemini-3.5-flash-lite","supportedGenerationMethods":["generateContent"]}]}'
+            return R()
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", None, __import__("io").BytesIO(DAY_429))
+
+    monkeypatch.setattr(g.urllib.request, "urlopen", fake_urlopen)
+
+    def boom(*a, **k):
+        raise urllib.error.HTTPError("https://x", 429, "quota", None, __import__("io").BytesIO(DAY_429))
+
+    monkeypatch.setattr(g, "_open", boom)
+    monkeypatch.setattr(g, "keepalive_enabled", lambda: True)
+    monkeypatch.setattr(g, "_proxied", lambda url: False)
+    lines = []
+    problems = g.diagnose(tmp_path / ".env", out=lines.append)
+    text = "\n".join(lines)
+    assert "GenerateRequestsPerDayPerProjectPerModel-FreeTier" in text and "allows 500" in text
+    assert any("daily limit" in p for p in problems)

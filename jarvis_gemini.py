@@ -43,9 +43,8 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 # model fallback (removed 2026-09-25, user request): the user picks the model in Settings.
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
 PROVIDERS = ("claude", "gemini", "ollama")  # ollama: local brain (jarvis_ollama)
-MAX_RETRY_WAIT_S = 30.0  # longest 429 "retry after" Jarvis will sit through mid-command. Free-tier per-minute limits are
-# ~5 requests/min per model and Google asks for 17-27 s: failing at once (tried with 15 s, 2026-09-29) turned every burst
-# into "couldn't reach Gemini", while waiting it out gets the answer.
+MAX_RETRY_WAIT_S = 30.0  # longest 429 "retry after" Jarvis will sit through mid-command, for a per-MINUTE limit.
+# (A per-DAY limit is never waited on: see quota_kind. Google's retryDelay is meaningless for it, often 2 s.)
 
 
 # --- provider choice -----------------------------------------------------------------------
@@ -273,9 +272,31 @@ def last_error_reason(max_age_s: float = 120.0) -> str:
     return ""
 
 
+def quota_violations(detail: str) -> list[tuple[str, str]]:
+    """[(quotaId, quotaValue)] from a 429's google.rpc.QuotaFailure, e.g. ("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "500")."""
+    ids = re.findall(r'"quotaId"\s*:\s*"([^"]+)"', detail or "")
+    vals = re.findall(r'"quotaValue"\s*:\s*"?(\d+)"?', detail or "")
+    return [(q, vals[i] if i < len(vals) else "") for i, q in enumerate(ids)]
+
+
+def quota_kind(detail: str) -> tuple[str, str]:
+    """("day" | "minute" | "", limit) for a 429. A daily limit does not come back by waiting a few seconds."""
+    for q, v in quota_violations(detail):
+        if "PerDay" in q:
+            return "day", v
+    for q, v in quota_violations(detail):
+        if "PerMinute" in q:
+            return "minute", v
+    return "", ""
+
+
 def reason_from_http(code: int, detail: str, model: str) -> str:
     low = (detail or "").lower()
     if code == 429:
+        kind, limit = quota_kind(detail)
+        if kind == "day":
+            return (f"{model} has used up its free daily limit{f' of {limit} requests' if limit else ''}, "
+                    "it resets at midnight Pacific time; pick another model or enable billing")
         wait = retry_delay_s(detail)
         if wait is not None and wait <= 120:
             return f"{model} is rate limited, try again in about {int(wait) + 1} seconds"
@@ -598,8 +619,8 @@ MAX_TIMEOUT_ATTEMPTS = 2  # a timed-out call is retried once, not max_attempts t
 
 def backup_on_rate_limit() -> bool:
     """JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT (default off): when the model answers 429 (its own per-minute or daily
-    limit) ask the backup model at once instead of waiting or failing. Each model has its own limit, so two models
-    roughly double the headroom on a free tier. Off by default: on 2026-09-25 the user chose to change models
+    limit) ask the backup model at once instead of waiting or failing. Each model has its own quota (free tier, per
+    project: e.g. 500 requests/day on 3.5-flash-lite, 20 on 3.5-flash), so two models add up. Off by default: on 2026-09-25 the user chose to change models
     themselves rather than have quota fall back automatically; this is the explicit opt-in."""
     return (os.environ.get("JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT") or "0").strip().lower() in ("1", "true", "yes", "on")
 
@@ -644,6 +665,10 @@ def _call_model(body: dict, timeout: int, http, key: str, model: str, max_attemp
             if e.code == 400 and think and "thinking" in detail.lower():
                 think = False
                 continue
+            if e.code == 429 and quota_kind(detail)[0] == "day":
+                log.warning("Gemini %s has used up its free daily quota (%s); waiting would not help.", model,
+                            quota_kind(detail)[1] or "?")
+                return None
             if e.code == 429 and not wait_on_429:
                 log.warning("Gemini %s hit its rate limit; handing over to the backup model instead of waiting.", model)
                 return None
@@ -820,9 +845,10 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
             if item is None:
                 break
             if (isinstance(item, _HttpFail) and item.code == 429 and _retry and not handed_text
+                    and quota_kind(item.detail)[0] != "day"  # a daily limit does not clear in seconds
                     and not (backup_on_rate_limit() and fallback_model_name())):  # opted in: hand over, don't wait
                 # A per-minute limit: Google says how long. Wait it out and try the stream once more instead of
-                # spending a second request on the fallback path (free tiers allow only ~5 per minute).
+                # spending a second request on the fallback path.
                 delay = retry_delay_s(item.detail)
                 if delay is not None and delay <= MAX_RETRY_WAIT_S and delay + 0.5 < budget:
                     stop.set()
@@ -998,6 +1024,8 @@ def diagnose(env_path: Path | None = None, out=print) -> list[str]:
                 detail = ""
             reason = reason_from_http(e.code, detail, model)
             out(f"   {label}: FAILED HTTP {e.code}: {reason}")
+            for q, v in quota_violations(detail):
+                out(f"      limit hit: {q}" + (f" (allows {v})" if v else ""))
             out(f"      Google said: {detail.strip()[:220]}")
             problems.append(f"{label}: {reason}")
         except Exception as e:
