@@ -1594,7 +1594,9 @@ AGENT_TOOLS = [
         "description": (
             "Take a screenshot and have a vision model describe, explain, summarize, or debug "
             "what's on screen. If the user explicitly asked for a visible error/bug to be "
-            "fixed/corrected/typed (not just explained), the correction is typed out automatically."
+            "fixed/corrected/typed (not just explained), the correction is typed out automatically. "
+            "Otherwise it only READS: it never types into a form or field; use mcp_windows_Click + "
+            "mcp_windows_Type (or type_text at the cursor) for that."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -9955,6 +9957,11 @@ _ACTION_CLAIMS = [
      re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:saved|written|wrote|created)\b[^.!?]{0,40}"
                 r"\b(?:file|document|doc|docx|note|notes|folder|presentation|spreadsheet|pptx)\b", re.I),
      re.compile(r"write|save|create|delegate|change_jarvis_code|move|copy|rename|organise|edit", re.I)),
+    ("type that in",
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:typed|written|wrote|filled|entered|put|pasted|inserted)\b[^.!?]{0,60}"
+                r"\b(?:form|fields?|box(?:es)?|space|answer boxes|browser|page|screen|text ?box)\b"
+                r"|\b(?:form|fields?|answers?) (?:has been |have been |was |were |is |are )?(?:filled|typed|written|entered)\b", re.I),
+     re.compile(r"type|fill|multiedit|paste", re.I)),
     ("remember that",
      re.compile(r"\bi'?ll remember\b|\b(?:i'?ve|i have)\s+(?:noted|remembered|saved)\b[^.!?]{0,20}\b(?:that|it|this)\b"
                 r"[^.!?]{0,20}\b(?:memory|remember)?", re.I),
@@ -10063,6 +10070,33 @@ _ON_SCREEN_BROWSER_REFUSAL = (
     "then Snapshot again to check. If those tools aren't available, say so instead of opening a browser.")
 
 
+# Found live 2026-09-29: with Gemini's tool narrowing, "answer the questions on my screen and write them in the
+# space" was offered read_screen/click_at/scroll_screen but no typing tool at all, so it read the questions and
+# then claimed "I've written it". A command about the screen always gets the tools that can act on it.
+SCREEN_KIT_TOOLS = {
+    "read_screen", "type_text", "click_at", "scroll_screen",
+    "mcp_windows_Snapshot", "mcp_windows_Click", "mcp_windows_Type", "mcp_windows_Scroll",
+    "mcp_windows_Wait", "mcp_windows_WaitFor", "mcp_windows_Shortcut", "mcp_windows_MultiEdit",
+}
+
+
+def _narrowing_core(transcript: str) -> set[str]:
+    core = set(tool_router.CORE_TOOLS)
+    if _ON_SCREEN_RE.search(transcript or "") or re.search(r"\bscreen\b", transcript or "", re.I):
+        core |= SCREEN_KIT_TOOLS
+    return core
+
+
+_WANTS_TEXT_PUT_IN_RE = re.compile(
+    r"\b(write|type|fill|put|enter|paste|insert)\b[^.!?]{0,60}\b(in|into|out)\b|\bfill (it|them|this|the form)\b",
+    re.IGNORECASE)
+_READ_SCREEN_NOTHING_TYPED = (
+    " [read_screen only reads the screen: NOTHING has been typed yet. To put this into the page, use "
+    "mcp_windows_Snapshot to find each answer field, mcp_windows_Click it, then mcp_windows_Type the text, and "
+    "Snapshot again to check. If the mcp_windows_* tools aren't available, tell the user to click the first "
+    "answer box and then use type_text; never say it was written unless a typing tool ran.]")
+
+
 def _means_what_is_on_screen(transcript: str) -> bool:
     """True when the user is talking about something already on their screen (and not asking to open a page)."""
     text = transcript or ""
@@ -10146,6 +10180,8 @@ def _execute_tool_impl(
             if fix_code:
                 type_text(fix_code)
                 result += " (typed the correction at your cursor)"
+            elif text and _WANTS_TEXT_PUT_IN_RE.search(transcript or ""):
+                result += _READ_SCREEN_NOTHING_TYPED
         elif tool_name == "web_search":
             query = str(inp.get("query") or "").strip()
             result = web_search_and_summarize(transcript, query) or "No results."
@@ -10919,7 +10955,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     elif _tool_narrowing_on():
         # Tool narrowing (2026-09-28): a short, ranked list + find_tools, instead of every schema.
         tools = tool_router.select(transcript, full_tools, limit=TOOL_NARROWING_LIMIT,
-                                   context=_recent_history_text(messages[:-1]))
+                                   context=_recent_history_text(messages[:-1]),
+                                   core=_narrowing_core(transcript))
     else:
         tools = full_tools
     tone_line = voice_tone.tone_context_line(tone) if tone else ""

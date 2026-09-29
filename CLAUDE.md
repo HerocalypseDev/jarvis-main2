@@ -1725,7 +1725,8 @@ row there each phase rather than only stating the total in chat.
 | 92 (Perplexity web search built, then removed at the user's request (needs a paid API key); Gemini help text fix; merged a concurrent main change) | Opus 5.5 | ~25 min | ~$1.80–$2.40 |
 | 93 (full codebase audit: task-queue deadlock, scheduler step isolation + single-flight skills, Approve bound to the reviewed action, failed tool backing a claim, crash on non-integer settings, daily plan listing handled items, 3 flaky/time-bomb tests; 9 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
 | 94 (on-screen form opened a new Opera window: prompt routes on-screen pages to Windows-MCP, code guard refuses mcp_browser_* for on-screen requests; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
-| **Running total (final)** | | **~2969 min** | **~$183.05–$256.85** |
+| 95 (on-screen form: typing tools always offered for screen commands under narrowing, read_screen says nothing was typed, new "typed/filled it in" claim check; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~2984 min** | **~$184.25–$258.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1817,6 +1818,14 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   form I'm looking at"..., and no URL/open/go to) makes any `mcp_browser_*` call return `_ON_SCREEN_BROWSER_REFUSAL`
   pointing at the Windows tools. Test: `test_cache.py::test_on_screen_form_never_opens_a_separate_browser`. (No
   eval case: the eval runner has no MCP tools.) Not verified live: typing into a real Google Form via Windows-MCP.
+- **Read the questions, said "I've written it", typed nothing (2026-09-29, found live, Gemini)**: tool narrowing offered
+  `read_screen`/`click_at`/`scroll_screen` but no typing tool, so the model could only read and then made a false claim.
+  Fixes: `_narrowing_core(transcript)` adds `SCREEN_KIT_TOOLS` (read_screen, type_text, click_at, scroll_screen,
+  mcp_windows_Snapshot/Click/Type/Scroll/Wait/WaitFor/Shortcut/MultiEdit) to the core set whenever the command mentions
+  the screen; `read_screen`'s result says "NOTHING has been typed yet" + how to type it when the user asked to write/type/
+  fill (`_WANTS_TEXT_PUT_IN_RE`), and its description says it only reads; new claim-checker entry "type that in"
+  ("I've written/typed/filled ... form/field/box/space/page/screen", "the form has been filled") backed only by a
+  type/fill/multiedit/paste tool. Test: `test_cache.py::test_on_screen_command_gets_typing_tools_and_no_fake_written_claim`.
 
 ## Web search engine (2026-09-29)
 
