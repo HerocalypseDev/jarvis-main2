@@ -1,0 +1,8 @@
+{
+  "name": "research_weekly",
+  "description": "Research pack: the Monday-evening run for watched topics. Silent on other days.",
+  "instructions": "This runs automatically every evening at 18:00. 1. Check today's date from your context: if it is NOT Monday, give NO spoken reply at all (empty text) and stop. 2. recall_facts with query 'Research watch' to get the topics. If there are none, give no spoken reply and stop. 3. For each topic (max 5), call delegate_research with the task: \"This week's most important news and developments on <topic>: 5 bullet points, each with the date and a source URL, then one line on what to watch next week.\" 4. Give ONE short spoken line: 'Started your weekly research on <n> topics; I'll tell you when the reports are ready.'",
+  "schedule": {
+    "daily_at": "18:00"
+  }
+}

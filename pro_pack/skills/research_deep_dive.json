@@ -1,0 +1,5 @@
+{
+  "name": "research_deep_dive",
+  "description": "Research pack: researches a topic properly and saves a sourced report. Use for 'research X for me', 'deep dive on X', 'find out everything about X'.",
+  "instructions": "1. Pin down the question in one sentence (ask one short question only if it is really vague) and the depth: quick (a few minutes) or thorough. 2. Quick: run web_search 3-5 times with different angles (overview, latest news, criticism/limits, numbers), then write the report yourself. Thorough: call delegate_research with a task that says exactly: the question, the sections wanted (Summary, Key facts, Different views, What's uncertain, Sources), and to cite a source URL for every fact; tell the user it's running in the background and you'll report when done. 3. For a quick report, call write_file with '<Topic> research.docx' in the workspace, sections: Summary (3 sentences), Key facts (bullets, each with its source), Different views, What's uncertain, Sources (list of URLs). Never state a fact you didn't find in a source; say 'not found' instead. 4. Speak the 3-sentence summary and where the file is."
+}

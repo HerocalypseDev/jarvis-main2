@@ -256,6 +256,14 @@ Rules:
 - P4 themes shipped (pack 1.4.0): + Emerald, Solar, Mono (high contrast); text/accent/on-accent/error contrast checked.
   The free stylesheet's last hard-coded cyan glows are now `color-mix(var(--color-accent) N%)` (same look in the
   default theme), so themes recolour the brand glow, active nav, card highlight, selection and usage bars too.
+- P5 Research + autonomy recipes shipped (pack 1.5.0): `research_deep_dive` (quick web_search rounds or
+  background `delegate_research`, .docx with a Sources list, never a fact without a source), `research_compare`,
+  `research_watch` (topics stored as `Research watch:` facts, max 5) + `research_weekly` (daily 18:00, silent unless
+  Monday; uses `delegate_research`, which scheduled runs may call - `delegate_to_claude_code` is refused there).
+  Recipes (`recipe_invoice_watch`, `recipe_job_alerts`, `recipe_deadline_mail`) create a `background_agents`
+  mail_match agent whose only step is `create_reminder` ({sender}/{subject} allowed there, FILL_TOOLS) and then
+  immediately disable it, so each starts OFF; the user tests with Run and enables it in the Toolbox. Pinned by
+  tests. Validator ignores Gmail operators `newer_than`/`older_than`. Suggested price now 10,000/$12/£10.
 - Not built yet (don't advertise): early access, the installer, and anything past the phase last shipped.
 
 ## Speech shaping (2026-09-18)
@@ -1673,7 +1681,8 @@ row there each phase rather than only stating the total in chat.
 | 83 (P2 Work pack: 6 work skills, validator accepts tool actions; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 84 (P3 Routines: pack macro loader with allowlist, user-first matching, Toolbox Pro rows + toggle, spoken info results, 7 routines; 3 new tests, headless check) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 85 (P4: 3 more themes with contrast checks, accent-token glows in the free stylesheet; headless check of each with an approval pending) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~2699 min** | **~$163.45–$229.55** |
+| 86 (P5: Research pack (4 skills) + 3 autonomy email recipes that start switched off; 2 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
+| **Running total (final)** | | **~2719 min** | **~$165.05–$231.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

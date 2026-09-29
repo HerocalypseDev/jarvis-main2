@@ -88,3 +88,33 @@ def test_routines_pass_the_loader_and_lock_only_locks():
         for st in m["steps"]:
             if st["tool"] == "system_action":
                 assert st["input"]["system_action"] in {"lock", "minimize_all", "media_stop"}
+
+
+def test_research_skills_cite_sources_and_weekly_run_is_silent_off_monday():
+    for name in ("research_deep_dive", "research_compare"):
+        text = json.loads((PACK / "skills" / f"{name}.json").read_text(encoding="utf-8"))["instructions"]
+        assert "Sources" in text and "write_file" in text, name
+    weekly = json.loads((PACK / "skills" / "research_weekly.json").read_text(encoding="utf-8"))
+    assert weekly["schedule"] == {"daily_at": "18:00"}
+    assert "NOT Monday" in weekly["instructions"] and "no spoken reply" in weekly["instructions"].lower()
+    # delegate_to_claude_code is refused for scheduled runs; the weekly job must use delegate_research
+    assert "delegate_research" in weekly["instructions"] and "delegate_to_claude_code" not in weekly["instructions"]
+
+
+def test_autonomy_recipes_start_switched_off_and_only_create_reminders():
+    import re
+
+    import jarvis_agents
+
+    recipes = sorted((PACK / "skills").glob("recipe_*.json"))
+    assert len(recipes) == 3
+    for path in recipes:
+        text = json.loads(path.read_text(encoding="utf-8"))["instructions"]
+        assert "action 'create'" in text and "action 'disable'" in text, path.name
+        assert text.index("action 'create'") < text.index("action 'disable'")
+        assert "trigger_type 'mail_match'" in text
+        step_tools = set(re.findall(r'\\"tool\\": \\"([a-z_]+)\\"', json.dumps(text)))
+        assert step_tools == {"create_reminder"}, path.name
+        # placeholders ({sender}/{subject}) are only allowed in FILL_TOOLS steps
+        assert step_tools <= jarvis_agents.FILL_TOOLS
+        assert "never" in text.lower()

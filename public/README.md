@@ -41,7 +41,9 @@ Jarvis4U is free and open source, and it stays that way. If it saves you time, y
 revision notes), the **Developer pack** (repo briefings, error explainer, change review, CI summaries,
 Claude Code hand-offs, standups), the **Work pack** (inbox triage with drafts, meeting prep,
 follow-ups, weekly updates, focus time, end-of-day wrap-up), **Routines** (say "start my work day",
-"deep focus", "leave desk"... and they run instantly), **Pro dashboard themes**, and new packs as they're released.
+"deep focus", "leave desk"... and they run instantly), the **Research pack** (sourced research reports,
+side-by-side comparisons, weekly topic watch), **Autonomy recipes** (ready-made email watchers for invoices,
+job alerts and deadlines that start switched off), five **Pro dashboard themes**, and new packs as they're released.
 Nothing in the free version is taken away or locked.
 
 After buying you get a download (the Pro pack) and a license key by email:
