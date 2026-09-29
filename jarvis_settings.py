@@ -40,9 +40,25 @@ SETTINGS: list[dict] = [
      "live": ("jarvis", "SMART_MODEL_EFFORT", str)},
     {"key": "JARVIS_SMART_MODEL_MIN_WORDS", "label": "Words that count as a long request", "kind": "number", "default": "40",
      "help": "Requests at least this long go to the smart model.", "live": ("jarvis", "SMART_MODEL_MIN_WORDS", int)},
-    {"key": "JARVIS_GEMINI_FALLBACK_MODEL", "label": "Gemini backup model (when overloaded)", "kind": "text",
-     "default": "", "help": "Tried once when your Gemini model says it's overloaded (503 high demand), never for "
-     "quota limits. e.g. gemini-flash-lite-latest. Empty = off.", "live": "env"},
+    {"key": "JARVIS_GEMINI_FALLBACK_MODEL", "label": "Gemini backup model (overloaded or slow)", "kind": "text",
+     "default": "", "help": "Tried once when your Gemini model says it's overloaded (503 high demand), and asked "
+     "in parallel when your model hasn't answered within the race time below (the first answer wins). Never used "
+     "for quota limits. e.g. gemini-flash-lite-latest. Empty = off.", "live": "env"},
+    {"key": "JARVIS_GEMINI_HEDGE_S", "label": "Race the backup after (seconds)", "kind": "number", "default": "8",
+     "help": "Needs a backup model. If Gemini hasn't answered after this long, the backup is asked too. 0 = never.",
+     "live": "env"},
+    {"key": "JARVIS_GEMINI_ATTEMPT_TIMEOUT_S", "label": "Gemini attempt time limit (seconds)", "kind": "number",
+     "default": "60", "help": "A single Gemini request is abandoned after this long (then tried once more).",
+     "live": "env"},
+    {"key": "JARVIS_GEMINI_STREAM", "label": "Speak Gemini replies as they are written", "kind": "bool", "default": "1",
+     "help": "Jarvis starts talking with the first sentence instead of waiting for the whole answer.", "live": "env"},
+    {"key": "JARVIS_LIVE_SPEECH_MAX_CHARS", "label": "Longest spoken reply (characters)", "kind": "number",
+     "default": "400", "help": "A streamed Gemini answer is spoken up to about this length, then Jarvis offers the "
+     "rest; the dashboard always shows all of it. 0 = read everything. Asking \"in detail\" also lifts it.",
+     "live": "env"},
+    {"key": "JARVIS_ACK_PHRASES", "label": "Say \"On it\" for tasks", "kind": "bool", "default": "1",
+     "help": "A short spoken acknowledgement right away when you ask for something that takes a moment.",
+     "live": "env"},
     {"key": "JARVIS_GEMINI_SMART_MODEL", "label": "Gemini model to escalate to", "kind": "text", "default": "",
      "help": "When a command goes wrong on Gemini (tool failed, repeated command, claimed action that didn't "
              "happen), the rest of it runs on this model, e.g. gemini-3.6-flash. Empty = off.", "live": "env"},

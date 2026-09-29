@@ -26,6 +26,7 @@ import os
 
 from jarvis_env import env_float, env_int
 import queue
+import random
 import re
 import shutil
 import sqlite3
@@ -1213,6 +1214,7 @@ def speak_text(text: str) -> None:
     t = _sanitize_for_speech(text)
     if not t:
         return
+    _await_ack()  # a spoken lead-in ("On it.") started for this command finishes before anything else
 
     lat = latency.current()
     # Barge-in: a command's speech counts from when the command started, so an interrupt also
@@ -1438,7 +1440,10 @@ quick single-step requests, and don't repeat it every step. \
 When you're done, reply with a short (1-4 sentence) \
 spoken summary of the outcome; don't narrate tool mechanics. Always end your turn with that \
 spoken reply — never end a turn with only a tool call and no text, even when the tool result \
-already says everything that needs saying; briefly restate it instead of leaving Jarvis silent.
+already says everything that needs saying; briefly restate it instead of leaving Jarvis silent. \
+Your words are spoken while you are still writing them, so make the FIRST sentence of every reply \
+stand on its own and carry the answer itself (no throat-clearing like "Great question" or \
+"Sure, here's what I found"); add detail after it only if it helps.
 
 Your reply is spoken aloud by a text-to-speech engine, not displayed as text — never use markdown \
 (no **bold**, no bullet points or numbered lists, no headers, no code blocks/backticks) and never \
@@ -3128,7 +3133,7 @@ CLAUDE_MAX_ATTEMPTS = 3
 CLAUDE_RETRY_DELAY_S = 1.5
 
 
-def _urlopen_hard_timeout(req: urllib.request.Request, timeout: int) -> bytes:
+def _urlopen_hard_timeout(req: urllib.request.Request, timeout: int, opener=None) -> bytes:
     """urlopen(timeout=...) is supposed to bound the whole call, but a wedged TLS connection
     has been observed in practice to hang well past its declared socket timeout (seen right
     after an SSLV3_ALERT_BAD_RECORD_MAC on this machine — the retry that followed never timed
@@ -3141,8 +3146,11 @@ def _urlopen_hard_timeout(req: urllib.request.Request, timeout: int) -> bytes:
 
     def _do() -> None:
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                outcome["data"] = resp.read()
+            if opener is not None:  # e.g. Gemini's connection-reusing POST (jarvis_gemini.http_post)
+                outcome["data"] = opener(req, timeout)
+            else:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    outcome["data"] = resp.read()
         except Exception as e:
             outcome["error"] = e
 
@@ -3154,6 +3162,11 @@ def _urlopen_hard_timeout(req: urllib.request.Request, timeout: int) -> bytes:
     if "error" in outcome:
         raise outcome["error"]
     return outcome.get("data", b"")
+
+
+def _gemini_http(req: urllib.request.Request, timeout: int) -> bytes:
+    """Gemini's transport: the same watchdog as every other call, over a reused HTTPS connection."""
+    return _urlopen_hard_timeout(req, timeout, opener=gemini.http_post)
 
 
 _cache_ttl_1h_rejected = False
@@ -3331,7 +3344,7 @@ def _failover_to_gemini(body: dict, timeout: int, reason: str, account_level: bo
     if not (_llm_failover_enabled() and gemini.api_key()):
         return None
     log.warning("Claude unavailable (%s); answering with Gemini instead.", reason)
-    result = gemini.call(body, timeout, _urlopen_hard_timeout)
+    result = gemini.call(body, timeout, _gemini_http)
     if result is None:
         return None
     _record_api_usage(body, result)
@@ -3389,7 +3402,7 @@ def _claude_request(body: dict, timeout: int) -> dict | None:
             _record_api_usage(body, result)
         return result
     if _llm_provider() == "gemini":
-        result = gemini.call(body, timeout, _urlopen_hard_timeout)
+        result = gemini.call(body, timeout, _gemini_http)
         if result is not None:
             _record_api_usage(body, result)
         return result
@@ -10974,6 +10987,209 @@ def _no_reply_fallback(last_result: str, used_tool_names: list[str]) -> str:
             "so check what's on screen before relying on it. Tell me what to do next, or try asking again.")
 
 
+# --- Gemini streaming to speech, live-speech budget, spoken lead-in (2026-09-29 speed pass) ----------
+# On Gemini the agent loop used to wait for every round to finish before a word was spoken (only the
+# Claude brain streamed). Now Gemini rounds stream too, through the same sentence extractor.
+def _gemini_stream_round(body: dict, timeout: int, speak_live, on_first_token=None) -> dict | None:
+    """One Gemini round over streamGenerateContent: leading text (before any tool call) is handed to
+    speak_live one complete sentence at a time as it arrives. Returns the same dict shape as
+    _claude_request, or None so the caller can run the ordinary non-streaming call for this round."""
+    if _llm_provider() != "gemini" or not gemini.api_key():
+        return None
+    buf = {"s": ""}
+
+    def _say(sentence: str) -> None:
+        if speak_live is None:
+            return
+        try:
+            speak_live(sentence)
+        except Exception as e:
+            log.warning("Live streamed-sentence speech failed: %s", e)
+
+    def _on_text(delta: str) -> None:
+        buf["s"] += delta
+        ready, rest = _extract_ready_sentences(buf["s"])
+        buf["s"] = rest
+        for sentence in ready:
+            _say(sentence)
+
+    def _on_done() -> None:
+        tail = buf["s"].strip()
+        buf["s"] = ""
+        if tail:
+            _say(tail)
+
+    result = gemini.stream_round(body, timeout, on_text=_on_text, on_text_done=_on_done,
+                                 on_first_token=on_first_token)
+    if result is not None:
+        _record_api_usage(body, result)
+    return result
+
+
+def _llm_stream_round(body: dict, timeout: int, speak_live, on_first_token=None) -> dict | None:
+    """Streams one round on whichever cloud brain is active (None = use the normal call)."""
+    provider = _llm_provider()
+    if provider == "claude":
+        return _claude_stream_first_round(body, timeout, speak_live, on_first_token=on_first_token)
+    if provider == "gemini":
+        return _gemini_stream_round(body, timeout, speak_live, on_first_token=on_first_token)
+    return None
+
+
+def _can_stream_round(iteration: int, narrate: bool, smart: bool, narrated: int) -> bool:
+    """Claude streams the first round only (its parser is scoped that way). Gemini streams every round
+    while narration lines are still allowed, so the final answer after a tool call is spoken as it is
+    written too. Never for a smart-model round: its thinking blocks can't be rebuilt from a stream."""
+    if not (narrate and not smart and _llm_tts_stream_enabled()):
+        return False
+    provider = _llm_provider()
+    if provider == "claude":
+        return iteration == 0
+    if provider == "gemini":
+        return gemini.stream_enabled() and narrated < MAX_NARRATED_LINES
+    return False
+
+
+LIVE_SPEECH_MAX_CHARS = 400  # ~3 sentences: what a streamed Gemini reply may say aloud before it stops
+
+
+def _live_speech_limit(transcript: str) -> int:
+    """How many characters a streamed reply may speak (0 = no limit). Streaming skips the
+    _summarize_for_speech pass (there is no whole reply to shorten), so the spoken version is cut here
+    instead; the dashboard and history always keep the full text. Gemini only: the Claude path keeps
+    its existing behaviour. Detail requests ("in detail", "step by step") and JARVIS_REPLY_STYLE=detailed
+    are never cut."""
+    if _llm_provider() != "gemini" or _wants_full_speech(transcript):
+        return 0
+    try:
+        return max(0, int((os.environ.get("JARVIS_LIVE_SPEECH_MAX_CHARS") or "").strip() or LIVE_SPEECH_MAX_CHARS))
+    except ValueError:
+        return LIVE_SPEECH_MAX_CHARS
+
+
+class _LiveSpeaker:
+    """speak_live callback for one streamed round: speaks each sentence, and once `limit` characters have
+    been spoken drops the rest (the first sentence is always spoken). `dropped` tells the caller a tail
+    was left unspoken."""
+
+    def __init__(self, limit: int = 0) -> None:
+        self.limit = limit
+        self.spoken = 0
+        self.dropped = 0
+
+    @property
+    def cut(self) -> bool:
+        return self.dropped > 0
+
+    def __call__(self, sentence: str) -> None:
+        if self.limit and self.spoken and (self.dropped or self.spoken + len(sentence) > self.limit):
+            self.dropped += len(sentence)
+            return
+        self.spoken += len(sentence)
+        speak_text(_collapse_paths_for_speech(sentence))
+
+
+CUT_SPEECH_HINT = "I can read the rest if you'd like."
+CUT_SPEECH_MIN_DROPPED = 60  # don't announce a "rest" for a stray few words
+
+
+# Spoken lead-in ("On it."): instant feedback while the model and tools work. It runs on its own thread
+# so it never delays the request, but every speak_text call first waits for it (_await_ack), so it can't
+# collide with or trail behind the real reply - the bug that got the old "One moment." filler removed
+# (2026-09-22). One per command, only for work that will visibly take a moment, never in Sleep Mode.
+ACK_ACTION = ("On it.", "Sure, on it.", "Working on it.", "Got it.")
+ACK_LOOKUP = ("Let me check.", "Let me look into that.", "One sec, checking.")
+ACK_PHRASES = ACK_ACTION + ACK_LOOKUP
+_ACK_LEAD = r"^(?:(?:hey|ok|okay)[, ]+)?(?:jarvis[, ]+)?(?:please[, ]+)?(?:(?:can|could|would) you (?:please )?|i need you to |i want you to )?"
+_ACK_TASK_RE = re.compile(
+    _ACK_LEAD + r"(?:open|launch|search|find|look up|lookup|look for|check|send|email|write|create|make|set|"
+    r"remind|schedule|book|play|download|summari[sz]e|draft|add|delete|remove|close|show|read|list|fetch|get|"
+    r"save|copy|move|rename|translate|research|plan|organi[sz]e|calculate|convert|call|text|message|fix|"
+    r"install|update|restart)\b", re.I)
+_ACK_LOOKUP_RE = re.compile(
+    r"\b(?:search|look up|lookup|look for|find|check|research|weather|news|latest|price|score|fetch|read|"
+    r"summari[sz]e|list|show)\b", re.I)
+_ack_last = {"phrase": ""}
+
+
+def _ack_enabled() -> bool:
+    return (os.environ.get("JARVIS_ACK_PHRASES") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _ack_kind(transcript: str) -> str | None:
+    """'lookup' / 'action' for a request that looks like work, None for a plain question or chat."""
+    text = (transcript or "").strip()
+    if not text or len(text.split()) < 2 or len(text) > 400:
+        return None
+    if not _ACK_TASK_RE.match(text):
+        return None
+    return "lookup" if _ACK_LOOKUP_RE.search(text) else "action"
+
+
+def _pick_ack(kind: str) -> str:
+    pool = [p for p in (ACK_LOOKUP if kind == "lookup" else ACK_ACTION) if p != _ack_last["phrase"]]
+    phrase = random.choice(pool or list(ACK_PHRASES))
+    _ack_last["phrase"] = phrase
+    return phrase
+
+
+def _start_ack(kind: str) -> bool:
+    """Starts this command's spoken lead-in in the background (once). False when it was skipped."""
+    if not _ack_enabled() or getattr(_command_ctx, "ack_started", False):
+        return False
+    started = getattr(_command_ctx, "started", None)
+    if started is not None and _speech_cancelled_since(started):
+        return False
+    try:
+        if sleep_mode.is_active():
+            return False
+    except Exception:
+        pass
+    _command_ctx.ack_started = True
+    phrase = _pick_ack(kind)
+
+    def _run() -> None:
+        _command_ctx.started = started  # so a barge-in silences the lead-in too
+        try:
+            speak_text(phrase)
+        except Exception as e:
+            log.debug("Spoken lead-in failed (harmless): %s", e)
+
+    t = threading.Thread(target=_run, name="jarvis-ack", daemon=True)
+    _command_ctx.ack_thread = t
+    t.start()
+    return True
+
+
+def _await_ack(timeout: float = 6.0) -> None:
+    """Called at the top of speak_text: let this command's lead-in finish before anything else speaks."""
+    t = getattr(_command_ctx, "ack_thread", None)
+    if t is None or t is threading.current_thread():
+        return
+    _command_ctx.ack_thread = None
+    t.join(timeout)
+
+
+def _maybe_ack_before_task(transcript: str) -> None:
+    kind = _ack_kind(transcript)
+    if kind:
+        _start_ack(kind)
+
+
+def _prewarm_ack_phrases() -> None:
+    """Synthesize the lead-in phrases once, in the background, so the first one is a cache hit."""
+    if not _ack_enabled():
+        return
+    time.sleep(4)
+    for phrase in ACK_PHRASES:
+        try:
+            if _tts_cache_peek(phrase) is None:
+                _synthesize_and_cache(phrase)
+        except Exception as e:
+            log.debug("Lead-in pre-warm skipped: %s", e)
+            return
+
+
 def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = False,
                    record_history: bool = True, tool_result_fallback: bool = True,
                    tools_override: list[dict] | None = None) -> str:
@@ -11089,19 +11305,18 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         # existing mid-task narration already uses). See _claude_stream_first_round's docstring
         # for the full scoping rationale.
         streamed_this_round = False
+        speaker: _LiveSpeaker | None = None
         data = None
         # Not for the smart model: the SSE parser doesn't rebuild thinking blocks (with their
         # signatures), which the next round must echo back.
-        if iteration == 0 and narrate and not smart and _llm_tts_stream_enabled():
+        if _can_stream_round(iteration, narrate, smart, narrated):
             def _on_first_token(_lat=lat):
                 if _lat:
                     _lat.mark("ttft")
 
-            data = _claude_stream_first_round(
-                request_body, AGENT_ROUND_TIMEOUT_S,
-                lambda s: speak_text(_collapse_paths_for_speech(s)),
-                on_first_token=_on_first_token,
-            )
+            speaker = _LiveSpeaker(_live_speech_limit(transcript))
+            data = _llm_stream_round(request_body, AGENT_ROUND_TIMEOUT_S, speaker,
+                                     on_first_token=_on_first_token)
             streamed_this_round = data is not None
         if data is None:
             data = _claude_request(request_body, timeout=AGENT_ROUND_TIMEOUT_S)
@@ -11132,10 +11347,16 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             # `reply` (for dashboard/history/reply-cache) — and only then is
             # reply_already_spoken_via_stream() set, so the caller knows not to re-speak it.
             if going_on:
-                pass
+                if " ".join(texts).strip():
+                    narrated += 1  # a streamed narration line counts against the per-command cap
             else:
                 reply_parts.extend(texts)
                 _mark_reply_stream_spoken()
+                if speaker is not None and speaker.dropped >= CUT_SPEECH_MIN_DROPPED:
+                    try:  # the spoken version was cut short: say so, the full text is on the dashboard
+                        speak_text(CUT_SPEECH_HINT)
+                    except Exception as e:
+                        log.debug("Cut-speech hint failed (harmless): %s", e)
         elif narrate and going_on and narrated < MAX_NARRATED_LINES and " ".join(texts).strip():
             line = " ".join(t.strip() for t in texts if t.strip())
             narrated += 1
@@ -11146,6 +11367,11 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 log.warning("Mid-task narration failed: %s", e)
         else:
             reply_parts.extend(texts)
+
+        if going_on and narrate and not narrated and not (streamed_this_round and " ".join(texts).strip()):
+            # The model went straight to a tool with nothing said: give the user a beat of feedback now,
+            # while the tool runs (no-op if a lead-in already played for this command).
+            _start_ack("lookup" if _ACK_LOOKUP_RE.search(transcript) else "action")
 
         if not going_on:
             # Found live (2026-09-25, Gemini flash-lite): the model said "I'll hand that off to
@@ -11305,6 +11531,8 @@ def handle_text_command(
     prev_started = getattr(_command_ctx, "started", None)
     _command_ctx.source = source
     _command_ctx.started = time.monotonic()  # barge-in cutoff for this command's speech
+    _command_ctx.ack_started = False  # at most one spoken lead-in per command
+    _command_ctx.ack_thread = None
     _inflight_enter()
     try:
         _handle_text_command_impl(transcript, reply_sink, tone, source)
@@ -11902,6 +12130,8 @@ def _handle_text_command_impl(
     if deterministic_reply is not None:
         reply = deterministic_reply
     else:
+        if speaks_here and intent_path == "full":
+            _maybe_ack_before_task(loop_transcript)
         try:
             # Narrate mid-task only where the reply will also be spoken here (not phone-only).
             reply = run_agent_loop(
@@ -12441,6 +12671,9 @@ def main() -> int:
     filewatcher.watcher.listeners.append(_agents_on_file_event)  # C1: file_event background agents
     threading.Thread(target=audio_duck.warm_media_control, name="media-ctl-warm", daemon=True).start()
     start_prompt_cache_warmup()
+    if gemini.api_key():  # open the HTTPS connection now so the first command doesn't pay the handshake
+        threading.Thread(target=gemini.warm, name="gemini-warm", daemon=True).start()
+    threading.Thread(target=_prewarm_ack_phrases, name="ack-warm", daemon=True).start()
     try:
         dyn_tools.configure({t["name"] for t in AGENT_TOOLS})
         dyn_tools.init_dynamic_tools()

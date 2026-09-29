@@ -91,6 +91,7 @@ def jarvis(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "0")
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "0")  # no spoken lead-in thread in tests that capture speech
     import jarvis as j
 
     monkeypatch.setattr(j, "get_mcp_tool_schemas", lambda: [])

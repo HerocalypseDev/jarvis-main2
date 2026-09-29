@@ -486,6 +486,7 @@ def jarvis(monkeypatch, tmp_path):
     # that calls run_agent_loop(narrate=True) without this would otherwise make a REAL network
     # call to Anthropic's streaming endpoint.
     monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "0")
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "0")  # no spoken lead-in thread in tests that capture speech
     j._reply_cache.clear()
     j._tool_result_cache.clear()
     cache.reset_stats()

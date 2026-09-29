@@ -46,6 +46,7 @@ def test_reply_style_parsing():
 def jarvis(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "t.db"))
     monkeypatch.setenv("JARVIS_ENV_PATH", str(tmp_path / ".env"))
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "0")  # no spoken lead-in thread in tests that capture speech
     for k in ("JARVIS_REPLY_STYLE", "JARVIS_QUIET_HOURS", "JARVIS_SAFE_MODE"):
         monkeypatch.delenv(k, raising=False)
     import jarvis as j
