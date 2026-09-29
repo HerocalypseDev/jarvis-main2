@@ -1408,11 +1408,11 @@ After opening the chat, Snapshot again and check the conversation header shows t
 BEFORE typing the message; only then type it and press Enter. If no result matches, or the header \
 shows someone else, stop and tell the user instead of sending — a message to the wrong person \
 can't be taken back.
-To fill in a form or click things that are on the user's screen, drive it directly: for a web page \
-use the mcp_browser_* tools (browser_snapshot, then browser_type / browser_fill_form / \
-browser_click by element ref); for a desktop app or a form already open in a window use the \
-mcp_windows_* UI tools (Snapshot to read the fields, Click a field, Type into it, Snapshot again to \
-check). Don't write a Python or PowerShell script to do it. Fill the fields, then tell the user what \
+To fill in a form or click things that are on the user's screen (including a web page open in \
+their own browser), use the mcp_windows_* UI tools, which act on the real screen: Snapshot to read \
+the page and find the fields, Click a field, Type into it, Snapshot again to check. Never use the \
+mcp_browser_* tools for this: they open a separate browser window that can't see the user's tabs; \
+they are only for opening a page the user asked you to visit. Don't write a Python or PowerShell script to do it. Fill the fields, then tell the user what \
 you filled; only press Submit/Send if they asked you to.
 When you do need Python, use the run_python tool: it runs with the same Python interpreter Jarvis \
 itself uses. Never call python.exe / py through run_shell by a path you guessed (e.g. \
@@ -10048,6 +10048,27 @@ def _execute_tool(
     return result
 
 
+# Found live 2026-09-29: "answer the questions on my screen and type them in" opened a NEW Opera window.
+# The mcp_browser_* tools drive Playwright's own separate browser, which can't see the user's open tabs,
+# so for anything already on the screen only the mcp_windows_* UI tools (which act on the real desktop) work.
+_ON_SCREEN_RE = re.compile(
+    r"\b(on|in|from|at)\s+(my|the|this)\s+screen\b|\bon[- ]screen\b|\bin front of me\b|"
+    r"\b(this|the)\s+(page|tab|form|window)\s+(i'?m|i am)\s+(on|in|reading|looking at)\b",
+    re.IGNORECASE)
+_OPEN_A_PAGE_RE = re.compile(r"https?://|\bwww\.|\b(open|go to|navigate to|visit|load)\b", re.IGNORECASE)
+_ON_SCREEN_BROWSER_REFUSAL = (
+    "Not using the mcp_browser_* tools: they open a separate browser window that can't see what is on the "
+    "user's screen. For something already on screen use the mcp_windows_* UI tools: mcp_windows_Snapshot to "
+    "read the page and find the fields, mcp_windows_Click on the answer field, mcp_windows_Type the text, "
+    "then Snapshot again to check. If those tools aren't available, say so instead of opening a browser.")
+
+
+def _means_what_is_on_screen(transcript: str) -> bool:
+    """True when the user is talking about something already on their screen (and not asking to open a page)."""
+    text = transcript or ""
+    return bool(_ON_SCREEN_RE.search(text)) and not _OPEN_A_PAGE_RE.search(text)
+
+
 def _execute_tool_impl(
     tool_name: str, tool_input: dict, transcript: str, skip_confirmation: bool = False
 ) -> str:
@@ -10077,6 +10098,8 @@ def _execute_tool_impl(
             elif tool_name.startswith("mcp_whatsapp_") and tool_name.endswith("_navigate"):
                 result = ("Don't navigate the WhatsApp app anywhere: it is the desktop app, already "
                           "on WhatsApp. Use browser_snapshot, then click/type instead.")
+            elif tool_name.startswith("mcp_browser_") and _means_what_is_on_screen(transcript):
+                result = _ON_SCREEN_BROWSER_REFUSAL
             elif tool_name.startswith("mcp_browser_") and _is_whatsapp_web_url(inp.get("url")):
                 result = _ensure_whatsapp_desktop() or (
                     "Not opening WhatsApp Web: the WhatsApp desktop app is open instead. "

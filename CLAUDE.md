@@ -1724,7 +1724,8 @@ row there each phase rather than only stating the total in chat.
 | 91 (feature video v3 with the owner's Deepgram Draco narration) | Opus 5.5 | ~25 min | ~$1.00–$1.40 |
 | 92 (Perplexity web search built, then removed at the user's request (needs a paid API key); Gemini help text fix; merged a concurrent main change) | Opus 5.5 | ~25 min | ~$1.80–$2.40 |
 | 93 (full codebase audit: task-queue deadlock, scheduler step isolation + single-flight skills, Approve bound to the reviewed action, failed tool backing a claim, crash on non-integer settings, daily plan listing handled items, 3 flaky/time-bomb tests; 9 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
-| **Running total (final)** | | **~2959 min** | **~$182.25–$255.75** |
+| 94 (on-screen form opened a new Opera window: prompt routes on-screen pages to Windows-MCP, code guard refuses mcp_browser_* for on-screen requests; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
+| **Running total (final)** | | **~2969 min** | **~$183.05–$256.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1808,6 +1809,14 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   a guessed path. `run_python`'s description says the same. Prompt-level, so not deterministic: pinned by
   `test_cache.py::test_prompt_fills_forms_with_ui_tools_and_never_guesses_a_python_path` and eval case
   `form-fill-no-guessed-python`. If it recurs, add a code-level check in `run_shell` for a nonexistent python.exe.
+- **Opened a new Opera window instead of typing into the form (2026-09-29, found live)**: that rule sent web pages to
+  `mcp_browser_*`, which is Playwright's OWN separate browser (it can't see the user's open tabs), so "answer the
+  questions on my screen and write them in" opened a new window. The prompt now says: anything already on screen,
+  web page included, goes through `mcp_windows_*` (Snapshot/Click/Type); `mcp_browser_*` only for opening a page the
+  user asked for. Code-level guard: `_means_what_is_on_screen(transcript)` ("on my screen", "in front of me", "the
+  form I'm looking at"..., and no URL/open/go to) makes any `mcp_browser_*` call return `_ON_SCREEN_BROWSER_REFUSAL`
+  pointing at the Windows tools. Test: `test_cache.py::test_on_screen_form_never_opens_a_separate_browser`. (No
+  eval case: the eval runner has no MCP tools.) Not verified live: typing into a real Google Form via Windows-MCP.
 
 ## Web search engine (2026-09-29)
 
