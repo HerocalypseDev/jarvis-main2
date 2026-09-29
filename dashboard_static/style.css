@@ -121,7 +121,7 @@ body {
 /* --- global element defaults ------------------------------------------------------------ */
 a { color: var(--color-accent); text-decoration-color: var(--color-accent-dim); text-underline-offset: 2px; }
 a:hover { text-decoration-color: var(--color-accent); }
-::selection { background: rgba(47, 216, 255, 0.28); color: var(--color-text-primary); }
+::selection { background: color-mix(in srgb, var(--color-accent) 28%, transparent); color: var(--color-text-primary); }
 code, kbd, pre, .mono { font-family: var(--font-mono); }
 kbd {
   font-size: var(--text-xs); padding: 1px 5px; border: 1px solid var(--color-border-strong);
@@ -172,7 +172,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
   background: linear-gradient(180deg, var(--color-bg-secondary), var(--color-bg-primary));
   border-bottom: 1px solid var(--color-border);
   /* a thin accent line instead of a full-bar glow */
-  box-shadow: inset 0 -1px 0 rgba(47, 216, 255, 0.12), var(--shadow-sm);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-accent) 12%, transparent), var(--shadow-sm);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -199,7 +199,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
   font-weight: 700;
   letter-spacing: 2px;
   color: var(--color-accent);
-  text-shadow: 0 0 8px rgba(47, 216, 255, 0.55);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 55%, transparent);
   white-space: nowrap;
 }
 .brand-sub { color: var(--color-text-muted); font-weight: 400; letter-spacing: 0.5px; margin-left: 6px; text-shadow: none; font-size: 0.9em; }
@@ -420,12 +420,12 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
 .nav-link:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
 .nav-link:hover .nav-icon { color: var(--color-accent); }
 .nav-link.active {
-  background: linear-gradient(90deg, rgba(47, 216, 255, 0.16), rgba(47, 216, 255, 0.04));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 16%, transparent), color-mix(in srgb, var(--color-accent) 4%, transparent));
   color: var(--color-accent);
   box-shadow: inset 3px 0 0 var(--color-accent);
   font-weight: 600;
 }
-.nav-link.active .nav-icon { color: var(--color-accent); text-shadow: 0 0 8px rgba(47, 216, 255, 0.6); }
+.nav-link.active .nav-icon { color: var(--color-accent); text-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 60%, transparent); }
 .nav-link:focus-visible { outline-offset: -2px; }
 .nav-icon { width: 18px; text-align: center; flex-shrink: 0; color: var(--color-text-muted); transition: color var(--transition-fast); }
 .nav-badge {
@@ -559,7 +559,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
   right: var(--space-4);
   top: -1px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(47, 216, 255, 0.45), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 45%, transparent), transparent);
   pointer-events: none;
 }
 .home-block:hover { border-color: var(--color-border-strong); }
@@ -856,7 +856,7 @@ li.skeleton { height: 30px; }
   flex: 1.5;
 }
 .usage-bar-col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
-.usage-bar { width: 100%; background: linear-gradient(180deg, rgba(47, 216, 255, 0.55), rgba(26, 107, 133, 0.55)); border-top: 2px solid var(--color-accent); border-radius: 3px 3px 0 0; transition: background var(--transition-fast); }
+.usage-bar { width: 100%; background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 55%, transparent), color-mix(in srgb, var(--color-accent-dim) 55%, transparent)); border-top: 2px solid var(--color-accent); border-radius: 3px 3px 0 0; transition: background var(--transition-fast); }
 .usage-bar-col:hover .usage-bar { background: var(--color-accent-dim); }
 .usage-bar-label { font-size: 0.65em; color: var(--text-muted); margin-top: 2px; }
 .usage-lower .list { flex: 1; min-width: 260px; max-height: 320px; overflow-y: auto; }

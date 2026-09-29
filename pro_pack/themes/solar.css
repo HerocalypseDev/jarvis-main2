@@ -1,0 +1,21 @@
+/* Jarvis4U Pro theme: Solar. Token overrides only. */
+/* name: Solar */
+:root {
+  --color-bg-primary: #0f0b05;
+  --color-bg-secondary: #17110a;
+  --color-bg-tertiary: #1f170d;
+  --color-bg-inset: #0a0703;
+  --color-bg-hover: #281d10;
+  --color-bg-shine: #2e2213;
+  --color-border: #3a2b16;
+  --color-border-strong: #5a4220;
+  --color-text-primary: #fbf1e1;
+  --color-text-secondary: #e2cfae;
+  --color-text-muted: #b39d7b;
+  --color-accent: #ff9f1c;
+  --color-accent-dim: #8f5a10;
+  --color-accent-hover: #ffb85a;
+  --color-on-accent: #1a0e00;
+  --color-accent-soft: rgba(255, 159, 28, 0.12);
+  --shadow-glow: 0 0 12px rgba(255, 159, 28, 0.35);
+}
