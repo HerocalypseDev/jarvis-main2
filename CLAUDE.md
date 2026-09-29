@@ -238,7 +238,11 @@ Rules:
   themed (the approval bar must stay red). Served via `POST /api/feature/license/theme_css` only with a valid
   key; the choice is per-browser localStorage. Known cosmetic gap: a few hard-coded cyan rgba glows (brand
   text-shadow, card top highlight) don't follow the theme.
-- Not built yet (don't advertise): early access, other packs (streamer/developer/home), the installer.
+- **Pro phases (PRO_ROADMAP.md)**: P1 Developer pack shipped (pack 1.1.0): 7 `dev_*` skills (repo briefing,
+  explain error, change review, CI summary, Claude Code hand-off brief, standup, 9:00 health watch that is silent
+  unless high-severity). `run_shell` in pack skills = read-only git only (pinned by test). `build_pro_pack.py`
+  now rejects any snake_case word in a skill that isn't a real tool, tool parameter or pack skill.
+- Not built yet (don't advertise): early access, the installer, and anything past the phase last shipped.
 
 ## Speech shaping (2026-09-18)
 
@@ -1651,7 +1655,8 @@ row there each phase rather than only stating the total in chat.
 | 79 (Jarvis4U Pro: offline signed license keys + seller key tool, Pro pack loader into the skill list, Settings Pro card, sidebar Get Pro/Support, README + FUNDING.yml, Selar product covers; 8 new tests) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
 | 80 (embedded owner public key; published Pro/license/donation update to Jarvis4U) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
 | 81 (Pro pack v1.0.0: 7 Student skills, 2 sanitised themes + picker, pack builder/validator, export exclusion; 5 new tests, headless theme check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
-| **Running total (final)** | | **~2624 min** | **~$157.45–$221.05** |
+| 82 (Pro roadmap + P1 Developer pack: 7 dev skills, stricter pack validator; 2 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
+| **Running total (final)** | | **~2644 min** | **~$159.05–$223.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

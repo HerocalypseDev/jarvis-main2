@@ -1,0 +1,8 @@
+{
+  "name": "dev_health_watch",
+  "description": "Developer pack: a morning check of a repo you name for obvious risks (secrets, merge markers, swallowed errors). Silent when nothing is wrong. Runs at 9:00 once a repo is set.",
+  "instructions": "This runs automatically at 9:00. 1. Call recall_facts (or memory_search 'Health watch repo:') to find the folder the user chose. If none is saved, give NO spoken reply at all (empty text) and stop. 2. Call check_project_health with root_path = that folder. 3. Speak ONE short line only if there is a high-severity finding (hardcoded secret, merge-conflict marker, eval on input): 'Heads up: <n> risky spots in <repo>, the worst is <x> in <file>.' Otherwise give NO spoken reply (empty text). Never change any file. To turn it on, the user says 'watch <folder> for code health'; then call remember_fact with category 'preference' and content 'Health watch repo: <folder>'.",
+  "schedule": {
+    "daily_at": "09:00"
+  }
+}
