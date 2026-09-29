@@ -29,3 +29,6 @@ public_export_denylist.txt
 
 # Jarvis4U Pro pack (bought separately; unzip here, never commit)
 pro/
+
+# built Pro pack zips (tools/build_pro_pack.py)
+dist/

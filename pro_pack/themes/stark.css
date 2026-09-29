@@ -1,0 +1,21 @@
+/* Jarvis4U Pro theme: Stark (deep red + gold). Token overrides only. */
+/* name: Stark */
+:root {
+  --color-bg-primary: #0d0707;
+  --color-bg-secondary: #160b0b;
+  --color-bg-tertiary: #1e1010;
+  --color-bg-inset: #0a0505;
+  --color-bg-hover: #261414;
+  --color-bg-shine: #2c1818;
+  --color-border: #3a1c1c;
+  --color-border-strong: #5a2b2b;
+  --color-text-primary: #f6ead8;
+  --color-text-secondary: #d9c1a3;
+  --color-text-muted: #a88f78;
+  --color-accent: #ffc247;
+  --color-accent-dim: #8a6420;
+  --color-accent-soft: rgba(255, 194, 71, 0.12);
+  --color-accent-hover: #ffd47a;
+  --color-on-accent: #1a0f00;
+  --shadow-glow: 0 0 12px rgba(255, 194, 71, 0.35);
+}

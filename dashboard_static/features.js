@@ -365,6 +365,13 @@ async function refreshProCard() {
   badge.textContent = lic.valid ? "PRO" : "free";
   badge.className = "pill" + (lic.valid ? " pill-done" : "");
   remove.hidden = !lic.valid;
+  const row = document.getElementById("pro-theme-row");
+  const sel = document.getElementById("pro-theme");
+  const themes = st.themes || [];
+  row.hidden = !themes.length;
+  sel.innerHTML = '<option value="">Default (cyan)</option>' +
+    themes.map((t) => `<option value="${escAttr(t.id)}">${esc(t.name)}</option>`).join("");
+  sel.value = savedProTheme();
   if (lic.valid) {
     const pack = st.installed ? `Pro pack ${esc(st.pack.version || "")} installed, ${st.skills} Pro skill(s) active.`
       : "Now unzip the Pro pack you downloaded into the <span class=\"mono\">pro</span> folder next to jarvis.py.";
@@ -386,8 +393,28 @@ document.getElementById("pro-form")?.addEventListener("submit", async (e) => {
 document.getElementById("pro-remove")?.addEventListener("click", async () => {
   if (!confirm("Remove the Pro license key from this PC?")) return;
   await featurePost("license", "deactivate").catch(() => {});
+  applyProTheme("");
   document.getElementById("pro-msg").textContent = "Key removed.";
   refreshProCard();
 });
 window.addEventListener("hashchange", () => { if (currentRoute() === "settings") refreshProCard().catch(() => {}); });
 if (typeof currentRoute === "function" && currentRoute() === "settings") refreshProCard().catch(() => {});
+
+// --- Pro themes: the choice is a per-browser convenience (localStorage); the CSS comes from the
+// server, which rebuilds it from colour tokens only (jarvis_pro.theme_css) and only with a valid key.
+function savedProTheme() {
+  try { return localStorage.getItem("jarvis-pro-theme") || ""; } catch (e) { return ""; }
+}
+async function applyProTheme(id) {
+  let style = document.getElementById("pro-theme-style");
+  if (!id) { if (style) style.remove(); return; }
+  const r = await featurePost("license", "theme_css", { id }).catch(() => null);
+  if (!r || !r.ok) { if (style) style.remove(); return; }
+  if (!style) { style = document.createElement("style"); style.id = "pro-theme-style"; document.head.appendChild(style); }
+  style.textContent = r.css;
+}
+document.getElementById("pro-theme")?.addEventListener("change", (e) => {
+  try { localStorage.setItem("jarvis-pro-theme", e.target.value); } catch (err) { /* ignore */ }
+  applyProTheme(e.target.value);
+});
+applyProTheme(savedProTheme());
