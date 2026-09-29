@@ -808,6 +808,17 @@ def test_prompt_routes_whatsapp_through_its_debug_port_with_checks(jarvis):
     assert "never \nopen WhatsApp Web" in text or "never open WhatsApp Web" in text
 
 
+def test_prompt_fills_forms_with_ui_tools_and_never_guesses_a_python_path(jarvis):
+    # Found live 2026-09-29: "fill the form on my screen" ran run_shell with a made-up
+    # ...\\Python312\\python.exe path that didn't exist, instead of driving the form directly.
+    text = " ".join(b.get("text", "") for b in jarvis.build_system_blocks(""))
+    assert "To fill in a form" in text and "mcp_windows_* UI tools" in text and "mcp_browser_*" in text
+    assert "only press Submit/Send if they asked" in text
+    assert "use the run_python tool" in text and "Never call python.exe" in text
+    run_python = next(t for t in jarvis.AGENT_TOOLS if t["name"] == "run_python")
+    assert "instead of calling python.exe" in run_python["description"]
+
+
 def test_whatsapp_uses_desktop_app_never_web(jarvis, monkeypatch):
     ran, ensured = [], []
     monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "ok")
