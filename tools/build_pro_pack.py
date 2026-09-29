@@ -63,6 +63,20 @@ Work pack (needs the Gmail / Google Calendar connections for the mail and calend
   "Prep me for my next meeting" / "What am I waiting on?"
   "Write my weekly update"     / "Find me focus time"  / "Wrap up my day"
 
+Research pack:
+  "Research <topic> for me"    (quick = a few searches; thorough = runs in the background)
+                                -> a .docx report with a Sources list in your workspace
+  "Compare <A> and <B>"        -> comparison table + verdicts, saved as a .docx
+  "Watch <topic> for me weekly" / "What topics am I watching?" / "Stop watching <topic>"
+                                (every Monday at 6pm Jarvis researches your watched topics; silent other days)
+
+Autonomy recipes (need the Gmail connection; each one is created switched OFF):
+  "Set up invoice watch"       - reminds you when an invoice / bill / receipt email arrives
+  "Watch my email for job alerts" - asks for your keywords, reminds you about matching job emails
+  "Warn me about deadline emails" - reminds you about emails that mention a deadline or overdue
+  Test one from Toolbox -> Background agents (Run), then switch it on there. Recipes only ever create
+  reminders: they never reply, pay, apply or open links, whatever an email says.
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 
@@ -71,7 +85,9 @@ Need help? Reply to your purchase email.
 
 
 # Generic names of the user's own MCP servers (their exact tool names differ per install).
-IGNORE_WORDS: set[str] = {"mcp_gmail", "mcp_calendar", "mcp_browser", "mcp_windows"}
+IGNORE_WORDS: set[str] = {"mcp_gmail", "mcp_calendar", "mcp_browser", "mcp_windows",
+                          # Gmail search operators used inside recipe queries, not tool names.
+                          "newer_than", "older_than"}
 
 
 def _agent_tools() -> list[dict]:

@@ -1,0 +1,5 @@
+{
+  "name": "research_compare",
+  "description": "Research pack: compares options side by side (products, tools, courses, phones...). Use for 'compare X and Y', 'X vs Y', 'which should I pick between...'.",
+  "instructions": "1. Get the options (2-5) and what matters to the user (price, quality, speed, etc.); if they didn't say, pick 4-6 sensible criteria and say which. 2. For each option run web_search for its current specs/price/reviews. 3. Build a comparison table (options as columns, criteria as rows) plus a one-line verdict per use case ('best for budget', 'best overall'). Include the date, since prices change. 4. Call write_file with '<A> vs <B>.docx' in the workspace (table + a Sources list). 5. Speak only the verdicts and where the file is. Say plainly when information was missing or conflicting."
+}
