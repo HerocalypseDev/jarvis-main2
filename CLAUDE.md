@@ -1610,7 +1610,9 @@ row there each phase rather than only stating the total in chat.
 | 74 (dashboard visual polish: design tokens, shell/components restyle, skeleton/error/Retry states, phone layout, network-card recursion fix; headless checks at 1440/390 px) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
 | 75 (visual polish audit: approval-bar replay/focus fix, input contrast, disabled primary button, Home KPI density, tokens, docs; full headless route/approve/WS/settings/autonomy check) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 76 (public release prep: export tool with privacy scan, public README/LICENSE/.env.example/CLAUDE.md/example skills, autonomy off by default for the public copy; public test suite matches private) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
-| **Running total (final)** | | **~2519 min** | **~$149.35–$209.55** |
+| 77 (published Jarvis4U: fresh single-commit public repo, remote contents verified) | Opus 5.5 | ~5 min | ~$0.40–$0.60 |
+| 78 (form filling via UI tools + never a guessed python.exe path: prompt rules, run_python description, test + eval case; also removed snake game folders) | Opus 5.5 | ~10 min | ~$0.70–$1.00 |
+| **Running total (final)** | | **~2534 min** | **~$150.45–$211.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1684,6 +1686,16 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   `test_ensure_whatsapp_desktop_restarts_app_without_port`.
 - **Not verified live**: the first restart (WhatsApp was running without the port at build time)
   and a real Playwright attach/send are untested.
+
+## Form filling / guessed Python path (2026-09-29, found live)
+
+- "Fill the form on my screen" ran `run_shell` with a made-up `...\Python312\python.exe` path (not installed
+  there), instead of driving the form. The stable system prompt now says: fill on-screen forms with the
+  `mcp_browser_*` (web) or `mcp_windows_*` (desktop) UI tools, never a script; report what was filled; only press
+  Submit/Send if asked; use `run_python` (Jarvis's own interpreter, `sys.executable`) and never call python.exe by
+  a guessed path. `run_python`'s description says the same. Prompt-level, so not deterministic: pinned by
+  `test_cache.py::test_prompt_fills_forms_with_ui_tools_and_never_guesses_a_python_path` and eval case
+  `form-fill-no-guessed-python`. If it recurs, add a code-level check in `run_shell` for a nonexistent python.exe.
 
 ## Hand-off guard (2026-09-25)
 

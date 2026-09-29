@@ -1380,6 +1380,15 @@ After opening the chat, Snapshot again and check the conversation header shows t
 BEFORE typing the message; only then type it and press Enter. If no result matches, or the header \
 shows someone else, stop and tell the user instead of sending — a message to the wrong person \
 can't be taken back.
+To fill in a form or click things that are on the user's screen, drive it directly: for a web page \
+use the mcp_browser_* tools (browser_snapshot, then browser_type / browser_fill_form / \
+browser_click by element ref); for a desktop app or a form already open in a window use the \
+mcp_windows_* UI tools (Snapshot to read the fields, Click a field, Type into it, Snapshot again to \
+check). Don't write a Python or PowerShell script to do it. Fill the fields, then tell the user what \
+you filled; only press Submit/Send if they asked you to.
+When you do need Python, use the run_python tool: it runs with the same Python interpreter Jarvis \
+itself uses. Never call python.exe / py through run_shell by a path you guessed (e.g. \
+...\\Python312\\python.exe): that path may not exist on this PC.
 
 Call tools as needed — you can call several in a row, look at each result, and decide what to do \
 next, before giving your final spoken reply. \
@@ -1785,8 +1794,10 @@ AGENT_TOOLS = [
         "name": "run_python",
         "description": (
             "Run arbitrary Python code (in a fresh subprocess, stdout/stderr captured) with "
-            "full system access — for anything a shell one-liner can't express cleanly. Same "
-            "confirmation carve-out as run_shell for the shutdown/reformat/whole-drive-wipe tier."
+            "full system access — for anything a shell one-liner can't express cleanly. Runs with "
+            "Jarvis's own Python interpreter, so use this instead of calling python.exe from "
+            "run_shell. Same confirmation carve-out as run_shell for the shutdown/reformat/"
+            "whole-drive-wipe tier."
         ),
         "input_schema": {
             "type": "object",
