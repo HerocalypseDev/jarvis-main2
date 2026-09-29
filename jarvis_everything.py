@@ -27,7 +27,11 @@ MAX_RESULTS = 25
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _working_url: dict = {"url": None, "checked": 0.0}
 SETUP_HINT = ("Everything isn't reachable. Install voidtools Everything, then either enable its HTTP "
-              "server (Tools > Options > HTTP Server, bind to 127.0.0.1) or put es.exe on the PATH.")
+              "server (Tools > Options > HTTP Server, bind to 127.0.0.1) or put es.exe on the PATH. Until "
+              "then, to find a file use run_shell, which is PowerShell (not cmd.exe, so no `dir /s /b`): "
+              "Get-ChildItem -Path $env:USERPROFILE -Recurse -Filter '*name*' -ErrorAction SilentlyContinue "
+              "| Select-Object -First 20 -ExpandProperty FullName. Search the user's folders (Desktop, "
+              "Documents, Downloads, OneDrive), never a whole drive like C:\\.")
 
 
 def _candidate_urls() -> list[str]:
