@@ -295,3 +295,17 @@ def test_file_index_skips_unsettled_and_unchanged(db, tmp_path, monkeypatch):
 def test_code_search_refuses_a_drive_root():
     root = os.path.splitdrive(os.path.abspath(os.sep))[0] + os.sep
     assert "whole drive" in code_tools.search("x", root)["error"]
+
+
+def test_agent_step_missing_a_required_input_is_refused(db):
+    # Found live 2026-09-29 (debug report): an agent saved with mcp_gmail_search_emails and no "query" failed on every run.
+    store = agents.Store(*db)
+    tools = {"mcp_gmail_search_emails"}
+    req = {"mcp_gmail_search_emails": ["query"]}
+    msg = agents.create(store, "selar", "interval", {"every_min": 10}, [{"tool": "mcp_gmail_search_emails", "input": {}}],
+                        tools, set(), required=req)
+    assert "needs query" in msg
+    ok = agents.create(store, "selar", "interval", {"every_min": 10},
+                       [{"tool": "mcp_gmail_search_emails", "input": {"query": "from:selar.com newer_than:1d"}}],
+                       tools, set(), required=req)
+    assert "needs" not in ok

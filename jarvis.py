@@ -1412,7 +1412,13 @@ To fill in a form or click things that are on the user's screen (including a web
 their own browser), use the mcp_windows_* UI tools, which act on the real screen: Snapshot to read \
 the page and find the fields, Click a field, Type into it, Snapshot again to check. Never use the \
 mcp_browser_* tools for this: they open a separate browser window that can't see the user's tabs; \
-they are only for opening a page the user asked you to visit. Don't write a Python or PowerShell script to do it. Fill the fields, then tell the user what \
+they are only for opening a page the user asked you to visit. Don't write a Python or PowerShell script to do it \
+(scripts that press keys or click blindly are refused). Fill a form one question at a time: Snapshot with \
+use_dom=true, find the question's text and the answer box right under it, Click that box, Type the answer, then \
+Scroll and Snapshot again for the next question. Never guess positions, never count Tab presses, never press \
+Ctrl+A in a form. Leave boxes that already have the user's text alone unless they ask you to change them. Never \
+invent facts about the user (name, age, timezone, experience, availability): use what you remember about them, \
+otherwise leave that question and ask. At the end say which questions you filled and which you left. Fill the fields, then tell the user what \
 you filled; only press Submit/Send if they asked you to.
 When you do need Python, use the run_python tool: it runs with the same Python interpreter Jarvis \
 itself uses. Never call python.exe / py through run_shell by a path you guessed (e.g. \
@@ -6457,6 +6463,16 @@ def _agent_known_tools() -> set[str]:
     return _macro_known_tools()
 
 
+def _agent_required_inputs() -> dict[str, list[str]]:
+    """Required inputs per tool, from the same (connected-only) schemas, so an agent step can't be saved without them."""
+    out = {}
+    for t in AGENT_TOOLS + dyn_tools.schemas() + list(_mcp_tool_schemas):
+        req = ((t.get("input_schema") or {}).get("required") or [])
+        if req:
+            out[t["name"]] = [str(r) for r in req]
+    return out
+
+
 def _agent_run_async(a: dict, events: list[dict] | None = None) -> bool:
     """Runs an agent's steps once per queued event (or once) on a worker thread. Single flight per agent."""
     with _agents_lock:
@@ -6545,7 +6561,8 @@ def _background_agents_tool(inp: dict) -> str:
     if action == "create":
         return agents.create(_agent_store, name, str(inp.get("trigger_type") or ""), inp.get("trigger_config") or {},
                              inp.get("steps") or [], _agent_known_tools(), _AGENT_FORBIDDEN_TOOLS,
-                             inp.get("max_runs_per_day") or 24, enabled=inp.get("enabled", True) is not False)
+                             inp.get("max_runs_per_day") or 24, enabled=inp.get("enabled", True) is not False,
+                             required=_agent_required_inputs())
     a = _agent_store.get(name) if name else None
     if action in ("delete", "enable", "disable", "run", "log") and not a:
         return "No background agent by that name."
@@ -9958,10 +9975,10 @@ _ACTION_CLAIMS = [
                 r"\b(?:file|document|doc|docx|note|notes|folder|presentation|spreadsheet|pptx)\b", re.I),
      re.compile(r"write|save|create|delegate|change_jarvis_code|move|copy|rename|organise|edit", re.I)),
     ("type that in",
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:typed|written|wrote|filled|entered|put|pasted|inserted)\b[^.!?]{0,60}"
-                r"\b(?:form|fields?|box(?:es)?|space|answer boxes|browser|page|screen|text ?box)\b"
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:[a-z ,]{0,40}\band\s+)?(?:typed|written|wrote|filled|entered|put|pasted|inserted)\b"
+                r"[^.!?]{0,110}\b(?:form|fields?|box(?:es)?|space|answer boxes|browser|page|screen|text ?box|application|answers?)\b"
                 r"|\b(?:form|fields?|answers?) (?:has been |have been |was |were |is |are )?(?:filled|typed|written|entered)\b", re.I),
-     re.compile(r"type|fill|multiedit|paste", re.I)),
+     re.compile(r"type|fill|multiedit|paste|write_file", re.I)),  # write_file: "I've written the answer down in a note"
     ("remember that",
      re.compile(r"\bi'?ll remember\b|\b(?:i'?ve|i have)\s+(?:noted|remembered|saved)\b[^.!?]{0,20}\b(?:that|it|this)\b"
                 r"[^.!?]{0,20}\b(?:memory|remember)?", re.I),
@@ -10095,6 +10112,30 @@ _READ_SCREEN_NOTHING_TYPED = (
     "mcp_windows_Snapshot to find each answer field, mcp_windows_Click it, then mcp_windows_Type the text, and "
     "Snapshot again to check. If the mcp_windows_* tools aren't available, tell the user to click the first "
     "answer box and then use type_text; never say it was written unless a typing tool ran.]")
+
+
+# Found live 2026-09-29 (debug report): asked to fill a Google Form, the model wrote pyautogui / pywinauto /
+# SendKeys scripts that clicked fixed coordinates, pressed Tab N times and pasted answers in an assumed order.
+# Answers landed under the wrong questions, questions were skipped, the user's own answers were overwritten,
+# Ctrl+A/Ctrl+C grabbed the whole page, and SendKeys ^t opened new tabs. Jarvis has real UI tools that can see
+# the screen (mcp_windows_Snapshot/Click/Type, click_at, type_text, control_window), so a script that drives the
+# keyboard/mouse/windows blindly is refused and pointed at them.
+_UI_SCRIPT_RE = re.compile(
+    r"\b(?:pyautogui|pywinauto|pynput|pydirectinput|autoit|pygetwindow|SendKeys|SendWait|AppActivate|keybd_event|"
+    r"mouse_event|SendInput|SetForegroundWindow|SetCursorPos)\b|\bimport\s+(?:keyboard|mouse)\b|"
+    r"\bfrom\s+(?:keyboard|mouse)\s+import\b",
+    re.IGNORECASE)
+_UI_SCRIPT_REFUSAL = (
+    "Refused: scripts that drive the keyboard, mouse or windows blindly (pyautogui, pywinauto, SendKeys...) put "
+    "text in the wrong places. Use the UI tools that can see the screen instead: mcp_windows_Snapshot (use_dom=true) "
+    "to list the fields with their positions, mcp_windows_Click on the answer box under the right question, "
+    "mcp_windows_Type the text, mcp_windows_Scroll for the next one, and Snapshot again to check. Without the "
+    "mcp_windows_* tools use control_window to focus the app and read_screen, click_at (only with positions you "
+    "read from the screen) and type_text.")
+
+
+def _ui_script_problem(code: str) -> str | None:
+    return _UI_SCRIPT_REFUSAL if _UI_SCRIPT_RE.search(code or "") else None
 
 
 def _previous_user_text(messages: list[dict]) -> str:
@@ -10405,6 +10446,8 @@ def _execute_tool_impl(
             command = str(inp.get("command") or "").strip()
             if not command:
                 result = "No command given."
+            elif _ui_script_problem(command):
+                result = _ui_script_problem(command)
             else:
                 reason = None if skip_confirmation else _catastrophic_reason(command)
                 if reason:
@@ -10418,9 +10461,13 @@ def _execute_tool_impl(
                 else:
                     result = _run_shell_command(command)
         elif tool_name == "run_python":
-            code = str(inp.get("code") or "").strip()
+            # "command" too: the model called run_python with {"command": ...} a dozen times in one live run and
+            # got "No code given." each time (debug report 2026-09-29).
+            code = str(inp.get("code") or inp.get("command") or "").strip()
             if not code:
-                result = "No code given."
+                result = "No code given (run_python takes the Python source in 'code')."
+            elif _ui_script_problem(code):
+                result = _ui_script_problem(code)
             else:
                 reason = None if skip_confirmation else _catastrophic_reason(code)
                 if reason:
@@ -10912,6 +10959,21 @@ def _claude_stream_first_round(body: dict, timeout: int, speak_live, on_first_to
     return result
 
 
+_RAW_TOOL_OUTPUT_RE = re.compile(r"^\s*(?:exit_code=|stdout:|stderr:|\[?\s*\"?\s*Cursor Position|Cursor Position|###\s|\{|\[)")
+
+
+def _no_reply_fallback(last_result: str, used_tool_names: list[str]) -> str:
+    """What to say when the model ended with tool calls and no text. A short, readable result (a staged
+    confirmation, "Cancelled reminder #3.") is used as is; raw output (shell exit codes, screen dumps, JSON) is
+    never read out: found live 2026-09-29, replies of "exit_code=0" and a whole screen dump (with an email address)."""
+    text = (last_result or "").strip()
+    if text and len(text) <= 400 and not _RAW_TOOL_OUTPUT_RE.search(text):
+        return text
+    steps = len(used_tool_names)
+    return (f"I didn't finish that: I used {steps} step{'s' if steps != 1 else ''} without getting to an answer, "
+            "so check what's on screen before relying on it. Tell me what to do next, or try asking again.")
+
+
 def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = False,
                    record_history: bool = True, tool_result_fallback: bool = True,
                    tools_override: list[dict] | None = None) -> str:
@@ -11187,7 +11249,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         # MAX_AGENT_ITERATIONS before ever narrating a summary. The system prompt already says
         # to always give a short spoken reply, but that's not 100% reliable model behavior —
         # silence is worse than just surfacing the last tool's own result text instead.
-        reply = last_tool_result_text
+        reply = _no_reply_fallback(last_tool_result_text, used_tool_names)
     if record_history:
         _append_history(transcript, reply)
     # Lessons memory: learn from a failed tool or from the user correcting the previous answer.
