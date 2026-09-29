@@ -184,6 +184,10 @@ Rules:
   `--color-border-strong`); a disabled `.btn-primary` would have shown dark text on a dark page; Home KPI strips
   stacked one per row and stretched whole rows (now 2-up); last hard-coded hexes tokenised; DASHBOARD.md corrected.
 
+- **Autonomy page stuck loading on a direct link (2026-09-29, found while making the feature video)**: a direct
+  `#/autonomy` load routed before `autonomy.js` ran, so the router's `refreshAutonomy()` call was missed and the page
+  showed its skeleton until the 10 s timer. `autonomy.js` now calls it once when it loads (same fix as the Toolbox).
+
 ## Public release: Jarvis4U (2026-09-28)
 
 - This repo stays **private** (full history, personal notes, own skills). The public repo **Jarvis4U** is a
@@ -1715,7 +1719,8 @@ row there each phase rather than only stating the total in chat.
 | 86 (P5: Research pack (4 skills) + 3 autonomy email recipes that start switched off; 2 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 87 (cleared overdue reminder stayed in the briefing/urgent cards: skip covered commitments, close the commitment on cancel; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
 | 88 (Pro audit: open_url file-launch hole, routine core-phrase hijack, scheduled Pro skills gated, agents created off, theme readability, builder rules, data framing in 16 skills; 12 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
-| **Running total (final)** | | **~2774 min** | **~$169.45–$237.95** |
+| 89 (feature video: demo dashboard with made-up data, 18 captioned scenes, 57 s 1080p MP4; Autonomy direct-load fix) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~2804 min** | **~$171.45–$240.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
