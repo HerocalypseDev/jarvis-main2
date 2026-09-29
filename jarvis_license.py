@@ -72,6 +72,8 @@ def verify(key: str, public_key_b64: str | None = None) -> dict:
     try:
         data = json.loads(payload.decode("utf-8"))
     except Exception:
+        data = None
+    if not isinstance(data, dict):   # never raise from a check that runs on every command
         return {"valid": False, "reason": "This license key is damaged. Copy it again from your email."}
     info = {"email": str(data.get("e") or ""), "tier": str(data.get("t") or ""),
             "issued": str(data.get("i") or ""), "id": str(data.get("n") or "")}

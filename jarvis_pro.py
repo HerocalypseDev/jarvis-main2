@@ -86,6 +86,40 @@ def themes() -> list[dict]:
     return out
 
 
+# The free stylesheet's own values (dashboard_static/style.css :root) for the tokens the readability check uses.
+_DEFAULT_TOKENS = {"--color-bg-primary": "#050b14", "--color-bg-secondary": "#0a1420",
+                   "--color-text-primary": "#dcedf5", "--color-text-secondary": "#a9c4d3"}
+MIN_TEXT_CONTRAST = 4.5
+_HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _luminance(hex_colour: str) -> float | None:
+    m = _HEX_RE.match(hex_colour.strip())
+    if not m:
+        return None
+    h = m.group(1)
+    h = "".join(c * 2 for c in h) if len(h) == 3 else h
+    ch = []
+    for i in (0, 2, 4):
+        c = int(h[i:i + 2], 16) / 255
+        ch.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+
+
+def _readable(tokens: dict) -> bool:
+    """Body text (which is also the approval bar's text) must stay readable on the page and panel
+    backgrounds: plain hex colours with >= 4.5:1 contrast. A theme that fails is refused whole."""
+    for text in ("--color-text-primary", "--color-text-secondary"):
+        for bg in ("--color-bg-primary", "--color-bg-secondary"):
+            lt, lb = _luminance(tokens.get(text, _DEFAULT_TOKENS[text])), _luminance(tokens.get(bg, _DEFAULT_TOKENS[bg]))
+            if lt is None or lb is None:
+                return False
+            hi, lo = max(lt, lb), min(lt, lb)
+            if (hi + 0.05) / (lo + 0.05) < MIN_TEXT_CONTRAST:
+                return False
+    return True
+
+
 def theme_css(theme_id: str) -> str | None:
     """A theme rebuilt from its colour-token declarations only: `--color-*` / `--shadow-glow` with
     plain colour values. Anything else in the file (url(), @import, selectors, other properties) is
@@ -95,15 +129,17 @@ def theme_css(theme_id: str) -> str | None:
     path = pro_dir() / "themes" / f"{theme_id}.css"
     if not path.is_file():
         return None
-    decls = []
+    tokens: dict[str, str] = {}
     for name, value in _DECL_RE.findall(path.read_text(encoding="utf-8", errors="replace")):
         value = value.strip()
         if not (name.startswith("--color-") or name == "--shadow-glow"):
             continue
         if name.startswith(_LOCKED) or "url" in value.lower() or not _SAFE_VALUE_RE.match(value):
             continue
-        decls.append(f"  {name}: {value};")
-    return ":root {\n" + "\n".join(decls) + "\n}\n" if decls else None
+        tokens[name] = value
+    if not tokens or not _readable(tokens):
+        return None
+    return ":root {\n" + "\n".join(f"  {k}: {v};" for k, v in tokens.items()) + "\n}\n"
 
 
 def status() -> dict:

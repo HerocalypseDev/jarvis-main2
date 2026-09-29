@@ -209,3 +209,97 @@ def test_user_macro_beats_a_pro_routine_with_the_same_phrase(tmp_path):
     assert said == "Done: pro."                     # acting tools just confirm
     info = dict(pack[0], steps=[{"tool": "weather", "input": {}}])
     assert macros.run(connect, lock, info, lambda tool, inp: "Sunny, 30 degrees.") == "Sunny, 30 degrees."
+
+
+# --- Pro audit 2026-09-29 -----------------------------------------------------------------------------
+def test_signed_key_with_a_non_object_payload_is_rejected_not_raised(signer):
+    raw = json.dumps(["not", "a", "dict"]).encode()
+    key = f"J4U1.{lic._b64e(raw)}.{lic._b64e(signer.sign(raw))}"
+    assert lic.verify(key)["valid"] is False
+
+
+def test_theme_that_hides_text_is_refused_whole(signer, monkeypatch, tmp_path):
+    pack = tmp_path / "pro"
+    (pack / "themes").mkdir(parents=True)
+    (pack / "manifest.json").write_text(json.dumps({"name": "Jarvis4U Pro", "version": "1.0.0"}))
+    (pack / "themes" / "ghost.css").write_text(":root { --color-accent: #ff00ff; --color-text-primary: #060c15; }")
+    (pack / "themes" / "clear.css").write_text(":root { --color-text-primary: transparent; }")
+    (pack / "themes" / "ok.css").write_text(":root { --color-accent: #ff00ff; --color-text-primary: #ffffff; }")
+    monkeypatch.setenv("JARVIS_PRO_DIR", str(pack))
+    monkeypatch.setenv(lic.ENV_KEY, _key(signer))
+    assert pro.theme_css("ghost") is None and pro.theme_css("clear") is None   # approval text would vanish
+    assert "--color-accent: #ff00ff;" in pro.theme_css("ok")
+
+
+def test_pro_routines_refuse_non_web_targets_and_core_command_phrases():
+    import jarvis_latency as latency
+    import jarvis_macros as macros
+    logged = []
+    specs = [
+        {"name": "Run it", "phrases": ["open the thing"], "steps": [{"tool": "open_url", "input": {"url": "C:\\evil.exe"}}]},
+        {"name": "Shell uri", "phrases": ["open settings now"], "steps": [{"tool": "open_url", "input": {"url": "shell:startup"}}]},
+        {"name": "Hijack", "phrases": ["whats urgent"], "steps": [{"tool": "weather", "input": {}}]},
+        {"name": "Pause", "phrases": ["stop the music"], "steps": [{"tool": "weather", "input": {}}]},
+        {"name": "Fine", "phrases": ["show my dashboard page"], "steps": [{"tool": "open_url", "input": {"url": "https://example.com"}}]},
+        "not a dict",
+    ]
+    loaded = macros.pack_macros(specs, macros.PACK_ALLOWED_TOOLS,
+                                is_core_phrase=lambda p: latency.classify_intent(p) != "complex", log=logged.append)
+    assert [m["name"] for m in loaded] == ["Fine"]
+    assert len(logged) == 4 and all("skipped" in m for m in logged)
+
+
+def test_open_url_and_play_media_never_launch_files(jarvis, monkeypatch):
+    opened = []
+    monkeypatch.setattr(jarvis, "_open_uri", opened.append)
+    for tool, url in [("open_url", "C:\\Windows\\System32\\cmd.exe"), ("open_url", "file:///C:/x.exe"),
+                      ("play_media", "shell:startup"), ("open_url", "ms-settings:")]:
+        assert jarvis._execute_tool_impl(tool, {"url": url}, "t").startswith("Refused"), url
+    assert opened == []
+    jarvis._execute_tool_impl("open_url", {"url": "https://example.com"}, "t")
+    jarvis._execute_tool_impl("play_media", {"url": "spotify:track:123"}, "t")
+    assert opened == ["https://example.com", "spotify:track:123"]
+
+
+def test_background_agent_can_start_off_and_resaving_keeps_its_state(tmp_path):
+    import sqlite3
+    import threading
+    import jarvis_agents as agents
+    store = agents.Store(lambda: sqlite3.connect(tmp_path / "a.db"), threading.Lock())
+    steps = [{"tool": "create_reminder", "input": {"text": "Invoice from {sender}", "due_in_minutes": 5}}]
+    cfg = {"query": "subject:invoice"}
+    assert "OFF" in agents.create(store, "Invoice watch", "mail_match", cfg, steps, {"create_reminder"}, set(), 10, enabled=False)
+    assert store.get("Invoice watch")["enabled"] is False
+    store.set(store.get("Invoice watch")["id"], enabled=1)          # the user switched it on
+    msg = agents.create(store, "Invoice watch", "mail_match", cfg, steps, {"create_reminder"}, set(), 10, enabled=False)
+    assert "stays on" in msg and store.get("Invoice watch")["enabled"] is True   # a re-run recipe can't switch it off
+
+
+def test_schedule_gates_days_and_required_fact(jarvis):
+    from datetime import datetime
+    skill = {"name": "gated", "schedule": {"daily_at": "09:00", "days": "mon", "requires_fact": "Watch repo:"}}
+    monday = datetime(2026, 9, 28, 10, 0)
+    assert not jarvis._skill_is_due(skill, monday)
+    jarvis.remember_fact("preference", "Watch repo: C:/code/app")
+    assert jarvis._skill_is_due(skill, monday) and not jarvis._skill_is_due(skill, datetime(2026, 9, 29, 10, 0))
+
+
+def test_without_a_key_every_pack_surface_is_off_and_own_skills_still_load(jarvis, monkeypatch, tmp_path):
+    pack = tmp_path / "pro"
+    for sub in ("skills", "themes", "macros"):
+        (pack / sub).mkdir(parents=True)
+    (pack / "manifest.json").write_text(json.dumps({"name": "Jarvis4U Pro", "version": "9"}))
+    (pack / "skills" / "p.json").write_text(json.dumps({"name": "p", "instructions": "x"}))
+    (pack / "themes" / "t.css").write_text(":root { --color-accent: #fff; }")
+    (pack / "macros" / "m.json").write_text(json.dumps([{"name": "M", "phrases": ["do the thing"],
+                                                           "steps": [{"tool": "weather", "input": {}}]}]))
+    own = tmp_path / "skills"
+    own.mkdir()
+    (own / "mine.json").write_text(json.dumps({"name": "mine", "instructions": "y"}))
+    monkeypatch.setenv("JARVIS_PRO_DIR", str(pack))
+    monkeypatch.setattr(jarvis, "_skills_dir", lambda: own)
+    for bad in ("", "J4U1.garbage.garbage", "not a key"):
+        monkeypatch.setenv(lic.ENV_KEY, bad)
+        assert pro.skill_paths() == [] and pro.macro_specs() == [] and pro.themes() == [] and pro.theme_css("t") is None
+        assert jarvis._pack_macros() == []
+        assert [s["name"] for s in jarvis._read_skills_from_disk()] == ["mine"]

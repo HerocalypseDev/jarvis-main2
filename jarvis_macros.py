@@ -123,17 +123,51 @@ PACK_ALLOWED_TOOLS = {
 SPEAK_RESULT_TOOLS = {"briefing", "daily_plan", "weather", "system_status"}
 
 
-def pack_macros(specs: list[dict], known_tools: set[str], disabled=()) -> list[dict]:
-    """Validated, read-only macros from an installed Pro pack. A spec that fails the normal checks or
-    uses a tool outside PACK_ALLOWED_TOOLS is skipped (never partially loaded)."""
+def _pack_step_problem(st: dict) -> str | None:
+    tool = str(st.get("tool"))
+    if tool not in PACK_ALLOWED_TOOLS:
+        return f"tool {tool!r} is not allowed in Pro routines"
+    if tool in ("open_url", "play_media"):
+        url = str((st.get("input") or {}).get("url") or "").strip().lower()
+        if not url.startswith(("https://", "http://")):
+            return f"{tool} may only open a web link"   # never a file path / shell: target
+    return None
+
+
+_CONTRACTIONS = {"whats": "what's", "whos": "who's", "im": "i'm", "its": "it's", "dont": "don't", "thats": "that's",
+                 "hows": "how's", "wheres": "where's", "lets": "let's", "ill": "i'll", "youre": "you're",
+                 "isnt": "isn't", "cant": "can't", "wont": "won't"}
+
+
+def _phrase_variants(phrase: str) -> set[str]:
+    """The phrase as written, normalised, and normalised with apostrophes put back ("whats" -> "what's"):
+    matching drops apostrophes, but Jarvis's own intent patterns are written with them."""
+    n = normalize(phrase)
+    return {phrase.strip().lower(), n, " ".join(_CONTRACTIONS.get(w, w) for w in n.split())}
+
+
+def pack_macros(specs: list[dict], known_tools: set[str], disabled=(),
+                is_core_phrase: Callable[[str], bool] | None = None, log: Callable[[str], None] | None = None) -> list[dict]:
+    """Validated, read-only macros from an installed Pro pack. A spec that fails the normal checks, uses a
+    tool outside PACK_ALLOWED_TOOLS, opens a non-web target, or claims a phrase one of Jarvis's own commands
+    answers (`is_core_phrase`, e.g. "what's urgent", "pause") is skipped whole and logged."""
     out, seen = [], set()
     off = {str(n).strip().lower() for n in disabled}
     for spec in specs or []:
-        name = str((spec or {}).get("name") or "").strip()[:60]
-        phrases, steps = spec.get("phrases"), spec.get("steps")
-        if validate(name, phrases, steps, known_tools):
+        if not isinstance(spec, dict):
             continue
-        if any(str(st.get("tool")) not in PACK_ALLOWED_TOOLS for st in steps):
+        name = str(spec.get("name") or "").strip()[:60]
+        phrases, steps = spec.get("phrases"), spec.get("steps")
+        err = validate(name, phrases, steps, known_tools)
+        if not err:
+            err = next((e for e in (_pack_step_problem(st) for st in steps) if e), None)
+        if not err and is_core_phrase:
+            core = [p for p in phrases if any(is_core_phrase(v) for v in _phrase_variants(str(p)))]
+            if core:
+                err = f"phrase {core[0]!r} belongs to one of Jarvis's own commands"
+        if err:
+            if log:
+                log(f"Pro routine {name or '?'!r} skipped: {err}")
             continue
         if name.lower() in seen:
             continue
