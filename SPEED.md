@@ -535,18 +535,24 @@ choice is the biggest lever; the rest is plumbing. Env vars are all on the Setti
   **Not verified live:** real audio playback of the lead-in and the streamed sentences, and the race against a
   genuinely stalled model (unit-tested with a fake stalled transport).
 
-### Free-tier rate limits (found live 2026-09-29: "couldn't reach Gemini" on `gemini-3.5-flash-lite`)
+### Free-tier limits (found live 2026-09-29: "couldn't reach Gemini" on `gemini-3.5-flash-lite`)
 
-- **Cause:** the free tier allows only ~5 requests per minute per model (measured: 5 succeed, the 6th gets a 429 with a
-  17-59 s `retryDelay`; `gemini-flash-lite-latest` ~5, `gemini-3-flash-preview` ~5-6). Jarvis makes 1 request for a plain
-  answer, 2-4 for a tool command, plus background calls, so a few commands in a minute exhaust it. Gemma's limit is on
-  tokens (Jarvis's requests are ~8-10k tokens) and it 429'd after two commands. Limits are per **project** and per model
-  (AI Studio > Rate limit shows the numbers); a paid tier (billing set up in AI Studio) lifts them, instantly for Free -> Tier 1.
-- **What Jarvis now does:** the reason is spoken/logged ("...gemini-3.5-flash-lite is rate limited, try again in about 27
-  seconds", `jarvis_gemini.last_error_reason`); a short 429 is waited out on the stream itself (no wasted extra request);
-  opt-in `JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT=1` hands a 429 to the user-chosen backup model at once instead of waiting
-  (each model has its own limit). Off by default (the 2026-09-25 "no automatic model switching" decision).
+**Correction (same day):** the first write-up here blamed a "~5 requests per minute" limit. That was wrong: the 429s carried
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, i.e. the **daily** allowance was nearly (then fully) used up, which is
+why "5 succeeded, the 6th failed" and why Google's `retryDelay` (17 s, then 2 s) meant nothing. Measured limits on this key:
+`gemini-3.5-flash-lite` **500 requests/day**, `gemini-3.5-flash` **20/day**, per project and per model, reset at midnight
+Pacific time (Google docs). Gemma also hit a tokens-per-minute ceiling with Jarvis's ~8-10k-token requests.
+
+- **What burns the allowance:** every model call from Jarvis (commands, tool rounds, and background calls such as the
+  autonomy mail poll, memory extraction, lessons, daily plan) AND any test or diagnostic run on the same key. **Model sweeps
+  cost quota**: one "which models work" check spends one request on each model, which is a lot when a model only allows 20 a
+  day. Use the free model *list* endpoint for availability and test only the model you use.
+- **What Jarvis now does:** the reason is spoken/logged ("...gemini-3.5-flash-lite has used up its free daily limit of 500
+  requests, it resets at midnight Pacific time; pick another model or enable billing", `jarvis_gemini.last_error_reason`,
+  `quota_kind`); a **daily** 429 is never waited on (one request, no retries); a short per-minute 429 is waited out (also inside
+  the stream); opt-in `JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT=1` hands any 429 to the user-chosen backup model at once (each model
+  has its own allowance, so two models add up). Off by default (the 2026-09-25 "no automatic model switching" decision).
 - **Check from the PC:** `python jarvis_gemini.py` runs `diagnose()`: key source (Windows environment vs `.env`, masked),
-  model, proxy, key check, and a test request over plain urllib AND Jarvis's transport, with Google's exact reply.
-- Tests: `test_speed_gemini.py` (49). Live: an 8-command burst reproduced the failure (8/8) and the backup hand-over.
-
+  model, proxy, key check, and a test request over plain urllib AND Jarvis's transport, naming the exact limit hit.
+- Real fixes: enable billing on the Google AI Studio project (free -> Tier 1 is instant per Google's docs), or spread load over
+  models with the backup switch. Tests: `test_speed_gemini.py`.

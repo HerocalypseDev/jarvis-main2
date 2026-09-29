@@ -45,9 +45,9 @@ SETTINGS: list[dict] = [
      "in parallel when your model hasn't answered within the race time below (the first answer wins). Never used "
      "for quota limits. e.g. gemini-flash-lite-latest. Empty = off.", "live": "env"},
     {"key": "JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT", "label": "Use the backup model when Gemini hits its limit", "kind": "bool",
-     "default": "0", "help": "Free tiers allow only ~5 requests a minute per model. On: when your model says it hit its "
-     "limit (429), the backup model answers at once instead of Jarvis waiting up to a minute. Needs a backup model "
-     "above. Off (default): Jarvis waits, or fails with the reason.", "live": "env"},
+     "default": "0", "help": "Free tiers give every model its own daily allowance (e.g. 500 requests/day on 3.5-flash-lite, 20 on "
+     "3.5-flash). On: when your model says it hit its limit (429), the backup model answers at once instead of "
+     "Jarvis waiting or failing. Needs a backup model above. Off (default): Jarvis waits, or fails with the reason.", "live": "env"},
     {"key": "JARVIS_GEMINI_HEDGE_S", "label": "Race the backup after (seconds)", "kind": "number", "default": "8",
      "help": "Needs a backup model. If Gemini hasn't answered after this long, the backup is asked too. 0 = never.",
      "live": "env"},
