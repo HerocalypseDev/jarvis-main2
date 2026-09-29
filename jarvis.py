@@ -1290,6 +1290,16 @@ def speak_text(text: str) -> None:
                 pending = next_result.get("audio")
 
 
+def _unsafe_open_target(tool_name: str, url) -> bool:
+    """open_url/play_media may open web links (and play_media spotify: URIs) only. Empty = not unsafe
+    (the tool itself says "No URL given")."""
+    u = str(url or "").strip().lower()
+    if not u:
+        return False
+    ok = ("http://", "https://") + (("spotify:",) if tool_name == "play_media" else ())
+    return not u.startswith(ok)
+
+
 def _open_uri(uri: str) -> None:
     u = uri.strip()
     if not u:
@@ -2989,12 +2999,14 @@ BATCH_TOOLS = [
             "(name), enable/disable/delete (name), create (name, trigger_type interval {every_min>=5} | daily "
             "{at 'HH:MM', days 'mon,tue'} | mail_match {query: Gmail search} | file_event {ext, name_contains} | "
             "manual, steps [{tool, input}] using existing tools; {subject}/{sender}/{path} fill in from the "
-            "trigger, only in create_reminder/search-type steps; max_runs_per_day). Changing agents only works from the PC."
+            "trigger, only in create_reminder/search-type steps; max_runs_per_day; enabled=false saves a new agent switched "
+            "off). Changing agents only works from the PC."
         ),
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "log", "run", "enable", "disable", "delete", "create"]},
             "name": {"type": "string"}, "trigger_type": {"type": "string"}, "trigger_config": {"type": "object"},
-            "steps": {"type": "array", "items": {"type": "object"}}, "max_runs_per_day": {"type": "integer"}},
+            "steps": {"type": "array", "items": {"type": "object"}}, "max_runs_per_day": {"type": "integer"},
+            "enabled": {"type": "boolean"}},
             "required": ["action"]},
     },
     {
@@ -4795,10 +4807,31 @@ def list_reminders(include_delivered: bool = False) -> str:
     return "\n".join(lines)
 
 
+def _commitment_handled_elsewhere(c: dict) -> bool:
+    meta = autonomy._meta(c)
+    return bool(meta.get("handled_by_tool") or meta.get("covered_by") or meta.get("executor") == "jarvis")
+
+
+def _close_commitments_for_reminder(text: str) -> int:
+    """The user cleared a reminder: the open autonomy commitment about the same thing (same 60% content-word
+    rule as _reminder_covers) is cancelled too, so it stops showing as overdue in the Autonomy tab/briefing."""
+    have = _content_words(text)
+    if not have:
+        return 0
+    closed = 0
+    for c in autonomy.status()["commitments"]:
+        want = _content_words(c.get("description") or "")
+        if want and len(want & have) / len(want) >= 0.6:
+            autonomy.set_commitment_status(int(c["id"]), "cancelled")
+            closed += 1
+    return closed
+
+
 def cancel_reminder(reminder_id: int) -> str:
     with _memory_db_lock:
         conn = _memory_db_connect()
         try:
+            row = conn.execute("SELECT text FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
             cur = conn.execute(
                 "UPDATE reminders SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL",
                 (datetime.now().isoformat(timespec="seconds"), reminder_id),
@@ -4811,6 +4844,10 @@ def cancel_reminder(reminder_id: int) -> str:
             autonomy.note_reminder_cancelled(reminder_id)
         except Exception as e:
             log.debug("autonomy calibration note failed: %s", e)
+        try:
+            _close_commitments_for_reminder(row[0] if row else "")
+        except Exception as e:
+            log.debug("closing the reminder's commitment failed: %s", e)
     return f"Cancelled reminder #{reminder_id}." if cur.rowcount else f"No active reminder #{reminder_id}."
 
 
@@ -5112,9 +5149,42 @@ def _set_last_skill_run(skill_name: str, when: datetime) -> None:
             conn.close()
 
 
+_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _schedule_gate_ok(schedule: dict, now: datetime) -> bool:
+    """Optional, cheap preconditions a schedule can carry, checked before any model call:
+    "days": "mon" / "mon,thu" (only on those weekdays), and "requires_fact": "Exam:" / ["Exam:", "Homework:"]
+    (only when an active memory fact contains one of them, e.g. the user has saved an exam). Used by Pro pack
+    skills so a check the user never set up costs nothing; any skill may use them."""
+    days = schedule.get("days")
+    if days:
+        wanted = {d.strip().lower()[:3] for d in str(days).split(",") if d.strip()}
+        if _WEEKDAYS[now.weekday()] not in wanted:
+            return False
+    needs = schedule.get("requires_fact")
+    if needs:
+        needs = [needs] if isinstance(needs, str) else [str(n) for n in needs if str(n).strip()]
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                found = any(conn.execute("SELECT 1 FROM memory_facts WHERE superseded_at IS NULL AND "
+                                         "instr(lower(content), lower(?)) > 0 LIMIT 1", (n,)).fetchone()
+                            for n in needs)
+            except sqlite3.Error:
+                found = False
+            finally:
+                conn.close()
+        if not found:
+            return False
+    return True
+
+
 def _skill_is_due(skill: dict, now: datetime) -> bool:
     schedule = skill.get("schedule")
     if not isinstance(schedule, dict):
+        return False
+    if not _schedule_gate_ok(schedule, now):
         return False
     last_run = _get_last_skill_run(skill["name"])
 
@@ -5551,13 +5621,22 @@ def _macro_known_tools() -> set[str]:
 
 
 PRO_MACROS_OFF_KEY = "JARVIS_PRO_ROUTINES_OFF"
+_pack_skip_logged: set[str] = set()
+
+
+def _log_pack_skip_once(msg: str) -> None:
+    if msg not in _pack_skip_logged:   # the pack is re-read on every command: log each problem once
+        _pack_skip_logged.add(msg)
+        log.warning(msg)
 
 
 def _pack_macros() -> list[dict]:
     """Pro routine macros (read-only, low-risk tools only); [] without a valid key or pack."""
     try:
         off = [n for n in (os.environ.get(PRO_MACROS_OFF_KEY) or "").split(",") if n.strip()]
-        return macros.pack_macros(pro.macro_specs(), _macro_known_tools(), off)
+        return macros.pack_macros(pro.macro_specs(), _macro_known_tools(), off,
+                                  is_core_phrase=lambda p: latency.classify_intent(p) != "complex",
+                                  log=_log_pack_skip_once)
     except Exception as e:
         log.warning("Pro routines skipped: %s", e)
         return []
@@ -6400,7 +6479,7 @@ def _background_agents_tool(inp: dict) -> str:
     if action == "create":
         return agents.create(_agent_store, name, str(inp.get("trigger_type") or ""), inp.get("trigger_config") or {},
                              inp.get("steps") or [], _agent_known_tools(), _AGENT_FORBIDDEN_TOOLS,
-                             inp.get("max_runs_per_day") or 24)
+                             inp.get("max_runs_per_day") or 24, enabled=inp.get("enabled", True) is not False)
     a = _agent_store.get(name) if name else None
     if action in ("delete", "enable", "disable", "run", "log") and not a:
         return "No background agent by that name."
@@ -6816,7 +6895,10 @@ def _briefing_fetchers(kind: str, now: datetime) -> dict:
     def deadlines():
         if not autonomy.enabled():
             return []
-        rows = [c for c in autonomy.status()["commitments"] if not c.get("quarantined")]
+        # A commitment a reminder / calendar event / Jarvis job already handles is shown by that thing while
+        # it is live; listing it here too kept "overdue: X" up after the reminder fired or was cleared.
+        rows = [c for c in autonomy.status()["commitments"] if not c.get("quarantined")
+                and not _commitment_handled_elsewhere(c)]
         return briefing.deadline_items(rows, now, 24)
 
     def needs_you():
@@ -7319,6 +7401,10 @@ def _dashboard_get_daily_items() -> list[dict]:
             schedule_desc = f"every {schedule['every_minutes']:g} minutes"
         else:
             schedule_desc = "recurring"
+        if schedule.get("days"):
+            schedule_desc += f" ({schedule['days']} only)"
+        if schedule.get("requires_fact"):
+            schedule_desc += ", once set up"
         last_run = _get_last_skill_run(skill["name"])
         items.append({
             "kind": "skill",
@@ -9933,6 +10019,10 @@ def _execute_tool_impl(
             result = _ensure_whatsapp_desktop() or (
                 "Opened the WhatsApp desktop app instead of WhatsApp Web. "
                 "Use the mcp_whatsapp_* tools to drive it.")
+        elif tool_name in ("open_url", "play_media") and _unsafe_open_target(tool_name, inp.get("url")):
+            # os.startfile runs whatever it is given: a file path, file:// or shell: target would launch a
+            # program, not open a page (a prompt-injected or tampered macro could name an .exe).
+            result = f"Refused: {tool_name} only opens web links (http/https){' or spotify:' if tool_name == 'play_media' else ''}."
         elif tool_name == "open_url":
             url = str(inp.get("url") or "").strip()
             result = f"Opened {url}." if url else "No URL given."

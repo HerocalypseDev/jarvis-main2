@@ -76,7 +76,7 @@ SETTINGS: list[dict] = [
      "help": "Credit, key or outage problems are answered by Gemini instead.", "live": "env"},
     {"key": "JARVIS_GEMINI_MODEL", "label": "Gemini model", "kind": "text", "default": "gemini-3.1-flash-lite",
      "options_from": "gemini",
-     "help": "Models that answered a test prompt in the last hour. If its daily free quota runs out, the next one is used.",
+     "help": "Chat models your Gemini key can use (list refreshed hourly). If this one's daily free quota runs out, pick another here.",
      "live": "env"},
     {"key": "JARVIS_FOLLOWUP_S", "label": "Follow-up listening window (seconds)", "kind": "number", "default": "5",
      "help": "Keep listening this long after a spoken reply. 0 = off.", "live": ("jarvis", "followup.window_s", float)},

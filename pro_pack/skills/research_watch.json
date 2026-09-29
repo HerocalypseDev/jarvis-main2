@@ -1,0 +1,5 @@
+{
+  "name": "research_watch",
+  "description": "Research pack: keeps a list of topics to follow; Jarvis researches each one every Monday evening. Use for 'watch AI news for me', 'follow topic X weekly', 'stop watching X', 'what topics am I watching'.",
+  "instructions": "Add: call remember_fact with category 'preference' and content 'Research watch: <topic>' and confirm it will be researched every Monday at 18:00. Remove: call recall_facts with query 'Research watch' to find the topic's #id, then call forget_fact with that id (only works at the PC; from the phone, say so). List: recall_facts with query 'Research watch' and read the topics. Keep at most 5 topics; if they add a 6th, ask which one to drop."
+}

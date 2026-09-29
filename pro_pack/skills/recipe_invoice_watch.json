@@ -1,0 +1,5 @@
+{
+  "name": "recipe_invoice_watch",
+  "description": "Autonomy recipe: watches Gmail for invoices, bills and receipts and reminds you to check them. Use for 'watch my email for invoices', 'set up invoice watch'.",
+  "instructions": "1. Call background_agents with action 'create', name 'Invoice watch', trigger_type 'mail_match', trigger_config {\"query\": \"subject:(invoice OR bill OR receipt OR payment due) newer_than:2d\"}, steps [{\"tool\": \"create_reminder\", \"input\": {\"text\": \"New invoice or bill from {sender}: {subject}. Check it and pay if needed.\", \"due_in_minutes\": 60}}], max_runs_per_day 10, enabled false. 2. enabled false makes it start switched OFF; never call background_agents with action 'enable' yourself in this recipe. If it says an agent with that name already existed, its on/off state was kept: tell the user that. Tell the user: it's set up but off; they can test it once from Toolbox -> Background agents (Run) and switch it on there when happy. Changing agents only works from the PC, so if this was asked from the phone, say that and stop. This recipe only creates reminders; it never pays, replies or opens links."
+}

@@ -94,7 +94,7 @@ hard-coded cyan rgba glows (brand text-shadow, card top highlight, nav active gr
 `--color-accent-*` tokens in the free stylesheet so themes recolour them too. Contrast check >= 4.5:1
 for text tokens, headless screenshot of each theme.
 
-## Phase 5 - Research pack + Autonomy recipes (skills only)
+## Phase 5 - Research pack + Autonomy recipes (skills only) - SHIPPED in pack 1.5.0
 
 Research: `research_deep_dive` (plan -> several `web_search` rounds -> sourced .docx with a sources list),
 `research_compare` (A vs B table), `research_watch` (creates a weekly `background_agents` watch; user
