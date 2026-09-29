@@ -1784,7 +1784,11 @@ AGENT_TOOLS = [
             "stdout/stderr/exit code. A narrow tier of commands that would shut down/restart/"
             "sign out the machine, reformat a disk, or recursively wipe an entire drive or the "
             "whole user profile is staged instead of run immediately, and needs a spoken \"yes\" "
-            "on the next turn — everything else executes right away with no confirmation."
+            "on the next turn — everything else executes right away with no confirmation. This is "
+            "PowerShell, NOT cmd.exe: cmd switches such as `dir /s /b` or `dir C:\\ -s -b` fail. To find a "
+            "file by name use quick_search; without Everything, Get-ChildItem -Path $env:USERPROFILE "
+            "-Recurse -Filter '*name*' -ErrorAction SilentlyContinue | Select-Object -First 20, never a "
+            "whole-drive scan."
         ),
         "input_schema": {
             "type": "object",

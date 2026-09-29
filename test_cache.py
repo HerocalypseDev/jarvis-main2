@@ -950,3 +950,15 @@ def test_background_task_status_is_never_reply_cached(jarvis, monkeypatch):
     n = calls["n"]
     jarvis.run_agent_loop("do i have any background tasks")
     assert calls["n"] > n
+
+
+def test_file_find_guidance_is_powershell_not_cmd(jarvis):
+    """Found live 2026-09-29: with Everything missing the model improvised `dir C:\\ -s -b *x*` (cmd
+    syntax) in PowerShell and it failed. The run_shell description and the quick_search hint must say
+    PowerShell and give a bounded Get-ChildItem instead."""
+    import jarvis_everything
+    desc = next(t for t in jarvis.AGENT_TOOLS if t["name"] == "run_shell")["description"]
+    assert "NOT cmd.exe" in desc and "Get-ChildItem" in desc
+    hint = jarvis_everything.SETUP_HINT
+    assert "Get-ChildItem" in hint and "USERPROFILE" in hint and "PowerShell" in hint
+    assert jarvis_everything.format_results({"ok": False, "error": hint, "results": []}) == hint

@@ -1758,6 +1758,16 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   `test_cache.py::test_prompt_fills_forms_with_ui_tools_and_never_guesses_a_python_path` and eval case
   `form-fill-no-guessed-python`. If it recurs, add a code-level check in `run_shell` for a nonexistent python.exe.
 
+## File-find on a PC without Everything (2026-09-29, found live)
+
+- "Find a file on my laptop" ran `dir C:\ -s -b *weird*` through `run_shell` and failed: that is cmd.exe syntax and
+  `run_shell` is PowerShell. Cause: `quick_search` needs voidtools Everything; without it, it returns a setup hint and the
+  model improvised. `jarvis_everything.SETUP_HINT` and the `run_shell` description now say "PowerShell, not cmd" and give a
+  bounded `Get-ChildItem $env:USERPROFILE -Recurse -Filter ... | Select-Object -First 20`, never a whole-drive scan.
+  Still no disk-walk fallback in Jarvis's own code (deliberate). Best fix on the PC: install Everything + enable its
+  HTTP server. Prompt-level, so not deterministic; pinned by `test_cache.py::test_file_find_guidance_is_powershell_not_cmd`
+  (written here but not run: this container's Python can't install the pinned requirements).
+
 ## Hand-off guard (2026-09-25)
 
 - **Found live**: on Gemini flash-lite, Jarvis replied "I'll hand that off to James" four times
