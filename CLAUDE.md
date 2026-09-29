@@ -1820,6 +1820,16 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   subscription); only the search query goes to Perplexity. The 10-min `web_search` tool cache still applies.
 - Tests: `test_perplexity.py` (4, urlopen faked). **Not verified live** (no key in the cloud session).
 
+## File-find on a PC without Everything (2026-09-29, found live)
+
+- "Find a file on my laptop" ran `dir C:\ -s -b *weird*` through `run_shell` and failed: that is cmd.exe syntax and
+  `run_shell` is PowerShell. Cause: `quick_search` needs voidtools Everything; without it, it returns a setup hint and the
+  model improvised. `jarvis_everything.SETUP_HINT` and the `run_shell` description now say "PowerShell, not cmd" and give a
+  bounded `Get-ChildItem $env:USERPROFILE -Recurse -Filter ... | Select-Object -First 20`, never a whole-drive scan.
+  Still no disk-walk fallback in Jarvis's own code (deliberate). Best fix on the PC: install Everything + enable its
+  HTTP server. Prompt-level, so not deterministic; pinned by `test_cache.py::test_file_find_guidance_is_powershell_not_cmd`
+  (passes; first run 2026-09-29 while merging the Perplexity change).
+
 ## Hand-off guard (2026-09-25)
 
 - **Found live**: on Gemini flash-lite, Jarvis replied "I'll hand that off to James" four times
