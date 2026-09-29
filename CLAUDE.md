@@ -225,8 +225,9 @@ Rules:
   .../activate` verifies before saving to `.env` as `JARVIS_PRO_LICENSE_KEY` (write-only in Settings),
   `.../deactivate`). The key is never returned to the browser or written to the audit trail (email only).
 - Free features are never gated, safety/privacy features stay free. Tests: `test_license.py` (8).
-- Not done yet: the owner's `--init` + public key, the Pro pack content (Student pack, themes), publishing
-  this to Jarvis4U (wait for the public key so the public build can accept keys).
+- Owner ran `--init` 2026-09-29; `PUBLIC_KEY_B64` = `JIvxSUPK_7GUrS5m6YsP0ATjXQq_DKlWB79gLXOVc_0` (public, safe). The private
+  `.pem` is on the owner's PC only; changing the public key would invalidate every key already sold.
+  Not done yet: the Pro pack content (Student pack, themes).
 
 ## Speech shaping (2026-09-18)
 

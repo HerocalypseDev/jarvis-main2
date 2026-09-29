@@ -25,7 +25,7 @@ PREFIX = "J4U1"
 
 # Set once by the seller: `python tools/make_license.py --init` prints this value. Empty = this
 # build has no Pro license key yet, and every key is reported as "not available in this build".
-PUBLIC_KEY_B64 = ""
+PUBLIC_KEY_B64 = "JIvxSUPK_7GUrS5m6YsP0ATjXQq_DKlWB79gLXOVc_0"
 
 # Key ids (the "n" field) that were refunded or leaked. Takes effect in the next release.
 REVOKED_IDS: frozenset[str] = frozenset()
