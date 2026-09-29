@@ -52,6 +52,7 @@ EXCLUDE = (
     "pro_pack/",                 # the PAID Pro pack source: must never reach the public repo
     "tools/build_pro_pack.py",
     "test_pro_pack.py",
+    "PRO_ROADMAP.md",            # private business plan
     "dist/",
     "session_state.json",
     "jarvis_memory.db",

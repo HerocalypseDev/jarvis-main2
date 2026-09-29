@@ -15,7 +15,7 @@ def test_pack_is_never_part_of_the_public_export():
     ex = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ex)
     for path in ("pro_pack/skills/study_session.json", "pro_pack/manifest.json", "tools/build_pro_pack.py",
-                 "test_pro_pack.py", "dist/Jarvis4U-Pro-1.0.0.zip"):
+                 "test_pro_pack.py", "dist/Jarvis4U-Pro-1.0.0.zip", "PRO_ROADMAP.md"):
         assert ex._excluded(path), path
 
 
