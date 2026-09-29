@@ -10080,9 +10080,9 @@ SCREEN_KIT_TOOLS = {
 }
 
 
-def _narrowing_core(transcript: str) -> set[str]:
+def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
     core = set(tool_router.CORE_TOOLS)
-    if _ON_SCREEN_RE.search(transcript or "") or re.search(r"\bscreen\b", transcript or "", re.I):
+    if on_screen or _ON_SCREEN_RE.search(transcript or "") or re.search(r"\bscreen\b", transcript or "", re.I):
         core |= SCREEN_KIT_TOOLS
     return core
 
@@ -10095,6 +10095,32 @@ _READ_SCREEN_NOTHING_TYPED = (
     "mcp_windows_Snapshot to find each answer field, mcp_windows_Click it, then mcp_windows_Type the text, and "
     "Snapshot again to check. If the mcp_windows_* tools aren't available, tell the user to click the first "
     "answer box and then use type_text; never say it was written unless a typing tool ran.]")
+
+
+def _previous_user_text(messages: list[dict]) -> str:
+    """The user's previous command in this conversation (plain text), or ''."""
+    for m in reversed(messages or []):
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            texts = [str(b.get("text", "")) for b in c if isinstance(b, dict) and b.get("type") == "text"]
+            if texts:
+                return " ".join(texts)
+    return ""
+
+
+def _on_screen_command(transcript: str, history: list[dict]) -> bool:
+    """This command is about what's on the user's screen, directly or as a short follow-up to one.
+    Found live 2026-09-29: "do it again" after an on-screen form request didn't mention the screen, so the
+    on-screen rules switched off and the model opened a new browser window each time."""
+    if _means_what_is_on_screen(transcript):
+        return True
+    words = len((transcript or "").split())
+    return (0 < words <= 14 and not _OPEN_A_PAGE_RE.search(transcript or "")
+            and _means_what_is_on_screen(_previous_user_text(history)))
 
 
 def _means_what_is_on_screen(transcript: str) -> bool:
@@ -10132,7 +10158,8 @@ def _execute_tool_impl(
             elif tool_name.startswith("mcp_whatsapp_") and tool_name.endswith("_navigate"):
                 result = ("Don't navigate the WhatsApp app anywhere: it is the desktop app, already "
                           "on WhatsApp. Use browser_snapshot, then click/type instead.")
-            elif tool_name.startswith("mcp_browser_") and _means_what_is_on_screen(transcript):
+            elif tool_name.startswith("mcp_browser_") and (
+                    _means_what_is_on_screen(transcript) or getattr(_command_ctx, "on_screen", False)):
                 result = _ON_SCREEN_BROWSER_REFUSAL
             elif tool_name.startswith("mcp_browser_") and _is_whatsapp_web_url(inp.get("url")):
                 result = _ensure_whatsapp_desktop() or (
@@ -10950,13 +10977,15 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     # its own separate cached prefix from the full-tool-list one (Anthropic caches by exact
     # prefix match), so its cache hit rate ramps up independently as these commands repeat.
     full_tools = AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()
+    on_screen = _on_screen_command(transcript, messages[:-1])
+    _command_ctx.on_screen = on_screen  # read by the mcp_browser_* guard in _execute_tool_impl
     if tools_override is not None:
         tools = tools_override
     elif _tool_narrowing_on():
         # Tool narrowing (2026-09-28): a short, ranked list + find_tools, instead of every schema.
         tools = tool_router.select(transcript, full_tools, limit=TOOL_NARROWING_LIMIT,
                                    context=_recent_history_text(messages[:-1]),
-                                   core=_narrowing_core(transcript))
+                                   core=_narrowing_core(transcript, on_screen))
     else:
         tools = full_tools
     tone_line = voice_tone.tone_context_line(tone) if tone else ""

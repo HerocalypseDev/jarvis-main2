@@ -866,6 +866,47 @@ def test_on_screen_command_gets_typing_tools_and_no_fake_written_claim(jarvis, m
     assert not jarvis._unbacked_claims("Here are answers you can type into the form.", [])
 
 
+def test_do_it_again_after_an_on_screen_request_keeps_the_on_screen_rules(jarvis, monkeypatch):
+    # Found live 2026-09-29: "do it again" after "fill the form on my screen" didn't mention the screen, so the
+    # mcp_browser_* guard and the typing tools switched off and every retry opened a new browser window.
+    prev = [{"role": "user", "content": "answer the questions and write it in the provided space on my screen"},
+            {"role": "assistant", "content": "Done."}]
+    assert jarvis._on_screen_command("do it again", prev)
+    assert jarvis._on_screen_command("you skipped some questions, fix it", prev)
+    assert not jarvis._on_screen_command("open youtube", prev)
+    assert not jarvis._on_screen_command("do it again", [{"role": "user", "content": "set a timer"}])
+    assert "mcp_windows_Type" in jarvis._narrowing_core("do it again", True)
+    ran = []
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "ok")
+    monkeypatch.setattr(jarvis, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis._command_ctx, "on_screen", True, raising=False)
+    out = jarvis._execute_tool_impl("mcp_browser_browser_navigate", {"url": "https://forms.gle/x"}, "do it again")
+    assert ran == [] and "mcp_windows_" in out
+
+
+def test_collect_debug_report_masks_secrets(tmp_path, monkeypatch):
+    import sqlite3, importlib.util
+    from datetime import datetime
+    spec = importlib.util.spec_from_file_location("collect_debug", "tools/collect_debug.py")
+    cd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cd)
+    db = tmp_path / "m.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE action_audit (id INTEGER PRIMARY KEY, timestamp TEXT, transcript TEXT, tool_name TEXT, tool_input TEXT, result TEXT)")
+    conn.execute("CREATE TABLE dashboard_sessions (id INTEGER PRIMARY KEY, source TEXT, transcript TEXT, status TEXT, reply TEXT, started_at TEXT, ended_at TEXT)")
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute("INSERT INTO action_audit (timestamp, transcript, tool_name, tool_input, result) VALUES (?,?,?,?,?)",
+                 (now, "fill it", "mcp_windows_Type", '{"text": "my key sk-ant-abcdefghijklmnop123"}', "Typed"))
+    conn.execute("INSERT INTO dashboard_sessions (source, transcript, status, reply, started_at) VALUES (?,?,?,?,?)",
+                 ("voice", "email bob@example.com", "done", "ok", now))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(cd, "_env_secret_values", lambda: ["hunter2secret"])
+    monkeypatch.setattr(cd, "_log_lines", lambda since: [(now, "log: token hunter2secret used")])
+    out = cd.build_report(1, db=db)
+    assert "mcp_windows_Type" in out and "email b***@example.com" in out
+    assert "sk-ant-" not in out and "hunter2secret" not in out and out.count("[SECRET]") == 2
+
+
 def test_whatsapp_uses_desktop_app_never_web(jarvis, monkeypatch):
     ran, ensured = [], []
     monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "ok")
