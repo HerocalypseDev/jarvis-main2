@@ -42,6 +42,14 @@ Student pack - just ask Jarvis:
   "Make notes on the French revolution"
   (every evening at 8pm Jarvis quietly checks what's due and only speaks if something is close)
 
+Developer pack - just ask Jarvis:
+  "Brief me on this repo"                      / "Write my standup"
+  "Explain this error" (copy the error first)  / "Why is CI failing?" (copy the log first)
+  "Review my changes in <folder>"
+  "Hand this to Claude Code properly: <task>"
+  "Watch <folder> for code health" (then a quiet 9am check that only speaks if something risky shows up)
+  Developer skills only ever run read-only git commands; they never commit, push or edit your code.
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 
@@ -49,13 +57,19 @@ Need help? Reply to your purchase email.
 """
 
 
-def _known_tools() -> set[str]:
+IGNORE_WORDS: set[str] = set()
+
+
+def _known_tools() -> tuple[set[str], set[str]]:
+    """(tool names, parameter names across all tools)."""
     os.environ.setdefault("JARVIS_MEMORY_DB_PATH", str(DIST / "_build_check.db"))
     os.environ.setdefault("ANTHROPIC_API_KEY", "build-check")
     sys.path.insert(0, str(ROOT))
     import jarvis  # noqa: E402
 
-    return {t["name"] for t in jarvis.AGENT_TOOLS}
+    tools = {t["name"] for t in jarvis.AGENT_TOOLS}
+    params = {k for t in jarvis.AGENT_TOOLS for k in ((t.get("input_schema") or {}).get("properties") or {})}
+    return tools, params
 
 
 def check() -> dict:
@@ -63,7 +77,8 @@ def check() -> dict:
     for key in ("name", "version"):
         if not manifest.get(key):
             raise SystemExit(f"manifest.json needs a {key!r}")
-    tools = _known_tools()
+    tools, params = _known_tools()
+    skill_names = {p.stem for p in (SRC / "skills").glob("*.json")}
     names = set()
     for path in sorted((SRC / "skills").glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -73,9 +88,10 @@ def check() -> dict:
         if name.lower() in names:
             raise SystemExit(f"{path.name}: duplicate skill name {name!r}")
         names.add(name.lower())
-        mentioned = set(re.findall(r"\b[a-z]+_[a-z_]+\b", data["instructions"]))
-        unknown = {m for m in mentioned if m.endswith(("_reminder", "_reminders", "_facts", "_fact", "_file",
-                                                        "_search", "_mode", "_files")) and m not in tools}
+        # Every snake_case word must be a real tool, a real tool parameter, or another pack skill, so a
+        # typo'd or invented tool name can never ship.
+        mentioned = set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", data["instructions"]))
+        unknown = mentioned - tools - params - skill_names - IGNORE_WORDS
         if unknown:
             raise SystemExit(f"{path.name}: names tools Jarvis doesn't have: {sorted(unknown)}")
     import jarvis_pro

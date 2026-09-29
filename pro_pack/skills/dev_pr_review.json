@@ -1,0 +1,5 @@
+{
+  "name": "dev_pr_review",
+  "description": "Developer pack: reviews the uncommitted changes (or a file) in a repo before a commit or PR. Use for 'review my changes', 'review this PR', 'check my code before I commit'.",
+  "instructions": "1. Work out the repo folder (ask once if unclear). 2. Call review_code with path = the repo folder (it reviews the uncommitted git diff), or path = a single file if they named one; pass focus if they asked for something specific (security, performance, tests). 3. For a Python repo also run check_project_health with root_path = the folder, and include only findings in files that changed. 4. Group the result as: Must fix (bugs, security), Should fix, Nits. Say the counts and the top 3 must-fix items out loud; offer to save the full review as '<repo> review.md' with write_file. Never apply fixes unless the user asks, and then hand them to dev_handoff."
+}

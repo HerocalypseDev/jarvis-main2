@@ -29,9 +29,9 @@ def test_student_pack_loads_through_the_normal_loader(monkeypatch):
     monkeypatch.setattr(lic, "PUBLIC_KEY_B64", base64.urlsafe_b64encode(raw).rstrip(b"=").decode())
     monkeypatch.setenv(lic.ENV_KEY, lic.sign({"e": "a@b.c", "t": "pro", "i": "2026-09-29", "n": "t1"}, private))
     monkeypatch.setenv("JARVIS_PRO_DIR", str(PACK))
-    names = sorted(p.stem for p in pro.skill_paths())
-    assert names == ["exam_countdown", "homework_tracker", "make_notes", "quiz_me", "revision_timetable",
-                     "study_checkin", "study_session"]
+    names = {p.stem for p in pro.skill_paths()}
+    assert {"exam_countdown", "homework_tracker", "make_notes", "quiz_me", "revision_timetable",
+            "study_checkin", "study_session"} <= names
     for p in pro.skill_paths():
         data = json.loads(p.read_text(encoding="utf-8"))
         assert data["name"] == p.stem and data["instructions"].strip()
@@ -42,3 +42,24 @@ def test_student_pack_loads_through_the_normal_loader(monkeypatch):
     for t in pro.themes():
         css = pro.theme_css(t["id"])
         assert "--color-accent" in css and "--color-error" not in css
+
+
+def test_pack_passes_the_build_validator_and_names_only_real_tools():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("build_pro_pack", ROOT / "tools" / "build_pro_pack.py")
+    bp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bp)
+    manifest = bp.check()            # raises SystemExit on an invented tool name, bad JSON, bad theme
+    assert manifest["version"] and "developer" in manifest["packs"]
+
+
+def test_developer_skills_only_use_read_only_git():
+    dev = sorted((PACK / "skills").glob("dev_*.json"))
+    assert len(dev) == 7
+    for path in dev:
+        text = json.loads(path.read_text(encoding="utf-8"))["instructions"]
+        if "run_shell" in text:
+            assert "READ-ONLY git" in text and "Never commit, push" in text, path.name
+        assert "git push" not in text.replace("Never commit, push", "")
+    watch = json.loads((PACK / "skills" / "dev_health_watch.json").read_text(encoding="utf-8"))
+    assert watch["schedule"] == {"daily_at": "09:00"} and "NO spoken reply" in watch["instructions"]

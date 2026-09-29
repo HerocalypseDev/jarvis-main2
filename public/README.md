@@ -38,7 +38,8 @@ Jarvis4U is free and open source, and it stays that way. If it saves you time, y
 
 [**Get Jarvis4U Pro**](https://selar.com/1954zy6955) for extras on top of the free version: the
 **Student pack** (study sessions, exam countdowns, homework tracker, quizzes, revision timetables,
-revision notes), **Pro dashboard themes**, and new packs as they're released.
+revision notes), the **Developer pack** (repo briefings, error explainer, change review, CI summaries,
+Claude Code hand-offs, standups), **Pro dashboard themes**, and new packs as they're released.
 Nothing in the free version is taken away or locked.
 
 After buying you get a download (the Pro pack) and a license key by email:
