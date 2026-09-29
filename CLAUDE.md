@@ -1720,7 +1720,8 @@ row there each phase rather than only stating the total in chat.
 | 87 (cleared overdue reminder stayed in the briefing/urgent cards: skip covered commitments, close the commitment on cancel; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
 | 88 (Pro audit: open_url file-launch hole, routine core-phrase hijack, scheduled Pro skills gated, agents created off, theme readability, builder rules, data framing in 16 skills; 12 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
 | 89 (feature video: demo dashboard with made-up data, 18 captioned scenes, 57 s 1080p MP4; Autonomy direct-load fix) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~2804 min** | **~$171.45–$240.75** |
+| 90 (feature video v2: frame-stepped motion (camera moves, scrolling, cursor, animated cards/captions, varied transitions), Piper voice-over, original synthesized music ducked under speech; 118 s 1080p) | Opus 5.5 | ~45 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~2849 min** | **~$174.45–$244.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
