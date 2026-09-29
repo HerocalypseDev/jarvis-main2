@@ -96,6 +96,8 @@ import jarvis_chief as chief
 import jarvis_voice_usage as voice_usage
 import jarvis_netscan as netscan
 import jarvis_settings as settings
+import jarvis_license as license_mod
+import jarvis_pro as pro
 import jarvis_clipboard_history as clip_history
 import jarvis_everything as everything
 import jarvis_macros as macros
@@ -4963,9 +4965,8 @@ def _load_skills() -> list[dict]:
     """Skills from disk, re-parsed only when a skills/*.json file was added, removed or
     modified (checked via a cheap name+mtime signature) instead of on every agent turn."""
     global _skills_cache
-    directory = _skills_dir()
     try:
-        sig = tuple((p.name, p.stat().st_mtime_ns) for p in sorted(directory.glob("*.json")))
+        sig = tuple((str(p), p.stat().st_mtime_ns) for p in _skill_file_paths())
     except OSError:
         return _read_skills_from_disk()
     cached = _skills_cache
@@ -4976,21 +4977,36 @@ def _load_skills() -> list[dict]:
     return [dict(s) for s in skills]
 
 
-def _read_skills_from_disk() -> list[dict]:
-    """Reads every *.json skill file from the skills directory. A malformed file is skipped
-    with a warning instead of breaking the others or the whole system prompt."""
+def _skill_file_paths() -> list[Path]:
+    """The user's own skills/*.json, then (only with a valid Pro license and an installed Pro pack)
+    pro/skills/*.json. Pro skills are ordinary skills: same tools, same audit trail and gate."""
     directory = _skills_dir()
-    if not directory.is_dir():
-        return []
+    own = sorted(directory.glob("*.json")) if directory.is_dir() else []
+    try:
+        extra = pro.skill_paths()
+    except Exception as e:  # a broken Pro pack must never break the free skills
+        log.warning("Pro pack skipped: %s", e)
+        extra = []
+    return own + extra
+
+
+def _read_skills_from_disk() -> list[dict]:
+    """Reads every *.json skill file (own skills first, then Pro pack skills). A malformed file is
+    skipped with a warning instead of breaking the others or the whole system prompt. A Pro skill
+    with the same name as one of the user's own skills is ignored (the user's wins)."""
     skills = []
-    for path in sorted(directory.glob("*.json")):
+    seen: set[str] = set()
+    for path in _skill_file_paths():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             name = str(data.get("name") or path.stem).strip()
             description = str(data.get("description") or "").strip()
             instructions = str(data.get("instructions") or "").strip()
             schedule = data.get("schedule")
+            if name and instructions and name.lower() in seen:
+                continue
             if name and instructions:
+                seen.add(name.lower())
                 skill: dict = {"name": name, "description": description, "instructions": instructions}
                 if isinstance(schedule, dict):
                     skill["schedule"] = schedule
@@ -5927,6 +5943,31 @@ def _as_dashboard(fn, *args):
 
 
 _feature("daily_plan")(_feature_daily_plan)
+
+
+@_feature("license")
+def _feature_license(action: str, payload: dict):
+    """Jarvis4U Pro: status, activate (verify first, then save to .env), deactivate. The key itself
+    is never sent back to the browser or written to the audit trail."""
+    global _skills_cache
+    if action == "get":
+        return pro.status()
+    if action == "activate":
+        check = license_mod.verify(str(payload.get("key") or ""))
+        if not check.get("valid"):
+            return {"ok": False, "error": check.get("reason") or "That key didn't work."}
+        res = settings.set_setting(license_mod.ENV_KEY, re.sub(r"\s+", "", str(payload.get("key"))))
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error") or "Couldn't save the key."}
+        _skills_cache = None
+        _log_action_audit("pro_license", {"action": "activate", "email": check.get("email")}, "(dashboard)", "activated")
+        return {"ok": True, **pro.status()}
+    if action == "deactivate":
+        settings.set_setting(license_mod.ENV_KEY, "")
+        _skills_cache = None
+        _log_action_audit("pro_license", {"action": "deactivate"}, "(dashboard)", "removed")
+        return {"ok": True, **pro.status()}
+    raise ValueError(f"unknown action {action!r}")
 
 
 @_feature("clipboard")

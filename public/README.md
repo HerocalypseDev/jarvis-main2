@@ -29,6 +29,24 @@ Nothing is shared with anyone except the AI/voice services you choose to configu
 - **Optional:** autonomy (acts on your mail/messages by itself), face recognition (local only),
   MCP servers (Gmail, Google Calendar, browser automation, GitHub, ...).
 
+## Support Jarvis4U ❤
+
+Jarvis4U is free and open source, and it stays that way. If it saves you time, you can
+[**support the project**](https://selar.com/7e2611t04t) (pick any tier), or get **Jarvis4U Pro**.
+
+### Jarvis4U Pro ⭐
+
+[**Get Jarvis4U Pro**](https://selar.com/1954zy6955) for extras on top of the free version: skill
+packs (study, streaming, developer, home), Pro dashboard themes and early access to new features.
+Nothing in the free version is taken away or locked.
+
+After buying you get a download (the Pro pack) and a license key by email:
+1. Unzip the Pro pack into a folder called `pro` next to `jarvis.py`.
+2. Open the dashboard -> **Settings** -> **Jarvis4U Pro**, paste the key, press **Activate**.
+
+The key is checked on your own PC (no account, no internet needed). Safety rules are identical
+in Pro: Pro skills use the same tools, audit trail and confirmation gate as everything else.
+
 ## Requirements
 
 - Windows 10 or 11 (it uses Windows APIs for hotkeys, audio, windows and notifications)

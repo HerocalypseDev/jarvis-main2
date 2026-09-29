@@ -204,6 +204,30 @@ Rules:
 - Verified: scan clean; the public copy's test suite fails exactly the same 85 tests as this repo in the
   Linux container (Windows-only/camera/missing-package), no new failures.
 
+## Jarvis4U Pro: license keys + donations (2026-09-29)
+
+- Selling is on **Selar** (Nigeria-friendly; Buy Me a Coffee, Lemon Squeezy and Dodo don't pay out here):
+  Pro `https://selar.com/1954zy6955`, Support/tips `https://selar.com/7e2611t04t` (tiers via variants;
+  Selar's minimum is $3/£3). Links live in `jarvis_pro.py`, the Settings Pro card, the sidebar, the public
+  README and `public/.github/FUNDING.yml`.
+- **Keys are offline Ed25519-signed tokens** (`jarvis_license.py`): `J4U1.<payload>.<sig>`, payload =
+  email/tier/issue date/id. Jarvis holds only `PUBLIC_KEY_B64`; the private signing key is made by
+  `python tools/make_license.py --init` on the owner's PC at `~/.jarvis4u/license_signing_key.pem` and must
+  **never** be committed, sent or generated in a cloud session. Until the owner pastes the printed public key
+  into `PUBLIC_KEY_B64`, every key reads "not available in this build". Keys are issued per sale with
+  `python tools/make_license.py buyer@email` (log in `~/.jarvis4u/issued_keys.csv`); refunds/leaks go in
+  `REVOKED_IDS` (effective next release). No activation limit, and editable out of the open code: accepted.
+- **Pro pack** (`jarvis_pro.py`): `pro/manifest.json` + `pro/skills/*.json` next to jarvis.py (or
+  `JARVIS_PRO_DIR`), gitignored. Only active with a valid key; Pro skills join the normal skill list
+  (own skills win on a name clash) so they get no extra powers: same tools, audit trail, catastrophic gate.
+  A broken pack never breaks free skills.
+- Dashboard: Settings "Jarvis4U Pro" card via `@_feature("license")` (`GET /api/feature/license`, `POST
+  .../activate` verifies before saving to `.env` as `JARVIS_PRO_LICENSE_KEY` (write-only in Settings),
+  `.../deactivate`). The key is never returned to the browser or written to the audit trail (email only).
+- Free features are never gated, safety/privacy features stay free. Tests: `test_license.py` (8).
+- Not done yet: the owner's `--init` + public key, the Pro pack content (Student pack, themes), publishing
+  this to Jarvis4U (wait for the public key so the public build can accept keys).
+
 ## Speech shaping (2026-09-18)
 
 - `_finish_background_task` now reports completion with `urgent=True` — a background
@@ -1612,7 +1636,8 @@ row there each phase rather than only stating the total in chat.
 | 76 (public release prep: export tool with privacy scan, public README/LICENSE/.env.example/CLAUDE.md/example skills, autonomy off by default for the public copy; public test suite matches private) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
 | 77 (published Jarvis4U: fresh single-commit public repo, remote contents verified) | Opus 5.5 | ~5 min | ~$0.40–$0.60 |
 | 78 (form filling via UI tools + never a guessed python.exe path: prompt rules, run_python description, test + eval case; also removed snake game folders) | Opus 5.5 | ~10 min | ~$0.70–$1.00 |
-| **Running total (final)** | | **~2534 min** | **~$150.45–$211.15** |
+| 79 (Jarvis4U Pro: offline signed license keys + seller key tool, Pro pack loader into the skill list, Settings Pro card, sidebar Get Pro/Support, README + FUNDING.yml, Selar product covers; 8 new tests) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
+| **Running total (final)** | | **~2579 min** | **~$153.95–$216.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

@@ -348,3 +348,46 @@ document.getElementById("plan-refresh")?.addEventListener("click", async (e) => 
 });
 refreshDailyPlan().catch(() => {});
 setInterval(() => refreshDailyPlan().catch(() => {}), 300000);
+
+// --- Jarvis4U Pro license (Settings card) -------------------------------------------------------
+// The key is sent once to POST /api/feature/license/activate, verified server-side before it is
+// saved to .env, and never shown again (the status only carries the licensee email and date).
+async function refreshProCard() {
+  const card = document.getElementById("pro-card");
+  if (!card) return;
+  const st = await featureGet("license").catch(() => null);
+  const badge = document.getElementById("pro-badge");
+  const status = document.getElementById("pro-status");
+  const remove = document.getElementById("pro-remove");
+  if (!st) { status.textContent = "Couldn't check the license right now."; return; }
+  const lic = st.license || {};
+  card.classList.toggle("is-pro", !!lic.valid);
+  badge.textContent = lic.valid ? "PRO" : "free";
+  badge.className = "pill" + (lic.valid ? " pill-done" : "");
+  remove.hidden = !lic.valid;
+  if (lic.valid) {
+    const pack = st.installed ? `Pro pack ${esc(st.pack.version || "")} installed, ${st.skills} Pro skill(s) active.`
+      : "Now unzip the Pro pack you downloaded into the <span class=\"mono\">pro</span> folder next to jarvis.py.";
+    status.innerHTML = `Licensed to <strong>${esc(lic.email)}</strong> since ${esc(lic.issued)}. ${pack}`;
+  } else {
+    status.textContent = lic.reason && lic.reason !== "No license key entered." ? lic.reason : "You're on the free version.";
+  }
+}
+document.getElementById("pro-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("pro-key");
+  const msg = document.getElementById("pro-msg");
+  msg.textContent = "Checking…";
+  const r = await featurePost("license", "activate", { key: input.value }).catch((err) => ({ ok: false, error: String(err.message || err) }));
+  msg.textContent = r.ok ? "Pro activated. Thank you for supporting Jarvis4U!" : r.error;
+  if (r.ok) input.value = "";
+  refreshProCard();
+});
+document.getElementById("pro-remove")?.addEventListener("click", async () => {
+  if (!confirm("Remove the Pro license key from this PC?")) return;
+  await featurePost("license", "deactivate").catch(() => {});
+  document.getElementById("pro-msg").textContent = "Key removed.";
+  refreshProCard();
+});
+window.addEventListener("hashchange", () => { if (currentRoute() === "settings") refreshProCard().catch(() => {}); });
+if (typeof currentRoute === "function" && currentRoute() === "settings") refreshProCard().catch(() => {});
