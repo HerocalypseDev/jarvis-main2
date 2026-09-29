@@ -240,7 +240,8 @@ def test_queue_gate_batches_and_digest_flushes(monkeypatch, tmp_path):
     j.queue_or_deliver_notification("New device on your network: phone.", urgent=True)
     assert spoken == ["Heads up: report due.", "New device on your network: phone."]
     assert len(j._session_context["notification_digest"]) == 1
-    monkeypatch.setattr(j, "_digest_state", {"last": 0.0})
+    # well in the past whatever the machine uptime (time.monotonic can be < 1 h on a fresh boot / container)
+    monkeypatch.setattr(j, "_digest_state", {"last": time.monotonic() - 10 ** 7})
     j._digest_tick()
     assert spoken[-1] == "New device on your network: phone." and j._session_context["notification_digest"] == []
 

@@ -30,6 +30,8 @@ from __future__ import annotations
 import logging
 import math
 import os
+
+from jarvis_env import env_float, env_int
 import sqlite3
 import sys
 import threading
@@ -47,21 +49,21 @@ WHITELIST_CONTACTS = [
 ]
 # Sleep/nap mode sets the system volume to this percent (0 = silent) and restores the exact
 # previous level on wake. VOLUME_DOWN_STEPS is only the fallback when exact control isn't available.
-SLEEP_VOLUME_PERCENT = max(0, min(100, int(os.environ.get("JARVIS_SLEEP_VOLUME_PERCENT") or 0)))
-VOLUME_DOWN_STEPS = int(os.environ.get("JARVIS_SLEEP_VOLUME_STEPS") or 8)
-MEDIA_AUTOPAUSE_MINUTES = int(os.environ.get("JARVIS_SLEEP_MEDIA_AUTOPAUSE_MINUTES") or 30)
+SLEEP_VOLUME_PERCENT = max(0, min(100, env_int("JARVIS_SLEEP_VOLUME_PERCENT", 0)))
+VOLUME_DOWN_STEPS = env_int("JARVIS_SLEEP_VOLUME_STEPS", 8)
+MEDIA_AUTOPAUSE_MINUTES = env_int("JARVIS_SLEEP_MEDIA_AUTOPAUSE_MINUTES", 30)
 # Calmer TTS: slower (higher length_scale) and quieter (lower volume) than the default 1.0/1.0.
-SLEEP_LENGTH_SCALE = float(os.environ.get("JARVIS_SLEEP_TTS_LENGTH_SCALE") or 1.25)
-SLEEP_TTS_VOLUME = float(os.environ.get("JARVIS_SLEEP_TTS_VOLUME") or 0.7)
+SLEEP_LENGTH_SCALE = env_float("JARVIS_SLEEP_TTS_LENGTH_SCALE", 1.25)
+SLEEP_TTS_VOLUME = env_float("JARVIS_SLEEP_TTS_VOLUME", 0.7)
 
 # Sleep stats: a Sleep Mode session shorter than this is treated as an accidental toggle, not a
 # night's sleep, and left out of averages. Goal is the nightly target used for "sleep debt".
-MIN_SESSION_MINUTES = int(os.environ.get("JARVIS_SLEEP_MIN_SESSION_MINUTES") or 20)
-SLEEP_GOAL_HOURS = float(os.environ.get("JARVIS_SLEEP_GOAL_HOURS") or 8)
+MIN_SESSION_MINUTES = env_int("JARVIS_SLEEP_MIN_SESSION_MINUTES", 20)
+SLEEP_GOAL_HOURS = env_float("JARVIS_SLEEP_GOAL_HOURS", 8)
 # A nap is a session the user starts with nap mode (enable(kind="nap")). Naps are tracked on
 # their own and never count toward night averages, bedtime, sleep debt or the goal streak. A nap
 # shorter than NAP_MIN_MINUTES is treated as an accidental toggle and ignored.
-NAP_MIN_MINUTES = int(os.environ.get("JARVIS_NAP_MIN_MINUTES") or 10)
+NAP_MIN_MINUTES = env_int("JARVIS_NAP_MIN_MINUTES", 10)
 
 AMBIENT_SOUNDS = {
     "rain": "https://www.youtube.com/results?search_query=rain+sounds+for+sleep+10+hours",

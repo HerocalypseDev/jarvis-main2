@@ -423,3 +423,22 @@ def test_cleared_overdue_reminder_leaves_briefing_and_urgent(J, monkeypatch):
     assert "Cancelled" in J.cancel_reminder(rid)
     assert [c["description"] for c in a.status()["commitments"]] == ["submit the chemistry essay"]
     assert "wash" not in json.dumps(J.briefing_report("morning")).lower()
+
+
+def test_daily_plan_skips_commitments_something_else_already_handles(J, monkeypatch):
+    """Audit 2026-09-29: the plan only skipped `covered_by`; a commitment a scheduling tool already handled, or a
+    Jarvis job, was still listed as one of the user's tasks for today."""
+    a = J.autonomy
+    a.configure(J._autonomy_callbacks())
+    a.set_enabled(True)
+    soon = (datetime.now() + timedelta(hours=3)).isoformat(timespec="seconds")
+    handled = a._insert_commitment({"handled_by_tool": True}, "task", "book the dentist", "user", soon, "q", 0.9,
+                                   "conversation", "")
+    job = a._insert_commitment({"executor": "jarvis", "instruction": "update the site"}, "task", "update the site",
+                               "user", soon, "q", 0.9, "conversation", "")
+    real = a._insert_commitment({}, "task", "finish the essay", "user", soon, "q", 0.9, "conversation", "")
+    monkeypatch.setattr(J, "_calendar_events_raw", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(J.daily_plan, "candidates", lambda c, r, e, carried, now: captured.setdefault("c", c) or [])
+    J._daily_plan_gather(datetime.now())
+    assert [c["description"] for c in captured["c"]] == ["finish the essay"]

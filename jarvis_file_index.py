@@ -18,6 +18,8 @@ import hashlib
 import json
 import logging
 import os
+
+from jarvis_env import env_float, env_int
 import queue
 import re
 import sqlite3
@@ -174,7 +176,7 @@ class Index:
 
     def _llm_allowed(self) -> bool:
         try:
-            per_hour = int(os.environ.get("JARVIS_FILE_TAG_LLM_PER_HOUR") or 10)
+            per_hour = env_int("JARVIS_FILE_TAG_LLM_PER_HOUR", 10)
         except ValueError:
             per_hour = 10
         now = time.monotonic()

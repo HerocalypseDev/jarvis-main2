@@ -161,10 +161,12 @@ def test_file_index_never_moves_files(db, tmp_path):
 def test_filewatcher_feeds_index(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "w.db"))
     import jarvis_filewatcher as fw
-    w = fw.FileWatcher(paths=[str(tmp_path)])
+    watched = tmp_path / "watched"          # the DB must not live inside the watched folder
+    watched.mkdir()
+    w = fw.FileWatcher(paths=[str(watched)])
     got = []
     w.listeners.append(got.append)
-    (tmp_path / "a.txt").write_text("x")
+    (watched / "a.txt").write_text("x")
     w.poll_once()
     assert got and got[0]["path"].endswith("a.txt")
 

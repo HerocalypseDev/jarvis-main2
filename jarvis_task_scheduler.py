@@ -291,6 +291,9 @@ def tick(now: datetime, run_callback, notify_callback) -> None:
     run_callback if given else just notifies), and finishes any 'running' task whose slot
     has passed — if it ran over, pushes every later 'scheduled' task back by the overrun and
     inflates that task's future estimate (backoff) so tomorrow's plan is less optimistic."""
+    # The task itself runs WITHOUT _db_lock held (audit 2026-09-29): run_callback is a full agent loop, and
+    # _db_lock is not re-entrant, so a queued task whose agent called list_task_queue / cancel_task /
+    # plan_task_queue deadlocked this thread for good. Claim under the lock, run, then record under the lock.
     with _db_lock:
         conn = _connect()
         try:
@@ -299,25 +302,31 @@ def tick(now: datetime, run_callback, notify_callback) -> None:
                 "WHERE status = 'scheduled' AND scheduled_start <= ?",
                 (now.isoformat(timespec="seconds"),),
             ).fetchall()
-            for task_id, description, instructions in due:
-                conn.execute(
-                    "UPDATE task_queue SET status = 'running' WHERE id = ?", (task_id,)
-                )
-                conn.commit()
-                log.info("Starting queued task #%s: %r", task_id, description)
+            for task_id, _d, _i in due:
+                conn.execute("UPDATE task_queue SET status = 'running' WHERE id = ?", (task_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    for task_id, description, instructions in due:
+        log.info("Starting queued task #%s: %r", task_id, description)
+        try:
+            if run_callback and instructions:
+                run_callback(description, instructions)
+            elif notify_callback:
+                notify_callback(f"Time for queued task: {description}")
+        except Exception as e:
+            log.warning("Queued task #%s failed: %s", task_id, e)
+            with _db_lock:
+                conn = _connect()
                 try:
-                    if run_callback and instructions:
-                        run_callback(description, instructions)
-                    elif notify_callback:
-                        notify_callback(f"Time for queued task: {description}")
-                except Exception as e:
-                    log.warning("Queued task #%s failed: %s", task_id, e)
-                    conn.execute(
-                        "UPDATE task_queue SET status = 'failed' WHERE id = ?", (task_id,)
-                    )
+                    conn.execute("UPDATE task_queue SET status = 'failed' WHERE id = ?", (task_id,))
                     conn.commit()
-                    continue
-
+                finally:
+                    conn.close()
+            continue
+        with _db_lock:
+            conn = _connect()
+            try:
                 started_row = conn.execute(
                     "SELECT scheduled_start, scheduled_end, estimate_minutes FROM task_queue WHERE id = ?",
                     (task_id,),
@@ -337,5 +346,5 @@ def tick(now: datetime, run_callback, notify_callback) -> None:
                         _push_back_remaining(conn, sched_end, overrun)
                         _inflate_estimate(conn, description, estimate)
                 conn.commit()
-        finally:
-            conn.close()
+            finally:
+                conn.close()

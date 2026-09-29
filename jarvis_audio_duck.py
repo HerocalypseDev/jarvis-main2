@@ -22,6 +22,8 @@ import atexit
 import base64
 import logging
 import os
+
+from jarvis_env import env_float, env_int
 import queue
 import re
 import subprocess
@@ -31,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 log = logging.getLogger("jarvis")
 
-RELEASE_DELAY_S = float(os.environ.get("JARVIS_DUCK_RELEASE_S") or 1.0)
+RELEASE_DELAY_S = env_float("JARVIS_DUCK_RELEASE_S", 1.0)
 
 _lock = threading.Lock()
 _depth = 0

@@ -1723,7 +1723,8 @@ row there each phase rather than only stating the total in chat.
 | 90 (feature video v2: frame-stepped motion (camera moves, scrolling, cursor, animated cards/captions, varied transitions), Piper voice-over, original synthesized music ducked under speech; 118 s 1080p) | Opus 5.5 | ~45 min | ~$3.00–$4.20 |
 | 91 (feature video v3 with the owner's Deepgram Draco narration) | Opus 5.5 | ~25 min | ~$1.00–$1.40 |
 | 92 (Perplexity web search built, then removed at the user's request (needs a paid API key); Gemini help text fix; merged a concurrent main change) | Opus 5.5 | ~25 min | ~$1.80–$2.40 |
-| **Running total (final)** | | **~2899 min** | **~$177.25–$248.75** |
+| 93 (full codebase audit: task-queue deadlock, scheduler step isolation + single-flight skills, Approve bound to the reviewed action, failed tool backing a claim, crash on non-integer settings, daily plan listing handled items, 3 flaky/time-bomb tests; 9 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
+| **Running total (final)** | | **~2959 min** | **~$182.25–$255.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1823,6 +1824,22 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   Still no disk-walk fallback in Jarvis's own code (deliberate). Best fix on the PC: install Everything + enable its
   HTTP server. Prompt-level, so not deterministic; pinned by `test_cache.py::test_file_find_guidance_is_powershell_not_cmd`
   (passes; first run 2026-09-29 while merging the Perplexity change).
+
+## Full codebase audit (2026-09-29)
+
+Tests: `test_audit_scheduler.py` + additions to `test_hardening.py`, `test_executive.py`, `test_smarter.py`. Rules to keep:
+- `jarvis_task_scheduler.tick()` claims due tasks under `_db_lock` and runs each callback WITHOUT it (the lock
+  is non-reentrant; a queued task whose agent listed/cancelled/planned the queue froze the scheduler, and every
+  reminder, forever). Never call out to the agent loop while holding a DB lock.
+- `_scheduler_tick` runs each step in its own try/except (one bad step used to skip reminders for that tick);
+  scheduled skills and the task queue run on `_run_single_flight` worker threads, one copy per name.
+- Dashboard Approve sends the reviewed action's `queued_at` as `expect`; if a different action is waiting now,
+  nothing runs ("review the current one"). Approve without `expect` keeps the old behaviour.
+- The claim checker only counts tools that SUCCEEDED (not failed, not staged); MCP error strings count as failed.
+- Numeric settings read at import go through `jarvis_env.env_int/env_float` (a "12.5" or typo in .env used to
+  crash startup). Use them for any new numeric env var.
+- Tests must not hard-code calendar dates near "now" (add_commitment drops past deadlines): build them from
+  `datetime.now()`.
 
 ## Hand-off guard (2026-09-25)
 
