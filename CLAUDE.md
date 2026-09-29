@@ -272,6 +272,23 @@ Rules:
   mail_match agent whose only step is `create_reminder` ({sender}/{subject} allowed there, FILL_TOOLS) and then
   immediately disable it, so each starts OFF; the user tests with Run and enables it in the Toolbox. Pinned by
   tests. Validator ignores Gmail operators `newer_than`/`older_than`. Suggested price now 10,000/$12/£10.
+- **Pro audit (2026-09-29)**, rules to keep (tests: `test_pro_pack.py` builder-refusal tests, `test_license.py` "Pro
+  audit" block):
+  - `open_url`/`play_media` only open `http(s)` (play_media also `spotify:`): `_open_uri` is `os.startfile`, so a
+    file path / `file:` / `shell:` target would launch a program (free core, found via pack routines).
+  - Pack routines (`jarvis_macros.pack_macros`) also refuse non-web `open_url`, and any phrase one of Jarvis's own
+    intents answers (checked with apostrophes restored: matching drops them, so "whats urgent" would have hijacked
+    "what's urgent"); a skipped routine is logged once.
+  - Scheduled Pro skills carry `schedule.requires_fact` (+ `days` for weekly): no model call until the user set the
+    feature up (before: 3 runs a day from activation, the weekly one every evening). Core `_schedule_gate_ok`
+    supports both keys for any skill.
+  - `background_agents` create takes `enabled=false`; re-saving an existing agent keeps its on/off state. Recipes use
+    it instead of create-then-disable (a skipped disable call left a live agent; a re-run switched a live one off).
+  - Themes are refused whole unless text-primary/secondary are hex with >= 4.5:1 on bg-primary/secondary (the approval
+    bar's text is body text); a signed key with a non-object payload is rejected, not raised.
+  - `build_pro_pack.py` now refuses: non-data files, reading skills without `DATA_SENTENCE`, scheduled skills without
+    `requires_fact`, agent recipes without `enabled false` or that switch one on, skills that write to autonomy, and
+    routines the loader would skip.
 - Not built yet (don't advertise): early access, the installer, and anything past the phase last shipped.
 
 ## Speech shaping (2026-09-18)
@@ -1697,7 +1714,8 @@ row there each phase rather than only stating the total in chat.
 | 85 (P4: 3 more themes with contrast checks, accent-token glows in the free stylesheet; headless check of each with an approval pending) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 86 (P5: Research pack (4 skills) + 3 autonomy email recipes that start switched off; 2 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 87 (cleared overdue reminder stayed in the briefing/urgent cards: skip covered commitments, close the commitment on cancel; 1 new test) | Opus 5.5 | ~10 min | ~$0.80–$1.10 |
-| **Running total (final)** | | **~2729 min** | **~$165.85–$232.95** |
+| 88 (Pro audit: open_url file-launch hole, routine core-phrase hijack, scheduled Pro skills gated, agents created off, theme readability, builder rules, data framing in 16 skills; 12 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
+| **Running total (final)** | | **~2774 min** | **~$169.45–$237.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
