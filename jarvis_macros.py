@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 # Phrases that must keep reaching Jarvis's own handling: "stop talking" silences speech, safe mode is a
@@ -218,9 +218,83 @@ def run(connect, lock, macro: dict, execute: Callable[[str, dict], str],
     return f"Done: {macro['name']}."
 
 
+# --- suggestions from habits (2026-09-30) ---------------------------------------------------------------
+# A command the owner keeps saying, that Jarvis answers with the same tool call(s) every time, is a macro waiting
+# to happen: as a macro it runs with no model call (faster, and no quota). Suggestions only ever use low-risk
+# tools (the Pro-routine allowlist plus the read-only tools), come from the audit table, and are never created
+# without the owner saying so.
+_FAILED_START = ("tool failed", "refused", "couldn't", "could not", "error", "unknown", "not available", "mcp tool")
+
+
+def suggest(connect, lock, safe_tools: set[str], known_tools: set[str], already_fast=None,
+            min_count: int = 3, days: int = 30, limit: int = 5, now: datetime | None = None) -> list[dict]:
+    now = now or datetime.now()
+    since = (now - timedelta(days=days)).isoformat(timespec="seconds")
+    try:
+        sessions = _q(connect, lock, "SELECT transcript FROM dashboard_sessions WHERE started_at >= ?", (since,))
+        audit = _q(connect, lock, "SELECT transcript, tool_name, tool_input, result FROM action_audit "
+                                  "WHERE timestamp >= ? ORDER BY id", (since,))
+    except Exception:
+        return []
+    said: dict[str, int] = {}
+    for r in sessions:
+        t = normalize(str(r.get("transcript") or ""))
+        if 2 <= len(t.split()) <= 12:
+            said[t] = said.get(t, 0) + 1
+    taken = {normalize(p) for m in list_macros(connect, lock) for p in m["phrases"]}
+    by_say: dict[str, list[tuple[str, str]]] = {}
+    for r in audit:
+        if str(r.get("result") or "").lower().startswith(_FAILED_START):
+            continue
+        by_say.setdefault(normalize(str(r.get("transcript") or "")), []).append(
+            (str(r.get("tool_name") or ""), str(r.get("tool_input") or "{}")))
+    out = []
+    for phrase, n in sorted(said.items(), key=lambda kv: -kv[1]):
+        if n < min_count or phrase in RESERVED or phrase in taken or (already_fast and already_fast(phrase)):
+            continue
+        calls = by_say.get(phrase, [])
+        counts: dict[tuple[str, str], int] = {}
+        for c in calls:
+            counts[c] = counts.get(c, 0) + 1
+        # the calls made almost every time (>= 80% of the runs), in the order first seen
+        stable = [c for c in dict.fromkeys(calls) if counts[c] >= max(min_count, 0.8 * n)]
+        if not stable or len(stable) > 4:
+            continue
+        if any(t not in safe_tools or t not in known_tools or t in FORBIDDEN_STEP_TOOLS for t, _ in stable):
+            continue
+        try:
+            steps = [{"tool": t, "input": json.loads(i)} for t, i in stable]
+        except ValueError:
+            continue
+        if any(st["tool"] in ("open_url", "play_media") and not str(st["input"].get("url", "")).lower().startswith(
+                ("http://", "https://")) for st in steps):
+            continue
+        out.append({"phrase": phrase, "count": n, "steps": steps,
+                    "name": re.sub(r"[^a-z0-9]+", "_", phrase)[:40].strip("_")})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def handle_tool(connect, lock, inp: dict, known_tools: set[str], attended: bool,
-                execute: Callable[[str, dict], str] | None = None, staged=None) -> str:
+                execute: Callable[[str, dict], str] | None = None, staged=None,
+                safe_tools: set[str] | None = None, already_fast=None) -> str:
     action = str(inp.get("action") or "list").lower()
+    if action in ("suggest", "accept"):
+        sugg = suggest(connect, lock, safe_tools or set(), known_tools, already_fast)
+        if action == "suggest":
+            if not sugg:
+                return "No habits worth a macro yet: I look for a command you said 3+ times that always did the same thing."
+            return "\n".join(f"- You said {s['phrase']!r} {s['count']} times; it always ran " +
+                             ", ".join(st["tool"] for st in s["steps"]) + f". To keep it: macros accept phrase={s['phrase']!r}"
+                             for s in sugg)
+        if not attended:
+            return "Macros can only be changed from the PC (voice, typed or dashboard), not from here."
+        want = normalize(str(inp.get("phrase") or ""))
+        pick = next((s for s in sugg if s["phrase"] == want), None)
+        if not pick:
+            return "That isn't one of the current suggestions (ask for 'suggest' to see them)."
+        return save(connect, lock, pick["name"], [pick["phrase"]], pick["steps"], known_tools)
     if action == "list":
         ms = list_macros(connect, lock)
         return "\n".join(f"- {m['name']}{'' if m['enabled'] else ' (off)'}: say " +

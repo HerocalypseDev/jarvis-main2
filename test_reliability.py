@@ -346,3 +346,209 @@ def test_usage_summary_reports_average_prompt_size_per_call(tmp_path):
     conn.close()
     s = b.local_summary(lambda: sqlite3.connect(tmp_path / "u.db"), threading.Lock(), now)
     assert s["periods"]["today"]["calls"] == 2 and s["periods"]["today"]["avg_prompt_tokens"] == 2000
+
+
+# --- tool registry sanity: what a single per-tool record would guarantee ---------------------------
+def test_tool_registry_is_consistent(jarvis):
+    import inspect
+    import re as _re
+    tools = jarvis.AGENT_TOOLS
+    names = [t["name"] for t in tools]
+    assert len(names) == len(set(names)), "duplicate tool names"
+    for t in tools:
+        assert len(t.get("description", "")) >= 25, f"{t['name']} needs a real description (models pick tools by it)"
+        sch = t.get("input_schema") or {}
+        assert sch.get("type") == "object", f"{t['name']} schema must be an object"
+        for r in sch.get("required", []):
+            assert r in (sch.get("properties") or {}), f"{t['name']} requires {r!r} but has no such property"
+    known = set(names)
+    # every place that names tools must name real ones
+    assert set(jarvis.READONLY_TOOL_TTLS) <= known, set(jarvis.READONLY_TOOL_TTLS) - known
+    import jarvis_tool_router as R
+    assert set(R.CORE_TOOLS) <= known, set(R.CORE_TOOLS) - known
+    assert set(jarvis._VERIFIED_TOOLS) <= known
+    assert {n for n in jarvis.SCREEN_KIT_TOOLS if not n.startswith("mcp_")} <= known
+    assert set(jarvis._BATCH_TOOL_HANDLERS) <= known, set(jarvis._BATCH_TOOL_HANDLERS) - known
+    # read-only means read-only: nothing that writes may sit in the parallel/cached list
+    writes = _re.compile(r"^(write|create|delete|send|run|type|click|set|save|forget|remember|cancel|queue|start|"
+                         r"open|play|download|enroll|approve|resume)")
+    assert not [n for n in jarvis.READONLY_TOOL_TTLS if writes.match(n)]
+    # every built-in tool is dispatched somewhere
+    src = inspect.getsource(jarvis._execute_tool_impl)
+    unhandled = [n for n in names if f'"{n}"' not in src and n not in jarvis._BATCH_TOOL_HANDLERS
+                 and n != jarvis.tool_router.FIND_TOOLS_NAME]
+    assert not unhandled, f"tools with no dispatch branch: {unhandled}"
+
+
+def test_announcement_lines_only_name_real_tools(jarvis):
+    known = {t["name"] for t in jarvis.AGENT_TOOLS}
+    for n in ("quick_search", "web_search", "delegate_to_claude_code", "change_jarvis_code", "delegate_research",
+              "review_code", "code_search", "briefing", "write_file", "read_file", "download_image", "read_screen",
+              "type_text", "click_at", "scroll_screen", "run_shell", "run_python"):
+        assert n in known, f"_tool_announcement talks about {n!r}, which is not a tool any more"
+        assert jarvis._tool_announcement(n, {}) is not None
+
+
+# --- macro suggestions ------------------------------------------------------------------------------
+def _macro_db(tmp_path):
+    import sqlite3
+    import threading
+    path = tmp_path / "m.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE dashboard_sessions (started_at TEXT, source TEXT, transcript TEXT, status TEXT, "
+                 "reply TEXT, ended_at TEXT)")
+    conn.execute("CREATE TABLE action_audit (id INTEGER PRIMARY KEY, timestamp TEXT, tool_name TEXT, tool_input TEXT, "
+                 "result TEXT, transcript TEXT)")
+    conn.close()
+    return path, (lambda: sqlite3.connect(path)), threading.Lock()
+
+
+def _say(path, when, text, tool, inp, result="ok"):
+    import sqlite3
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO dashboard_sessions VALUES (?,?,?,?,?,?)", (when, "voice", text, "done", "", None))
+    conn.execute("INSERT INTO action_audit (timestamp, tool_name, tool_input, result, transcript) VALUES (?,?,?,?,?)",
+                 (when, tool, json.dumps(inp), result, text))
+    conn.commit()
+    conn.close()
+
+
+def test_habits_become_macro_suggestions_but_only_with_low_risk_tools(tmp_path):
+    from datetime import datetime, timedelta
+    import jarvis_macros as m
+    path, connect, lock = _macro_db(tmp_path)
+    now = datetime(2026, 9, 30, 12, 0)
+    for i in range(4):
+        when = (now - timedelta(days=i)).isoformat(timespec="seconds")
+        _say(path, when, "start my study setup", "open_app", {"app": "notes"})
+        _say(path, when, "email sam the report", "mcp_gmail_send_email", {"to": "sam"})     # never suggested
+        _say(path, when, "how is the system", "system_status", {})
+    _say(path, now.isoformat(timespec="seconds"), "one off command here", "weather", {})      # said once: no habit
+    safe = m.PACK_ALLOWED_TOOLS
+    known = safe | {"mcp_gmail_send_email"}
+    out = m.suggest(connect, lock, safe, known, already_fast=lambda p: False, now=now)
+    phrases = {s["phrase"] for s in out}
+    assert phrases == {"start my study setup", "how is the system"}
+    study = next(s for s in out if s["phrase"] == "start my study setup")
+    assert study["steps"] == [{"tool": "open_app", "input": {"app": "notes"}}] and study["count"] == 4
+    # things Jarvis already answers instantly, and phrases already taken, are not suggested
+    assert not m.suggest(connect, lock, safe, known, already_fast=lambda p: p == "how is the system", now=now) \
+        or "how is the system" not in {s["phrase"] for s in m.suggest(connect, lock, safe, known,
+                                                                      already_fast=lambda p: p == "how is the system", now=now)}
+
+
+def test_a_failing_or_unstable_habit_is_not_suggested_and_accept_needs_the_pc(tmp_path):
+    from datetime import datetime, timedelta
+    import jarvis_macros as m
+    path, connect, lock = _macro_db(tmp_path)
+    now = datetime(2026, 9, 30, 12, 0)
+    for i in range(4):
+        when = (now - timedelta(hours=i)).isoformat(timespec="seconds")
+        _say(path, when, "open my notes please", "open_app", {"app": "notes"}, result="Tool failed: nope")
+        _say(path, when, "start focus time now", "open_app", {"app": "notes" if i % 2 else "vscode"})  # not the same call
+    safe = m.PACK_ALLOWED_TOOLS
+    assert m.suggest(connect, lock, safe, safe, now=now) == []
+    for i in range(3):
+        _say(path, (now - timedelta(minutes=i)).isoformat(timespec="seconds"), "open my notes app", "open_app",
+             {"app": "notes"})
+    tool = lambda act, attended, **kw: m.handle_tool(connect, lock, dict(action=act, **kw), safe, attended,
+                                                     safe_tools=safe, already_fast=None)
+    assert "open my notes app" in tool("suggest", True)
+    assert tool("accept", False, phrase="open my notes app").startswith("Macros can only be changed")
+    assert tool("accept", True, phrase="something else").startswith("That isn't one of the current suggestions")
+    assert tool("accept", True, phrase="open my notes app").startswith("Saved macro")
+    assert m.match(connect, lock, "open my notes app")["steps"][0]["tool"] == "open_app"
+    assert "open my notes app" not in tool("suggest", True)  # now a macro: not suggested again
+
+
+# --- plans that a restart cut short can be resumed -----------------------------------------------------
+def _plan(jarvis, statuses):
+    task_id = jarvis._insert_background_task("do the four things", "plan", "[]")
+    with jarvis._memory_db_lock:
+        conn = jarvis._memory_db_connect()
+        for i, st in enumerate(statuses):
+            conn.execute("INSERT INTO plan_steps (task_id, step_index, description, depends_on, status, created_at, "
+                         "result_summary) VALUES (?,?,?,?,?,?,?)",
+                         (task_id, i, f"step {i}", "[]", st, "2026-09-30T10:00:00", f"result {i}" if st == "done" else None))
+        conn.commit()
+        conn.close()
+    return task_id
+
+
+def test_interrupted_plan_resumes_from_the_first_unfinished_step(jarvis, monkeypatch):
+    ran = []
+    monkeypatch.setattr(jarvis, "_run_plan_step", lambda desc, ctx: ran.append((desc, ctx)) or f"did {desc}")
+    monkeypatch.setattr(jarvis, "_finish_background_task", lambda tid, status, summary, kind="": ran.append(("finish", status, summary)))
+    monkeypatch.setattr(jarvis, "record_recent_task", lambda *a: None)
+    task_id = _plan(jarvis, ["done", "done", "pending", "pending"])
+    jarvis._recover_interrupted_background_tasks()
+    with jarvis._memory_db_lock:
+        conn = jarvis._memory_db_connect()
+        conn.execute("UPDATE background_tasks SET status='failed', result_summary='interrupted by a Jarvis restart' "
+                     "WHERE id=?", (task_id,))
+        conn.commit()
+        conn.close()
+    msg = jarvis._resume_plan(task_id)
+    assert "2 of 4 steps were already done" in msg
+    import time as _t
+    for _ in range(100):
+        if any(r[0] == "finish" for r in ran):
+            break
+        _t.sleep(0.02)
+    assert [r[0] for r in ran if r[0] != "finish"] == ["step 2", "step 3"]  # finished steps are not run again
+    assert ran[-1][:2] == ("finish", "done") and "step 0: result 0" in ran[-1][2]
+    assert "already running" in jarvis._resume_plan(task_id)  # (the stubbed finish left the row 'running')
+    assert jarvis._resume_plan(99999).startswith("There is no plan")
+    assert jarvis._resume_plan("x").startswith("Give the plan's number")
+
+
+def test_restart_notice_names_the_cut_short_plan_once(jarvis, monkeypatch):
+    sent = []
+    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda t, **k: sent.append(t))
+    task_id = _plan(jarvis, ["done", "pending", "pending"])
+    with jarvis._memory_db_lock:
+        conn = jarvis._memory_db_connect()
+        conn.execute("UPDATE background_tasks SET status='failed', result_summary='interrupted by a Jarvis restart', "
+                     "finished_at=? WHERE id=?", (jarvis.datetime.now().isoformat(timespec="seconds"), task_id))
+        conn.commit()
+        conn.close()
+    jarvis._interrupted_told.update(done=False, force=True)
+    jarvis._interrupted_plans_tick()
+    jarvis._interrupted_plans_tick()
+    jarvis._interrupted_told["force"] = False
+    assert len(sent) == 1 and f"resume plan {task_id}" in sent[0] and "1 of 3 steps done" in sent[0]
+
+
+def test_set_plan_schema_lets_a_resume_call_through_the_argument_check(jarvis):
+    sch = next(t for t in jarvis.AGENT_TOOLS if t["name"] == "set_plan")["input_schema"]
+    assert "resume_task_id" in sch["properties"] and not sch.get("required")
+    args, notes, err = ta.check("set_plan", sch, {"resume_task_id": "7"})
+    assert err is None and args["resume_task_id"] == 7
+
+
+def test_toolbox_endpoint_lists_habit_suggestions_and_accept_creates_the_macro(jarvis, monkeypatch, tmp_path):
+    from datetime import datetime, timedelta
+    from fastapi.testclient import TestClient
+    import jarvis_dashboard as dash
+    monkeypatch.setattr(jarvis, "_log_action_audit", lambda *a, **k: None)
+    now = datetime.now()
+    dash._connect().close()  # creates the dashboard's own tables in the temp DB
+    with jarvis._memory_db_lock:
+        conn = jarvis._memory_db_connect()
+        for i in range(3):
+            when = (now - timedelta(hours=i + 1)).isoformat(timespec="seconds")
+            conn.execute("INSERT INTO dashboard_sessions (started_at, source, transcript, status, reply) "
+                         "VALUES (?,?,?,?,?)", (when, "voice", "start my study setup", "done", ""))
+            conn.execute("INSERT INTO action_audit (timestamp, transcript, tool_name, tool_input, result) "
+                         "VALUES (?,?,?,?,?)", (when, "start my study setup", "open_app", '{"app": "notepad"}', "Opened notepad."))
+        conn.commit()
+        conn.close()
+    monkeypatch.setattr(jarvis, "_macro_known_tools", lambda: {"open_app", "weather"})
+    with TestClient(dash._build_app(), base_url="http://127.0.0.1:8765") as c:
+        data = c.get("/api/feature/macros").json()
+        assert [s["phrase"] for s in data["suggestions"]] == ["start my study setup"]
+        assert data["suggestions"][0]["steps"] == [{"tool": "open_app", "input": {"app": "notepad"}}]
+        r = c.post("/api/feature/macros/accept", json={"phrase": "start my study setup"}).json()
+        assert r["result"].startswith("Saved macro")
+        again = c.get("/api/feature/macros").json()
+        assert again["suggestions"] == [] and [m["name"] for m in again["macros"]] == ["start_my_study_setup"]

@@ -1512,7 +1512,8 @@ For a compound instruction that's really several distinct sub-tasks chained toge
 the old email and send the update"), use set_plan instead of working through every step \
 inline here: it runs each step as its own focused background request, checkpoints progress \
 after each one, and respects the ordering you give it via depends_on. Don't use it for a \
-simple 1-2 step ask — just do those directly. No persona for set_plan itself; the steps \
+simple 1-2 step ask — just do those directly. A plan that stopped part-way (a restart, a failed step) is \
+continued with set_plan(resume_task_id=N), which keeps the finished steps. No persona for set_plan itself; the steps \
 inside it still use James/{MAIL_CALENDAR_AGENT_NAME} where those tools apply.
 
 For real technical/coding work, reach for these proactively rather than only when explicitly \
@@ -2417,6 +2418,14 @@ AGENT_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "resume_task_id": {
+                    "type": "integer",
+                    "description": (
+                        "to continue a plan that stopped (list_background_tasks shows it as failed, e.g. "
+                        "'interrupted by a Jarvis restart'): its id. Finished steps are kept, only the rest run. "
+                        "Give this INSTEAD of steps."
+                    ),
+                },
                 "steps": {
                     "type": "array",
                     "description": "ordered list of sub-tasks that make up the full request",
@@ -2441,7 +2450,6 @@ AGENT_TOOLS = [
                     },
                 },
             },
-            "required": ["steps"],
         },
     },
     {
@@ -2975,10 +2983,14 @@ BATCH_TOOLS = [
         "description": (
             "Voice macros: a trigger phrase that runs fixed tool calls instantly. action=list, run (name), "
             "create (name, phrases: list of 2+ word phrases, steps: [{tool, input}] using existing tool "
-            "names and their exact inputs), delete/enable/disable (name). Changing macros only works from the PC."
+            "names and their exact inputs), delete/enable/disable (name), suggest (commands you keep repeating that "
+            "always do the same thing, worth a macro), accept (phrase: turn one suggestion into a macro). "
+            "Changing macros only works from the PC."
         ),
         "input_schema": {"type": "object", "properties": {
-            "action": {"type": "string", "enum": ["list", "run", "create", "delete", "enable", "disable"]},
+            "action": {"type": "string", "enum": ["list", "run", "create", "delete", "enable", "disable", "suggest",
+                                                  "accept"]},
+            "phrase": {"type": "string"},
             "name": {"type": "string"}, "phrases": {"type": "array", "items": {"type": "string"}},
             "steps": {"type": "array", "items": {"type": "object"}}}, "required": ["action"]},
     },
@@ -5415,6 +5427,7 @@ def _scheduler_steps(now: datetime) -> list:
         ("autonomy", _autonomy_tick_battery_aware, (now,)),
         ("chief", _chief_tick, (now,)),
         ("doctor", _doctor_tick, ()),
+        ("plans", _interrupted_plans_tick, ()),
         ("netscan", _netscan_tick, ()),
         ("meeting", _meeting_tick, ()),
         ("agents", _agents_tick, (now,)),
@@ -6038,7 +6051,21 @@ def _spawn_lesson(*args) -> None:
 def _macros_tool(inp: dict) -> str:
     transcript = f"(macro tool) {inp.get('name') or ''}"
     return macros.handle_tool(_memory_db_connect, _memory_db_lock, inp, _macro_known_tools(), _attended(),
-                              execute=lambda tool, i: _execute_tool(tool, i, transcript), staged=_looks_staged)
+                              execute=lambda tool, i: _execute_tool(tool, i, transcript), staged=_looks_staged,
+                              safe_tools=_macro_suggest_tools(), already_fast=_already_fast_path)
+
+
+def _macro_suggest_tools() -> set[str]:
+    """Habit-based macro suggestions only ever use low-risk tools: the Pro-routine allowlist + the read-only tools."""
+    return set(macros.PACK_ALLOWED_TOOLS) | set(READONLY_TOOL_TTLS)
+
+
+def _already_fast_path(phrase: str) -> bool:
+    """A phrase Jarvis already answers without the model (time, volume, timers...) needs no macro."""
+    try:
+        return latency.classify_intent(phrase) not in (None, "complex")
+    except Exception:
+        return False
 
 
 def _macro_reply(transcript: str) -> str | None:
@@ -6261,7 +6288,9 @@ def _feature_devices(action: str, payload: dict):
 def _feature_macros(action: str, payload: dict):
     if action == "get":
         return {"macros": macros.list_macros(_memory_db_connect, _memory_db_lock),
-                "pack": _pack_macros(), "tools": sorted(_macro_known_tools())}
+                "pack": _pack_macros(), "tools": sorted(_macro_known_tools()),
+                "suggestions": macros.suggest(_memory_db_connect, _memory_db_lock, _macro_suggest_tools(),
+                                              _macro_known_tools(), _already_fast_path)}
     if action == "pack_toggle":
         # Pro routines are read-only; switching one off/on only edits a setting (names, comma-separated).
         name = str((payload or {}).get("name") or "").strip()
@@ -9888,7 +9917,18 @@ def _run_plan(task_id: int) -> None:
     steps = {idx: (desc, json.loads(deps or "[]")) for idx, desc, deps in rows}
     results: dict[int, str] = {}
     done: set[int] = set()
-    remaining = set(steps.keys())
+    # Resuming an interrupted plan: steps already finished keep their result and are not run again.
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            for idx, summary in conn.execute(
+                    "SELECT step_index, result_summary FROM plan_steps WHERE task_id = ? AND status = 'done'",
+                    (task_id,)).fetchall():
+                results[idx] = summary or ""
+                done.add(idx)
+        finally:
+            conn.close()
+    remaining = set(steps.keys()) - done
 
     while remaining:
         ready = sorted(i for i in remaining if all(d in done for d in steps[i][1]))
@@ -9925,6 +9965,73 @@ def _run_plan(task_id: int) -> None:
     if len(final_summary) > MAX_TOOL_RESULT_CHARS:
         final_summary = final_summary[:MAX_TOOL_RESULT_CHARS] + "... [truncated]"
     _finish_background_task(task_id, "done", final_summary or "all steps finished", kind="plan")
+
+
+def _resume_plan(task_id) -> str:
+    """Continues a plan that stopped (failed step, or interrupted by a restart) from its first unfinished step."""
+    try:
+        task_id = int(task_id)
+    except (TypeError, ValueError):
+        return "Give the plan's number (list_background_tasks shows it)."
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            row = conn.execute("SELECT kind, status FROM background_tasks WHERE id = ?", (task_id,)).fetchone()
+            if not row or row[0] != "plan":
+                return f"There is no plan #{task_id}."
+            if row[1] == "running":
+                return f"Plan #{task_id} is already running."
+            if row[1] == "done":
+                return f"Plan #{task_id} already finished."
+            left = conn.execute("SELECT COUNT(*) FROM plan_steps WHERE task_id = ? AND status != 'done'",
+                                (task_id,)).fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM plan_steps WHERE task_id = ?", (task_id,)).fetchone()[0]
+        finally:
+            conn.close()
+    if not left:
+        return f"Plan #{task_id} has no unfinished steps."
+    running = _count_running_background_tasks("plan")
+    if running >= MAX_CONCURRENT_PLAN_TASKS:
+        return f"Already {running} plan(s) running (cap is {MAX_CONCURRENT_PLAN_TASKS}); try again once one finishes."
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            conn.execute("UPDATE plan_steps SET status = 'pending', started_at = NULL, finished_at = NULL, "
+                         "result_summary = NULL WHERE task_id = ? AND status != 'done'", (task_id,))
+            conn.execute("UPDATE background_tasks SET status = 'running', finished_at = NULL, result_summary = NULL "
+                         "WHERE id = ?", (task_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    threading.Thread(target=_run_plan, args=(task_id,), daemon=True, name=f"plan-task-{task_id}").start()
+    return (f"Resumed plan #{task_id}: {total - left} of {total} steps were already done, running the other {left} "
+            "now. I'll let you know when it's finished.")
+
+
+_interrupted_told = {"done": False}
+
+
+def _interrupted_plans_tick() -> None:
+    """Once per start: say which plans a restart cut short and how to continue them."""
+    if _interrupted_told["done"] or (os.environ.get("PYTEST_CURRENT_TEST") and not _interrupted_told.get("force")):
+        return
+    _interrupted_told["done"] = True
+    since = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            rows = conn.execute(
+                "SELECT t.id, t.task, (SELECT COUNT(*) FROM plan_steps s WHERE s.task_id = t.id AND s.status = 'done'), "
+                "(SELECT COUNT(*) FROM plan_steps s WHERE s.task_id = t.id) FROM background_tasks t "
+                "WHERE t.kind = 'plan' AND t.status = 'failed' AND t.result_summary LIKE 'interrupted%' "
+                "AND t.finished_at >= ? ORDER BY t.id", (since,)).fetchall()
+        finally:
+            conn.close()
+    if rows:
+        parts = [f"#{i} ({str(task)[:50]}, {d} of {n} steps done)" for i, task, d, n in rows[:3]]
+        queue_or_deliver_notification(
+            "A restart cut short " + ("this plan: " if len(rows) == 1 else f"{len(rows)} plans: ") + "; ".join(parts) +
+            ". Say 'resume plan " + str(rows[0][0]) + "' to carry on from where it stopped.")
 
 
 def _set_plan(transcript: str, steps: list) -> str:
@@ -10729,7 +10836,8 @@ def _execute_tool_impl(
         elif tool_name == "list_background_tasks":
             result = list_background_tasks(bool(inp.get("include_finished")))
         elif tool_name == "set_plan":
-            result = _set_plan(transcript, inp.get("steps") or [])
+            result = (_resume_plan(inp.get("resume_task_id")) if inp.get("resume_task_id") not in (None, "")
+                      else _set_plan(transcript, inp.get("steps") or []))
         elif tool_name == "get_workflow_status":
             result = workflow.get_workflow_status(str(inp.get("path") or ""))
         elif tool_name == "check_project_health":
