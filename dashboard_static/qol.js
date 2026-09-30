@@ -395,6 +395,29 @@ window.addEventListener("hashchange", () => { if (currentRoute() === "home") ref
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshHealth();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshHealth(); }, 30000);
 
+// --- Home "What I've been doing" (self-awareness journal): GET /api/feature/self -----------------
+async function refreshSelfAware() {
+  const list = document.getElementById("home-self");
+  if (!list) return;
+  const note = document.getElementById("home-self-note");
+  try {
+    const res = await fetch("/api/feature/self", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
+    const pending = d.restart_pending || [];
+    note.hidden = !pending.length;
+    note.textContent = pending.length ? `My code on disk changed (${pending.slice(0, 3).join(", ")}${pending.length > 3 ? ", ..." : ""}). I'm running the old version until I restart.` : "";
+    list.innerHTML = (d.events || []).length
+      ? d.events.slice(0, 8).map((e) => `<li class="list-item compact"><span class="tool">${esc(e.subsystem)}</span> ${esc(e.summary)} <span class="muted">${esc(e.ago || "")}</span></li>`).join("")
+      : '<li class="muted">Nothing notable yet.</li>';
+  } catch (e) {
+    list.innerHTML = `<li class="muted">Couldn't load activity: ${esc(String(e))}</li>`;
+  }
+}
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshSelfAware(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshSelfAware();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshSelfAware(); }, 30000);
+
 // --- Home voice speed (second wave): last 20 voice commands from jarvis_latency.recent ------------
 async function refreshLatency() {
   const el = document.getElementById("home-latency");

@@ -95,6 +95,7 @@ import jarvis_audio_duck as audio_duck
 import jarvis_followup
 import jarvis_toolargs as toolargs
 import jarvis_doctor as doctor
+import jarvis_selfaware as selfaware
 import jarvis_wakeword
 import jarvis_weather as weather
 import jarvis_briefing as briefing
@@ -1689,6 +1690,19 @@ AGENT_TOOLS = [
             "engines, camera, disk. Use when something seems broken or the user asks if you're OK."
         ),
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "self_report",
+        "description": (
+            "What Jarvis's OWN parts have been doing and whether its own code changed: autonomy actions, sleep "
+            "sessions, camera/identity events, settings and brain changes, safe mode, background tasks, code changes "
+            "since the last start or on disk since this run began (a restart is then needed to load them). Use for "
+            "'what have you been doing', 'what changed', 'did your code change', 'what did autonomy do'. Read-only."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["recent", "code"]},
+            "subsystem": {"type": "string", "enum": list(selfaware.SUBSYSTEMS)},
+            "hours": {"type": "number"}}},
     },
     {
         "name": "api_spend",
@@ -3319,8 +3333,11 @@ def set_llm_provider(provider: str) -> str:
         return "Gemini isn't set up: add GEMINI_API_KEY to the .env file and restart Jarvis."
     if provider == "claude" and not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
         return "Claude isn't set up: ANTHROPIC_API_KEY is missing."
+    before = _llm_provider()
     gemini.set_provider(LLM_SETTINGS_PATH, provider)
     _invalidate_read_caches()
+    if provider != before:
+        selfaware.record("brain", "switched", f"brain switched from {before} to {provider}")
     if provider == "gemini":
         return (
             f"Switched to Gemini ({gemini.model_name()}). Note: on Google's free tier, your "
@@ -3737,6 +3754,9 @@ def _memory_db_connect() -> sqlite3.Connection:
         _apply_memory_db_pragmas(conn)
         _create_memory_tables(conn)
     return conn
+
+
+selfaware.configure(lambda: _memory_db_connect(), _memory_db_lock, Path(__file__).resolve().parent)
 
 
 def _apply_memory_db_pragmas(conn: sqlite3.Connection) -> None:
@@ -5428,6 +5448,7 @@ def _scheduler_steps(now: datetime) -> list:
         ("chief", _chief_tick, (now,)),
         ("doctor", _doctor_tick, ()),
         ("plans", _interrupted_plans_tick, ()),
+        ("self awareness", _selfaware_tick, ()),
         ("netscan", _netscan_tick, ()),
         ("meeting", _meeting_tick, ()),
         ("agents", _agents_tick, (now,)),
@@ -5537,6 +5558,7 @@ def set_safe_mode(on: bool, source: str | None = None) -> str:
     if on:
         followup.cancel()
     dashboard.notify({"type": "safe_mode", "data": {"on": on}})
+    selfaware.record("safety", "safe_mode", f"safe mode turned {'on' if on else 'off'} (from {source or 'unknown'})")
     log.info("Safe mode %s (from %s).", "ON" if on else "OFF", source)
     if not on:
         threading.Thread(target=flush_pending_notifications, daemon=True).start()  # what was held
@@ -5663,8 +5685,66 @@ def _doctor_tick() -> None:
         if key in told:
             continue
         told[key] = time.time()
+        selfaware.record("system", "doctor", f"noticed a problem: {c['name']} - {c['detail']}")
         queue_or_deliver_notification(
             f"Heads up: {c['name']}. {c['detail']}." + (f" To fix it: {c['fix']}." if c["fix"] else ""))
+
+
+_selfaware_state = {"next": 0.0}
+
+
+def _selfaware_tick() -> None:
+    """Every ~60 s: copy what autonomy and sleep did into the journal, and notice if my own code changed on disk
+    while I was running (single cheap pass: only files whose mtime/size moved are re-hashed)."""
+    t = time.monotonic()
+    if t < _selfaware_state["next"]:
+        return
+    _selfaware_state["next"] = t + 60
+    selfaware.sync_adapters()
+    changed = selfaware.watch_code()
+    if changed:
+        dashboard.notify({"type": "self_event", "data": {"subsystem": "code", "files": changed[:6]}})
+
+
+def _selfaware_setting_hook(key: str, value, live: bool) -> None:
+    selfaware.record("settings", "changed", f"setting {key}" + (f" set to {value}" if value not in (None, "") else
+                                                                 " changed" if value is None else " cleared")
+                     + ("" if live else " (needs a restart to apply)"))
+
+
+def _face_event_hook(ev: dict) -> None:
+    """Live refresh for the dashboard, plus one journal line (event kind and name only: never a picture/vector)."""
+    dashboard.notify({"type": "face_event", "data": ev})
+    kind = str((ev or {}).get("kind") or "")
+    if kind:
+        who = str((ev or {}).get("name") or "").strip()
+        selfaware.record("identity", kind, kind.replace("_", " ") + (f" ({who})" if who else ""))
+
+
+def _selfaware_flags() -> list[str]:
+    """Non-default modes worth the model knowing about (sleep and face already have their own prompt lines)."""
+    flags = []
+    if safe_mode_on():
+        flags.append("safe mode on")
+    try:
+        if autonomy.enabled() and autonomy.dry_run():
+            flags.append("autonomy in dry-run")
+        elif not autonomy.enabled():
+            flags.append("autonomy off")
+    except Exception:
+        pass
+    prov = _llm_provider()
+    if prov != "claude":
+        flags.append(f"brain: {prov}")
+    return flags
+
+
+def _selfaware_line() -> str:
+    try:
+        return selfaware.prompt_line(_selfaware_flags())
+    except Exception as e:
+        log.debug("self-awareness line skipped: %s", e)
+        return ""
 
 
 _google_reauth_told: dict[str, float] = {}
@@ -6282,6 +6362,15 @@ def _feature_devices(action: str, payload: dict):
             netscan.apply_names(_netscan_state["last"], netscan.names(_memory_db_connect, _memory_db_lock))
         return {"ok": True}
     return None
+
+
+@_feature("self")
+def _feature_self(action: str, payload: dict):
+    """Home "What I've been doing" card: the self-awareness journal (read-only)."""
+    if action != "get":
+        return None
+    selfaware.sync_adapters()
+    return selfaware.status(_selfaware_flags())
 
 
 @_feature("macros")
@@ -7777,6 +7866,7 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
         + sleep_mode.system_prompt_context_line()
         + face.system_prompt_context_line()
         + autonomy.agent_context_line()
+        + _selfaware_line()
         + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
         + _relevant_memory_line(query)
         + _lessons_line(query)
@@ -9481,6 +9571,9 @@ def _finish_background_task(task_id: int, status: str, summary: str, kind: str =
         "data": {"id": task_id, "status": status, "result_summary": summary},
     })
     ok = status == "done"
+    selfaware.record("tasks", "finished" if ok else "failed",
+                     f"background {kind or 'task'} #{task_id} {'finished' if ok else 'failed'}"
+                     + (" (a change to my own code)" if task_id in _SELF_EDIT_TASK_IDS else ""))
     if kind == "code":
         who = f"{CODING_AGENT_NAME} (background task #{task_id})"
         lead = f"{who} is done:" if ok else f"{who} ran into a problem:"
@@ -10106,6 +10199,7 @@ READONLY_TOOL_TTLS: dict[str, float] = {
     "system_status": 20,
     "weather": 600,
     "briefing": 60,
+    "self_report": 10,
     "api_spend": 300,
     "list_reminders": 30,
     "list_task_queue": 30,
@@ -10505,6 +10599,8 @@ def _execute_tool_impl(
             result = briefing_report("morning" if inp.get("kind") == "morning" else "urgent")["speech"]
         elif tool_name == "self_check":
             result = self_check_report()
+        elif tool_name == "self_report":
+            result = _self_report_tool(inp)
         elif tool_name == "weather":
             result = weather.weather_report(str(inp.get("place") or ""), inp.get("days") or 1)
         elif tool_name == "api_spend":
@@ -10817,6 +10913,7 @@ def _execute_tool_impl(
         elif tool_name == "set_llm_provider":
             result = set_llm_provider(str(inp.get("provider") or ""))
         elif tool_name == "restart_jarvis":
+            selfaware.record("system", "restart", "restart requested" + (" (forced)" if inp.get("force") else ""))
             result = restart_mod.restart(
                 Path(__file__).resolve().parent,
                 len(_RUNNING_BACKGROUND_PROCS),
@@ -11601,7 +11698,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         reply_key = cache.stable_hash(
             cache.normalize_text(transcript),
             sleep_mode.system_prompt_context_line() + face.system_prompt_context_line()
-            + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE")),
+            + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
+            + f"|self{selfaware.revision()}",
         )
         cached_reply = _reply_cache.get(reply_key)
         cache.record("reply", cached_reply is not cache.MISS, repr(transcript[:40]))
@@ -12016,6 +12114,17 @@ def _gemini_live_problem() -> str | None:
         return f"Gemini couldn't be reached ({type(e).__name__})"
 
 
+def _self_report_tool(inp: dict) -> str:
+    if str(inp.get("action") or "recent").lower() == "code":
+        return selfaware.code_report()
+    try:
+        hours = float(inp.get("hours") or 24)
+    except (TypeError, ValueError):
+        hours = 24
+    selfaware.sync_adapters()  # pick up autonomy/sleep rows written since the last tick
+    return selfaware.report(max(1, min(hours, 720)), str(inp.get("subsystem") or "") or None)
+
+
 def self_check_report() -> str:
     """Checks every moving part and says what's broken first. Works with no LLM at all, which is
     exactly when it's needed."""
@@ -12400,6 +12509,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return set_safe_mode(not off, _current_command_source())
     if intent == "self_check":
         return self_check_report()
+    if intent == "self_report":
+        return _self_report_tool({})
     if intent == "repeat":
         return _last_reply["text"] or "I haven't said anything yet."
     if intent == "shorter":
@@ -13010,6 +13121,11 @@ def main() -> int:
     if CURSOR_OPEN_FULLSCREEN and sys.platform == "win32":
         log.info("Cursor will be sent F11 for fullscreen after focus/launch.")
     _cleanup_old_logs()
+    try:
+        settings.change_hook = _selfaware_setting_hook
+        selfaware.startup()
+    except Exception as e:
+        log.warning("Self-awareness startup skipped: %s", e)
     threading.Thread(target=_restore_timers, daemon=True, name="restore-timers").start()
     _preload_piper_async()
     if stt_deepgram.DEEPGRAM_API_KEY:
@@ -13139,7 +13255,7 @@ def main() -> int:
     if face.enabled():
         # The stranger prompt goes to Telegram only (a private bot chat), never the ntfy topic.
         guest_reminders.configure(send_fn=_telegram_send, release_fn=_release_held_reminders)
-        face.set_event_hook(lambda ev: dashboard.notify({"type": "face_event", "data": ev}))
+        face.set_event_hook(_face_event_hook)
         face.start_polling(
             greet_fn=_face_greet,
             notify_fn=queue_or_deliver_notification,

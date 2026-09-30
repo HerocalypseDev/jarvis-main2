@@ -120,6 +120,10 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("self_check", re.compile(r"\bself[- ]?check\b|\bcheck yourself\b"
                               r"|\A\s*(?:jarvis,?\s*)?(?:(?:run|do)\s+(?:a\s+)?)?(?:diagnostics?|health ?check)(?: on yourself)?\W*\Z"
                               r"|\A\s*(?:jarvis,?\s*)?are you (?:ok|okay|alright|working)(?:,?\s*jarvis)?\W*\Z", re.I)),
+    # "what have you been up to / what changed": what my own subsystems did (self-awareness journal).
+    ("self_report", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:what have you been (?:up to|doing)(?: lately| today| recently)?"
+                               r"|what(?:'s| has| have)? changed(?: (?:lately|recently|today|in you|with you))?"
+                               r"|did (?:your|the) code change|what(?:'s| is) new with you)(?:,?\s*jarvis)?\W*\Z", re.I)),
     ("repeat", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:repeat that|say that again|what did you say|come again|repeat)\W*\Z", re.I)),
     ("shorter", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:say that shorter|shorter|tl;?dr|summari[sz]e that|give me the short version|shorter please)\W*\Z", re.I)),
     ("last_actions", re.compile(r"\A\s*(?:jarvis,?\s*)?what (?:did|have) you (?:just )?(?:do|done)"
