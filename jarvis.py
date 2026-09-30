@@ -11203,6 +11203,96 @@ def _start_ack(kind: str) -> bool:
     return True
 
 
+# Task-specific lead-in (2026-09-30, user idea): the moment the model has picked a slow tool, Jarvis says one
+# friendly sentence about THAT task ("Sure, I'll search your whole PC for weird.") while the tool runs. Built
+# locally from the tool name and its arguments: instant, no extra model call, no quota. It comes after the
+# generic "On it." (which needed no decision) and is skipped when the model already said something itself.
+def _announce_enabled() -> bool:
+    return _ack_enabled() and (os.environ.get("JARVIS_ANNOUNCE_TASKS") or "1").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
+def _say_arg(value, limit: int = 60) -> str:
+    """A model-chosen argument made safe to read aloud: one line, no control characters, short."""
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+    text = _collapse_paths_for_speech(re.sub(r"\s+", " ", text).strip().strip("\"'"))
+    return (text[:limit].rsplit(" ", 1)[0] + "...") if len(text) > limit else text
+
+
+def _tool_announcement(name: str, inp: dict) -> str | None:
+    """One friendly spoken sentence for a slow tool call, or None for a quick/silent one."""
+    inp = inp if isinstance(inp, dict) else {}
+    n = name or ""
+    if n in ("quick_search", "find_files"):
+        q = _say_arg(next((inp[k] for k in _QUICK_SEARCH_QUERY_ALIASES if inp.get(k)), ""))
+        if n == "find_files" and inp.get("action") == "index_watched":
+            return "Sure, I'll index the files in your watched folders."
+        return (f"Sure, I'll search your whole PC for {q}." if q else "Sure, I'll search your PC for that.")
+    if n == "web_search":
+        q = _say_arg(inp.get("query") or inp.get("q"))
+        return f"Sure, I'll search the web for {q}." if q else "Sure, I'll look that up on the web."
+    if n in ("delegate_to_claude_code", "change_jarvis_code"):
+        return "Okay, I'll hand that to James and get it started."
+    if n == "delegate_research":
+        q = _say_arg(inp.get("topic") or inp.get("query") or inp.get("task"))
+        return f"Okay, I'll start researching {q}." if q else "Okay, I'll start that research."
+    if n == "review_code" or n == "code_search":
+        return "Sure, I'll go through the code for that."
+    if n == "briefing":
+        return "Sure, I'll pull your briefing together."
+    if n in ("write_file", "write_docx", "make_document"):
+        return "Sure, I'll write that up now."
+    if n == "read_file":
+        return "Sure, I'll read that file."
+    if n == "download_image":
+        return "Sure, I'll download that image."
+    if n in ("read_screen", "type_text", "click_at", "scroll_screen") or n.startswith("mcp_windows_"):
+        return "Sure, I'll work on what's on your screen."
+    if n.startswith("mcp_gmail_"):
+        return "Sure, I'll check your Gmail."
+    if n.startswith("mcp_calendar_"):
+        return "Sure, I'll check your calendar."
+    if n.startswith("mcp_whatsapp_"):
+        return "Sure, I'll handle that in WhatsApp."
+    if n.startswith("mcp_browser_"):
+        return "Sure, I'll open that in the browser."
+    if n in ("run_shell", "run_python"):
+        return "Sure, I'll run that on your PC now."
+    return None
+
+
+def _start_announcement(line: str) -> bool:
+    """Speaks a task-specific lead-in on a background thread, after any generic lead-in already playing,
+    and before the final reply (speak_text waits for it via _await_ack). Once per command."""
+    if not _announce_enabled() or getattr(_command_ctx, "announced", False):
+        return False
+    started = getattr(_command_ctx, "started", None)
+    if started is not None and _speech_cancelled_since(started):
+        return False
+    try:
+        if sleep_mode.is_active():
+            return False
+    except Exception:
+        pass
+    _command_ctx.announced = True
+    _command_ctx.ack_started = True  # the generic filler must not follow a specific announcement
+    previous = getattr(_command_ctx, "ack_thread", None)
+
+    def _run() -> None:
+        _command_ctx.started = started
+        if previous is not None:
+            previous.join(6.0)  # keep order: "On it." first, then the specific line
+        try:
+            speak_text(line)
+        except Exception as e:
+            log.debug("Task announcement failed (harmless): %s", e)
+
+    t = threading.Thread(target=_run, name="jarvis-announce", daemon=True)
+    _command_ctx.ack_thread = t
+    t.start()
+    return True
+
+
 def _await_ack(timeout: float = 6.0) -> None:
     """Called at the top of speak_text: let this command's lead-in finish before anything else speaks."""
     t = getattr(_command_ctx, "ack_thread", None)
@@ -11411,9 +11501,16 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             reply_parts.extend(texts)
 
         if going_on and narrate and not narrated and not (streamed_this_round and " ".join(texts).strip()):
-            # The model went straight to a tool with nothing said: give the user a beat of feedback now,
-            # while the tool runs (no-op if a lead-in already played for this command).
-            _start_ack("lookup" if _ACK_LOOKUP_RE.search(transcript) else "action")
+            # The model went straight to a tool with nothing said: tell the user what is about to happen, in
+            # words about THIS task, while the tool runs (built locally from the tool call, no model call).
+            # Tools without a line fall back to the generic lead-in (no-op if one already played).
+            line = None
+            for tu in tool_uses:
+                line = _tool_announcement(tu.get("name", ""), tu.get("input") or {})
+                if line:
+                    break
+            if not (line and _start_announcement(line)):
+                _start_ack("lookup" if _ACK_LOOKUP_RE.search(transcript) else "action")
 
         if not going_on:
             # Found live (2026-09-25, Gemini flash-lite): the model said "I'll hand that off to
@@ -11575,6 +11672,7 @@ def handle_text_command(
     _command_ctx.started = time.monotonic()  # barge-in cutoff for this command's speech
     _command_ctx.ack_started = False  # at most one spoken lead-in per command
     _command_ctx.ack_thread = None
+    _command_ctx.announced = False  # and at most one task-specific announcement
     _inflight_enter()
     try:
         _handle_text_command_impl(transcript, reply_sink, tone, source)
