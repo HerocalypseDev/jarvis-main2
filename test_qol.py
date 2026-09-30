@@ -212,6 +212,7 @@ def test_self_check_reports_problems_first(monkeypatch):
     monkeypatch.setattr(jarvis, "_claude_live_problem", lambda: "the Anthropic credit balance is too low")
     monkeypatch.setattr(jarvis, "_gemini_live_problem", lambda: None)
     monkeypatch.setattr(jarvis.doctor, "problems", lambda *a, **k: [])  # machine-specific: covered in test_reliability
+    monkeypatch.setattr(jarvis.sd, "query_devices", lambda kind=None, **k: {"name": "test device"})  # no audio hardware needed
     monkeypatch.setattr(jarvis, "_dashboard_get_services_status", lambda: [
         {"name": "gmail", "status": "connected", "detail": "5 tool(s)"},
         {"name": "context7", "status": "failed", "detail": "last tried 10:00"}])

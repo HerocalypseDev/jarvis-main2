@@ -34,7 +34,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -333,6 +333,15 @@ _CATASTROPHIC_PATTERNS = _CATASTROPHIC_PATTERNS + (
             re.I,
         ),
         "reformat a disk, wipe free space, or damage boot/system configuration",
+    ),
+    (
+        re.compile(
+            r"\bsc(?:\.exe)?\s+(?:\\\\\S+\s+)?delete\b|\bremove-(?:service|localuser)\b|"
+            r"\bnet1?\s+user\b[^\n]*/(?:delete|add)\b|\bnet1?\s+localgroup\s+administrators\b[^\n]*/add\b|"
+            r"\b(?:takeown|icacls)\b[^\n]*(?:\b[a-z]:[\\/]*(?=[\s\"'*;&|)]|$)|[\\/]windows\b|system32|program files)",
+            re.I,
+        ),
+        "delete a Windows service or user account, add an administrator, or take over permissions on system folders",
     ),
 )
 
@@ -4953,13 +4962,18 @@ def _check_due_reminders(now: datetime) -> None:
         # a silent visual banner doesn't talk over anything, so it doesn't need to wait out
         # queue_or_deliver_notification's busy-gate to avoid being missed.
         # (A held reminder gets no toast either: the banner would show its text on screen.)
-        if not _reminders_held_now(bool(urgent)):
-            send_windows_toast("Jarvis Reminder", text)
-        # A reminder the user set must fire on time; only unprompted messages wait out the busy gate.
-        queue_or_deliver_notification(
-            f"Reminder: {text}", urgent=bool(urgent), bypass_busy_gate=True, is_reminder=True
-        )
-        record_recent_task(f"reminder delivered: {text}")
+        try:
+            if not _reminders_held_now(bool(urgent)):
+                send_windows_toast("Jarvis Reminder", text)
+            # A reminder the user set must fire on time; only unprompted messages wait out the busy gate.
+            queue_or_deliver_notification(
+                f"Reminder: {text}", urgent=bool(urgent), bypass_busy_gate=True, is_reminder=True
+            )
+            record_recent_task(f"reminder delivered: {text}")
+        except Exception as e:
+            # A failure while announcing must not leave the row due: it would toast again every minute, forever,
+            # and the reminders after it in this batch would never fire. It is marked done below either way.
+            log.warning("Reminder #%s could not be announced (%s); marking it delivered.", rid, e)
         with _memory_db_lock:
             conn = _memory_db_connect()
             try:
@@ -5687,8 +5701,8 @@ def _doctor_tick() -> None:
         if c.get("quiet"):
             continue  # for the dashboard / doctor report only: not something to say out loud
         key = c["name"]  # by name: the detail changes daily ("signed in 6 days ago") and must not re-announce
-        if time.time() - told.get(key, 0) < 3 * 86400:
-            continue
+        if key in told and not (c.get("repeat") and time.time() - told[key] >= 3 * 86400):
+            continue  # said once; only a sign-in that is about to expire is repeated (every 3 days)
         told[key] = time.time()
         selfaware.record("system", "doctor", f"noticed a problem: {c['name']} - {c['detail']}")
         queue_or_deliver_notification(
@@ -10306,6 +10320,20 @@ _READ_ONLY_NAME_RE = re.compile(r"(?:^|_|-)(?:list|search|get|read|recall|find|q
 _NEVER_BACKS_CLAIMS = {"email_reply", "find_tools", "lessons", "list_background_tasks"}  # drafts / look-ups only
 
 
+# Asking for a "yes" to a dangerous action that was never staged (found live 2026-09-18: "I'm about to shut down...
+# say yes" with no run_shell call, so a later "yes" did nothing). Only when nothing is actually waiting for a yes.
+_ASKS_FOR_YES_RE = re.compile(r"\b(?:say|reply|answer|type|tell me)\b[^.!?]{0,12}\byes\b|\bconfirm\b[^.!?]{0,25}\byes\b", re.I)
+_DANGEROUS_ACTION_RE = re.compile(r"\b(?:shut ?down|power off|restart|reboot|format|wipe|erase|delete|hibernate|sign out|log ?off)\b", re.I)
+_CONFIRMATION_IMITATION = "stage that action, so nothing is waiting for your yes"
+
+
+def _confirmation_imitated(reply_text: str) -> bool:
+    if not (_ASKS_FOR_YES_RE.search(reply_text or "") and _DANGEROUS_ACTION_RE.search(reply_text or "")):
+        return False
+    with _pending_action_lock:
+        return _pending_action is None
+
+
 def _unbacked_claims(reply_text: str, used_tool_names: list[str]) -> list[str]:
     """What the reply claims to have done, past tense, with no tool of that kind run this turn.
     Questions and offers ("Shall I set a reminder?") are ignored."""
@@ -10320,6 +10348,8 @@ def _unbacked_claims(reply_text: str, used_tool_names: list[str]) -> list[str]:
         for what, claim, backing in _ACTION_CLAIMS:
             if what not in out and claim.search(sentence) and not any(backing.search(n) for n in doers):
                 out.append(what)
+    if _confirmation_imitated(reply_text):
+        out.append(_CONFIRMATION_IMITATION)
     return out
 
 
@@ -10459,7 +10489,9 @@ def _ui_script_problem(code: str) -> str | None:
 _SHELL_FILE_SEARCH_RE = re.compile(
     r"(?:\b(?:get-childitem|gci|ls|dir)\b[^|;\n]*-(?:recurse|r)\b[^|;\n]*-(?:filter|include|name)\b"
     r"|\b(?:get-childitem|gci|ls|dir)\b[^|;\n]*-(?:filter|include)\b[^|;\n]*-(?:recurse|r)\b"
-    r"|\bdir\b[^|;\n]*/s\b|\bwhere(?:\.exe)?\s+/r\b|\bfind\s+\S+\s+-i?name\b)", re.IGNORECASE)
+    r"|\bdir\b[^|;\n]*/s\b|\bwhere(?:\.exe)?\s+/r\b|\bfind\s+\S+\s+-i?name\b"
+    r"|\b(?:get-childitem|gci|ls|dir)\b[^;\n]*-(?:recurse|r)\b[^;\n]*\|\s*(?:where-object|where|\?|select-string)(?=\s)[^;\n]*\bname\b)",
+    re.IGNORECASE)
 _SHELL_FILE_SEARCH_REFUSAL = (
     "Not run: to find a file by name use the quick_search tool (Everything is running and answers in "
     "milliseconds over the whole PC). Call quick_search with the file name instead of scanning folders.")
@@ -12039,6 +12071,7 @@ _command_ctx = threading.local()
 # types, sends, or is an MCP tool still runs one at a time, in order, exactly as before. The per-command context
 # (source, barge-in clock, screen flags) is thread-local, so it is copied into each worker.
 PARALLEL_TOOLS_MAX = 4
+PARALLEL_TOOL_TIMEOUT_S = 90  # a read-only tool that hangs must not hold the whole turn (the same limit as running it alone)
 
 
 def _parallel_tools_enabled() -> bool:
@@ -12066,11 +12099,22 @@ def _run_read_only_tools_parallel(tool_uses: list[dict], transcript: str) -> dic
     ctx = dict(vars(_command_ctx))
     t0 = time.monotonic()
     out: dict[int, str] = {}
-    with ThreadPoolExecutor(max_workers=min(PARALLEL_TOOLS_MAX, len(idx)), thread_name_prefix="jarvis-tool") as ex:
+    # No `with` block: leaving it would wait for a hung tool. Each result is waited for up to the limit; a tool
+    # that is still running then becomes a failed result and its thread is left to finish on its own.
+    ex = ThreadPoolExecutor(max_workers=min(PARALLEL_TOOLS_MAX, len(idx)), thread_name_prefix="jarvis-tool")
+    try:
         futures = {i: ex.submit(_run_tool_with_ctx, ctx, tool_uses[i].get("name", ""),
                                 tool_uses[i].get("input") or {}, transcript) for i in idx}
+        deadline = time.monotonic() + PARALLEL_TOOL_TIMEOUT_S
         for i, f in futures.items():
-            out[i] = f.result()
+            try:
+                out[i] = f.result(timeout=max(0.1, deadline - time.monotonic()))
+            except FutureTimeout:
+                log.warning("Parallel tool %r still running after %ss; not waiting for it.",
+                            tool_uses[i].get("name"), PARALLEL_TOOL_TIMEOUT_S)
+                out[i] = f"Tool failed: {tool_uses[i].get('name')} did not answer in {PARALLEL_TOOL_TIMEOUT_S} seconds."
+    finally:
+        ex.shutdown(wait=False)
     log.info("Ran %d read-only tools in parallel in %.2fs: %s", len(idx), time.monotonic() - t0,
              ", ".join(tool_uses[i].get("name", "") for i in idx))
     return out

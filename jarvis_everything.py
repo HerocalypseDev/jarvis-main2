@@ -93,6 +93,10 @@ def _es(q: str, count: int) -> list[dict] | None:
     # The whole query is ONE argument (es.exe joins its words itself). Splitting it with shlex in POSIX mode treated
     # the backslash in `"C:\\Users\\x\\" name` as an escape and an apostrophe ("don't") as an open quote: a ValueError
     # that was reported as "Everything isn't reachable" although it was running.
+    if q.lstrip().startswith("-"):
+        # es.exe reads an argument starting with "-" as a switch (-export-csv would write a file): as a quoted
+        # phrase it is only ever text to search for. Search text can come from a mail subject (agent placeholders).
+        q = '"' + q.strip().replace('"', "") + '"'
     p = subprocess.run([exe, "-n", str(count), "-sort", "date-modified-descending", q],
                        capture_output=True, text=True, timeout=TIMEOUT_S + 3, creationflags=_NO_WINDOW,
                        errors="replace")

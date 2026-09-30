@@ -192,7 +192,9 @@ def check(tool: str, schema: dict | None, args: dict | None) -> tuple[dict, list
                     f"Invalid value {args[name]!r} for '{name}' of {tool}. Valid values: "
                     f"{', '.join(str(e) for e in enum)}. Call {tool} again with one of them.")
 
-    still_missing = [r for r in required if r not in args or _empty(args[r])]
+    # Only an ABSENT (or null) required parameter is an error. A blank string can be a real value (clear a field,
+    # an empty filter) and the tool says for itself when it needs text; refusing it here broke such MCP calls.
+    still_missing = [r for r in required if r not in args or args[r] is None]
     if still_missing:
         got = ", ".join(k for k in args if not str(k).startswith("_")) or "nothing"
         return args, notes, (

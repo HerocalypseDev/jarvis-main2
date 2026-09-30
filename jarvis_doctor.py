@@ -100,11 +100,13 @@ def google_login_checks(now: float | None = None, state: dict | None = None) -> 
             seen[server] = rec
         age_days = (now - rec["first_seen"]) / 86400
         if age_days >= GOOGLE_LOGIN_WARN_DAYS:
-            out.append(_check(f"{server.title()} sign-in", "warn",
+            c = _check(f"{server.title()} sign-in", "warn",
                               f"signed in {age_days:.0f} days ago; if your Google Cloud app is still in 'Testing' "
                               "status, Google ends the sign-in after about 7 days",
                               f"Run `{REAUTH[server]}`, and publish the app (OAuth consent screen > Publish app) "
-                              "so it stops expiring"))
+                              "so it stops expiring")
+            c["repeat"] = True  # a sign-in that is about to end is worth a reminder every few days
+            out.append(c)
         else:
             out.append(_check(f"{server.title()} sign-in", "ok", f"signed in {age_days:.0f} days ago"))
     if state is None and json.dumps(st, sort_keys=True) != before:

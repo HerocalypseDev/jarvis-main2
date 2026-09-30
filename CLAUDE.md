@@ -1741,7 +1741,8 @@ row there each phase rather than only stating the total in chat.
 | 108 (research phase 3 product feel: habit-based macro suggestions with Toolbox rows, plans resumable after a restart + restart notice, tool-registry consistency test; 10 new tests) | Sonnet 5.5 | ~35 min | ~$3.00–$4.20 |
 | 109 (self-awareness: journal of what autonomy/sleep/identity/settings/brain/safe mode/tasks did, code fingerprint diff at start + on-disk watcher, volatile prompt line, `self_report` tool + voice intent, Home card; 13 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
 | 110 (audit of the 2026-09-30 batch: optional-parameter guessing (cc/force) stopped, es.exe query quoting, false "not on disk" for dotted names, plan resume race + stuck plans, useless "Done" habit macros, doctor re-announcing daily, announcement before a staged shutdown, dashboard files claiming a restart, free-text settings in the prompt; 18 new tests) | Sonnet 5.5 | ~45 min | ~$3.50–$4.80 |
-| **Running total (final)** | | **~3444 min** | **~$219.05–$306.85** |
+| 111 (full codebase audit, second pass: imitated-confirmation claim guard, wider gate (services/accounts/permissions), reminder announce-failure storm, parallel tool timeout, blank required args, es.exe switch injection, shell-search guard gap, doctor nagging, hardware-free self-check test; 8 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~3484 min** | **~$222.05–$311.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2069,7 +2070,7 @@ Tests: `test_audit_batch.py` (18, one per defect; 11 of them fail on the old cod
   as failed, which also unblocks resuming); `_resume_plan` checks and claims in one lock hold (two simultaneous resumes started the plan
   twice). A resumed plan re-runs the step that was in flight at the restart: its side effects may repeat (accepted).
 - **Habit macros** are offered only for ACTION tools (see above).
-- **Doctor**: announced by problem NAME (the detail changes daily), again only after 3 days, forgotten once fixed; the "Tool arguments"
+- **Doctor**: announced by problem NAME (the detail changes daily), once, forgotten once fixed (only an expiring Google sign-in is repeated, every 3 days); the "Tool arguments"
   developer note is `quiet` (report/card only, never spoken); `doctor_state.json` is written atomically (torn file = every sign-in
   age restarts) and still holds only a token fingerprint.
 - **Announcements**: no "I'll run that" line for a shell/python/UI call the confirmation gate is about to stage.
@@ -2081,6 +2082,35 @@ Tests: `test_audit_batch.py` (18, one per defect; 11 of them fail on the old cod
 - Residual: no timeout on a hung parallel read-only tool (same as running it alone); the shell-search guard misses a recursive scan that
   pipes into `Where-Object`; a wake word hit by a TV costs one speech-to-text call per hit (2.5 s cooldown); not verified live: real mic
   wake word, real Everything HTTP server, real Google token age.
+
+## Full codebase audit, second pass (2026-09-30)
+
+Whole-system audit after the feature batch; tests appended to `test_audit_batch.py` (25 total). Rules to keep:
+- **Claim checker also catches an imitated confirmation**: a reply that asks for a "yes" to a dangerous action (shut down, restart,
+  format, wipe, delete...) while nothing is staged (`_pending_action is None`) is an unbacked claim (`_confirmation_imitated`): one
+  nudge to make the real `run_shell` call, then "Correction: I didn't actually stage that action". This is the code-level guard the
+  2026-09-18 shutdown note said to add if the prompt-only rule ever failed.
+- **The gate also stages** `sc delete`, `Remove-Service/LocalUser`, `net user ... /delete|/add`, `net localgroup administrators ... /add`
+  and `takeown`/`icacls` aimed at a drive root, Windows, System32 or Program Files. Still a text tripwire (string-concatenation
+  obfuscation like `'shut'+'down'` is not caught: documented limit).
+- **A reminder whose announcement raises is still marked delivered** and the rest of the batch still fires (before: it toasted again
+  every minute forever and blocked the reminders after it).
+- **Parallel read-only tools have a 90 s limit** (`PARALLEL_TOOL_TIMEOUT_S`): a hung one becomes a failed result, the executor is not
+  waited on.
+- **Argument check**: only an absent/null REQUIRED parameter is an error (a blank string can be a real value, e.g. clearing a field).
+- **es.exe**: a search text starting with `-` is quoted, so it can never be a switch (`-export-csv` would write a file; agent
+  placeholders can put a mail subject there).
+- **Shell name-search guard** also refuses `Get-ChildItem -Recurse | Where-Object Name ...` / `? {$_.Name ...}` while Everything is up.
+- **Doctor**: a permanent "not installed" (Everything) is said once, not every 3 days.
+- `test_qol::test_self_check_reports_problems_first` no longer depends on audio hardware.
+- Checked and fine (no change): import survives garbage in every numeric env var; every `subprocess.run` has a timeout; every thread is a
+  daemon; `open_url`/`play_media` scheme checks and all `_open_uri` callers; the only callers of `skip_confirmation=True`/
+  `_execute_confirmed_action` are the spoken yes, the dashboard Approve and the staged re-run; dashboard middleware covers every
+  `/api/*` route and `/ws` checks Origin; rg is called with `--` before the query; deferred jobs claim one at a time;
+  no undefined names (pyflakes) in any module.
+- Residual (needs live Windows verification): real mic wake word, Everything's HTTP server and es.exe quoting on a real install,
+  Google sign-in age, the Home "What I've been doing" card in a real browser, a real code change during a running session,
+  typing into a real form through Windows-MCP.
 
 ## Hand-off guard (2026-09-25)
 
