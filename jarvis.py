@@ -93,6 +93,7 @@ import jarvis_tts_deepgram as tts_deepgram
 import jarvis_latency as latency
 import jarvis_audio_duck as audio_duck
 import jarvis_followup
+import jarvis_wakeword
 import jarvis_weather as weather
 import jarvis_briefing as briefing
 import jarvis_chief as chief
@@ -12179,21 +12180,22 @@ def _handle_text_command_impl(
 
 def handle_voice_command(
     audio: np.ndarray, sample_rate: int, stream_session: "stt_deepgram.StreamingSession | None" = None,
-    hold: dict | None = None, hands_free: bool = False,
+    hold: dict | None = None, hands_free: bool = False, wake: bool = False,
 ) -> None:
     """hands_free: captured by the follow-up window (no key held), see jarvis_followup.
+    wake: the capture was started by the "Hey Jarvis" wake word (always hands_free too).
     hold: {"mode": selection|appshot|dictation, "key": ...} when a hold-mode key was used."""
     _inflight_enter()  # covers transcription, which happens before handle_text_command
     try:
         _handle_voice_command_impl(audio, sample_rate, stream_session=stream_session, hold=hold,
-                                   hands_free=hands_free)
+                                   hands_free=hands_free, wake=wake)
     finally:
         _inflight_exit()
 
 
 def _handle_voice_command_impl(
     audio: np.ndarray, sample_rate: int, stream_session: "stt_deepgram.StreamingSession | None" = None,
-    hold: dict | None = None, hands_free: bool = False,
+    hold: dict | None = None, hands_free: bool = False, wake: bool = False,
 ) -> None:
     if audio.size == 0 or _selection_aborted(hold):
         # (an aborted selection = the key was part of a shortcut like Ctrl+Win+Arrow, not a command)
@@ -12211,6 +12213,23 @@ def _handle_voice_command_impl(
         log.info("Push-to-talk: heard nothing.")
         latency.end()
         return
+    if wake:
+        # The detector can fire on a TV or a similar sound, so the transcript is the second check:
+        # a wake capture only runs if it really starts with the name.
+        heard_name, rest = jarvis_wakeword.strip_wake_phrase(transcript)
+        if not heard_name:
+            log.info("Wake word fired but the words were %r, not the name; ignoring.", transcript)
+            latency.end()
+            return
+        if not rest:
+            log.info("Wake word: name only, waiting for the command.")
+            latency.end()
+            speak_text("Yes?")
+            if not safe_mode_on():
+                followup.arm(chained=False)  # the command comes next, through the normal follow-up window
+            return
+        log.info("Wake word: %r", rest)
+        transcript = rest
     lat.intent = latency.classify_intent(transcript)
     tone = voice_tone.analyze_tone(transcript, audio, sample_rate)
     if tone.get("tone") != "neutral":
@@ -12244,7 +12263,7 @@ def _handle_voice_command_impl(
         _command_ctx.attach_image = None
         latency.end()
     if not _speech_cancelled_since(started) and not safe_mode_on():  # not after a barge-in / in safe mode
-        followup.arm(chained=hands_free)
+        followup.arm(chained=hands_free and not wake)  # a fresh "Hey Jarvis" starts the chain over
 
 
 _text_hotkey_popup_open = threading.Event()
@@ -12712,6 +12731,8 @@ def main() -> int:
     )
 
     input_idx = _choose_input_device(blocksize)
+    wake_listener = None  # created lazily when JARVIS_WAKE_WORD is switched on
+    wake_gate_ts, wake_gate_ok = 0.0, False
 
     try:
         with sd.InputStream(
@@ -12735,6 +12756,8 @@ def main() -> int:
                     if JARVIS_PTT_ENABLED and _keyboard_is_pressed(JARVIS_PTT_KEY):
                         _interrupt_speech()
                     followup.cancel()
+                    if wake_listener is not None:
+                        wake_listener.reset()  # never let Jarvis's own voice add up to a wake word
                     continue
 
                 if JARVIS_PTT_ENABLED:
@@ -12746,13 +12769,35 @@ def main() -> int:
                         ptt_down = ptt_down or _keyboard_is_pressed(hold["key"])
                     pressed = ptt_down or hold_now is not None
                     if not pressed and not ptt_active:
-                        utterance = followup.feed(data[:, 0] if data.ndim > 1 else data)
+                        mono = data[:, 0] if data.ndim > 1 else data
+                        # Optional "Hey Jarvis" (Settings): only while nothing else is listening, and
+                        # never in Safe Mode or Sleep Mode. Switching it off in Settings frees the model.
+                        if time.monotonic() - wake_gate_ts > 2.0:  # Sleep Mode state is a DB read: not every block
+                            wake_gate_ts = time.monotonic()
+                            try:
+                                wake_gate_ok = jarvis_wakeword.enabled() and not sleep_mode.is_active()
+                            except Exception:
+                                wake_gate_ok = False
+                        if wake_gate_ok and not safe_mode_on():
+                            if wake_listener is None:
+                                wake_listener = jarvis_wakeword.WakeListener(SAMPLE_RATE, async_load=True)
+                            if followup.armed:
+                                wake_listener.reset()
+                            elif wake_listener.feed(mono):
+                                log.info("Wake word heard (score %.2f), listening...", wake_listener.last_score)
+                                followup.seed(wake_listener.recent_audio())
+                                wake_listener.reset()
+                        elif wake_listener is not None:
+                            wake_listener = None
+                        utterance = followup.feed(mono)
                         if utterance is not None:
-                            log.info("Follow-up heard (%.2fs), transcribing...", len(utterance) / SAMPLE_RATE)
+                            woke = followup.last_seeded
+                            log.info("%s heard (%.2fs), transcribing...", "Wake word command" if woke else "Follow-up",
+                                     len(utterance) / SAMPLE_RATE)
                             threading.Thread(
                                 target=handle_voice_command,
                                 args=(utterance.reshape(-1, 1), SAMPLE_RATE),
-                                kwargs={"hands_free": True},
+                                kwargs={"hands_free": True, "wake": woke},
                                 daemon=True,
                             ).start()
                         continue

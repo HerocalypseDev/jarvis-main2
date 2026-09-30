@@ -1731,7 +1731,8 @@ row there each phase rather than only stating the total in chat.
 | 98 (Gemini speed pass: streaming into speech on every round, stall protection + backup racing, connection reuse, spoken-length cap, spoken lead-in; live-verified against the real API; 36 new tests) | n/a | ~55 min | ~$3.50–$4.50 |
 | 99 ("couldn't reach Gemini" root-caused: free tier = daily per-model allowance (500/day, 20/day); spoken failure reasons, `python jarvis_gemini.py` diagnostic, in-stream 429 wait, restored 30 s cap, opt-in backup on rate limit; live burst test; 13 new tests) | n/a | ~60 min | ~$4.00–$5.50 |
 | 100 (correction: the Gemini 429s were the DAILY per-model quota, not per-minute; daily 429 never waited on, reason names the quota (500/day, 20/day, resets midnight Pacific), docs corrected; 5 new tests) | n/a | ~20 min | ~$2.00–$3.00 |
-| **Running total (final)** | | **~3169 min** | **~$197.95–$277.45** |
+| 101 (opt-in "Hey Jarvis" wake word: openWakeWord detector on the mic loop, seeded follow-up capture, transcript name check, Settings switch off by default; real-model smoke test; 14 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~3194 min** | **~$199.75–$279.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1906,6 +1907,25 @@ Full write-up: SPEED.md "Gemini speed pass". Rules to keep (tests: `test_speed_g
   first, so speech stays in order. Keep that join if `speak_text` is refactored; never add a second ack path that
   speaks without it. Shared test fixtures set `JARVIS_ACK_PHRASES=0`.
 - Connection reuse is skipped behind an HTTPS proxy. Gemini Live (native audio) was deliberately **not** built.
+
+## Wake word (2026-09-30)
+
+Opt-in "Hey Jarvis" (`jarvis_wakeword.py`, `test_wakeword.py`), **off by default** (`JARVIS_WAKE_WORD`, Settings, live;
+`JARVIS_WAKE_THRESHOLD` 0.5). Rules to keep:
+- openWakeWord's bundled `hey_jarvis` ONNX runs locally over the mic blocks the push-to-talk loop already reads
+  (44.1 kHz resampled to 16 kHz int16, 1280-sample frames). Optional dependency (`openwakeword==0.4.0`, commented in
+  requirements.txt); if missing or the model fails, the feature turns itself off with one log line, push-to-talk unaffected.
+  Model loads on a background thread (the audio loop must never block). Measured: ~+140 MB RAM, ~5-7% of one core.
+- On a hit the main loop calls `followup.seed(recent audio)`: capture starts at "Hey", ends after `SILENCE_S` once the user
+  talks on, or after `WAKE_GRACE_S` (1.6 s) if they only said the name; then `handle_voice_command(..., hands_free=True,
+  wake=True)`. The transcript is the second check: it must OPEN with the name (`strip_wake_phrase`, tolerates Travis/Jervis
+  mishearings) or it is dropped; name only -> "Yes?" and the normal follow-up window takes the command.
+- **A wake capture is hands-free, so it can never confirm the catastrophic gate** (same rule as the follow-up window; never
+  relax it). Wake listening is skipped while Jarvis speaks (detector reset), while any capture/window is active, in Safe Mode
+  and in Sleep Mode (Sleep state is cached 2 s: it is a DB read). A wake command resets the hands-free chain counter.
+- Not verified live: real "Hey Jarvis" speech through a real mic (the real model was only smoke-tested on noise: no false
+  hit, 5% of a core). If it misses the phrase lower `JARVIS_WAKE_THRESHOLD`; if TV triggers it, raise it. Audio only leaves
+  the PC after a hit (STT of the captured command, same as any voice command).
 
 ## Hand-off guard (2026-09-25)
 
