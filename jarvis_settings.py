@@ -100,6 +100,13 @@ SETTINGS: list[dict] = [
      "live": "env"},
     {"key": "JARVIS_FOLLOWUP_S", "label": "Follow-up listening window (seconds)", "kind": "number", "default": "5",
      "help": "Keep listening this long after a spoken reply. 0 = off.", "live": ("jarvis", "followup.window_s", float)},
+    {"key": "JARVIS_WAKE_WORD", "label": "\"Hey Jarvis\" wake word", "kind": "bool", "default": "0",
+     "help": "Say \"Hey Jarvis, ...\" instead of holding the push-to-talk key. Runs a small model on this PC "
+     "(about 140 MB of memory and a few percent of one CPU core) and needs `pip install openwakeword`; nothing "
+     "leaves the PC until the phrase is heard. Off in Safe Mode and Sleep Mode. A wake-word command can never "
+     "confirm a shutdown/format: use the push-to-talk key for that.", "live": "env"},
+    {"key": "JARVIS_WAKE_THRESHOLD", "label": "Wake word sensitivity", "kind": "number", "default": "0.5",
+     "help": "0.1-0.99. Lower if \"Hey Jarvis\" is often missed; raise if it fires on TV or chatter.", "live": "env"},
     {"key": "JARVIS_FOLLOWUP_MIN_RMS", "label": "Follow-up mic sensitivity", "kind": "number", "default": "0.01",
      "help": "Lower if follow-ups never trigger; raise if background noise triggers them.",
      "live": ("jarvis_followup", "MIN_RMS", float)},

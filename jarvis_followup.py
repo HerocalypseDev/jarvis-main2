@@ -34,6 +34,8 @@ MAX_S = _env_float("JARVIS_FOLLOWUP_MAX_S", 15.0)
 MAX_CHAIN = int(_env_float("JARVIS_FOLLOWUP_MAX_CHAIN", 3))  # hands-free turns in a row before the key is needed again
 MIN_SPEECH_S = 0.3  # shorter bursts (a click, a cough) are dropped
 PREROLL_S = 0.3  # audio kept from just before speech started, so the first syllable isn't clipped
+WAKE_GRACE_S = _env_float("JARVIS_WAKE_GRACE_S", 1.6)  # after "Hey Jarvis", how long a pause before the command is tolerated
+WAKE_WINDOW_S = 8.0  # a wake capture may run this long overall
 
 
 class FollowUpListener:
@@ -49,6 +51,9 @@ class FollowUpListener:
         self._preroll_s = 0.0
         self._ambient: deque[float] = deque(maxlen=100)
         self._chain = 0
+        self._seeded = False
+        self._await_voice = False
+        self.last_seeded = False  # the utterance feed() last returned came from the wake word
 
     def arm(self, now: float | None = None, chained: bool = False) -> None:
         """chained: this reply answered a hands-free follow-up. After MAX_CHAIN of those in a row
@@ -63,6 +68,28 @@ class FollowUpListener:
     def cancel(self) -> None:
         self._deadline = 0.0
         self._capture = None
+        self._seeded = False
+
+    @property
+    def armed(self) -> bool:
+        """True while a follow-up window is open or a capture is running (the wake word stays quiet then)."""
+        return self._capture is not None or time.monotonic() < self._deadline
+
+    def seed(self, blocks: list[np.ndarray], now: float | None = None) -> None:
+        """Wake word heard: start capturing right now, beginning with the audio that led up to it (`blocks`,
+        oldest first) so the words "Hey Jarvis" are included for the transcript check. The capture ends
+        after SILENCE_S once the user talks on, or after WAKE_GRACE_S if they only said the name and
+        paused. Its result is flagged (`last_seeded`) so the caller can tell it apart from a follow-up."""
+        now = now if now is not None else time.monotonic()
+        self._capture = [b.copy() for b in blocks if len(b)]
+        self._captured_s = sum(len(b) for b in self._capture) / self.sample_rate
+        self._voiced_s = max(MIN_SPEECH_S, self._captured_s)  # the name itself was speech
+        self._silence_s = 0.0
+        self._await_voice = True
+        self._seeded = True
+        self._deadline = now + WAKE_WINDOW_S
+        self._preroll.clear()
+        self._preroll_s = 0.0
 
     @property
     def capturing(self) -> bool:
@@ -97,16 +124,21 @@ class FollowUpListener:
                 self._preroll_s = 0.0
             return None
         self._capture.append(block.copy())
-        self._captured_s += dur
+        self._captured_s += dur  # (a wake-seeded capture never re-checks the window deadline)
         if loud:
             self._voiced_s += dur
             self._silence_s = 0.0
+            self._await_voice = False
         else:
             self._silence_s += dur
-        if self._silence_s < SILENCE_S and self._captured_s < MAX_S:
+        # After only the wake name, wait a little longer for the command to start.
+        limit_silence = WAKE_GRACE_S if self._await_voice else SILENCE_S
+        limit_total = WAKE_WINDOW_S if self._seeded else MAX_S
+        if self._silence_s < limit_silence and self._captured_s < limit_total:
             return None
         audio, voiced = np.concatenate(self._capture, axis=0), self._voiced_s
         self._capture = None
+        self.last_seeded, self._seeded, self._await_voice = self._seeded, False, False
         if voiced < MIN_SPEECH_S:
             return None  # a click or cough: keep whatever is left of the window
         self._deadline = 0.0  # one follow-up per window; the next reply re-arms it
