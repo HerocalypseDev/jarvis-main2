@@ -1101,3 +1101,38 @@ def test_file_find_guidance_is_powershell_not_cmd(jarvis):
     hint = jarvis_everything.SETUP_HINT
     assert "Get-ChildItem" in hint and "USERPROFILE" in hint and "PowerShell" in hint
     assert jarvis_everything.format_results({"ok": False, "error": hint, "results": []}) == hint
+
+
+def test_find_a_file_always_goes_through_everything(jarvis, monkeypatch):
+    """User request 2026-09-30: any "find a file on my laptop" must use the Everything app (quick_search),
+    never a shell scan. The prompt/tool text says so, quick_search is always offered, and a recursive name
+    search through run_shell is refused while Everything is reachable (allowed when it is not)."""
+    import jarvis_everything as ev
+    import jarvis_tool_router as R
+    assert "quick_search" in R.CORE_TOOLS
+    text = " ".join(b.get("text", "") for b in jarvis.build_system_blocks(""))
+    assert "ALWAYS use the quick_search tool first" in text and "Everything app" in text
+    desc = next(t for t in jarvis.AGENT_TOOLS if t["name"] == "quick_search")["description"]
+    assert "ALWAYS" in desc and "find" in desc
+    scans = ["Get-ChildItem -Path C:\\Users\\x -Recurse -Filter '*weird*' -ErrorAction SilentlyContinue",
+             "gci C:\\ -Recurse -Include *.pdf | Select -First 5", "dir C:\\ /s /b *weird*", "where /r C:\\ weird*"]
+    monkeypatch.setattr(ev, "reachable", lambda *a, **k: True)
+    for c in scans:
+        assert jarvis._file_search_via_shell_problem(c) and "quick_search" in jarvis._file_search_via_shell_problem(c), c
+    for ok in ("Get-ChildItem C:\\Users\\x\\Desktop", "Get-Process | Select -First 3", "git status"):
+        assert jarvis._file_search_via_shell_problem(ok) is None, ok
+    monkeypatch.setattr(ev, "reachable", lambda *a, **k: False)  # Everything not set up: the fallback is allowed
+    assert all(jarvis._file_search_via_shell_problem(c) is None for c in scans)
+
+
+def test_everything_reachable_is_cached_and_es_exe_is_found_in_program_files(monkeypatch, tmp_path):
+    import jarvis_everything as ev
+    calls = []
+    monkeypatch.setattr(ev, "search", lambda *a, **k: calls.append(1) or {"ok": True, "results": []})
+    ev._reach["ts"] = 0.0
+    assert ev.reachable() and ev.reachable() and len(calls) == 1
+    (tmp_path / "Everything").mkdir()
+    (tmp_path / "Everything" / "es.exe").write_bytes(b"")
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    assert ev._find_es_exe() == str(tmp_path / "Everything" / "es.exe")
+    assert "HTTP Server" in ev.SETUP_HINT and "Enable HTTP server" in ev.SETUP_HINT

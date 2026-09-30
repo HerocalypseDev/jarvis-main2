@@ -26,8 +26,10 @@ TIMEOUT_S = 2.0
 MAX_RESULTS = 25
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _working_url: dict = {"url": None, "checked": 0.0}
-SETUP_HINT = ("Everything isn't reachable. Install voidtools Everything, then either enable its HTTP "
-              "server (Tools > Options > HTTP Server, bind to 127.0.0.1) or put es.exe on the PATH. Until "
+SETUP_HINT = ("Everything isn't reachable. Make sure the Everything app is running, then in it open Tools > "
+              "Options > HTTP Server, tick 'Enable HTTP server', leave the port at 80 (or set "
+              "JARVIS_EVERYTHING_URL), set 'Bind to interfaces' to 127.0.0.1 and click OK. (Alternative: put "
+              "es.exe, Everything's command-line tool, on the PATH.) Tell the user this. Until "
               "then, to find a file use run_shell, which is PowerShell (not cmd.exe, so no `dir /s /b`): "
               "Get-ChildItem -Path $env:USERPROFILE -Recurse -Filter '*name*' -ErrorAction SilentlyContinue "
               "| Select-Object -First 20 -ExpandProperty FullName. Search the user's folders (Desktop, "
@@ -72,8 +74,21 @@ def _http(url: str, q: str, count: int) -> list[dict]:
     return out
 
 
+def _find_es_exe() -> str | None:
+    """es.exe is a separate download, but people usually drop it next to Everything itself."""
+    roots = [os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"), os.environ.get("LOCALAPPDATA"),
+             os.path.join(os.path.expanduser("~"), "Downloads")]
+    for root in filter(None, roots):
+        for sub in ("Everything", "Everything 1.5a", "Everything\\es", "es", ""):
+            p = os.path.join(root, sub, "es.exe")
+            if os.path.isfile(p):
+                return p
+    return None
+
+
 def _es(q: str, count: int) -> list[dict] | None:
-    exe = (os.environ.get("JARVIS_EVERYTHING_ES") or "").strip() or shutil.which("es") or shutil.which("es.exe")
+    exe = ((os.environ.get("JARVIS_EVERYTHING_ES") or "").strip() or shutil.which("es") or shutil.which("es.exe")
+           or _find_es_exe())
     if not exe:
         return None
     p = subprocess.run([exe, "-n", str(count), "-sort", "date-modified-descending", *shlex.split(q, posix=True)],
@@ -111,6 +126,20 @@ def search(query: str, ext: str = "", path_prefix: str = "", count: int = MAX_RE
     if res is not None:
         return {"ok": True, "backend": "es", "results": res, "ms": round((time.perf_counter() - t0) * 1000)}
     return {"ok": False, "error": SETUP_HINT, "results": []}
+
+
+_reach: dict = {"ok": False, "ts": 0.0}
+
+
+def reachable(max_age_s: float = 30.0) -> bool:
+    """True if Everything answers right now (HTTP server or es.exe). Cached briefly so a guard that calls
+    it on every shell command doesn't probe each time."""
+    now = time.monotonic()
+    if now - _reach["ts"] < max_age_s:
+        return bool(_reach["ok"])
+    ok = bool(search("*", count=1).get("ok"))
+    _reach["ok"], _reach["ts"] = ok, now
+    return ok
 
 
 def format_results(r: dict, limit: int = 15) -> str:

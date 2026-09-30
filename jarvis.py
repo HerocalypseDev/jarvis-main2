@@ -1423,6 +1423,10 @@ Ctrl+A in a form. Leave boxes that already have the user's text alone unless the
 invent facts about the user (name, age, timezone, experience, availability): use what you remember about them, \
 otherwise leave that question and ask. At the end say which questions you filled and which you left. Fill the fields, then tell the user what \
 you filled; only press Submit/Send if they asked you to.
+Whenever the user asks you to find, search for or locate a file or folder on this PC, ALWAYS use the \
+quick_search tool first (it uses the Everything app, answers in milliseconds and covers the whole disk). \
+Do not use run_shell / Get-ChildItem / dir for that. Only if quick_search says Everything isn't reachable, \
+tell the user how to switch on Everything's HTTP server, then use the bounded PowerShell fallback it names.
 When you do need Python, use the run_python tool: it runs with the same Python interpreter Jarvis \
 itself uses. Never call python.exe / py through run_shell by a path you guessed (e.g. \
 ...\\Python312\\python.exe): that path may not exist on this PC.
@@ -2939,8 +2943,9 @@ BATCH_TOOLS = [
     {
         "name": "quick_search",
         "description": (
-            "Instant file/folder NAME search over the whole PC through Everything (milliseconds, newest "
-            "first). Prefer this over scanning folders. Supports Everything syntax in query (wildcards, "
+            "ALWAYS use this when the user asks to find/search/locate a file or folder on the PC: instant "
+            "NAME search over the whole disk through the Everything app (milliseconds, newest "
+            "first). Never scan folders with run_shell instead. Supports Everything syntax in query (wildcards, "
             "'dm:today'). ext: e.g. 'pdf;docx'. path_prefix limits to a folder."
         ),
         "input_schema": {"type": "object", "properties": {
@@ -10155,6 +10160,27 @@ def _ui_script_problem(code: str) -> str | None:
     return _UI_SCRIPT_REFUSAL if _UI_SCRIPT_RE.search(code or "") else None
 
 
+# A recursive name search through the shell (Get-ChildItem -Recurse -Filter/-Include, dir /s, where /r) is what the
+# model falls back on for "find my file". When Everything is reachable that is slow and pointless, so it is
+# refused and pointed at quick_search. With Everything unreachable it is allowed (it's the documented fallback).
+_SHELL_FILE_SEARCH_RE = re.compile(
+    r"(?:\b(?:get-childitem|gci|ls|dir)\b[^|;\n]*-(?:recurse|r)\b[^|;\n]*-(?:filter|include|name)\b"
+    r"|\b(?:get-childitem|gci|ls|dir)\b[^|;\n]*-(?:filter|include)\b[^|;\n]*-(?:recurse|r)\b"
+    r"|\bdir\b[^|;\n]*/s\b|\bwhere(?:\.exe)?\s+/r\b|\bfind\s+\S+\s+-i?name\b)", re.IGNORECASE)
+_SHELL_FILE_SEARCH_REFUSAL = (
+    "Not run: to find a file by name use the quick_search tool (Everything is running and answers in "
+    "milliseconds over the whole PC). Call quick_search with the file name instead of scanning folders.")
+
+
+def _file_search_via_shell_problem(command: str) -> str | None:
+    if not _SHELL_FILE_SEARCH_RE.search(command or ""):
+        return None
+    try:
+        return _SHELL_FILE_SEARCH_REFUSAL if everything.reachable() else None
+    except Exception:
+        return None
+
+
 def _previous_user_text(messages: list[dict]) -> str:
     """The user's previous command in this conversation (plain text), or ''."""
     for m in reversed(messages or []):
@@ -10465,6 +10491,8 @@ def _execute_tool_impl(
                 result = "No command given."
             elif _ui_script_problem(command):
                 result = _ui_script_problem(command)
+            elif _file_search_via_shell_problem(command):
+                result = _file_search_via_shell_problem(command)
             else:
                 reason = None if skip_confirmation else _catastrophic_reason(command)
                 if reason:
