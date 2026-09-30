@@ -1736,7 +1736,8 @@ row there each phase rather than only stating the total in chat.
 | 103 (debug report: quick_search ignored the `name_query` parameter Gemini sent, so Everything was never asked; parameter aliases, clearer errors, find_files hint; 1 new test) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
 | 104 (task-specific spoken announcement: built locally from the chosen tool, after the generic lead-in, once per command, Settings switch; 3 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
 | 105 (research: how to make Jarvis more efficient/agentic/professional within the owner's limits; measured the codebase, checked free provider tiers, wrote `RESEARCH_AGENTIC.md` (private, export-excluded) with a ranked plan; no code change) | Sonnet 5.5 | ~20 min | ~$1.00–$1.50 |
-| **Running total (final)** | | **~3254 min** | **~$203.35–$285.15** |
+| 106 (research phase 1 reliability: generic tool-argument repair, verify-after-act receipts, doctor + Google sign-in expiry warnings + health card, eval drafts from debug reports + capped eval runs; 18 new tests) | Sonnet 5.5 | ~45 min | ~$4.00–$5.50 |
+| **Running total (final)** | | **~3299 min** | **~$207.35–$290.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1953,6 +1954,33 @@ Opt-in "Hey Jarvis" (`jarvis_wakeword.py`, `test_wakeword.py`), **off by default
 - Not verified live: real "Hey Jarvis" speech through a real mic (the real model was only smoke-tested on noise: no false
   hit, 5% of a core). If it misses the phrase lower `JARVIS_WAKE_THRESHOLD`; if TV triggers it, raise it. Audio only leaves
   the PC after a hit (STT of the captured command, same as any voice command).
+
+## Reliability layer (2026-09-30, RESEARCH_AGENTIC.md phase 1)
+
+Tests: `test_reliability.py` (18). Rules to keep:
+- **Generic argument check** (`jarvis_toolargs.check`, called at the top of `_execute_tool_impl` for every built-in and
+  connected MCP tool with a schema): a wrong parameter name is renamed to the missing one (`name_query` -> `query`,
+  `extension` -> `ext`; one stray + one missing required also pairs), simple type slips and enum case are fixed, and an
+  unfixable call returns an error that names what is missing and what the tool takes. Every repair is logged and counted
+  (`toolargs.summary()` shows in the doctor): a tool that keeps showing up needs a clearer description. Don't add more
+  per-tool alias code; the existing ones (quick_search, run_python) stay as a second line.
+- **Verify after acting** (`_verify_action`, end of `_execute_tool_impl`): `write_file`, `download_image`,
+  `create_reminder`, `remember_fact` read the outcome back (file on disk and non-empty, reminder/fact row exists) and end
+  the result with `[verified: ...]`, or turn it into `Tool failed: ...` (so the claim checker counts it as failed). The
+  prompt tells the model to rely on that receipt and to read a page back after typing. To cover another tool, add it to
+  `_VERIFIED_TOOLS` and a branch in `_verify_action`; a broken check never breaks the action.
+- **Doctor** (`jarvis_doctor.py`, `python jarvis_doctor.py`): local checks (brain key, `.env`, Everything, packages for
+  switched-on features, last eval result, tool-argument repairs, Google sign-in age). The Gmail/Calendar refresh token
+  never changes until re-sign-in, so its SHA-256 fingerprint's first-seen day (`doctor_state.json`, gitignored, never the
+  token) is the sign-in day; from 6 days it warns with the exact `npx.cmd ... auth` command (Testing-mode Google apps end
+  a sign-in after ~7 days). Feeds `health_report()` (Home card) and `self_check_report()`; `_doctor_tick` (scheduler, at
+  start and every 12 h, skipped under pytest) announces each NEW problem once; `_notify_google_reauth` says so once per
+  12 h when a Google tool answers `invalid_grant`. Machine-specific, so tests that check report shape must stub
+  `doctor.problems`.
+- **Evals**: `python tools/collect_debug.py --evals` drafts `evals/drafts.json` (gitignored) from commands where a tool
+  failed, the reply apologised or the user repeated themselves: review, then move into `evals/cases.json`.
+  `python jarvis_eval.py --limit 15` runs a rotating capped subset (fits a free daily quota); schedule it nightly with
+  Windows Task Scheduler if wanted. Not scheduled inside Jarvis on purpose: it spends the owner's daily model quota.
 
 ## Hand-off guard (2026-09-25)
 

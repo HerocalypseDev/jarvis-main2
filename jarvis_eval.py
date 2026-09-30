@@ -107,12 +107,23 @@ def run(cases: list[dict], verbose: bool = False, delay: float = 0.0) -> dict:
     return out
 
 
+def pick_rotating(cases: list[dict], limit: int, day: int | None = None) -> list[dict]:
+    """`limit` cases starting at a point that moves with the calendar day, so a nightly capped run covers every
+    case over a few nights instead of always the first ones."""
+    day = int(time.time() // 86400) if day is None else day
+    start = (day * limit) % len(cases)
+    return [cases[(start + i) % len(cases)] for i in range(limit)]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--provider", choices=["claude", "gemini"])
     ap.add_argument("--model", help="model name for that provider")
     ap.add_argument("--case", action="append", help="run only these case ids")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="run at most this many cases (rotating through all of them over successive runs), "
+                         "so a scheduled run stays inside a free tier's daily quota")
     ap.add_argument("--delay", type=float, default=0.0,
                     help="seconds to wait between cases (free Gemini tiers allow ~5-15 requests a minute)")
     args = ap.parse_args(argv)
@@ -123,6 +134,8 @@ def main(argv=None) -> int:
     cases = json.loads(CASES.read_text(encoding="utf-8"))
     if args.case:
         cases = [c for c in cases if c["id"] in set(args.case)]
+    if args.limit and args.limit < len(cases):
+        cases = pick_rotating(cases, args.limit)
     result = run(cases, args.verbose, args.delay)
     RESULTS.mkdir(parents=True, exist_ok=True)
     path = RESULTS / f"{time.strftime('%Y%m%d-%H%M%S')}-{result['provider']}-{result['model']}.json"

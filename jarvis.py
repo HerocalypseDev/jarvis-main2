@@ -93,6 +93,8 @@ import jarvis_tts_deepgram as tts_deepgram
 import jarvis_latency as latency
 import jarvis_audio_duck as audio_duck
 import jarvis_followup
+import jarvis_toolargs as toolargs
+import jarvis_doctor as doctor
 import jarvis_wakeword
 import jarvis_weather as weather
 import jarvis_briefing as briefing
@@ -1427,6 +1429,10 @@ Whenever the user asks you to find, search for or locate a file or folder on thi
 quick_search tool first (it uses the Everything app, answers in milliseconds and covers the whole disk). \
 Do not use run_shell / Get-ChildItem / dir for that. Only if quick_search says Everything isn't reachable, \
 tell the user how to switch on Everything's HTTP server, then use the bounded PowerShell fallback it names.
+After a tool that changes something (writes a file, sets a reminder, saves a fact), base your reply on \
+the tool's own result: if it ends with "[verified: ...]" you may say it is done and repeat that proof \
+briefly; if it says "Tool failed" or has no proof, say plainly that it did not work. After typing into a \
+page, read the page back before saying it is filled in.
 When you do need Python, use the run_python tool: it runs with the same Python interpreter Jarvis \
 itself uses. Never call python.exe / py through run_shell by a path you guessed (e.g. \
 ...\\Python312\\python.exe): that path may not exist on this PC.
@@ -5408,6 +5414,7 @@ def _scheduler_steps(now: datetime) -> list:
         ("battery", _battery_tick, ()),
         ("autonomy", _autonomy_tick_battery_aware, (now,)),
         ("chief", _chief_tick, (now,)),
+        ("doctor", _doctor_tick, ()),
         ("netscan", _netscan_tick, ()),
         ("meeting", _meeting_tick, ()),
         ("agents", _agents_tick, (now,)),
@@ -5559,6 +5566,12 @@ def health_report() -> dict:
         n_timers = len(_timers)
     if n_timers:
         add("Timers", True, f"{n_timers} running")
+    try:  # the quiet failures: expiring Google sign-ins, Everything not set up, missing packages...
+        for c in doctor.run_checks():
+            if c["status"] != "ok":
+                add(c["name"], False, c["detail"] + (f". Fix: {c['fix']}" if c["fix"] else ""))
+    except Exception as e:
+        log.debug("doctor checks skipped: %s", e)
     return {"safe_mode": safe_mode_on(), "items": items}
 
 
@@ -5617,6 +5630,45 @@ def _meeting_headsup(now: datetime, within_min: float) -> None:
         log.warning("Meeting heads-up failed: %s", e)
     finally:
         _chief_state["meeting_running"] = False
+
+
+# Doctor tick (2026-09-30): twice a day, and once at startup, look for the quiet failures and say so once per
+# problem (not every check) as a non-urgent notice. Only new or changed problems are announced.
+_doctor_state = {"next": 0.0, "told": {}}
+
+
+def _doctor_tick() -> None:
+    if os.environ.get("PYTEST_CURRENT_TEST") and not _doctor_state.get("force"):
+        return  # the scheduler tests must not speak or probe this machine
+    t = time.monotonic()
+    if t < _doctor_state["next"]:
+        return
+    _doctor_state["next"] = t + 12 * 3600
+    told = _doctor_state["told"]
+    for c in doctor.problems():
+        key = c["name"] + "|" + c["detail"]
+        if key in told:
+            continue
+        told[key] = time.time()
+        queue_or_deliver_notification(
+            f"Heads up: {c['name']}. {c['detail']}." + (f" To fix it: {c['fix']}." if c["fix"] else ""))
+
+
+_google_reauth_told: dict[str, float] = {}
+
+
+def _notify_google_reauth(server_name: str) -> None:
+    """A Google tool just failed with an expired sign-in: tell the owner once per 12 hours, wherever the call
+    came from (a background agent or the inbox poll would otherwise only log it)."""
+    if time.time() - _google_reauth_told.get(server_name, 0) < 12 * 3600:
+        return
+    _google_reauth_told[server_name] = time.time()
+    cmd = doctor.REAUTH.get(server_name, "")
+    try:
+        queue_or_deliver_notification(
+            f"Your {server_name} sign-in has expired." + (f" Run {cmd} on your PC to renew it." if cmd else ""))
+    except Exception as e:
+        log.debug("Re-auth notice skipped: %s", e)
 
 
 def _chief_tick(now: datetime) -> None:
@@ -7616,6 +7668,7 @@ def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
     text = " ".join(parts) or "(no output)"
     hint = _mcp_auth_error_hint(server_name, text)
     if hint:
+        _notify_google_reauth(server_name)
         return hint
     return f"MCP tool reported an error: {text}" if getattr(result, "is_error", False) else text
 
@@ -10223,6 +10276,19 @@ def _means_what_is_on_screen(transcript: str) -> bool:
     return bool(_ON_SCREEN_RE.search(text)) and not _OPEN_A_PAGE_RE.search(text)
 
 
+_schema_index: dict = {"key": None, "by_name": {}}
+
+
+def _tool_schema(name: str) -> dict | None:
+    """The input schema of a built-in or already-connected MCP tool (never starts an MCP server)."""
+    key = (len(AGENT_TOOLS), len(_mcp_tool_schemas))
+    if _schema_index["key"] != key:
+        _schema_index["by_name"] = {t["name"]: t.get("input_schema") or {} for t in list(AGENT_TOOLS) + list(_mcp_tool_schemas)
+                                    if t.get("name")}
+        _schema_index["key"] = key
+    return _schema_index["by_name"].get(name)
+
+
 def _execute_tool_impl(
     tool_name: str, tool_input: dict, transcript: str, skip_confirmation: bool = False
 ) -> str:
@@ -10232,8 +10298,18 @@ def _execute_tool_impl(
     inp = tool_input or {}
     result = f"Unrecognized tool: {tool_name!r}"
     try:
-        blocked = _untrusted_block(tool_name)
-        if blocked:
+        # Generic argument check: a wrong parameter name (name_query for query) is repaired, an unfixable call
+        # comes back as an error that says what the tool takes, so the model corrects itself next round.
+        arg_error = None
+        schema = _tool_schema(tool_name)
+        if schema:
+            inp, arg_notes, arg_error = toolargs.check(tool_name, schema, inp)
+            if arg_notes:
+                log.info("Tool arguments for %s repaired: %s", tool_name, "; ".join(arg_notes))
+        blocked = None if arg_error else _untrusted_block(tool_name)
+        if arg_error:
+            result = arg_error
+        elif blocked:
             result = blocked
         elif tool_name.startswith("mcp_"):
             # MCP tools can type into a terminal or Run box (Windows-MCP Type/Shortcut, the
@@ -10762,8 +10838,67 @@ def _execute_tool_impl(
         log.warning("Tool %r raised: %s", tool_name, e)
         result = f"Tool failed: {e}"
 
+    try:
+        result = _verify_action(tool_name, inp, result)
+    except Exception as e:  # a broken check must never break the action itself
+        log.debug("Verification of %s skipped: %s", tool_name, e)
     log.info("Tool %s(%r) -> %s", tool_name, inp, (result or "")[:200])
     _log_action_audit(tool_name, inp, transcript, result)
+    return result
+
+
+# Verify after acting (2026-09-30). The claim checker only proves that a tool RAN; these read the outcome back
+# from the real world (the file is on disk, the reminder row exists) and end the result with a one-line receipt
+# the model can repeat, or with "Tool failed:" when the outcome isn't there, so a false "done" can't be said.
+_VERIFIED_TOOLS = ("write_file", "download_image", "create_reminder", "remember_fact")
+_PATH_IN_RESULT_RE = re.compile(r"(?:to|at|as|saved)\s+((?:[A-Za-z]:\\|/)[^\r\n]*?\.[A-Za-z0-9]{1,5})(?=[.\s,;)]|$)")
+
+
+def _human_size(n: int) -> str:
+    return f"{n} bytes" if n < 1024 else f"{n / 1024:.1f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
+
+
+def _verify_action(tool_name: str, inp: dict, result: str) -> str:
+    if tool_name not in _VERIFIED_TOOLS or _looks_failed(result) or _looks_staged(result):
+        return result
+    text = str(result or "")
+    if tool_name in ("write_file", "download_image"):
+        m = _PATH_IN_RESULT_RE.search(text)
+        if not m:
+            return result  # no path to look at (a refusal or an unusual message): leave it alone
+        p = Path(m.group(1))
+        if not p.is_file():
+            return f"Tool failed: {tool_name} reported success but {p} is not on disk. {text}"
+        size = p.stat().st_size
+        if size == 0 and (inp.get("content") or tool_name == "download_image"):
+            return f"Tool failed: {p} exists but is empty. {text}"
+        return f"{text} [verified: {p.name} is on disk, {_human_size(size)}]"
+    if tool_name == "create_reminder":
+        rid = getattr(_reminder_ctx, "last_id", None)
+        if not rid or not text.startswith("Reminder set"):
+            return result
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                row = conn.execute("SELECT text, due_at FROM reminders WHERE id = ? AND cancelled_at IS NULL",
+                                   (rid,)).fetchone()
+            finally:
+                conn.close()
+        if not row:
+            return f"Tool failed: the reminder was not saved. {text}"
+        return f"{text} [verified: reminder #{rid} is saved for {row[1].replace('T', ' ')[:16]}]"
+    if tool_name == "remember_fact" and text.startswith("Remembered"):
+        content = str(inp.get("content") or "").strip()
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                row = conn.execute("SELECT id FROM memory_facts WHERE content = ? AND superseded_at IS NULL "
+                                   "ORDER BY id DESC LIMIT 1", (content,)).fetchone()
+            finally:
+                conn.close()
+        if not row:
+            return f"Tool failed: the fact was not stored. {text}"
+        return f"{text} [verified: stored as fact #{row[0]}]"
     return result
 
 
@@ -11771,6 +11906,11 @@ def self_check_report() -> str:
         pass
     if _llm_failover["last_reason"] and provider == "claude":
         fine.append(f"automatic Gemini failover is on (last reason: {_llm_failover['last_reason']})")
+    try:
+        for c in doctor.problems():
+            problems.append(f"{c['name']}: {c['detail']}" + (f" (fix: {c['fix']})" if c["fix"] else ""))
+    except Exception as e:
+        log.debug("doctor checks skipped: %s", e)
     fine.append("autonomy " + ("on" if autonomy.enabled() else "off"))
     head = ("Everything's working." if not problems else
             f"{len(problems)} problem{'s' if len(problems) > 1 else ''}: " + "; ".join(problems) + ".")

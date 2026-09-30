@@ -16,6 +16,7 @@ before sending it to anyone; delete anything you'd rather keep private.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sqlite3
@@ -123,14 +124,81 @@ def build_report(hours: float, now: datetime | None = None, db: Path | None = No
     return head + "\n".join(scrub(f"[{ts}] {text}") for ts, text in items) + "\n"
 
 
+# --- eval drafts (2026-09-30): every real failure becomes a regression-test candidate --------------------------
+FAILED_RESULT_RE = re.compile(
+    r"^\s*(tool failed|refused|not run|not available|mcp tool (call failed|reported an error)|unknown|invalid|"
+    r"missing|no (query|text|path|code|command)|.* needs '|command timed out|say what to search)", re.I)
+APOLOGY_RE = re.compile(r"\b(couldn'?t|could not|can'?t|unable|sorry|didn'?t manage|did not)\b", re.I)
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "case"
+
+
+def build_eval_drafts(hours: float, now: datetime | None = None, db: Path | None = None) -> list[dict]:
+    """Draft evals/cases.json entries from commands that visibly went wrong: a tool failed, the reply apologised,
+    or the user said the same thing again within five minutes. A draft is a starting point: read it, fix the
+    expectation, then move it into evals/cases.json (the runner never reads drafts)."""
+    now = now or datetime.now()
+    since = (now - timedelta(hours=hours)).isoformat(timespec="seconds")
+    path = db or _db_path()
+    if not path.exists():
+        return []
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    try:
+        sessions = conn.execute("SELECT started_at, transcript, reply FROM dashboard_sessions WHERE started_at >= ? "
+                                "ORDER BY started_at", (since,)).fetchall()
+        tools = conn.execute("SELECT transcript, tool_name, tool_input, result FROM action_audit WHERE timestamp >= ? "
+                             "ORDER BY timestamp, id", (since,)).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    by_say: dict[str, list[tuple]] = {}
+    for tr, name, inp, res in tools:
+        by_say.setdefault(tr or "", []).append((name, inp, res or ""))
+    drafts, seen = [], set()
+    for i, (started, say, reply) in enumerate(sessions):
+        say = (say or "").strip()
+        if not say or say in seen:
+            continue
+        calls = by_say.get(say, [])
+        failed = [(n, r) for n, _, r in calls if FAILED_RESULT_RE.match(r)]
+        repeated = any(later[1].strip().lower() == say.lower() for later in sessions[i + 1:i + 3]
+                       if later[0] and started and later[0][:16] <= (datetime.fromisoformat(started) +
+                                                                     timedelta(minutes=5)).isoformat()[:16])
+        apologised = bool(reply and APOLOGY_RE.search(reply[:200]))
+        if not (failed or repeated or apologised):
+            continue
+        seen.add(say)
+        why = ("a tool failed: " + "; ".join(f"{n} -> {r[:70]}" for n, r in failed[:2]) if failed else
+               "the user had to repeat the command" if repeated else "the reply was an apology")
+        ok_tools = [n for n, _, r in calls if not FAILED_RESULT_RE.match(r)]
+        draft = {"id": "draft-" + _slug(say), "why": f"auto-drafted {started[:10]}: {why}", "say": say,
+                 "observed": {"tools": [n for n, _, _ in calls], "reply": (reply or "")[:200]},
+                 "_review": "edit expect_any/forbid, then move into evals/cases.json"}
+        if ok_tools:
+            draft["expect_any"] = [{"tool": t} for t in dict.fromkeys(ok_tools)][:3]
+        drafts.append(draft)
+    return drafts
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hours", type=float, default=3.0, help="how far back to look (default 3)")
     ap.add_argument("--out", default=str(ROOT / "debug_report.txt"))
+    ap.add_argument("--evals", action="store_true",
+                    help="also draft regression cases from commands that went wrong into evals/drafts.json")
     args = ap.parse_args()
     report = build_report(args.hours)
     Path(args.out).write_text(report, encoding="utf-8")
     print(f"Wrote {args.out} ({report.count(chr(10))} lines). Read it, then send it.")
+    if args.evals:
+        drafts = build_eval_drafts(args.hours)
+        dest = ROOT / "evals" / "drafts.json"
+        dest.write_text(make_scrubber(_env_secret_values())(json.dumps(drafts, indent=2)), encoding="utf-8")
+        print(f"Drafted {len(drafts)} eval case(s) into {dest}: review them, then move the good ones into "
+              "evals/cases.json.")
 
 
 if __name__ == "__main__":
