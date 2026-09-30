@@ -15,7 +15,6 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import time
@@ -91,7 +90,10 @@ def _es(q: str, count: int) -> list[dict] | None:
            or _find_es_exe())
     if not exe:
         return None
-    p = subprocess.run([exe, "-n", str(count), "-sort", "date-modified-descending", *shlex.split(q, posix=True)],
+    # The whole query is ONE argument (es.exe joins its words itself). Splitting it with shlex in POSIX mode treated
+    # the backslash in `"C:\\Users\\x\\" name` as an escape and an apostrophe ("don't") as an open quote: a ValueError
+    # that was reported as "Everything isn't reachable" although it was running.
+    p = subprocess.run([exe, "-n", str(count), "-sort", "date-modified-descending", q],
                        capture_output=True, text=True, timeout=TIMEOUT_S + 3, creationflags=_NO_WINDOW,
                        errors="replace")
     if p.returncode != 0:
@@ -105,7 +107,10 @@ def search(query: str, ext: str = "", path_prefix: str = "", count: int = MAX_RE
     if not q:
         return {"ok": False, "error": "No search text given: call quick_search again with the file name in the "
                                       "'query' parameter (for example query='weird').", "results": []}
-    count = max(1, min(int(count or MAX_RESULTS), 100))
+    try:
+        count = max(1, min(int(count or MAX_RESULTS), 100))
+    except (TypeError, ValueError):
+        count = MAX_RESULTS
     t0 = time.perf_counter()
     urls = _candidate_urls()
     if _working_url["url"] in urls:

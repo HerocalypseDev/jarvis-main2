@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -38,11 +39,19 @@ def _load_state() -> dict:
         return {}
 
 
+_state_lock = threading.Lock()
+
+
 def _save_state(state: dict) -> None:
-    try:
-        STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
-    except OSError:
-        pass
+    """Atomic (temp file + replace) and serialised: the Home card and the scheduler both reach this, and a torn
+    file would read as empty and restart every sign-in's age from zero."""
+    with _state_lock:
+        try:
+            tmp = STATE_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state), encoding="utf-8")
+            os.replace(tmp, STATE_PATH)
+        except OSError:
+            pass
 
 
 def _google_token_paths(server: str) -> list[Path]:
@@ -187,8 +196,10 @@ def run_checks(env: dict | None = None) -> list[dict]:
         import jarvis_toolargs
         line = jarvis_toolargs.summary()
         if not line.startswith("no "):
-            out.append(_check("Tool arguments", "warn", line,
-                              "The model keeps sending these tools wrong parameter names: sharpen their descriptions"))
+            c = _check("Tool arguments", "warn", line,
+                       "The model keeps sending these tools wrong parameter names: sharpen their descriptions")
+            c["quiet"] = True  # a developer note: shown in the report and health card, never announced aloud
+            out.append(c)
     except Exception:
         pass
     return out
@@ -200,7 +211,7 @@ def problems(checks: list[dict] | None = None) -> list[dict]:
 
 def speech(checks: list[dict] | None = None) -> str:
     """One or two spoken sentences for the self-check, empty when nothing needs attention."""
-    bad = problems(checks)
+    bad = [c for c in problems(checks) if not c.get("quiet")]
     if not bad:
         return ""
     return " ".join(f"{c['name']}: {c['detail']}." + (f" Fix: {c['fix']}." if c["fix"] else "") for c in bad[:3])

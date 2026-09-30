@@ -5680,9 +5680,14 @@ def _doctor_tick() -> None:
         return
     _doctor_state["next"] = t + 12 * 3600
     told = _doctor_state["told"]
-    for c in doctor.problems():
-        key = c["name"] + "|" + c["detail"]
-        if key in told:
+    bad = doctor.problems()
+    for gone in [k for k in told if k not in {c["name"] for c in bad}]:
+        told.pop(gone, None)  # fixed: a later recurrence is news again
+    for c in bad:
+        if c.get("quiet"):
+            continue  # for the dashboard / doctor report only: not something to say out loud
+        key = c["name"]  # by name: the detail changes daily ("signed in 6 days ago") and must not re-announce
+        if time.time() - told.get(key, 0) < 3 * 86400:
             continue
         told[key] = time.time()
         selfaware.record("system", "doctor", f"noticed a problem: {c['name']} - {c['detail']}")
@@ -5707,6 +5712,10 @@ def _selfaware_tick() -> None:
 
 
 def _selfaware_setting_hook(key: str, value, live: bool) -> None:
+    # Only on/off, choice and number settings journal their value; free text can hold an address, a path or a name
+    # and would then ride into the model's prompt.
+    if value not in (None, "") and (settings._BY_KEY.get(key) or {}).get("kind") not in ("bool", "choice", "number"):
+        value = None
     selfaware.record("settings", "changed", f"setting {key}" + (f" set to {value}" if value not in (None, "") else
                                                                  " changed" if value is None else " cleared")
                      + ("" if live else " (needs a restart to apply)"))
@@ -6136,8 +6145,10 @@ def _macros_tool(inp: dict) -> str:
 
 
 def _macro_suggest_tools() -> set[str]:
-    """Habit-based macro suggestions only ever use low-risk tools: the Pro-routine allowlist + the read-only tools."""
-    return set(macros.PACK_ALLOWED_TOOLS) | set(READONLY_TOOL_TTLS)
+    """Habit-based macro suggestions only ever use the low-risk ACTION tools of the Pro-routine allowlist. Read-only
+    information tools are left out on purpose: a user macro just says "Done", so a habit like "what's on my reminders"
+    would become a macro that never tells you the answer."""
+    return set(macros.PACK_ALLOWED_TOOLS) - set(macros.SPEAK_RESULT_TOOLS)
 
 
 def _already_fast_path(phrase: str) -> bool:
@@ -9992,6 +10003,19 @@ def _run_plan_step(step_description: str, prior_context: str) -> str:
 
 
 def _run_plan(task_id: int) -> None:
+    """Runs a plan on its own thread. Anything unexpected (a corrupt step row, a bad dependency list) ends the
+    task as failed instead of killing the thread and leaving it 'running' forever, which would also block resuming."""
+    try:
+        _run_plan_impl(task_id)
+    except Exception as e:
+        log.warning("Plan #%s crashed: %s", task_id, e)
+        try:
+            _finish_background_task(task_id, "failed", f"plan crashed: {e}", kind="plan")
+        except Exception as e2:
+            log.debug("Could not mark plan #%s failed: %s", task_id, e2)
+
+
+def _run_plan_impl(task_id: int) -> None:
     """Background-thread entry point (like _delegate_research's _run): works through a plan's
     steps in dependency order, one at a time, persisting each step's result before moving on
     so a crash or a hung request only loses the one in-flight step, not the whole plan.
@@ -10007,7 +10031,13 @@ def _run_plan(task_id: int) -> None:
             ).fetchall()
         finally:
             conn.close()
-    steps = {idx: (desc, json.loads(deps or "[]")) for idx, desc, deps in rows}
+    steps = {}
+    for idx, desc, deps in rows:
+        try:
+            parsed = json.loads(deps or "[]")
+            steps[idx] = (desc, [int(d) for d in parsed] if isinstance(parsed, list) else [])
+        except (ValueError, TypeError):
+            steps[idx] = (desc, [])  # unreadable dependency list: treat the step as independent, don't lose the plan
     results: dict[int, str] = {}
     done: set[int] = set()
     # Resuming an interrupted plan: steps already finished keep their result and are not run again.
@@ -10066,6 +10096,9 @@ def _resume_plan(task_id) -> str:
         task_id = int(task_id)
     except (TypeError, ValueError):
         return "Give the plan's number (list_background_tasks shows it)."
+    running = _count_running_background_tasks("plan")
+    # One lock hold for check + claim: two resume requests at once (voice and the dashboard, say) must not both
+    # start a thread on the same plan and run its steps twice.
     with _memory_db_lock:
         conn = _memory_db_connect()
         try:
@@ -10079,20 +10112,16 @@ def _resume_plan(task_id) -> str:
             left = conn.execute("SELECT COUNT(*) FROM plan_steps WHERE task_id = ? AND status != 'done'",
                                 (task_id,)).fetchone()[0]
             total = conn.execute("SELECT COUNT(*) FROM plan_steps WHERE task_id = ?", (task_id,)).fetchone()[0]
-        finally:
-            conn.close()
-    if not left:
-        return f"Plan #{task_id} has no unfinished steps."
-    running = _count_running_background_tasks("plan")
-    if running >= MAX_CONCURRENT_PLAN_TASKS:
-        return f"Already {running} plan(s) running (cap is {MAX_CONCURRENT_PLAN_TASKS}); try again once one finishes."
-    with _memory_db_lock:
-        conn = _memory_db_connect()
-        try:
+            if not left:
+                return f"Plan #{task_id} has no unfinished steps."
+            if running >= MAX_CONCURRENT_PLAN_TASKS:
+                return f"Already {running} plan(s) running (cap is {MAX_CONCURRENT_PLAN_TASKS}); try again once one finishes."
+            claimed = conn.execute("UPDATE background_tasks SET status = 'running', finished_at = NULL, "
+                                   "result_summary = NULL WHERE id = ? AND status != 'running'", (task_id,)).rowcount
+            if not claimed:
+                return f"Plan #{task_id} is already running."
             conn.execute("UPDATE plan_steps SET status = 'pending', started_at = NULL, finished_at = NULL, "
                          "result_summary = NULL WHERE task_id = ? AND status != 'done'", (task_id,))
-            conn.execute("UPDATE background_tasks SET status = 'running', finished_at = NULL, result_summary = NULL "
-                         "WHERE id = ?", (task_id,))
             conn.commit()
         finally:
             conn.close()
@@ -11056,7 +11085,23 @@ def _execute_tool_impl(
 # from the real world (the file is on disk, the reminder row exists) and end the result with a one-line receipt
 # the model can repeat, or with "Tool failed:" when the outcome isn't there, so a false "done" can't be said.
 _VERIFIED_TOOLS = ("write_file", "download_image", "create_reminder", "remember_fact")
-_PATH_IN_RESULT_RE = re.compile(r"(?:to|at|as|saved)\s+((?:[A-Za-z]:\\|/)[^\r\n]*?\.[A-Za-z0-9]{1,5})(?=[.\s,;)]|$)")
+
+
+_PATH_START_RE = re.compile(r"(?:to|at|as|saved)\s+((?:[A-Za-z]:\\|/)[^\r\n]*)")
+_PATH_END_RE = re.compile(r"\.[A-Za-z0-9]{1,5}(?=[.\s,;)]|$)")
+
+
+def _paths_in_result(text: str) -> list[str]:
+    """Every way the path a tool result names could be read (each place a file extension could end it),
+    shortest first: file names can contain spaces and dots ("notes v1.2 draft.txt")."""
+    out: list[str] = []
+    for m in _PATH_START_RE.finditer(text or ""):
+        rest = m.group(1)
+        for e in _PATH_END_RE.finditer(rest):
+            cand = rest[:e.end()]
+            if cand not in out:
+                out.append(cand)
+    return out
 
 
 def _human_size(n: int) -> str:
@@ -11068,12 +11113,14 @@ def _verify_action(tool_name: str, inp: dict, result: str) -> str:
         return result
     text = str(result or "")
     if tool_name in ("write_file", "download_image"):
-        m = _PATH_IN_RESULT_RE.search(text)
-        if not m:
+        cands = _paths_in_result(text)
+        if not cands:
             return result  # no path to look at (a refusal or an unusual message): leave it alone
-        p = Path(m.group(1))
-        if not p.is_file():
-            return f"Tool failed: {tool_name} reported success but {p} is not on disk. {text}"
+        # A name like "notes v1.2 draft.txt" has several places where a path could end; the file counts as
+        # written if ANY reading of the message exists (only when none does is it reported as missing).
+        p = next((Path(c) for c in cands if Path(c).is_file()), None)
+        if p is None:
+            return f"Tool failed: {tool_name} reported success but {cands[-1]} is not on disk. {text}"
         size = p.stat().st_size
         if size == 0 and (inp.get("content") or tool_name == "download_image"):
             return f"Tool failed: {p} exists but is empty. {text}"
@@ -11587,6 +11634,8 @@ def _tool_announcement(name: str, inp: dict) -> str | None:
     if n == "download_image":
         return "Sure, I'll download that image."
     if n in ("read_screen", "type_text", "click_at", "scroll_screen") or n.startswith("mcp_windows_"):
+        if _catastrophic_reason(" ".join(str(v) for v in inp.values() if isinstance(v, (str, int, float)))):
+            return None
         return "Sure, I'll work on what's on your screen."
     if n.startswith("mcp_gmail_"):
         return "Sure, I'll check your Gmail."
@@ -11597,6 +11646,9 @@ def _tool_announcement(name: str, inp: dict) -> str | None:
     if n.startswith("mcp_browser_"):
         return "Sure, I'll open that in the browser."
     if n in ("run_shell", "run_python"):
+        # Never promise "I'll run that" for something the confirmation gate is about to stage (a shutdown, a wipe).
+        if _catastrophic_reason(" ".join(str(v) for v in inp.values() if isinstance(v, (str, int, float)))):
+            return None
         return "Sure, I'll run that on your PC now."
     return None
 

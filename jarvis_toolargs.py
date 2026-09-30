@@ -79,6 +79,23 @@ def _name_score(unknown: str, wanted: str) -> float:
     return difflib.SequenceMatcher(None, unknown.lower(), wanted.lower()).ratio()
 
 
+# Optional parameters that are never filled by guessing at a similar name: they add recipients, widen a
+# destructive action or switch off a check.
+_RISKY_OPTIONAL = {"cc", "bcc", "to", "recipient", "recipients", "force", "confirm", "confirmed", "ui_confirmed",
+                   "skip_confirmation", "overwrite", "recursive", "delete", "dry_run", "yes", "approve"}
+
+
+def _same_words(unknown: str, wanted: str) -> bool:
+    """Same words in another spelling/separator (nameQuery ~ name_query), or one single word abbreviating the other."""
+    a, b = _tokens(unknown), _tokens(wanted)
+    if a and a == b:
+        return True
+    if len(a) == 1 and len(b) == 1:
+        x, y = next(iter(a)), next(iter(b))
+        return min(len(x), len(y)) >= 3 and (x.startswith(y) or y.startswith(x))
+    return False
+
+
 def _coerce(value, prop: dict):
     """(new_value, changed). Only fixes slips that cannot change what was meant."""
     types = _types(prop) - {"null"}
@@ -133,9 +150,13 @@ def check(tool: str, schema: dict | None, args: dict | None) -> tuple[dict, list
     unknown = [k for k in args if k not in props and not str(k).startswith("_")]
     missing = [p for p in props if p not in args or _empty(args[p])]
 
-    # 1. rename unknown parameters that clearly mean a missing one
+    # 1. rename unknown parameters that clearly mean a missing one. A missing REQUIRED parameter is safe to fill
+    # (the call would fail otherwise); an optional one changes what the call does, so it is only filled when the
+    # names are the same words or an abbreviation (extension ~ ext), never a looser match (cc_address ~ cc would
+    # add a recipient, text ~ text_color would set a colour), and never a flag that widens what happens.
     for u in list(unknown):
-        cands = [(m, _name_score(u, m)) for m in missing if _compatible(args[u], props[m])]
+        cands = [(m, _name_score(u, m)) for m in missing if _compatible(args[u], props[m])
+                 and (m in required or (m.lower() not in _RISKY_OPTIONAL and _same_words(u, m)))]
         cands = sorted((c for c in cands if c[1] >= 0.75), key=lambda c: -c[1])
         if cands and (len(cands) == 1 or cands[0][1] > cands[1][1]):
             target = cands[0][0]

@@ -428,13 +428,11 @@ def test_habits_become_macro_suggestions_but_only_with_low_risk_tools(tmp_path):
     known = safe | {"mcp_gmail_send_email"}
     out = m.suggest(connect, lock, safe, known, already_fast=lambda p: False, now=now)
     phrases = {s["phrase"] for s in out}
-    assert phrases == {"start my study setup", "how is the system"}
+    assert phrases == {"start my study setup"}   # "how is the system" wants the ANSWER: a macro would just say "Done"
     study = next(s for s in out if s["phrase"] == "start my study setup")
     assert study["steps"] == [{"tool": "open_app", "input": {"app": "notes"}}] and study["count"] == 4
     # things Jarvis already answers instantly, and phrases already taken, are not suggested
-    assert not m.suggest(connect, lock, safe, known, already_fast=lambda p: p == "how is the system", now=now) \
-        or "how is the system" not in {s["phrase"] for s in m.suggest(connect, lock, safe, known,
-                                                                      already_fast=lambda p: p == "how is the system", now=now)}
+    assert not m.suggest(connect, lock, safe, known, already_fast=lambda p: p == "start my study setup", now=now)
 
 
 def test_a_failing_or_unstable_habit_is_not_suggested_and_accept_needs_the_pc(tmp_path):

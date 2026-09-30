@@ -384,16 +384,27 @@ def watch_code() -> list[str]:
     fresh = [f for f in files if f not in _told_changed]
     if fresh:
         _told_changed.update(fresh)
-        record("code", "changed_on_disk", "my code changed on disk while running: " + _names(fresh)
-               + ". The running copy still has the old version until I restart")
+        py = [f for f in fresh if _needs_restart(f)]
+        web = [f for f in fresh if not _needs_restart(f)]
+        if py:
+            record("code", "changed_on_disk", "my code changed on disk while running: " + _names(py)
+                   + ". The running copy still has the old version until I restart")
+        if web:
+            record("code", "dashboard_changed", "dashboard files changed on disk: " + _names(web)
+                   + " (a page refresh picks them up, no restart needed)")
     # a file that went back to the loaded content is no longer 'changed'
     _told_changed.intersection_update(files)
     return fresh
 
 
+def _needs_restart(rel: str) -> bool:
+    """Python is loaded once at start; the dashboard's own HTML/JS/CSS is read from disk on every page load."""
+    return rel.endswith(".py")
+
+
 def restart_pending() -> list[str]:
     d = code_on_disk_changes()
-    return d["changed"] + d["added"] + d["removed"]
+    return [f for f in d["changed"] + d["added"] + d["removed"] if _needs_restart(f)]
 
 
 # -------------------------------------------------------------------------------------------- summaries
