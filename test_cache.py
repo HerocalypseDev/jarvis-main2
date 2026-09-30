@@ -1125,6 +1125,24 @@ def test_find_a_file_always_goes_through_everything(jarvis, monkeypatch):
     assert all(jarvis._file_search_via_shell_problem(c) is None for c in scans)
 
 
+def test_quick_search_accepts_the_parameter_names_models_actually_send(jarvis, monkeypatch):
+    """Found live 2026-09-30 (debug report): Gemini called quick_search({"name_query": "weird"}), the tool only read
+    "query", answered "Say what to search for." and Everything was never asked."""
+    import jarvis_everything as ev
+    seen = []
+    monkeypatch.setattr(ev, "search", lambda q, ext="", pp="", count=25: seen.append((q, ext, pp)) or
+                        {"ok": True, "results": [{"path": "C:\\x\\weird.txt", "type": "file"}]})
+    for inp in ({"query": "weird"}, {"name_query": "weird"}, {"name": "weird"}, {"filename": "weird"},
+                {"query": "", "search": "weird"}):
+        assert "weird.txt" in jarvis._quick_search_tool(inp)
+    assert [s[0] for s in seen] == ["weird"] * 5
+    jarvis._quick_search_tool({"name_query": "weird", "extension": "txt", "path": "C:\\x"})
+    assert seen[-1] == ("weird", "txt", "C:\\x")
+    monkeypatch.undo()
+    empty = ev.search("")
+    assert not empty["ok"] and "'query'" in empty["error"]
+
+
 def test_everything_reachable_is_cached_and_es_exe_is_found_in_program_files(monkeypatch, tmp_path):
     import jarvis_everything as ev
     calls = []

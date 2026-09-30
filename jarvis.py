@@ -5698,9 +5698,16 @@ def _clipboard_tool(inp: dict) -> str:
     return clip_history.handle_tool(_memory_db_connect, _memory_db_lock, inp, _clipboard_copy)
 
 
+_QUICK_SEARCH_QUERY_ALIASES = ("query", "name_query", "name", "file_name", "filename", "file", "q", "search",
+                               "search_query", "text", "pattern", "keyword", "term")
+
+
 def _quick_search_tool(inp: dict) -> str:
-    r = everything.search(str(inp.get("query") or ""), str(inp.get("ext") or ""),
-                          str(inp.get("path_prefix") or ""), inp.get("count") or everything.MAX_RESULTS)
+    # Found live 2026-09-30 (Gemini): it called quick_search({"name_query": "weird"}) - the parameter name of the
+    # neighbouring find_files tool - got "Say what to search for." and gave up, so Everything was never asked.
+    q = next((str(inp[k]).strip() for k in _QUICK_SEARCH_QUERY_ALIASES if inp.get(k) and str(inp[k]).strip()), "")
+    r = everything.search(q, str(inp.get("ext") or inp.get("extension") or ""),
+                          str(inp.get("path_prefix") or inp.get("path") or ""), inp.get("count") or everything.MAX_RESULTS)
     return everything.format_results(r)
 
 
@@ -6311,7 +6318,10 @@ def _find_files_tool(inp: dict) -> str:
         return f"Indexing {n} existing file(s) in the watched folders in the background."
     rows = _file_index.find(str(inp.get("tag") or ""), str(inp.get("type") or ""), str(inp.get("name_query") or ""),
                             bool(inp.get("duplicates")), int(inp.get("limit") or 25))
-    return file_index.format_find(rows, bool(inp.get("duplicates")))
+    out = file_index.format_find(rows, bool(inp.get("duplicates")))
+    if not rows and inp.get("name_query"):
+        out += " For a file anywhere on the PC, call quick_search (it searches the whole disk through Everything)."
+    return out
 
 
 def _shortcut_fire(s: dict) -> str:
