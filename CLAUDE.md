@@ -1733,7 +1733,8 @@ row there each phase rather than only stating the total in chat.
 | 100 (correction: the Gemini 429s were the DAILY per-model quota, not per-minute; daily 429 never waited on, reason names the quota (500/day, 20/day, resets midnight Pacific), docs corrected; 5 new tests) | n/a | ~20 min | ~$2.00–$3.00 |
 | 101 (opt-in "Hey Jarvis" wake word: openWakeWord detector on the mic loop, seeded follow-up capture, transcript name check, Settings switch off by default; real-model smoke test; 14 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | 102 (find-a-file always via Everything: prompt + tool text, quick_search always offered, shell file-scan guard when Everything is up, es.exe auto-find, clearer setup hint; 2 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
-| **Running total (final)** | | **~3209 min** | **~$200.75–$281.35** |
+| 103 (debug report: quick_search ignored the `name_query` parameter Gemini sent, so Everything was never asked; parameter aliases, clearer errors, find_files hint; 1 new test) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~3219 min** | **~$201.35–$282.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1879,6 +1880,12 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   `jarvis_everything` also looks for `es.exe` in Program Files/Downloads, and `SETUP_HINT` now spells out the exact Everything
   steps (Tools > Options > HTTP Server > Enable, port 80, bind 127.0.0.1). If Jarvis still can't find files, the cause is that
   setting: Everything's HTTP server is off by default. Test: `test_cache.py::test_find_a_file_always_goes_through_everything`.
+  **Found in the owner's debug report the same day**: Gemini called `quick_search({"name_query": "weird"})` (the neighbouring
+  `find_files` tool's parameter), the tool only read `query`, said "Say what to search for." and Everything was never asked;
+  the model then gave up after scanning Downloads/Desktop/Documents. `_quick_search_tool` now accepts the aliases models send
+  (`name_query`, `name`, `filename`, `file`, `q`, `search`, ... plus `extension`/`path`), the empty-query error names the
+  `query` parameter, and an empty `find_files` name search points at `quick_search`. Lesson: when two tools sit close
+  together, accept each other's parameter names. Test: `test_quick_search_accepts_the_parameter_names_models_actually_send`.
 
 ## Full codebase audit (2026-09-29)
 

@@ -103,7 +103,8 @@ def search(query: str, ext: str = "", path_prefix: str = "", count: int = MAX_RE
     """{"ok", "backend", "results": [{path, type, size?}], "ms", "error"?}."""
     q = build_query(query, ext, path_prefix)
     if not q:
-        return {"ok": False, "error": "Say what to search for.", "results": []}
+        return {"ok": False, "error": "No search text given: call quick_search again with the file name in the "
+                                      "'query' parameter (for example query='weird').", "results": []}
     count = max(1, min(int(count or MAX_RESULTS), 100))
     t0 = time.perf_counter()
     urls = _candidate_urls()
