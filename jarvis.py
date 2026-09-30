@@ -11692,6 +11692,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         # tool_result blocks") — so an over-the-cap request still gets a (skipped) result
         # rather than being silently dropped from this list.
         tool_results = []
+        parallel = _run_read_only_tools_parallel(tool_uses, transcript)
         for i, tu in enumerate(tool_uses):
             if tu.get("name") == tool_router.FIND_TOOLS_NAME:
                 # Loop-internal and side-effect free: it only widens what the model may pick from
@@ -11710,7 +11711,9 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 log.info("find_tools %r -> %s", (tu.get("input") or {}).get("query"), [t["name"] for t in added])
                 tool_results.append({"type": "tool_result", "tool_use_id": tu.get("id"), "content": result_text})
                 continue
-            if i < MAX_TOOL_CALLS_PER_TURN:
+            if i in parallel:
+                result_text = parallel[i]  # already run alongside its siblings (results stay in the model's order)
+            elif i < MAX_TOOL_CALLS_PER_TURN:
                 result_text = _execute_tool(tu.get("name", ""), tu.get("input") or {}, transcript)
             else:
                 result_text = "Skipped: too many tool calls requested in a single turn."
@@ -11770,6 +11773,51 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
 
 
 _command_ctx = threading.local()
+
+
+# Parallel read-only tools (2026-09-30). Models often ask for several independent lookups in one turn ("weather,
+# my reminders, and what's urgent"); they were run one after another. The tools in READONLY_TOOL_TTLS only read,
+# so when a turn asks for two or more of them they run together on a small thread pool. Anything that writes,
+# types, sends, or is an MCP tool still runs one at a time, in order, exactly as before. The per-command context
+# (source, barge-in clock, screen flags) is thread-local, so it is copied into each worker.
+PARALLEL_TOOLS_MAX = 4
+
+
+def _parallel_tools_enabled() -> bool:
+    return (os.environ.get("JARVIS_PARALLEL_TOOLS") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _run_tool_with_ctx(ctx: dict, name: str, inp: dict, transcript: str) -> str:
+    for k, v in ctx.items():
+        setattr(_command_ctx, k, v)
+    try:
+        return _execute_tool(name, inp, transcript)
+    except Exception as e:
+        log.warning("Parallel tool %r raised: %s", name, e)
+        return f"Tool failed: {e}"
+
+
+def _run_read_only_tools_parallel(tool_uses: list[dict], transcript: str) -> dict[int, str]:
+    """{index in tool_uses: result} for the read-only calls of this turn when there are at least two; else {}."""
+    if not _parallel_tools_enabled():
+        return {}
+    idx = [i for i, tu in enumerate(tool_uses[:MAX_TOOL_CALLS_PER_TURN])
+           if tu.get("name") in READONLY_TOOL_TTLS and tu.get("name") != tool_router.FIND_TOOLS_NAME]
+    if len(idx) < 2:
+        return {}
+    ctx = dict(vars(_command_ctx))
+    t0 = time.monotonic()
+    out: dict[int, str] = {}
+    with ThreadPoolExecutor(max_workers=min(PARALLEL_TOOLS_MAX, len(idx)), thread_name_prefix="jarvis-tool") as ex:
+        futures = {i: ex.submit(_run_tool_with_ctx, ctx, tool_uses[i].get("name", ""),
+                                tool_uses[i].get("input") or {}, transcript) for i in idx}
+        for i, f in futures.items():
+            out[i] = f.result()
+    log.info("Ran %d read-only tools in parallel in %.2fs: %s", len(idx), time.monotonic() - t0,
+             ", ".join(tool_uses[i].get("name", "") for i in idx))
+    return out
+
+
 _inflight_lock = threading.Lock()
 _inflight_count = 0
 

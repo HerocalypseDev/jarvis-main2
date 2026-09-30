@@ -243,3 +243,106 @@ def test_capped_eval_runs_rotate_through_all_cases():
         assert len(picked) == 3
         seen |= {c["id"] for c in picked}
     assert seen == {str(i) for i in range(10)}
+
+
+# --- parallel read-only tools -------------------------------------------------------------------
+def test_read_only_tools_in_one_turn_run_together_and_keep_their_order(jarvis, monkeypatch):
+    import threading
+    started, ctx_seen = [], []
+    barrier = threading.Barrier(2, timeout=5)  # both must be running at the same moment
+
+    def fake_execute(name, inp, transcript, skip_confirmation=False):
+        ctx_seen.append(getattr(jarvis._command_ctx, "source", None))
+        started.append(name)
+        barrier.wait()
+        return f"result of {name}"
+
+    monkeypatch.setattr(jarvis, "_execute_tool", fake_execute)
+    jarvis._command_ctx.source = "voice"
+    uses = [{"id": "a", "name": "weather", "input": {}}, {"id": "b", "name": "run_shell", "input": {"command": "x"}},
+            {"id": "c", "name": "system_status", "input": {}}]
+    out = jarvis._run_read_only_tools_parallel(uses, "how is everything")
+    assert out == {0: "result of weather", 2: "result of system_status"}  # run_shell (index 1) is left to the loop
+    assert set(started) == {"weather", "system_status"} and ctx_seen == ["voice", "voice"]  # context copied to workers
+
+
+def test_one_read_only_tool_or_the_off_switch_means_no_parallel_run(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_execute_tool", lambda *a, **k: "x")
+    assert jarvis._run_read_only_tools_parallel([{"name": "weather", "input": {}}], "t") == {}
+    two = [{"name": "weather", "input": {}}, {"name": "system_status", "input": {}}]
+    monkeypatch.setenv("JARVIS_PARALLEL_TOOLS", "0")
+    assert jarvis._run_read_only_tools_parallel(two, "t") == {}
+    monkeypatch.setenv("JARVIS_PARALLEL_TOOLS", "1")
+    assert set(jarvis._run_read_only_tools_parallel(two, "t")) == {0, 1}
+
+
+def test_a_crashing_parallel_tool_becomes_a_failed_result_not_a_lost_turn(jarvis, monkeypatch):
+    def fake(name, inp, transcript, skip_confirmation=False):
+        if name == "weather":
+            raise RuntimeError("boom")
+        return "fine"
+
+    monkeypatch.setattr(jarvis, "_execute_tool", fake)
+    out = jarvis._run_read_only_tools_parallel(
+        [{"name": "weather", "input": {}}, {"name": "system_status", "input": {}}], "t")
+    assert out[0].startswith("Tool failed") and out[1] == "fine"
+
+
+def test_agent_loop_feeds_parallel_results_back_in_the_models_order(jarvis, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jarvis, "_execute_tool",
+                        lambda name, inp, transcript, skip_confirmation=False: calls.append(name) or f"R:{name}")
+    monkeypatch.setattr(jarvis, "_llm_provider", lambda: "claude")
+    monkeypatch.setattr(jarvis, "_history_snapshot", lambda: [])
+    monkeypatch.setattr(jarvis, "_append_history", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis, "_spawn_lesson", lambda *a: None)
+    sent = []
+    rounds = iter([
+        {"content": [{"type": "tool_use", "id": "t1", "name": "weather", "input": {}},
+                     {"type": "tool_use", "id": "t2", "name": "system_status", "input": {}}],
+         "stop_reason": "tool_use", "usage": {}},
+        {"content": [{"type": "text", "text": "Sunny and fine."}], "stop_reason": "end_turn", "usage": {}},
+    ])
+
+    def fake_request(body, timeout=None):
+        sent.append(body["messages"][-1])
+        return next(rounds)
+
+    monkeypatch.setattr(jarvis, "_claude_request", fake_request)
+    reply = jarvis.run_agent_loop("weather and system status")
+    assert reply == "Sunny and fine." and sorted(calls) == ["system_status", "weather"]
+    results = sent[-1]["content"]
+    assert [r["tool_use_id"] for r in results] == ["t1", "t2"]
+    assert [r["content"] for r in results] == ["R:weather", "R:system_status"]
+
+
+# --- prompt diet: a budget so it cannot quietly grow again --------------------------------------------
+def test_narrowed_request_stays_inside_the_token_budget(jarvis):
+    """What a Gemini/Ollama round carries every time: system prompt + the narrowed tool list. Measured 2026-09-30:
+    ~5.1k + ~4.5k tokens. This fails when a change adds a lot more, so bloat is a decision, not an accident."""
+    import jarvis_tool_router as R
+    system_chars = sum(len(b.get("text", "")) for b in jarvis.build_system_blocks("", "find the file weird"))
+    for say in ("find the file called weird on my laptop", "fill the form on my screen",
+                "set a reminder to call mum in 10 minutes"):
+        tools = R.select(say, jarvis.AGENT_TOOLS, limit=jarvis.TOOL_NARROWING_LIMIT, core=jarvis._narrowing_core(say))
+        tool_chars = len(json.dumps(tools))
+        assert tool_chars < 24_000, f"narrowed tool schemas grew to ~{tool_chars // 4} tokens for {say!r}"
+    assert system_chars < 28_000, f"system prompt grew to ~{system_chars // 4} tokens"
+    assert len(jarvis.AGENT_TOOLS) < 130, "too many tools: retire or merge some (each costs tokens every round)"
+
+
+def test_usage_summary_reports_average_prompt_size_per_call(tmp_path):
+    import sqlite3
+    import threading
+    import jarvis_billing as b
+    conn = sqlite3.connect(tmp_path / "u.db")
+    b._ensure_usage_table(conn)
+    now = time.time()
+    for i in range(2):
+        conn.execute("INSERT INTO api_usage (ts, model, input_tokens, cache_read_tokens, cache_write_tokens, "
+                     "output_tokens, cost_usd, saved_usd) VALUES (?,?,?,?,?,?,?,?)",
+                     (now, "m", 1000 + 1000 * i, 500, 0, 50, 0.001, 0.0))
+    conn.commit()
+    conn.close()
+    s = b.local_summary(lambda: sqlite3.connect(tmp_path / "u.db"), threading.Lock(), now)
+    assert s["periods"]["today"]["calls"] == 2 and s["periods"]["today"]["avg_prompt_tokens"] == 2000
