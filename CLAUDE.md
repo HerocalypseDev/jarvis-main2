@@ -1735,7 +1735,8 @@ row there each phase rather than only stating the total in chat.
 | 102 (find-a-file always via Everything: prompt + tool text, quick_search always offered, shell file-scan guard when Everything is up, es.exe auto-find, clearer setup hint; 2 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
 | 103 (debug report: quick_search ignored the `name_query` parameter Gemini sent, so Everything was never asked; parameter aliases, clearer errors, find_files hint; 1 new test) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
 | 104 (task-specific spoken announcement: built locally from the chosen tool, after the generic lead-in, once per command, Settings switch; 3 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
-| **Running total (final)** | | **~3234 min** | **~$202.35–$283.65** |
+| 105 (research: how to make Jarvis more efficient/agentic/professional within the owner's limits; measured the codebase, checked free provider tiers, wrote `RESEARCH_AGENTIC.md` (private, export-excluded) with a ranked plan; no code change) | Sonnet 5.5 | ~20 min | ~$1.00–$1.50 |
+| **Running total (final)** | | **~3254 min** | **~$203.35–$285.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
