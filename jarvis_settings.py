@@ -63,6 +63,10 @@ SETTINGS: list[dict] = [
     {"key": "JARVIS_ACK_PHRASES", "label": "Say \"On it\" for tasks", "kind": "bool", "default": "1",
      "help": "A short spoken acknowledgement right away when you ask for something that takes a moment.",
      "live": "env"},
+    {"key": "JARVIS_ANNOUNCE_TASKS", "label": "Say what task I'm starting", "kind": "bool", "default": "1",
+     "help": "Once the model has picked a slow tool (file search, web search, email, code...), Jarvis says one "
+     "friendly sentence about that task, e.g. \"Sure, I'll search your whole PC for weird.\" Needs the \"On it\" "
+     "switch above to be on.", "live": "env"},
     {"key": "JARVIS_GEMINI_SMART_MODEL", "label": "Gemini model to escalate to", "kind": "text", "default": "",
      "help": "When a command goes wrong on Gemini (tool failed, repeated command, claimed action that didn't "
              "happen), the rest of it runs on this model, e.g. gemini-3.6-flash. Empty = off.", "live": "env"},

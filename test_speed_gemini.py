@@ -830,3 +830,83 @@ def test_diagnose_names_the_limit_that_was_hit(tmp_path, monkeypatch):
     text = "\n".join(lines)
     assert "GenerateRequestsPerDayPerProjectPerModel-FreeTier" in text and "allows 500" in text
     assert any("daily limit" in p for p in problems)
+
+
+# --- task-specific announcement (2026-09-30) ----------------------------------------------------
+def test_tool_announcements_are_friendly_specific_and_only_for_slow_tools(jarvis):
+    a = jarvis._tool_announcement
+    assert a("quick_search", {"query": "weird"}) == "Sure, I'll search your whole PC for weird."
+    assert a("quick_search", {"name_query": "weird"}) == "Sure, I'll search your whole PC for weird."  # alias
+    assert a("quick_search", {}) == "Sure, I'll search your PC for that."
+    assert "search the web for best pizza" in a("web_search", {"query": "best pizza"})
+    assert "James" in a("delegate_to_claude_code", {"task": "x"})
+    assert "Gmail" in a("mcp_gmail_search_emails", {}) and "calendar" in a("mcp_calendar_list-events", {})
+    assert "screen" in a("mcp_windows_Snapshot", {})
+    for quick in ("system_status", "weather", "create_reminder", "recall_facts", "set_volume", "get_time", "unknown"):
+        assert a(quick, {"x": 1}) is None
+    # what is read aloud is made safe: one line, no control characters, capped
+    said = a("web_search", {"query": "line one\nline two\x07 " + "word " * 40})
+    assert "\n" not in said and "\x07" not in said and len(said) < 120 and said.endswith("...")
+
+
+def test_announcement_follows_the_generic_lead_in_then_the_tool_runs_then_the_reply(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "1")
+    monkeypatch.setenv("JARVIS_ANNOUNCE_TASKS", "1")
+    monkeypatch.setattr(jarvis.sleep_mode, "is_active", lambda: False)
+    spoken = []
+    real_await = jarvis._await_ack
+
+    def fake_speak(text):
+        real_await()
+        spoken.append(text)
+        time.sleep(0.05)
+
+    monkeypatch.setattr(jarvis, "speak_text", fake_speak)
+    monkeypatch.setattr(jarvis, "_execute_tool", lambda name, inp, transcript: "C:\\x\\weird.txt")
+    jarvis._command_ctx.ack_started = False
+    jarvis._command_ctx.ack_thread = None
+    jarvis._command_ctx.announced = False
+    jarvis._command_ctx.started = time.monotonic()
+    jarvis._start_ack("lookup")  # what handle_text_command does before the model answers
+    rounds = iter([
+        lambda on_text, on_done, on_first: (on_first(), on_done(),
+                                            {"content": [{"type": "tool_use", "id": "t1", "name": "quick_search",
+                                                          "input": {"name_query": "weird"}}],
+                                             "stop_reason": "tool_use", "usage": {}})[-1],
+        lambda on_text, on_done, on_first: _drive(on_text, on_done, on_first, ["Found it on your Desktop."]),
+    ])
+    monkeypatch.setattr(jarvis.gemini, "stream_round",
+                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None:
+                        next(rounds)(on_text, on_text_done, on_first_token))
+    jarvis.run_agent_loop("help me find the file called weird on my laptop", narrate=True)
+    jarvis._await_ack()
+    assert spoken[0] in jarvis.ACK_PHRASES
+    assert spoken[1] == "Sure, I'll search your whole PC for weird."
+    assert spoken[-1] == "Found it on your Desktop." and len(spoken) == 3  # generic, specific, answer: no overlap
+
+
+def test_announcement_once_per_command_off_switch_sleep_mode_and_model_narration(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "1")
+    monkeypatch.setenv("JARVIS_ANNOUNCE_TASKS", "1")
+    monkeypatch.setattr(jarvis.sleep_mode, "is_active", lambda: False)
+    monkeypatch.setattr(jarvis, "speak_text", lambda t: None)
+
+    def fresh():
+        jarvis._command_ctx.announced = False
+        jarvis._command_ctx.ack_thread = None
+        jarvis._command_ctx.started = time.monotonic()
+
+    fresh()
+    assert jarvis._start_announcement("Sure, I'll do it.") is True
+    assert jarvis._start_announcement("Again.") is False  # once per command
+    jarvis._await_ack()
+    fresh()
+    monkeypatch.setenv("JARVIS_ANNOUNCE_TASKS", "0")
+    assert jarvis._start_announcement("x") is False
+    monkeypatch.setenv("JARVIS_ANNOUNCE_TASKS", "1")
+    monkeypatch.setattr(jarvis.sleep_mode, "is_active", lambda: True)
+    assert jarvis._start_announcement("x") is False
+    monkeypatch.setattr(jarvis.sleep_mode, "is_active", lambda: False)
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "0")  # the master switch for spoken lead-ins
+    assert jarvis._start_announcement("x") is False
+    # (the model narrating for itself is covered by test_lead_in_is_not_added_when_the_model_already_narrated)

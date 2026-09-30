@@ -1734,7 +1734,8 @@ row there each phase rather than only stating the total in chat.
 | 101 (opt-in "Hey Jarvis" wake word: openWakeWord detector on the mic loop, seeded follow-up capture, transcript name check, Settings switch off by default; real-model smoke test; 14 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | 102 (find-a-file always via Everything: prompt + tool text, quick_search always offered, shell file-scan guard when Everything is up, es.exe auto-find, clearer setup hint; 2 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
 | 103 (debug report: quick_search ignored the `name_query` parameter Gemini sent, so Everything was never asked; parameter aliases, clearer errors, find_files hint; 1 new test) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~3219 min** | **~$201.35–$282.25** |
+| 104 (task-specific spoken announcement: built locally from the chosen tool, after the generic lead-in, once per command, Settings switch; 3 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
+| **Running total (final)** | | **~3234 min** | **~$202.35–$283.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1923,6 +1924,15 @@ Full write-up: SPEED.md "Gemini speed pass". Rules to keep (tests: `test_speed_g
   first, so speech stays in order. Keep that join if `speak_text` is refactored; never add a second ack path that
   speaks without it. Shared test fixtures set `JARVIS_ACK_PHRASES=0`.
 - Connection reuse is skipped behind an HTTPS proxy. Gemini Live (native audio) was deliberately **not** built.
+- **Task-specific announcement (2026-09-30, user idea, defaults chosen with the user)**: when the model goes straight to a slow tool
+  with nothing said, `_tool_announcement(name, input)` builds one friendly sentence locally ("Sure, I'll search your whole PC for
+  weird.") and `_start_announcement` speaks it on a background thread while the tool runs. It follows the generic "On it." (which
+  keeps playing first, on its own thread; the announcement joins it so nothing overlaps) and the final reply waits for it
+  (`_await_ack`). No model call, no quota. Only slow tools have a line (file/web search, delegation, Gmail/Calendar/WhatsApp/browser,
+  screen tools, shell/python, docs); quick ones stay silent and keep the generic lead-in. Once per command; skipped when the model
+  narrated itself, in Sleep Mode, after a barge-in, or with `JARVIS_ANNOUNCE_TASKS=0` / `JARVIS_ACK_PHRASES=0`. Spoken arguments go
+  through `_say_arg` (one line, no control characters, capped at 60 chars). Add a line for a new slow tool in `_tool_announcement`.
+  Tests: `test_speed_gemini.py` (3 new). Not verified live with a real voice.
 
 ## Wake word (2026-09-30)
 
