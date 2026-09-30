@@ -29,6 +29,8 @@ from typing import Callable
 ARP_SETTLE_S = 1.5
 RETURN_AFTER_S = 1800  # a named device gone this long is announced when it rejoins
 RECENT_SCAN_S = 600  # ...but only if the previous scan of that network was this recent
+LEFT_AFTER_S = 300  # a known device missing from scans this long has left (a phone can miss one or two sweeps)
+LEFT_MAX_S = 3600  # ...but one gone for over an hour is old news, never announced as "just left"
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _MAC_RE = re.compile(r"^([0-9a-f]{2}[-:]){5}[0-9a-f]{2}$", re.I)
 _hostname_cache: dict[str, str] = {}
@@ -144,6 +146,10 @@ def _ensure(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS network_devices (network TEXT NOT NULL, mac TEXT NOT NULL, "
                  "ip TEXT, hostname TEXT, first_seen REAL NOT NULL, last_seen REAL NOT NULL, "
                  "PRIMARY KEY (network, mac))")
+    try:  # 2026-09-30: when a device was announced as gone (NULL = present or never announced)
+        conn.execute("ALTER TABLE network_devices ADD COLUMN left_at REAL")
+    except sqlite3.OperationalError:
+        pass
 
 
 def record(connect: Callable[[], sqlite3.Connection], lock, result: dict, now: float | None = None) -> list[dict]:
@@ -156,22 +162,35 @@ def record(connect: Callable[[], sqlite3.Connection], lock, result: dict, now: f
         conn = connect()
         try:
             _ensure(conn)
-            rows = conn.execute("SELECT mac, first_seen, last_seen FROM network_devices WHERE network=?",
-                                (network,)).fetchall()
+            rows = conn.execute("SELECT mac, first_seen, last_seen, left_at, ip, hostname FROM network_devices "
+                                "WHERE network=?", (network,)).fetchall()
             known = {r[0]: r[1] for r in rows}
             last_seen = {r[0]: r[2] for r in rows}
+            left_at = {r[0]: r[3] for r in rows}
             new = [d for d in result["devices"] if d["mac"] not in known] if known else []
             # Known devices back after RETURN_AFTER_S away (callers announce only the named ones). Only
             # counted when this network was also scanned recently: after the PC slept or scanning was
             # paused, every device would otherwise look "just back" at once (audit 2026-09-27).
             last_scan = max(last_seen.values(), default=0)
             watching = now - last_scan <= RECENT_SCAN_S
+            # Back after being announced as gone: said again whatever the time away (a leave without a return
+            # would leave the owner guessing); otherwise only after RETURN_AFTER_S as before.
             result["returned"] = [d for d in result["devices"] if watching and d["mac"] in last_seen
-                                  and now - last_seen[d["mac"]] >= RETURN_AFTER_S]
+                                  and (left_at.get(d["mac"]) or now - last_seen[d["mac"]] >= RETURN_AFTER_S)]
+            # Known devices that stopped answering: announced once when gone LEFT_AFTER_S (caller says it for named ones).
+            present = {d["mac"] for d in result["devices"]}
+            result["departed"] = []
+            if watching:
+                for mac, first, seen, left, ip, host in rows:
+                    if (mac not in present and left is None and LEFT_AFTER_S <= now - seen <= LEFT_MAX_S):
+                        result["departed"].append({"mac": mac, "ip": ip or "", "hostname": host or "", "gateway": False,
+                                                   "this_pc": False, "private_mac": is_private_mac(mac)})
+                        conn.execute("UPDATE network_devices SET left_at=? WHERE network=? AND mac=?", (now, network, mac))
             for d in result["devices"]:
-                conn.execute("INSERT INTO network_devices VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(network, mac) "
+                conn.execute("INSERT INTO network_devices (network, mac, ip, hostname, first_seen, last_seen) "
+                             "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(network, mac) "
                              "DO UPDATE SET ip=excluded.ip, hostname=COALESCE(NULLIF(excluded.hostname, ''), hostname), "
-                             "last_seen=excluded.last_seen",
+                             "last_seen=excluded.last_seen, left_at=NULL",
                              (network, d["mac"], d["ip"], d["hostname"], now, now))
                 d["first_seen"] = known.get(d["mac"], now)
             conn.commit()

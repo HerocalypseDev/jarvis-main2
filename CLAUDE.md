@@ -1742,7 +1742,8 @@ row there each phase rather than only stating the total in chat.
 | 109 (self-awareness: journal of what autonomy/sleep/identity/settings/brain/safe mode/tasks did, code fingerprint diff at start + on-disk watcher, volatile prompt line, `self_report` tool + voice intent, Home card; 13 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
 | 110 (audit of the 2026-09-30 batch: optional-parameter guessing (cc/force) stopped, es.exe query quoting, false "not on disk" for dotted names, plan resume race + stuck plans, useless "Done" habit macros, doctor re-announcing daily, announcement before a staged shutdown, dashboard files claiming a restart, free-text settings in the prompt; 18 new tests) | Sonnet 5.5 | ~45 min | ~$3.50–$4.80 |
 | 111 (full codebase audit, second pass: imitated-confirmation claim guard, wider gate (services/accounts/permissions), reminder announce-failure storm, parallel tool timeout, blank required args, es.exe switch injection, shell-search guard gap, doctor nagging, hardware-free self-check test; 8 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~3484 min** | **~$222.05–$311.05** |
+| 112 (named devices are announced when they leave the network, once, after 5 min gone; returns after an announced leave are said too; Settings switch; 3 new tests) | Sonnet 5.5 | ~10 min | ~$0.70–$1.00 |
+| **Running total (final)** | | **~3494 min** | **~$222.75–$312.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2111,6 +2112,15 @@ Whole-system audit after the feature batch; tests appended to `test_audit_batch.
 - Residual (needs live Windows verification): real mic wake word, Everything's HTTP server and es.exe quoting on a real install,
   Google sign-in age, the Home "What I've been doing" card in a real browser, a real code change during a running session,
   typing into a real form through Windows-MCP.
+
+## Device left the network (2026-09-30, user request)
+
+`jarvis_netscan.record` now also returns `result["departed"]`: a known device missing from scans for `LEFT_AFTER_S` (5 min, so a phone
+that misses a sweep or two isn't "gone") and not longer than `LEFT_MAX_S` (1 h, so old rows never burst), once (`network_devices.left_at`,
+cleared when it is seen again). Only after the network was scanned recently (`watching`), so a PC sleep can't announce everyone leaving.
+Jarvis says "<name> left the network." for NAMED devices only (an unnamed phone with a random MAC would chatter), switch
+`JARVIS_NETSCAN_ANNOUNCE_LEFT` (default on, Settings). A device that comes back after an announced leave is announced as joined whatever
+the time away. Tests: end of `test_netscan.py`. Known limit: a phone that sleeps its Wi-Fi for 5+ minutes will say left/joined.
 
 ## Hand-off guard (2026-09-25)
 

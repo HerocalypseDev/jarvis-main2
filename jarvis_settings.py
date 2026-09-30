@@ -156,7 +156,10 @@ SETTINGS: list[dict] = [
              "127.0.0.1, put its address here (e.g. http://127.0.0.1:8080). Empty = try ports 80 and 8080, "
              "then es.exe.", "live": "env"},
     {"key": "JARVIS_NETSCAN_ANNOUNCE_NAMED", "label": "Announce named devices joining", "kind": "bool", "default": "1",
-     "help": "Say \"John's iPhone joined the network\" when a named device comes back after 30+ minutes away.",
+     "help": "Say \"John's iPhone joined the network\" when a named device comes back after 30+ minutes away, or after Jarvis already said it left.",
+     "live": "env"},
+    {"key": "JARVIS_NETSCAN_ANNOUNCE_LEFT", "label": "Announce named devices leaving", "kind": "bool", "default": "1",
+     "help": "Say \"John's iPhone left the network\" when a named device has been gone from the scans for 5 minutes.",
      "live": "env"},
     {"key": "JARVIS_BATTERY_SAVER", "label": "Battery saver", "kind": "bool", "default": "1",
      "help": "On battery: less background work when low, scanning paused and quiet announcements when very low.",

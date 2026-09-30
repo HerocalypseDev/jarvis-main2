@@ -5822,6 +5822,11 @@ def _netscan_run() -> None:
             for d in result.get("returned") or []:
                 if d.get("name") and not d.get("this_pc"):
                     queue_or_deliver_notification(f"{d['name']} joined the network.")
+        if _env_on("JARVIS_NETSCAN_ANNOUNCE_LEFT", True):
+            named = netscan.names(_memory_db_connect, _memory_db_lock)
+            for d in result.get("departed") or []:
+                if (named.get(d.get("mac")) or {}).get("name"):
+                    queue_or_deliver_notification(f"{named[d['mac']]['name']} left the network.")
     except Exception as e:
         log.warning("Network scan failed: %s", e)
         _netscan_state["last"] = {"ok": False, "error": str(e), "devices": [], "scanned_at": time.time()}
