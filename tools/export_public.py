@@ -53,6 +53,7 @@ EXCLUDE = (
     "tools/build_pro_pack.py",
     "test_pro_pack.py",
     "PRO_ROADMAP.md",            # private business plan
+    "RESEARCH_AGENTIC.md",       # private research notes (owner's limits and plans)
     "dist/",
     "session_state.json",
     "jarvis_memory.db",
