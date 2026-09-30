@@ -336,7 +336,7 @@ def _names(files: list[str], limit: int = 6) -> str:
 def _git_subjects(limit: int = 3) -> list[str]:
     try:
         out = subprocess.run(["git", "-C", str(_root), "log", f"-{limit}", "--format=%s"], capture_output=True,
-                             text=True, timeout=3).stdout
+                             text=True, timeout=3, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
         return [_clean(s, 90) for s in out.splitlines() if s.strip()][:limit]
     except Exception:
         return []

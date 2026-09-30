@@ -113,7 +113,8 @@ def test_a_saved_file_with_dots_and_spaces_in_its_name_is_verified_not_reported_
 def test_doctor_announces_a_problem_once_by_name_and_never_the_developer_note(jarvis, monkeypatch):
     said = []
     monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda m, **k: said.append(m))
-    problems = [{"name": "Gmail sign-in", "status": "warn", "detail": "signed in 6 days ago", "fix": "run auth"},
+    problems = [{"name": "Gmail sign-in", "status": "warn", "detail": "signed in 6 days ago", "fix": "run auth", "repeat": True},
+                {"name": "File search (Everything)", "status": "warn", "detail": "not answering", "fix": "install it"},
                 {"name": "Tool arguments", "status": "warn", "detail": "argument repairs: x x2", "fix": "", "quiet": True}]
     monkeypatch.setattr(jarvis.doctor, "problems", lambda *a, **k: problems)
     jarvis._doctor_state.update({"force": True, "next": 0.0, "told": {}})
@@ -122,11 +123,12 @@ def test_doctor_announces_a_problem_once_by_name_and_never_the_developer_note(ja
         problems[0] = {**problems[0], "detail": "signed in 7 days ago"}  # tomorrow's wording of the same problem
         jarvis._doctor_state["next"] = 0.0
         jarvis._doctor_tick()
-        assert len(said) == 1 and "Gmail sign-in" in said[0] and not any("Tool arguments" in m for m in said)
-        jarvis._doctor_state["told"]["Gmail sign-in"] = time.time() - 4 * 86400  # still broken 4 days later: remind
+        assert len(said) == 2 and "Gmail sign-in" in said[0] and not any("Tool arguments" in m for m in said)
+        for k in list(jarvis._doctor_state["told"]):
+            jarvis._doctor_state["told"][k] = time.time() - 4 * 86400
         jarvis._doctor_state["next"] = 0.0
-        jarvis._doctor_tick()
-        assert len(said) == 2
+        jarvis._doctor_tick()   # 4 days later: only the expiring sign-in is repeated, a permanent "not installed" is not
+        assert len(said) == 3 and "Gmail sign-in" in said[2]
         problems.clear()  # fixed: forgotten, so a recurrence is news again
         jarvis._doctor_state["next"] = 0.0
         jarvis._doctor_tick()
@@ -275,3 +277,104 @@ def test_free_text_setting_values_never_reach_the_journal_or_the_prompt(jarvis):
     texts = [r["summary"] for r in jarvis.selfaware.recent(5, "settings")]
     assert "setting JARVIS_OWN_EMAILS changed" in texts and "setting JARVIS_SAFE_MODE set to 1" in texts
     assert "example.com" not in jarvis.selfaware.prompt_line()
+
+
+# === full-codebase audit (2026-09-30, second pass) ===================================================================
+def test_asking_for_a_yes_to_a_dangerous_action_nothing_staged_is_an_unbacked_claim(jarvis, monkeypatch):
+    said = "I'm about to shut down your computer. Say yes to confirm."
+    monkeypatch.setattr(jarvis, "_pending_action", None)
+    assert jarvis._confirmation_imitated(said) and jarvis._CONFIRMATION_IMITATION in jarvis._unbacked_claims(said, [])
+    # a real staged action waiting for the yes: the same words are honest
+    monkeypatch.setattr(jarvis, "_pending_action", {"tool_name": "run_shell", "tool_input": {"command": "shutdown /s"},
+                                                    "queued_at": time.monotonic()})
+    assert jarvis._unbacked_claims(said, ["run_shell"]) == []
+    # ordinary talk is left alone
+    monkeypatch.setattr(jarvis, "_pending_action", None)
+    assert jarvis._unbacked_claims("Say yes if you want the weather in Lagos.", []) == []
+    assert jarvis._unbacked_claims("I can restart the router if you like.", []) == []
+
+
+def test_a_reminder_that_cannot_be_announced_is_still_marked_delivered_and_the_next_one_fires(jarvis, monkeypatch):
+    from datetime import datetime, timedelta
+    with jarvis._memory_db_lock:
+        conn = jarvis._memory_db_connect()
+        try:
+            due = (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")
+            for t in ("first", "second"):
+                conn.execute("INSERT INTO reminders (text, due_at, created_at) VALUES (?, ?, ?)", (t, due, due))
+            conn.commit()
+        finally:
+            conn.close()
+    said = []
+
+    def deliver(msg, **k):
+        if "first" in msg:
+            raise RuntimeError("tts exploded")
+        said.append(msg)
+
+    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", deliver)
+    monkeypatch.setattr(jarvis, "send_windows_toast", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis, "record_recent_task", lambda *a, **k: None)
+    jarvis._check_due_reminders(datetime.now())
+    assert said == ["Reminder: second"]
+    said.clear()
+    jarvis._check_due_reminders(datetime.now())   # nothing is left due: no storm
+    assert said == []
+
+
+def test_a_hung_parallel_tool_becomes_a_failed_result_instead_of_holding_the_turn(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "PARALLEL_TOOL_TIMEOUT_S", 0.3)
+    release = threading.Event()
+
+    def fake(name, inp, transcript, skip_confirmation=False):
+        if name == "weather":
+            release.wait(5)
+        return "R:" + name
+
+    monkeypatch.setattr(jarvis, "_execute_tool", fake)
+    t0 = time.monotonic()
+    out = jarvis._run_read_only_tools_parallel([{"name": "weather", "input": {}}, {"name": "system_status", "input": {}}], "t")
+    release.set()
+    assert time.monotonic() - t0 < 2 and out[0].startswith("Tool failed") and out[1] == "R:system_status"
+
+
+def test_a_recursive_name_search_piped_into_a_filter_is_also_refused_while_everything_is_up(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis.everything, "reachable", lambda *a, **k: True)
+    for cmd in ("Get-ChildItem C:\\Users -Recurse | Where-Object Name -like '*weird*'",
+                "gci . -r | ? {$_.Name -match 'weird'}"):
+        assert jarvis._file_search_via_shell_problem(cmd), cmd
+    assert jarvis._file_search_via_shell_problem("Get-ChildItem -Recurse | Measure-Object") is None
+    monkeypatch.setattr(jarvis.everything, "reachable", lambda *a, **k: False)
+    assert jarvis._file_search_via_shell_problem("Get-ChildItem . -Recurse -Filter *.py") is None
+
+
+def test_a_blank_required_string_is_a_value_not_a_missing_parameter():
+    schema = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+    assert ta.check("browser_type", schema, {"text": ""})[2] is None       # clearing a field is legitimate
+    assert "needs 'text'" in ta.check("browser_type", schema, {})[2]       # a missing one is still reported
+
+
+def test_the_gate_stages_service_deletion_account_changes_and_permission_takeovers(jarvis):
+    for cmd in ("sc delete winmgmt", "net user Administrator /delete", "net localgroup administrators bob /add",
+                "takeown /f C:\\Windows /r", "icacls C:\\ /grant Everyone:F /t", "Remove-LocalUser bob"):
+        assert jarvis._catastrophic_reason(cmd), cmd
+    for cmd in ("sc query", "net user", "icacls myfile.txt", "takeown /f notes.txt", "sc config x start=auto"):
+        assert not jarvis._catastrophic_reason(cmd), cmd
+    out = jarvis._execute_tool("run_shell", {"command": "sc delete winmgmt"}, "remove the service")
+    assert "staged, not run" in out
+    jarvis._take_pending_action()
+
+
+def test_search_text_starting_with_a_dash_is_never_an_es_exe_switch(monkeypatch):
+    import subprocess
+    import jarvis_everything as ev
+    seen = []
+
+    class P:
+        returncode, stdout = 0, ""
+
+    monkeypatch.setattr(ev, "_http", lambda *a, **k: (_ for _ in ()).throw(OSError("no http")))
+    monkeypatch.setenv("JARVIS_EVERYTHING_ES", "es.exe")
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: seen.append(cmd) or P())
+    ev.search("-export-csv C:\\Users\\x\\out.csv")
+    assert seen[0][-1] == '"-export-csv C:\\Users\\x\\out.csv"' and not seen[0][-1].startswith("-")
