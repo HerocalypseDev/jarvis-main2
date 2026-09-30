@@ -19,7 +19,7 @@ A set of cheap, local-first features. Rules that apply to every feature here:
 |---|---|---|---|
 | A1 Clipboard history | `jarvis_clipboard_history.py`, tool `clipboard_history` | on | `JARVIS_CLIPBOARD_HISTORY`, `JARVIS_CLIPBOARD_HISTORY_MAX` (50) |
 | A2 Everything file search | `jarvis_everything.py`, tool `quick_search` | on when Everything is installed | `JARVIS_EVERYTHING_URL`, `JARVIS_EVERYTHING_ES` |
-| A3 Device names | `jarvis_netscan.py`, tool `network_devices` | on | `JARVIS_NETSCAN_ANNOUNCE_NAMED` (1) |
+| A3 Device names | `jarvis_netscan.py`, tool `network_devices` | on | `JARVIS_NETSCAN_ANNOUNCE_NAMED` (1), `JARVIS_NETSCAN_ANNOUNCE_LEFT` (1) |
 | A4 Voice macros | `jarvis_macros.py`, tool `macros` | on (no macros until you make one) | - |
 | A5 Battery saver | `jarvis_battery.py` | on | `JARVIS_BATTERY_SAVER`, `JARVIS_BATTERY_LOW_PCT` (20), `JARVIS_BATTERY_CRITICAL_PCT` (10) |
 | A6 Deadline prep | `_deadline_context` (jarvis.py) + `_deadline_scan` (jarvis_autonomy.py) | on with autonomy | - |
