@@ -221,6 +221,9 @@ def _parse_env(text: str) -> dict[str, str]:
     return out
 
 
+change_hook = None  # fn(key, value_or_None, applied_live), set by jarvis.py
+
+
 def is_secret(key: str) -> bool:
     return bool(_SECRET_RE.search(key))
 
@@ -316,4 +319,10 @@ def set_setting(key: str, value: str) -> dict:
         os.environ[key] = value
         live = _apply_live(spec)
     log.info("Setting %s changed from the dashboard (%s).", key, "live" if live else "after restart")
+    hook = change_hook
+    if hook is not None:  # self-awareness journal; the value is only passed on for non-secret keys
+        try:
+            hook(key, None if is_secret(key) else value[:60], live)
+        except Exception as e:
+            log.debug("settings change hook failed: %s", e)
     return {"ok": True, "key": key, "applies": "now" if live else "restart"}

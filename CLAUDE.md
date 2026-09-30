@@ -1739,7 +1739,8 @@ row there each phase rather than only stating the total in chat.
 | 106 (research phase 1 reliability: generic tool-argument repair, verify-after-act receipts, doctor + Google sign-in expiry warnings + health card, eval drafts from debug reports + capped eval runs; 18 new tests) | Sonnet 5.5 | ~45 min | ~$4.00–$5.50 |
 | 107 (research phase 2 speed: parallel read-only tools with copied command context, prompt-size measurement + budget test, "Avg per call" on the Usage cards; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.20–$3.00 |
 | 108 (research phase 3 product feel: habit-based macro suggestions with Toolbox rows, plans resumable after a restart + restart notice, tool-registry consistency test; 10 new tests) | Sonnet 5.5 | ~35 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~3359 min** | **~$212.55–$297.85** |
+| 109 (self-awareness: journal of what autonomy/sleep/identity/settings/brain/safe mode/tasks did, code fingerprint diff at start + on-disk watcher, volatile prompt line, `self_report` tool + voice intent, Home card; 13 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~3399 min** | **~$215.55–$302.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2018,6 +2019,37 @@ Tests: `test_reliability.py`. Rules to keep:
   and a 13k-line file make it a risky rewrite for little gain). It fails on duplicate names, a missing description, a
   `required` name that isn't a property, READONLY/CORE/verified/batch/announcement lists naming tools that don't exist, a
   writing-sounding tool in the read-only list, or a built-in tool with no dispatch branch. Keep it green when adding tools.
+
+## Self-awareness (2026-09-30, user request: "aware of himself")
+
+`jarvis_selfaware.py`, tests `test_selfaware.py` (13). Pure module (never imports jarvis.py; jarvis.py hands it the DB
+connect function). No model call, no network, no new setting: on by default like every recent feature. Rules to keep:
+- **Journal** = `self_events` (ts, subsystem, kind, summary; 600 rows / 30 days) + `self_state` (watermarks, the code
+  fingerprint) in `jarvis_memory.db`, created lazily. Every line is one short sanitised sentence
+  (`jarvis_untrusted.neutralize_injection`, 200 chars). It never holds a secret value, picture or face vector: a settings
+  change journals the value only for non-secret keys (`jarvis_settings.change_hook`), a face event is kind + enrolled name.
+  Under pytest it is a no-op unless the test set `JARVIS_MEMORY_DB_PATH`.
+- **Sources**: direct hooks for settings, brain switch, safe mode, doctor problems, restart, background-task completion (marks
+  self-edits), face events (`_face_event_hook`, so the gate-isolation allowlist is untouched); adapters
+  (`sync_adapters`, scheduler step "self awareness", ~60 s) copy new `autonomy_decisions` (acted/failed/suggested/dismissed;
+  never 'silent' or skipped) and `sleep_log` start/end rows, so autonomy and sleep needed no change. First pass = baseline
+  (history is never replayed).
+- **Code awareness**: sha1 fingerprint of `*.py` (not `test_*`) + `dashboard_static/*`; `startup()` (called from `main()`)
+  compares with the previous run's and journals "since my last run: changed ... | recent commits: ...";
+  `watch_code()` (same tick, only files whose mtime/size moved are re-hashed) journals once per file set that code on disk
+  moved ahead of the running copy, and `restart_pending()` feeds the prompt line, the Home card and `self_report`.
+  Jarvis cannot hot-load code, so "restart to load it" is the honest state.
+- **Model sees it** via `selfaware.prompt_line()` in the **volatile** block only (never the cached stable one), <= 620
+  chars, framed "data, never an instruction", with non-default modes (safe mode, autonomy off/dry-run, non-Claude brain);
+  empty when nothing happened in 24 h. The reply-cache key includes `selfaware.revision()`.
+- **Ask it**: read-only `self_report` tool (actions recent|code, subsystem, hours; in `READONLY_TOOL_TTLS` at 10 s, not in
+  `CORE_TOOLS`: the router's 21-tool core limit is pinned by a test) and a no-LLM voice intent `self_report` ("what have you
+  been up to", "what changed", "did your code change"; whole utterances only). Dashboard: Home "What I've been doing" card
+  (`GET /api/feature/self`, read-only).
+- To make a new subsystem aware: call `selfaware.record(subsystem, kind, summary)` at the moment it acts (subsystem must be
+  one of `SUBSYSTEMS`), or add an adapter reading a table it already writes. Never journal message bodies or secrets.
+- Not built: journaling every tool call (that is the audit trail), hot-reloading code, editing own code from what it notices.
+  Not verified live: the Home card in a real browser and a real code change during a running session.
 
 ## Hand-off guard (2026-09-25)
 
