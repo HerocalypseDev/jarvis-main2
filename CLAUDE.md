@@ -1738,7 +1738,8 @@ row there each phase rather than only stating the total in chat.
 | 105 (research: how to make Jarvis more efficient/agentic/professional within the owner's limits; measured the codebase, checked free provider tiers, wrote `RESEARCH_AGENTIC.md` (private, export-excluded) with a ranked plan; no code change) | Sonnet 5.5 | ~20 min | ~$1.00–$1.50 |
 | 106 (research phase 1 reliability: generic tool-argument repair, verify-after-act receipts, doctor + Google sign-in expiry warnings + health card, eval drafts from debug reports + capped eval runs; 18 new tests) | Sonnet 5.5 | ~45 min | ~$4.00–$5.50 |
 | 107 (research phase 2 speed: parallel read-only tools with copied command context, prompt-size measurement + budget test, "Avg per call" on the Usage cards; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.20–$3.00 |
-| **Running total (final)** | | **~3324 min** | **~$209.55–$293.65** |
+| 108 (research phase 3 product feel: habit-based macro suggestions with Toolbox rows, plans resumable after a restart + restart notice, tool-registry consistency test; 10 new tests) | Sonnet 5.5 | ~35 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~3359 min** | **~$212.55–$297.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1997,6 +1998,26 @@ Tests: `test_reliability.py`. Rules to keep:
   long tool descriptions was NOT done: they carry rules learned from real failures (run_shell dialect, write_file, set_plan).
   Instead `test_narrowed_request_stays_inside_the_token_budget` fails when a change bloats the prompt/tool list, and the
   Usage cards show "Avg per call" (`avg_prompt_tokens`, fresh + cached tokens per model call).
+
+## Product-feel layer (2026-09-30, RESEARCH_AGENTIC.md phase 3)
+
+Tests: `test_reliability.py`. Rules to keep:
+- **Macro suggestions from habits** (`jarvis_macros.suggest`; `macros` tool actions `suggest` / `accept`; Toolbox "Suggested"
+  rows with a "Make it a macro" button; `GET /api/feature/macros` returns `suggestions`): a command said 3+ times in 30 days
+  whose successful tool calls were the same every time (>= 80% of runs, <= 4 calls) is offered as a macro that runs with no
+  model call. Only low-risk tools (`_macro_suggest_tools` = Pro-routine allowlist + `READONLY_TOOL_TTLS`), never `macros`
+  itself, never a non-web `open_url`, never a phrase Jarvis already answers instantly (`_already_fast_path`) or that is
+  reserved/taken. Nothing is created without the owner's yes/click; `accept` is attended-only like `create`.
+- **Plans can be resumed** (`set_plan(resume_task_id=N)` -> `_resume_plan`; `_run_plan` skips steps already `done` and
+  reuses their stored results): a restart used to mark a running plan and its unfinished steps failed with no way on. Now
+  `_interrupted_plans_tick` (once per start, off under pytest) says which plans a restart cut short and how far they got
+  ("say 'resume plan 12'"). `steps` is no longer `required` in the schema (a resume call has none); `_set_plan` still
+  refuses fewer than two steps. The plan/step machinery itself (`set_plan`, `plan_steps`, Tasks route with "step N/M")
+  already existed: RESEARCH_AGENTIC.md item 9/10 was mostly built, this closes the restart gap.
+- **Registry test** (`test_tool_registry_is_consistent`): stands in for a one-record-per-tool refactor (not done: 95 tools
+  and a 13k-line file make it a risky rewrite for little gain). It fails on duplicate names, a missing description, a
+  `required` name that isn't a property, READONLY/CORE/verified/batch/announcement lists naming tools that don't exist, a
+  writing-sounding tool in the read-only list, or a built-in tool with no dispatch branch. Keep it green when adding tools.
 
 ## Hand-off guard (2026-09-25)
 

@@ -106,7 +106,27 @@ async function refreshMacros() {
         <button class="btn btn-ghost" type="button" data-pro-routine="${escAttr(m.name)}">${m.enabled ? "Turn off" : "Turn on"}</button>
       </div></li>`).join(""));
   }
+  // Habits: commands you keep repeating that always ran the same tool calls. Never created without a click.
+  const sugg = data.suggestions || [];
+  if (sugg.length) {
+    list.insertAdjacentHTML("beforeend", sugg.map((sg) => `
+    <li class="list-item">
+      <div><span class="pill">Suggested</span> <span class="tool">${esc(sg.phrase)}</span>
+        <span class="muted">you said this ${esc(String(sg.count))} times</span></div>
+      <div class="muted">would run: ${sg.steps.map((st) => esc(st.tool)).join(" &rarr; ")} &middot; no AI call, instant</div>
+      <div class="memory-actions">
+        <button class="btn btn-ghost" type="button" data-suggest="${escAttr(sg.phrase)}">Make it a macro</button>
+      </div></li>`).join(""));
+  }
 }
+document.getElementById("tb-macro-list")?.addEventListener("click", async (e) => {
+  const phrase = e.target.closest("[data-suggest]")?.dataset.suggest;
+  if (!phrase) return;
+  const status = document.getElementById("tb-macro-status");
+  const r = await featurePost("macros", "accept", { phrase }).catch((err) => ({ result: String(err) }));
+  if (status) status.textContent = r.result || "";
+  refreshMacros();
+});
 document.getElementById("tb-macro-list")?.addEventListener("click", async (e) => {
   const name = e.target.closest("[data-pro-routine]")?.dataset.proRoutine;
   if (!name) return;

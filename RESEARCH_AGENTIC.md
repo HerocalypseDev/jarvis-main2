@@ -105,6 +105,14 @@ is worth the cost, and put as much care into tool design as into prompts
 - Paid search/model APIs, or anything that needs a card, until income from Jarvis4U Pro covers it.
 - Rebuilding Gemini Live (already declined).
 
+## 5b. Status (2026-09-30)
+
+Built after this report (Groq item 5 skipped by the owner): items 1, 2, 3, 4 (reliability layer), 6 (measured; a token budget
+test and an "Avg per call" card instead of trimming descriptions), 7 (parallel read-only tools), 8 (macro suggestions),
+9/10 (found already built as `set_plan`; added resume after a restart), 11 (registry consistency test instead of a rewrite).
+Not built: 12 (ask one question when ambiguous, per-command timeline). Correction to section 2: plans with checkpointed
+steps and a step progress display already existed; the missing piece was continuing one after a restart.
+
 ## 6. Suggested order
 
 1. **Session 1 (reliability):** items 1, 2 (file, typing, reminders first), 3, 4.
