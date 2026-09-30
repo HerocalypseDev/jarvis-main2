@@ -761,6 +761,7 @@ function renderUsage(u) {
       <div class="usage-token-row"><span>Cache write</span><span>${esc(Number(d.cache_write_tokens || 0).toLocaleString())}</span></div>
       <div class="usage-token-row"><span>Output</span><span>${esc(Number(d.output_tokens || 0).toLocaleString())}</span></div>
       <div class="usage-token-row"><span>Saved by caching</span><span>${esc(fmtUsd(d.cache_saved_usd))}</span></div>
+      <div class="usage-token-row" title="Average size of what each model call carries in (prompt + tools + history). Lower is faster."><span>Avg per call</span><span>${esc(Number(d.avg_prompt_tokens || 0).toLocaleString())}</span></div>
     </div>`).join("");
 }
 

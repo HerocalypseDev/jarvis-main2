@@ -1737,7 +1737,8 @@ row there each phase rather than only stating the total in chat.
 | 104 (task-specific spoken announcement: built locally from the chosen tool, after the generic lead-in, once per command, Settings switch; 3 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
 | 105 (research: how to make Jarvis more efficient/agentic/professional within the owner's limits; measured the codebase, checked free provider tiers, wrote `RESEARCH_AGENTIC.md` (private, export-excluded) with a ranked plan; no code change) | Sonnet 5.5 | ~20 min | ~$1.00–$1.50 |
 | 106 (research phase 1 reliability: generic tool-argument repair, verify-after-act receipts, doctor + Google sign-in expiry warnings + health card, eval drafts from debug reports + capped eval runs; 18 new tests) | Sonnet 5.5 | ~45 min | ~$4.00–$5.50 |
-| **Running total (final)** | | **~3299 min** | **~$207.35–$290.65** |
+| 107 (research phase 2 speed: parallel read-only tools with copied command context, prompt-size measurement + budget test, "Avg per call" on the Usage cards; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.20–$3.00 |
+| **Running total (final)** | | **~3324 min** | **~$209.55–$293.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1981,6 +1982,21 @@ Tests: `test_reliability.py` (18). Rules to keep:
   failed, the reply apologised or the user repeated themselves: review, then move into `evals/cases.json`.
   `python jarvis_eval.py --limit 15` runs a rotating capped subset (fits a free daily quota); schedule it nightly with
   Windows Task Scheduler if wanted. Not scheduled inside Jarvis on purpose: it spends the owner's daily model quota.
+
+## Speed layer (2026-09-30, RESEARCH_AGENTIC.md phase 2; Groq item skipped at the owner's request)
+
+Tests: `test_reliability.py`. Rules to keep:
+- **Parallel read-only tools** (`_run_read_only_tools_parallel`, called in `run_agent_loop` before the tool loop): when a
+  turn asks for 2+ tools from `READONLY_TOOL_TTLS` they run together (thread pool, max 4) and their results are fed
+  back in the model's order; everything else (writes, typing, sending, all `mcp_*`) still runs one at a time. The
+  per-command thread-local context is copied into each worker (`_run_tool_with_ctx`). A crashing worker becomes a
+  `Tool failed:` result. `JARVIS_PARALLEL_TOOLS=0` turns it off. Never add a tool that writes to `READONLY_TOOL_TTLS`.
+- **Prompt diet, measured**: a Gemini/Ollama round carries ~5.1k tokens of system prompt + ~4.5k of narrowed tools (Claude
+  keeps the full ~13.7k tool list but reads it from cache). Narrowing already applies to every non-Claude brain. The free
+  Gemini tier limits requests per day, not tokens per minute, so tokens are a speed matter, not a quota one. Trimming the
+  long tool descriptions was NOT done: they carry rules learned from real failures (run_shell dialect, write_file, set_plan).
+  Instead `test_narrowed_request_stays_inside_the_token_budget` fails when a change bloats the prompt/tool list, and the
+  Usage cards show "Avg per call" (`avg_prompt_tokens`, fresh + cached tokens per model call).
 
 ## Hand-off guard (2026-09-25)
 

@@ -237,6 +237,8 @@ def local_summary(connect: Callable[[], sqlite3.Connection], lock, now: float | 
                     "cost_usd": row[0], "calls": row[1], "input_tokens": row[2],
                     "cache_read_tokens": row[3], "cache_write_tokens": row[4],
                     "output_tokens": row[5], "cache_saved_usd": row[6],
+                    # what one model call carries in (fresh + cached): the prompt-diet number to keep low
+                    "avg_prompt_tokens": round((row[2] + row[3] + row[4]) / row[1]) if row[1] else 0,
                 }
             out["by_model"] = [
                 {"model": m, "cost_usd": c, "calls": n, "tokens": t}
