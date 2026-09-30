@@ -1740,7 +1740,8 @@ row there each phase rather than only stating the total in chat.
 | 107 (research phase 2 speed: parallel read-only tools with copied command context, prompt-size measurement + budget test, "Avg per call" on the Usage cards; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.20–$3.00 |
 | 108 (research phase 3 product feel: habit-based macro suggestions with Toolbox rows, plans resumable after a restart + restart notice, tool-registry consistency test; 10 new tests) | Sonnet 5.5 | ~35 min | ~$3.00–$4.20 |
 | 109 (self-awareness: journal of what autonomy/sleep/identity/settings/brain/safe mode/tasks did, code fingerprint diff at start + on-disk watcher, volatile prompt line, `self_report` tool + voice intent, Home card; 13 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~3399 min** | **~$215.55–$302.05** |
+| 110 (audit of the 2026-09-30 batch: optional-parameter guessing (cc/force) stopped, es.exe query quoting, false "not on disk" for dotted names, plan resume race + stuck plans, useless "Done" habit macros, doctor re-announcing daily, announcement before a staged shutdown, dashboard files claiming a restart, free-text settings in the prompt; 18 new tests) | Sonnet 5.5 | ~45 min | ~$3.50–$4.80 |
+| **Running total (final)** | | **~3444 min** | **~$219.05–$306.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2006,7 +2007,8 @@ Tests: `test_reliability.py`. Rules to keep:
 - **Macro suggestions from habits** (`jarvis_macros.suggest`; `macros` tool actions `suggest` / `accept`; Toolbox "Suggested"
   rows with a "Make it a macro" button; `GET /api/feature/macros` returns `suggestions`): a command said 3+ times in 30 days
   whose successful tool calls were the same every time (>= 80% of runs, <= 4 calls) is offered as a macro that runs with no
-  model call. Only low-risk tools (`_macro_suggest_tools` = Pro-routine allowlist + `READONLY_TOOL_TTLS`), never `macros`
+  model call. Only low-risk ACTION tools (`_macro_suggest_tools` = Pro-routine allowlist minus `SPEAK_RESULT_TOOLS`; information
+  tools are left out because a user macro only says "Done", so it would never give the answer), never `macros`
   itself, never a non-web `open_url`, never a phrase Jarvis already answers instantly (`_already_fast_path`) or that is
   reserved/taken. Nothing is created without the owner's yes/click; `accept` is attended-only like `create`.
 - **Plans can be resumed** (`set_plan(resume_task_id=N)` -> `_resume_plan`; `_run_plan` skips steps already `done` and
@@ -2050,6 +2052,35 @@ connect function). No model call, no network, no new setting: on by default like
   one of `SUBSYSTEMS`), or add an adapter reading a table it already writes. Never journal message bodies or secrets.
 - Not built: journaling every tool call (that is the audit trail), hot-reloading code, editing own code from what it notices.
   Not verified live: the Home card in a real browser and a real code change during a running session.
+
+## Feature-batch audit (2026-09-30)
+
+Audit-and-fix of the wake word, Everything, announcements, reliability, speed, product-feel and self-awareness batch.
+Tests: `test_audit_batch.py` (18, one per defect; 11 of them fail on the old code). Rules to keep:
+- **Argument repair fills a missing REQUIRED parameter freely, but an OPTIONAL one only for the same words or an abbreviation**
+  (`extension` -> `ext`), never a looser name (`cc_address` -> `cc` added a recipient, `text` -> `text_color`), and never
+  `_RISKY_OPTIONAL` (cc/bcc/to/force/confirm/overwrite/recursive/delete...). The repaired call still goes through the gate
+  (pinned: `{"cmd": "shutdown /s"}` is staged).
+- **es.exe gets the query as ONE argument** (shlex in POSIX mode ate the backslash of `C:\...\` and choked on an apostrophe, and the
+  ValueError was reported as "Everything isn't reachable"). A non-numeric `count` falls back to the default.
+- **Verify-after-act tries every place a path could end** (`_paths_in_result`): "notes v1.2 draft.txt" was reported as
+  missing after a successful write. A file counts as written if ANY reading exists.
+- **A plan can't get stuck "running"**: `_run_plan` wraps `_run_plan_impl` (a corrupt dependency list or any crash finishes the task
+  as failed, which also unblocks resuming); `_resume_plan` checks and claims in one lock hold (two simultaneous resumes started the plan
+  twice). A resumed plan re-runs the step that was in flight at the restart: its side effects may repeat (accepted).
+- **Habit macros** are offered only for ACTION tools (see above).
+- **Doctor**: announced by problem NAME (the detail changes daily), again only after 3 days, forgotten once fixed; the "Tool arguments"
+  developer note is `quiet` (report/card only, never spoken); `doctor_state.json` is written atomically (torn file = every sign-in
+  age restarts) and still holds only a token fingerprint.
+- **Announcements**: no "I'll run that" line for a shell/python/UI call the confirmation gate is about to stage.
+- **Self-awareness**: dashboard HTML/JS/CSS changes on disk never claim a restart is needed (only `.py` does); a settings change journals its
+  value only for bool/choice/number settings (free text can hold an address or path and would ride into the prompt).
+- Checked and fine (no change): a wake capture is hands-free so "Hey Jarvis, yes" cannot confirm a staged action (pinned end to end),
+  wake word off by default / off in Safe and Sleep Mode / soft-fails without the package; parallel tools are read-only only with an isolated
+  command context per worker; usage "avg per call" handles empty data; the budget test only measures.
+- Residual: no timeout on a hung parallel read-only tool (same as running it alone); the shell-search guard misses a recursive scan that
+  pipes into `Where-Object`; a wake word hit by a TV costs one speech-to-text call per hit (2.5 s cooldown); not verified live: real mic
+  wake word, real Everything HTTP server, real Google token age.
 
 ## Hand-off guard (2026-09-25)
 

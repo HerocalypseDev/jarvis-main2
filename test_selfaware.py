@@ -167,10 +167,10 @@ def test_settings_brain_and_safe_mode_changes_are_journaled(jarvis, monkeypatch)
     import jarvis_settings as st
     monkeypatch.setattr(st, "_write_env_value", lambda k, v: None)
     monkeypatch.setattr(st, "change_hook", jarvis._selfaware_setting_hook)
-    assert st.set_setting("JARVIS_SMART_MODEL", "some-model")["ok"]
+    assert st.set_setting("JARVIS_SMART_MODEL_EFFORT", "high")["ok"]
     assert st.set_setting("GEMINI_API_KEY", "hunter2-placeholder")["ok"]
     texts = [r["summary"] for r in jarvis.selfaware.recent(10)]
-    assert any("JARVIS_SMART_MODEL set to some-model" in t for t in texts)
+    assert any("JARVIS_SMART_MODEL_EFFORT set to high" in t for t in texts)
     assert any("GEMINI_API_KEY" in t for t in texts)
     assert not any("hunter2-placeholder" in t for t in texts)  # a secret's value never reaches the journal
     jarvis.set_safe_mode(True, "voice")

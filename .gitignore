@@ -35,3 +35,4 @@ dist/
 debug_report.txt
 doctor_state.json
 evals/drafts.json
+doctor_state.tmp

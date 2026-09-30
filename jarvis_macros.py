@@ -262,6 +262,8 @@ def suggest(connect, lock, safe_tools: set[str], known_tools: set[str], already_
             continue
         if any(t not in safe_tools or t not in known_tools or t in FORBIDDEN_STEP_TOOLS for t, _ in stable):
             continue
+        if any(t in SPEAK_RESULT_TOOLS for t, _ in stable):
+            continue  # asked for the ANSWER (weather, status...): a user macro only says "Done", which would be a downgrade
         try:
             steps = [{"tool": t, "input": json.loads(i)} for t, i in stable]
         except ValueError:
