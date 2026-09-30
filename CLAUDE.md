@@ -1732,7 +1732,8 @@ row there each phase rather than only stating the total in chat.
 | 99 ("couldn't reach Gemini" root-caused: free tier = daily per-model allowance (500/day, 20/day); spoken failure reasons, `python jarvis_gemini.py` diagnostic, in-stream 429 wait, restored 30 s cap, opt-in backup on rate limit; live burst test; 13 new tests) | n/a | ~60 min | ~$4.00–$5.50 |
 | 100 (correction: the Gemini 429s were the DAILY per-model quota, not per-minute; daily 429 never waited on, reason names the quota (500/day, 20/day, resets midnight Pacific), docs corrected; 5 new tests) | n/a | ~20 min | ~$2.00–$3.00 |
 | 101 (opt-in "Hey Jarvis" wake word: openWakeWord detector on the mic loop, seeded follow-up capture, transcript name check, Settings switch off by default; real-model smoke test; 14 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~3194 min** | **~$199.75–$279.95** |
+| 102 (find-a-file always via Everything: prompt + tool text, quick_search always offered, shell file-scan guard when Everything is up, es.exe auto-find, clearer setup hint; 2 new tests) | Sonnet 5.5 | ~15 min | ~$1.00–$1.40 |
+| **Running total (final)** | | **~3209 min** | **~$200.75–$281.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -1870,6 +1871,14 @@ Result of a read-only audit, then fixed; tests in `test_hardening.py` (70). Rule
   Still no disk-walk fallback in Jarvis's own code (deliberate). Best fix on the PC: install Everything + enable its
   HTTP server. Prompt-level, so not deterministic; pinned by `test_cache.py::test_file_find_guidance_is_powershell_not_cmd`
   (passes; first run 2026-09-29 while merging the Perplexity change).
+
+- **Find-a-file always uses Everything (2026-09-30, user request)**: the stable prompt and `quick_search`'s description say
+  "ALWAYS quick_search first"; `quick_search` is in `CORE_TOOLS` (never dropped by tool narrowing); `_file_search_via_shell_problem`
+  refuses a recursive name search through `run_shell` (Get-ChildItem -Recurse -Filter/-Include, `dir /s`, `where /r`) while
+  `everything.reachable()` (cached 30 s) is true, and allows it when Everything isn't set up (it is the documented fallback).
+  `jarvis_everything` also looks for `es.exe` in Program Files/Downloads, and `SETUP_HINT` now spells out the exact Everything
+  steps (Tools > Options > HTTP Server > Enable, port 80, bind 127.0.0.1). If Jarvis still can't find files, the cause is that
+  setting: Everything's HTTP server is off by default. Test: `test_cache.py::test_find_a_file_always_goes_through_everything`.
 
 ## Full codebase audit (2026-09-29)
 

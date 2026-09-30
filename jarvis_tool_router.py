@@ -39,7 +39,7 @@ CORE_TOOLS = {
     "remember_fact", "recall_facts", "memory_search", "create_reminder", "list_reminders",
     "schedule_jarvis_task", "delegate_to_claude_code", "change_jarvis_code", "list_background_tasks",
     "web_search", "open_app", "open_url", "run_shell", "read_file", "write_file", "system_status",
-    "briefing", "self_check",
+    "briefing", "self_check", "quick_search",  # quick_search: "find a file" must never fall back to a shell scan
 }
 
 _STOP = {
