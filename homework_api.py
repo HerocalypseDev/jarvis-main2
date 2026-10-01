@@ -9,6 +9,7 @@ The token and the signed file links are credentials: they never appear in an exc
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -17,6 +18,7 @@ import urllib.request
 
 USER_AGENT = "Jarvis-Homework/1.0"  # the app shows this as the device in its Activity log
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024  # a CSV export is the largest answer the app sends
 
 
 class HomeworkApiError(Exception):
@@ -60,6 +62,18 @@ _FALLBACK = {
 }
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib re-sends the Authorization header on a redirect, to any host and even from https to http.
+    The API never redirects, so a redirect is refused instead of followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise HomeworkApiError("The homework app redirected the request; check HOMEWORK_APP_URL "
+                               "(use the exact https address of the app, no path).", code)
+
+
+_api_opener = urllib.request.build_opener(_NoRedirect)
+
+
 def _request(method: str, body: dict | None, timeout: float):
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(_endpoint(), data=data, method=method, headers={
@@ -69,11 +83,15 @@ def _request(method: str, body: dict | None, timeout: float):
         "User-Agent": USER_AGENT,
     })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            status, raw = r.status, r.read()
+        with _api_opener.open(req, timeout=timeout) as r:
+            status, raw = r.status, r.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise HomeworkApiError("The homework app's answer was too large.")
+    except HomeworkApiError:
+        raise
     except urllib.error.HTTPError as e:
         status, raw = e.code, e.read() if hasattr(e, "read") else b""
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
         raise HomeworkApiError("Can't reach the homework app right now.") from None
     try:
         payload = json.loads(raw.decode("utf-8") or "{}")
@@ -116,5 +134,5 @@ def download(url: str, max_bytes: int = 21 * 1024 * 1024, timeout: float = 60) -
         raise
     except urllib.error.HTTPError as e:
         raise HomeworkApiError(f"A file couldn't be downloaded (HTTP {e.code}; the link may have expired).") from None
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
         raise HomeworkApiError("A file couldn't be downloaded right now.") from None

@@ -412,15 +412,21 @@ def _is_confirmation_yes(transcript: str) -> bool:
     return bool(_CONFIRM_YES_RE.search(t))
 
 
-# A connected MCP server named "homework" (a class homework app): these two can't be undone, so they go
-# through the same staged confirmation as a catastrophic command (spoken yes / dashboard Approve).
-_HOMEWORK_CONFIRM = {"mcp_homework_delete_homework", "mcp_homework_set_student_password"}
+# A connected class homework app's MCP server: these two can't be undone, so they go through the same staged
+# confirmation as a catastrophic command (spoken yes / dashboard Approve). Matched on the server's REAL tool
+# name, so it holds whatever the server is called in mcp_servers.json ("homework", "learnai", "Homework"...).
+_HOMEWORK_CONFIRM = {"delete_homework", "set_student_password"}
 
 
 def _homework_confirm_reason(tool_name: str, inp: dict) -> str | None:
-    if tool_name not in _HOMEWORK_CONFIRM:
+    if not tool_name.startswith("mcp_"):
         return None
-    if tool_name.endswith("delete_homework"):
+    real = (globals().get("_mcp_tool_index", {}).get(tool_name) or (None, None))[1]
+    if real is None:  # not connected yet / unknown: fall back to the name Jarvis exposes
+        real = next((n for n in _HOMEWORK_CONFIRM if tool_name.lower().endswith("_" + n)), None)
+    if real not in _HOMEWORK_CONFIRM:
+        return None
+    if real == "delete_homework":
         title = str(inp.get("confirm_title") or inp.get("homework_id") or "that homework")[:80]
         return f'permanently delete the homework "{title}" with every answer, file record and grade'
     who = str(inp.get("student") or "a student")[:40]

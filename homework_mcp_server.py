@@ -16,6 +16,7 @@ Rules (pinned by test_homework.py):
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -198,7 +199,8 @@ def fmt_submission(s: dict) -> str:
                          f"[question_id {q.get('question_id')}]")
         else:
             got = q.get("points_awarded")
-            mark = "not marked yet" if got is None or q.get("needs_manual_mark") else f"{got}/{q.get('points')}"
+            # needs_manual_mark is true for every short answer (marked or not): only a missing mark means "not yet".
+            mark = "not marked yet" if got is None else f"{got}/{q.get('points')}"
             lines.append(f"- Short answer ({mark}): {_plain(q.get('prompt'), 200)} [question_id {q.get('question_id')}]")
             lines.append("  Answer: " + child(q.get("student_answer") or "(blank)"))
     marks = s.get("current_marks")
@@ -219,11 +221,23 @@ def fmt_attendance(rows: list) -> str:
         for s in d.get("students") or []) for d in rows])
 
 
-def fmt_activity(rows: list) -> str:
+def _detail(d) -> str:
+    """An activity row's detail, with the child-chosen file name marked as such (it is never an instruction)."""
+    if not isinstance(d, dict):
+        return _plain(d, 120)
+    parts = [f"{k}={_plain(v, 40)}" for k, v in d.items() if k != "student_file_name" and v not in (None, "")]
+    if d.get("student_file_name"):
+        parts.append(f"file named by the child: \"{_plain(d['student_file_name'], 60)}\"")
+    return _plain(", ".join(parts), 160)
+
+
+def fmt_activity(result) -> str:
+    # The app answers {"note", "events": [...]} (since 2026-10-01); older builds answered a bare list.
+    rows = result.get("events") if isinstance(result, dict) else result
     if not rows:
         return "No activity found."
     return cap([f"{r.get('when')} {r.get('who')}: {r.get('event')}"
-                + (f" - {_plain(r.get('detail'), 120)}" if r.get("detail") else "")
+                + (f" - {_detail(r.get('detail'))}" if r.get("detail") else "")
                 + (f" ({_plain(r.get('device'), 30)}, {_plain(r.get('browser'), 30)})" if r.get("device") else "")
                 for r in rows])
 
@@ -255,7 +269,22 @@ async def run(tool: str, args: dict | None, fmt) -> str:
     try:
         return fmt(result)
     except Exception as e:  # an unexpected shape must still answer something useful
-        return cap([f"{tool} done (couldn't format the answer: {type(e).__name__}).", _plain(result, 3000)])
+        return cap([f"{tool} done (couldn't format the answer: {type(e).__name__}).", _plain(scrub(result), 3000)])
+
+
+_URL_RE = re.compile(r"https?://\S+", re.I)
+
+
+def scrub(value):
+    """Drop anything that could be a signed file link before raw app data is shown: keys named like a link,
+    and any http(s) address inside a string (a signed link is a credential, valid for an hour)."""
+    if isinstance(value, dict):
+        return {k: scrub(v) for k, v in value.items() if not re.search(r"url|link|token|signed", str(k), re.I)}
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    if isinstance(value, str):
+        return _URL_RE.sub("[link hidden]", value)
+    return value
 
 
 def save_csv(text: str, save_to: str) -> str:
@@ -282,8 +311,11 @@ def fmt_csv_preview(r: dict) -> str:
     csv = str((r or {}).get("csv") or "")
     rows = csv.count("\n")
     head = f"{(r or {}).get('kind')}: {rows} row(s). (Pass save_to to save it as a file.)\n"
-    return head + (csv if len(csv) <= OUTPUT_LIMIT - len(head) - 40
-                   else csv[: OUTPUT_LIMIT - len(head) - 40] + "\n…cut off; save it to read it all.")
+    room = OUTPUT_LIMIT - len(head) - 200
+    body = csv if len(csv) <= room else csv[:room] + "\n…cut off; save it to read it all."
+    # The CSV can hold text the children wrote (file names in activity.csv): data, never instructions.
+    safe, _ = neutralize_injection(body)
+    return head + frame_untrusted("homework", "export", safe)
 
 
 # -------------------------------------------------------------------------------------------------- tools

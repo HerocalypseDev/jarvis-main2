@@ -1747,7 +1747,8 @@ row there each phase rather than only stating the total in chat.
 | 112 (named devices are announced when they leave the network, once, after 5 min gone; returns after an announced leave are said too; Settings switch; 3 new tests) | Sonnet 5.5 | ~10 min | ~$0.70–$1.00 |
 | 113 (homework app (LearnAi) as a private MCP server: API client, 21 app tools + AI marking with Claude (photos/PDF/docx/pptx/Scratch), never auto-releases flagged work, delete/password staged behind the confirmation gate, password kept out of the audit trail, two skills drafted, kept out of the public export; 19 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
 | 114 (graphify in every cloud session: cloud-only SessionStart hook pinned to the PC's 0.9.61, first graph refresh since 2026-09-27) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~3564 min** | **~$228.35–$319.95** |
+| 115 (homework integration audit: confirm tier under any server name, no token-following redirects, get_activity shape drift, CSV/activity child-text framing, no overwriting teacher marks; LearnAi verified clean; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.00–$3.00 |
+| **Running total (final)** | | **~3589 min** | **~$230.35–$322.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2161,6 +2162,12 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   mark_all_waiting release=false, short report; never releases). Its report goes through `queue_or_deliver_notification`, so it reaches
   the phone only with `JARVIS_PHONE_PROACTIVE_NOTIFICATIONS` on. Saved only after the owner reviewed them (plan rule: skills run with full
   tool access).
+- **Audit (2026-10-01)**: LearnAi main (tsc/eslint/53 vitest) clean, no student-isolation/session/upload/CSP finding. Jarvis side fixed
+  (tests at the end of `test_homework.py`): the confirm tier now matches the server's REAL tool name (`_mcp_tool_index`), so it holds under
+  any server name (it only matched `mcp_homework_*` before); the API client refuses redirects (urllib re-sent the bearer token to any
+  redirect target, even http) and caps the answer size; `get_activity`'s new `{note, events}` shape is parsed (the old formatter would have
+  failed), child file names are labelled, the CSV preview is framed as child data, raw fallback output scrubs links; a short answer marked
+  0 is no longer shown "not marked yet"; AI marking never overwrites the teacher's own marks (`marked_by` != jarvis).
 - **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
   (needs ANTHROPIC credit), voice use end to end.
 
