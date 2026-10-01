@@ -411,7 +411,7 @@ def _is_confirmation_yes(transcript: str) -> bool:
         return False
     return bool(_CONFIRM_YES_RE.search(t))
 
-
+# A connected MCP server named "homework" (a class homework app): these two can't be undone, so they go through the same staged
 # Homework app (homework_mcp_server.py): these can't be undone, so they go through the same staged
 # confirmation as a catastrophic command (spoken yes / dashboard Approve), never run straight away.
 _HOMEWORK_CONFIRM = {"mcp_homework_delete_homework", "mcp_homework_set_student_password"}
