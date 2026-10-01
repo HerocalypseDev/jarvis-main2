@@ -402,3 +402,27 @@ def test_confirm_tier_holds_under_any_server_name(jarvis, monkeypatch):
         monkeypatch.setattr(jarvis, "_pending_action", None)
         out = jarvis._execute_tool_impl(name, {"student": "Peter", "password": "abcdef"}, "t")
         assert "staged, not run" in out, name
+
+
+def test_app_url_without_scheme_defaults_to_https_and_quotes_are_ignored(monkeypatch):
+    monkeypatch.setenv("HOMEWORK_APP_URL", "learn-ai-murex-iota.vercel.app")
+    assert homework_api._endpoint() == "https://learn-ai-murex-iota.vercel.app/api/jarvis"
+    monkeypatch.setenv("HOMEWORK_APP_URL", '"https://x.vercel.app/"')
+    assert homework_api._endpoint() == "https://x.vercel.app/api/jarvis"
+    monkeypatch.setenv("HOMEWORK_APP_URL", "http://evil.example")
+    with pytest.raises(homework_api.HomeworkApiError, match="https"):
+        homework_api._endpoint()
+
+
+def test_shell_and_python_cannot_print_the_env_file(jarvis, monkeypatch):
+    ran = []
+    monkeypatch.setattr(jarvis, "_run_shell_command", lambda c: ran.append(c) or "ok")
+    for cmd in ("python -c \"print(open('.env').read())\"", "Get-Content .env", "type C:\\x\\.env", "cat mcp_servers.json"):
+        out = jarvis._execute_tool_impl("run_shell", {"command": cmd}, "t")
+        assert out.startswith("Refused") and "credentials" in out, cmd
+    assert ran == []
+    out = jarvis._execute_tool_impl("run_python", {"code": "print(open('.env').read())"}, "t")
+    assert out.startswith("Refused")
+    # ordinary uses stay allowed
+    for cmd in ("python -c \"import os; print(bool(os.environ.get('HOMEWORK_APP_URL')))\"", "Get-Content .env.example", "dir"):
+        assert jarvis._execute_tool_impl("run_shell", {"command": cmd}, "t") == "ok", cmd

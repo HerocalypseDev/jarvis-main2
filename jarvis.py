@@ -10516,6 +10516,22 @@ def _ui_script_problem(code: str) -> str | None:
     return _UI_SCRIPT_REFUSAL if _UI_SCRIPT_RE.search(code or "") else None
 
 
+# The file tools refuse credential files (jarvis_workspace.sensitive_reason), but a shell/python one-liner that
+# opens .env prints every key into the model's context (debug report 2026-10-01: "open('.env').read()" while
+# hunting a homework URL). Refuse code that names the file; reading one variable via os.environ is still fine.
+_SECRET_FILE_RE = re.compile(
+    r"(?<![\w.])\.env(?![\w]|\.example\b|\.sample\b)|\bmcp_servers\.json\b|\bjarvis_memory\.db\b|\bface\.key\b",
+    re.IGNORECASE)
+_SECRET_FILE_REFUSAL = (
+    "Refused: that code opens a file that holds credentials (.env, mcp_servers.json, ...). Its contents would be "
+    "read into the conversation. To check one setting use os.environ.get('NAME') (print only whether it is set), "
+    "and ask the user to edit the file themselves.")
+
+
+def _secret_file_problem(code: str) -> str | None:
+    return _SECRET_FILE_REFUSAL if _SECRET_FILE_RE.search(code or "") else None
+
+
 # A recursive name search through the shell (Get-ChildItem -Recurse -Filter/-Include, dir /s, where /r) is what the
 # model falls back on for "find my file". When Everything is reachable that is slow and pointless, so it is
 # refused and pointed at quick_search. With Everything unreachable it is allowed (it's the documented fallback).
@@ -10874,6 +10890,8 @@ def _execute_tool_impl(
                 result = "No command given."
             elif _ui_script_problem(command):
                 result = _ui_script_problem(command)
+            elif _secret_file_problem(command):
+                result = _secret_file_problem(command)
             elif _file_search_via_shell_problem(command):
                 result = _file_search_via_shell_problem(command)
             else:
@@ -10896,6 +10914,8 @@ def _execute_tool_impl(
                 result = "No code given (run_python takes the Python source in 'code')."
             elif _ui_script_problem(code):
                 result = _ui_script_problem(code)
+            elif _secret_file_problem(code):
+                result = _secret_file_problem(code)
             else:
                 reason = None if skip_confirmation else _catastrophic_reason(code)
                 if reason:
