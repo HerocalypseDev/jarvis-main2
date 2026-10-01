@@ -1,0 +1,120 @@
+"""Client for the homework app's Jarvis API (LearnAi: POST /api/jarvis). Stdlib only, never imports jarvis.py.
+
+Configuration is read at call time (so a changed .env works after a restart without code changes):
+  HOMEWORK_APP_URL     e.g. https://learn-ai-xxxx.vercel.app (no trailing slash needed)
+  HOMEWORK_API_TOKEN   the same value as JARVIS_API_TOKEN in the app's Vercel settings
+
+The token and the signed file links are credentials: they never appear in an exception message or a log line.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+
+USER_AGENT = "Jarvis-Homework/1.0"  # the app shows this as the device in its Activity log
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+class HomeworkApiError(Exception):
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+
+
+def _base_url() -> str:
+    return (os.environ.get("HOMEWORK_APP_URL") or "").strip().rstrip("/")
+
+
+def _token() -> str:
+    return (os.environ.get("HOMEWORK_API_TOKEN") or "").strip()
+
+
+def is_configured() -> bool:
+    return bool(_base_url() and _token())
+
+
+def _endpoint() -> str:
+    base = _base_url()
+    if not base or not _token():
+        raise HomeworkApiError("The homework app isn't set up: add HOMEWORK_APP_URL and HOMEWORK_API_TOKEN to .env.")
+    parsed = urllib.parse.urlparse(base)
+    if parsed.scheme == "http" and (parsed.hostname or "") not in _LOCAL_HOSTS:
+        raise HomeworkApiError("HOMEWORK_APP_URL must start with https:// (the token is never sent over plain http).")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HomeworkApiError("HOMEWORK_APP_URL doesn't look like a web address.")
+    return base + "/api/jarvis"
+
+
+_FALLBACK = {
+    400: "The homework app said the request wasn't valid.",
+    401: "The homework app rejected Jarvis's token: HOMEWORK_API_TOKEN must equal JARVIS_API_TOKEN in Vercel.",
+    403: "The homework app is in read-only mode for Jarvis (JARVIS_API_READ_ONLY=1).",
+    404: "The homework app couldn't find that.",
+    500: "The homework app had an error.",
+    503: "The homework app has Jarvis access turned off (no JARVIS_API_TOKEN set in Vercel).",
+}
+
+
+def _request(method: str, body: dict | None, timeout: float):
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(_endpoint(), data=data, method=method, headers={
+        "Authorization": f"Bearer {_token()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            status, raw = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, e.read() if hasattr(e, "read") else b""
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise HomeworkApiError("Can't reach the homework app right now.") from None
+    try:
+        payload = json.loads(raw.decode("utf-8") or "{}")
+    except (ValueError, UnicodeDecodeError):
+        payload = {}
+    if status >= 400 or not payload.get("ok", status < 400):
+        msg = str(payload.get("error") or "").strip() or _FALLBACK.get(status) or f"The homework app answered {status}."
+        raise HomeworkApiError(msg, status)
+    return payload
+
+
+def list_tools(timeout: float = 30) -> list[dict]:
+    return list(_request("GET", None, timeout).get("tools") or [])
+
+
+def call(tool: str, args: dict | None = None, timeout: float = 30) -> object:
+    clean = {k: v for k, v in (args or {}).items() if v is not None}
+    return _request("POST", {"tool": tool, "args": clean}, timeout).get("result")
+
+
+def download(url: str, max_bytes: int = 21 * 1024 * 1024, timeout: float = 60) -> bytes:
+    """GET a signed file link (the link itself is the credential: no auth header). Stops past max_bytes."""
+    parsed = urllib.parse.urlparse(str(url or ""))
+    if parsed.scheme != "https" and (parsed.hostname or "") not in _LOCAL_HOSTS:
+        raise HomeworkApiError("A file link wasn't https, so it wasn't downloaded.")
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            chunks, total = [], 0
+            while True:
+                block = r.read(256 * 1024)
+                if not block:
+                    break
+                total += len(block)
+                if total > max_bytes:
+                    raise HomeworkApiError(f"A file is larger than {max_bytes // (1024 * 1024)} MB, so it wasn't downloaded.")
+                chunks.append(block)
+            return b"".join(chunks)
+    except HomeworkApiError:
+        raise
+    except urllib.error.HTTPError as e:
+        raise HomeworkApiError(f"A file couldn't be downloaded (HTTP {e.code}; the link may have expired).") from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise HomeworkApiError("A file couldn't be downloaded right now.") from None

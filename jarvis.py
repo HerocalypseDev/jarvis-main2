@@ -412,6 +412,21 @@ def _is_confirmation_yes(transcript: str) -> bool:
     return bool(_CONFIRM_YES_RE.search(t))
 
 
+# Homework app (homework_mcp_server.py): these can't be undone, so they go through the same staged
+# confirmation as a catastrophic command (spoken yes / dashboard Approve), never run straight away.
+_HOMEWORK_CONFIRM = {"mcp_homework_delete_homework", "mcp_homework_set_student_password"}
+
+
+def _homework_confirm_reason(tool_name: str, inp: dict) -> str | None:
+    if tool_name not in _HOMEWORK_CONFIRM:
+        return None
+    if tool_name.endswith("delete_homework"):
+        title = str(inp.get("confirm_title") or inp.get("homework_id") or "that homework")[:80]
+        return f'permanently delete the homework "{title}" with every answer, file record and grade'
+    who = str(inp.get("student") or "a student")[:40]
+    return f"change {who}'s homework-app password and sign them out everywhere"
+
+
 def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -> bool:
     """Stores a catastrophic tool call awaiting a "yes" on the next push-to-talk press.
     Returns False (and queues nothing) if something is already pending."""
@@ -10224,6 +10239,13 @@ def _set_plan(transcript: str, steps: list) -> str:
     )
 
 
+def _redact_audit_input(tool_input):
+    """The audit trail never stores a password value (e.g. set_student_password)."""
+    if not isinstance(tool_input, dict):
+        return tool_input
+    return {k: ("[hidden]" if "password" in str(k).lower() and v else v) for k, v in tool_input.items()}
+
+
 def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result: str) -> None:
     now = datetime.now().isoformat(timespec="seconds")
     with _memory_db_lock:
@@ -10232,7 +10254,7 @@ def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result:
             conn.execute(
                 "INSERT INTO action_audit (timestamp, transcript, tool_name, tool_input, result) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (now, transcript, tool_name, json.dumps(tool_input)[:2000], (result or "")[:2000]),
+                (now, transcript, tool_name, json.dumps(_redact_audit_input(tool_input))[:2000], (result or "")[:2000]),
             )
             conn.commit()
         finally:
@@ -10581,9 +10603,9 @@ def _execute_tool_impl(
         elif tool_name.startswith("mcp_"):
             # MCP tools can type into a terminal or Run box (Windows-MCP Type/Shortcut, the
             # browser), so their text goes through the same tripwire as run_shell/run_python.
-            reason = None if skip_confirmation else _catastrophic_reason(
+            reason = None if skip_confirmation else (_catastrophic_reason(
                 " ".join(str(v) for v in inp.values() if isinstance(v, (str, int, float)))
-            )
+            ) or _homework_confirm_reason(tool_name, inp))
             if reason:
                 if _queue_pending_confirmation(tool_name, dict(inp), reason):
                     result = (
