@@ -127,6 +127,8 @@ PRICES: dict[str, dict[str, float]] = {
     "claude-sonnet-5": {"in": 2.00, "out": 10.00, "read": 0.20, "w5m": 2.50, "w1h": 4.00},
     "claude-sonnet-4": {"in": 3.00, "out": 15.00, "read": 0.30, "w5m": 3.75, "w1h": 6.00},
     "claude-opus-4-5": {"in": 5.00, "out": 25.00, "read": 0.50, "w5m": 6.25, "w1h": 10.00},
+    "claude-opus-5": {"in": 5.00, "out": 25.00, "read": 0.50, "w5m": 6.25, "w1h": 10.00},
+    "claude-opus-5-5": {"in": 4.00, "out": 20.00, "read": 0.20, "w5m": 5.00, "w1h": 8.00},
     # Gemini paid-tier list prices (ai.google.dev/gemini-api/docs/pricing). Implicit caching has no
     # write charge, so w5m/w1h just mirror the input rate. The free tier actually bills $0 — these
     # are "what it would cost" figures; the real free-tier constraint is tokens/requests per

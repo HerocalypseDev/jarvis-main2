@@ -1743,7 +1743,8 @@ row there each phase rather than only stating the total in chat.
 | 110 (audit of the 2026-09-30 batch: optional-parameter guessing (cc/force) stopped, es.exe query quoting, false "not on disk" for dotted names, plan resume race + stuck plans, useless "Done" habit macros, doctor re-announcing daily, announcement before a staged shutdown, dashboard files claiming a restart, free-text settings in the prompt; 18 new tests) | Sonnet 5.5 | ~45 min | ~$3.50–$4.80 |
 | 111 (full codebase audit, second pass: imitated-confirmation claim guard, wider gate (services/accounts/permissions), reminder announce-failure storm, parallel tool timeout, blank required args, es.exe switch injection, shell-search guard gap, doctor nagging, hardware-free self-check test; 8 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
 | 112 (named devices are announced when they leave the network, once, after 5 min gone; returns after an announced leave are said too; Settings switch; 3 new tests) | Sonnet 5.5 | ~10 min | ~$0.70–$1.00 |
-| **Running total (final)** | | **~3494 min** | **~$222.75–$312.05** |
+| 113 (homework app (LearnAi) as a private MCP server: API client, 21 app tools + AI marking with Claude (photos/PDF/docx/pptx/Scratch), never auto-releases flagged work, delete/password staged behind the confirmation gate, password kept out of the audit trail, two skills drafted, kept out of the public export; 19 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
+| **Running total (final)** | | **~3554 min** | **~$227.75–$319.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2121,6 +2122,44 @@ cleared when it is seen again). Only after the network was scanned recently (`wa
 Jarvis says "<name> left the network." for NAMED devices only (an unnamed phone with a random MAC would chatter), switch
 `JARVIS_NETSCAN_ANNOUNCE_LEFT` (default on, Settings). A device that comes back after an announced leave is announced as joined whatever
 the time away. Tests: end of `test_netscan.py`. Known limit: a phone that sleeps its Wi-Fi for 5+ minutes will say left/joined.
+
+## Homework app: Jarvis as teacher of LearnAi (2026-10-01, PRIVATE)
+
+The owner's own homework app for their two kids (HerocalypseDev/LearnAi, Next.js on Vercel + Supabase, endpoint
+`POST /api/jarvis`). **Private by the owner's choice**: `homework_*` and `test_homework.py` are in `export_public.py`
+EXCLUDE (pinned by a test); nothing about it goes in `public/`, `mcp_servers.example.json` or the public README.
+Tests: `test_homework.py` (19, no network). Rules to keep:
+- **Files**: `homework_api.py` (stdlib client; token from `.env` `HOMEWORK_API_TOKEN`, URL `HOMEWORK_APP_URL`; https only except
+  localhost; errors never carry the token or a signed link), `homework_mcp_server.py` (MCP server `homework`, run by Jarvis's MCP client;
+  never imports jarvis.py), `homework_marker.py` (the AI marking). Setup on the PC: in `.env` set `HOMEWORK_APP_URL=https://<app>.vercel.app`,
+  `HOMEWORK_API_TOKEN=<same as JARVIS_API_TOKEN in Vercel>` (make one with `python -c "import secrets; print(secrets.token_urlsafe(40))"`),
+  optional `HOMEWORK_MARKING_MODEL` (default `claude-sonnet-5-5`, owner's choice: cheaper than Opus 5.5); in the gitignored
+  `mcp_servers.json` add `"homework": {"command": "python", "args": ["homework_mcp_server.py"]}`. `pip install anthropic==1.11.0` (in requirements).
+- **23 tools** (`mcp_homework_*`): the app's 21 (get_overview, list_students, list_homeworks, get_homework, list_to_mark, get_submission,
+  get_attendance, get_activity, get_settings, export_csv (+ optional `save_to` .csv, never into the code folder), create/update/delete_homework,
+  add/update/delete_question, save_marks, set_release, set_attendance, update_settings, set_student_password) + `mark_submission`,
+  `mark_all_waiting` (max 10 per run). Every answer is compact text <= 3500 chars with ids at line ends; errors start "Tool failed:" so
+  the claim checker counts them. Schemas mirror the app's `src/lib/jarvis/tools.ts` (enums as `Literal`); keep them in step when the app changes.
+- **Never shown, stored or logged**: the token, signed file links (downloaded once in memory, only name/type/size shown), a password
+  (`set_student_password` never echoes it; `_redact_audit_input` hides any `*password*` value in `action_audit`).
+- **Confirmation**: `mcp_homework_delete_homework` and `mcp_homework_set_student_password` are staged by the existing gate
+  (`_HOMEWORK_CONFIRM` / `_homework_confirm_reason` in the `mcp_` branch of `_execute_tool_impl`): spoken yes or dashboard Approve, same
+  `skip_confirmation` re-run, nothing reimplemented. Everything else runs directly.
+- **Marking** (inside the MCP server, because Jarvis's MCP client only passes text back): one tool-less Claude call per submission
+  (`client.beta.messages.create`, `output_config.effort high` + `format json_schema` MARK_SCHEMA, `fallbacks="default"` beta; no thinking
+  param). Files: images (upright, long edge <= 1568), PDFs (document block; > 30 pages -> text of the first 30), .docx/.pptx text + up to 5
+  embedded pictures, .sb3 summarised from project.json, text files; HEIC/unknown = "couldn't view". Multiple choice is the app's mark,
+  never re-marked. `validate_marks` clamps (short 0-10, task 0-60), drops unknown question ids, task = 0 with no file.
+  **Child text is untrusted** (neutralised + framed in the brief and in get_submission). **Never auto-release flagged work**: release only
+  when asked AND nothing was flagged (instruction-like text removed, file unviewable, low confidence, marker asked for review, no task file,
+  missing mark/comment); flagged results start "⚠ Needs your review". Refusal/API failure saves nothing. Each call is logged in
+  `homework_marking_log` and in `api_usage` (counts toward the daily spend alert). `PRICES` gained claude-opus-5 / claude-opus-5-5.
+- **Skills**: `skills/homework_admin.json` (on-request teacher routine) and `skills/homework_watch.json` (21:30 Wed/Sat: who handed in,
+  mark_all_waiting release=false, short report; never releases). Its report goes through `queue_or_deliver_notification`, so it reaches
+  the phone only with `JARVIS_PHONE_PROACTIVE_NOTIFICATIONS` on. Saved only after the owner reviewed them (plan rule: skills run with full
+  tool access).
+- **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
+  (needs ANTHROPIC credit), voice use end to end.
 
 ## Hand-off guard (2026-09-25)
 

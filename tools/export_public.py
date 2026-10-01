@@ -54,6 +54,8 @@ EXCLUDE = (
     "test_pro_pack.py",
     "PRO_ROADMAP.md",            # private business plan
     "RESEARCH_AGENTIC.md",       # private research notes (owner's limits and plans)
+    "homework_",                 # the owner's own homework app for their kids (names, ages): private by choice
+    "test_homework.py",
     "dist/",
     "session_state.json",
     "jarvis_memory.db",
