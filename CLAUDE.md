@@ -20,6 +20,8 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- Cloud sessions get graphify from `.claude/hooks/session-start.sh` (SessionStart hook, cloud-only, pinned to 0.9.61 = the
+  PC's version; a different version rewrites the whole `graphify-out/cache`). Bump the pin together with the PC.
 
 ## Dashboard (supervision UI)
 
@@ -1744,7 +1746,8 @@ row there each phase rather than only stating the total in chat.
 | 111 (full codebase audit, second pass: imitated-confirmation claim guard, wider gate (services/accounts/permissions), reminder announce-failure storm, parallel tool timeout, blank required args, es.exe switch injection, shell-search guard gap, doctor nagging, hardware-free self-check test; 8 new tests) | Sonnet 5.5 | ~40 min | ~$3.00–$4.20 |
 | 112 (named devices are announced when they leave the network, once, after 5 min gone; returns after an announced leave are said too; Settings switch; 3 new tests) | Sonnet 5.5 | ~10 min | ~$0.70–$1.00 |
 | 113 (homework app (LearnAi) as a private MCP server: API client, 21 app tools + AI marking with Claude (photos/PDF/docx/pptx/Scratch), never auto-releases flagged work, delete/password staged behind the confirmation gate, password kept out of the audit trail, two skills drafted, kept out of the public export; 19 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
-| **Running total (final)** | | **~3554 min** | **~$227.75–$319.05** |
+| 114 (graphify in every cloud session: cloud-only SessionStart hook pinned to the PC's 0.9.61, first graph refresh since 2026-09-27) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~3564 min** | **~$228.35–$319.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
