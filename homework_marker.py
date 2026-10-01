@@ -473,6 +473,11 @@ def mark_submission(homework_id: str, student: str, release: bool = False, save:
     title = (sub.get("homework") or {}).get("title") or "this homework"
     if sub.get("status") != "handed_in":
         return f"{who} hasn't handed in {title} yet."
+    current = sub.get("current_marks") or {}
+    if current and current.get("marked_by", "admin") != "jarvis":
+        # save_marks would silently overwrite the teacher's own marks and comment.
+        return (f"{who}'s {title} was already marked by you ({current.get('final_points')} points), so it wasn't "
+                "re-marked. Use save_marks to change it by hand.")
     ev = Evidence(who)
     collect_files(ev, (sub.get("task") or {}).get("student_files") or [], api.download)
     blocks = list(ev.file_blocks) + [{"type": "text", "text": build_brief(sub, ev)}]
