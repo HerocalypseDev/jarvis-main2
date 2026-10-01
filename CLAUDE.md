@@ -1751,7 +1751,8 @@ row there each phase rather than only stating the total in chat.
 | 114 (graphify in every cloud session: cloud-only SessionStart hook pinned to the PC's 0.9.61, first graph refresh since 2026-09-27) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 115 (homework integration audit: confirm tier under any server name, no token-following redirects, get_activity shape drift, CSV/activity child-text framing, no overwriting teacher marks; LearnAi verified clean; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.00–$3.00 |
 | 116 (live debug report: HOMEWORK_APP_URL without https:// now defaults to https; run_shell/run_python refuse code that opens .env/mcp_servers.json (the model had printed the whole .env into its context); graphify refreshed; 2 new tests) | Sonnet 5.5 | ~10 min | ~$0.80–$1.20 |
-| **Running total (final)** | | **~3599 min** | **~$231.15–$324.15** |
+| 117 (barge-in glitch: the mic loop called _interrupt_speech on every audio block while the key was held (DB write + log each time), and a streamed sentence was only stopped at its next network chunk; now once-per-press stats and an immediate abort of the active OutputStream; 1 new test) | Sonnet 5.5 | ~15 min | ~$1.00–$1.50 |
+| **Running total (final)** | | **~3614 min** | **~$232.15–$325.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

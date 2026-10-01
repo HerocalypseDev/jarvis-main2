@@ -249,17 +249,38 @@ _playback_lock = threading.Lock()
 _speech_interrupted_at = [0.0]
 
 
+# The OutputStream of the sentence being streamed right now (set by _play_pcm_stream), so a barge-in can
+# abort it at once. sd.stop() only ends sd.play() playback; a streamed sentence used to keep playing until
+# its NEXT network chunk arrived, so "talking over Jarvis" left his voice running (and jarvis_speaking set,
+# which blocks listening) for as long as the network was slow.
+_active_out: list = [None]
+_BARGE_IN_REPEAT_S = 1.0
+
+
 def _interrupt_speech() -> None:
-    _speech_interrupted_at[0] = time.monotonic()
-    try:
-        notify_priority.on_interrupt(_memory_db_connect, _memory_db_lock)  # C6: cut off = dismissed
-    except Exception as e:
-        log.debug("notification stats failed: %s", e)
+    now = time.monotonic()
+    # The mic loop calls this on EVERY audio block while the key is held and Jarvis is still speaking
+    # (~30 ms apart): the DB write and the log line must happen once per press, not dozens of times,
+    # or the loop and the playback thread fight over the memory-DB lock (heard as a glitching voice).
+    first = now - _speech_interrupted_at[0] > _BARGE_IN_REPEAT_S
+    _speech_interrupted_at[0] = now
+    if first:
+        try:
+            notify_priority.on_interrupt(_memory_db_connect, _memory_db_lock)  # C6: cut off = dismissed
+        except Exception as e:
+            log.debug("notification stats failed: %s", e)
     try:
         sd.stop()  # ends a blocking sd.play()/sd.wait() immediately
     except Exception as e:
         log.debug("sd.stop failed: %s", e)
-    log.info("Barge-in: speech interrupted.")
+    out = _active_out[0]
+    if out is not None:
+        try:
+            out.abort()  # a streamed sentence: stop the device now, not at the next chunk
+        except Exception as e:
+            log.debug("stream abort failed: %s", e)
+    if first:
+        log.info("Barge-in: speech interrupted.")
 
 
 def _speech_cancelled_since(t0: float) -> bool:
@@ -981,6 +1002,7 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
             # or a dropout — this is the reported "voice breaks a lot" symptom (2026-09-22
             # voice-bug pass). This trades a little more time-to-first-audio for not glitching.
             with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32", latency="high") as out:
+                _active_out[0] = out
                 for chunk in chunks:
                     if _speech_cancelled_since(t0):
                         out.abort()  # barge-in: drop what's buffered too
@@ -1005,11 +1027,15 @@ def _play_pcm_stream(chunks, sample_rate: int, on_first_chunk=None) -> bool:
                     # silently dropping it.
                     _write(out, bytes(prebuffer))
         except Exception as e:
-            log.warning(
-                "Deepgram streaming TTS playback failed%s: %s",
-                "" if any_played else " before any audio played", e,
-            )
+            if _speech_cancelled_since(t0):
+                log.debug("streamed playback aborted by barge-in: %s", e)  # expected: the abort ends write()
+            else:
+                log.warning(
+                    "Deepgram streaming TTS playback failed%s: %s",
+                    "" if any_played else " before any audio played", e,
+                )
         finally:
+            _active_out[0] = None
             jarvis_speaking.clear()
             audio_duck.release()
     return any_played

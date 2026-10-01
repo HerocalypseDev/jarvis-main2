@@ -118,3 +118,24 @@ def test_barge_in_before_the_first_streamed_chunk_is_not_replayed_over_rest(monk
     finally:
         jarvis._command_ctx.started = None
     assert played == []
+
+
+def test_barge_in_repeats_do_one_db_write_and_abort_the_streaming_device(monkeypatch, tmp_path):
+    """The mic loop calls _interrupt_speech on every block while the key is held; the stats write must happen once
+    per press, and a streamed sentence must be aborted at once (not at its next network chunk)."""
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "t.db"))
+    import jarvis
+    writes, aborted = [], []
+    monkeypatch.setattr(jarvis.notify_priority, "on_interrupt", lambda *a, **k: writes.append(1))
+    monkeypatch.setattr(jarvis.sd, "stop", lambda *a, **k: None)
+    jarvis._speech_interrupted_at[0] = 0.0
+    out = type("Out", (), {"abort": lambda self: aborted.append(1)})()
+    jarvis._active_out[0] = out
+    for _ in range(40):                      # 40 audio blocks with the key still down
+        jarvis._interrupt_speech()
+    assert writes == [1] and len(aborted) == 40
+    jarvis._speech_interrupted_at[0] = jarvis.time.monotonic() - 5   # a later, separate press
+    jarvis._interrupt_speech()
+    assert writes == [1, 1]
+    jarvis._active_out[0] = None
+    jarvis._speech_interrupted_at[0] = 0.0
