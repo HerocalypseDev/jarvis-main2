@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 try:
     from dotenv import load_dotenv
@@ -52,6 +52,28 @@ def cap(lines: list[str], limit: int = OUTPUT_LIMIT) -> str:
         out.append(line)
         used += len(line) + 1
     return "\n".join(out)
+
+
+_LABEL_RE = re.compile(
+    r"^\s*[\(\[]?\s*(?i:(?:for\s+)?(?:version|ver\.?))\s*[AB]\b\s*[\)\]]?\s*(?:[:\-–—.]\s*)?")
+_INLINE_LABEL_RE = re.compile(r"\s*[\(\[]\s*(?i:version)\s*[AB]\s*[\)\]]")
+
+
+def clean_label(text):
+    """Remove "Version A:" / "Version B -" style labels from text the children will read. The labels are only for
+    Jarvis (which version a question or task belongs to is the `version` / instructions_a/b parameter), so they must
+    never appear in a prompt, option or instruction. Strips a leading label (repeatedly) and "(Version A)" tags."""
+    if not isinstance(text, str):
+        return text
+    prev = None
+    while prev != text:
+        prev = text
+        text = _LABEL_RE.sub("", text, count=1)
+    return _INLINE_LABEL_RE.sub("", text).strip()
+
+
+def clean_options(options):
+    return [clean_label(o) for o in options] if isinstance(options, list) else options
 
 
 def _plain(text, limit: int = 160) -> str:
@@ -253,11 +275,23 @@ def fmt_marks(r: dict) -> str:
             f"(quiz + short answer {r.get('quiz_points')}, task {r.get('task_points')}{late}), {state}.")
 
 
+def _version_words(v) -> str:
+    return {"A": "version A only", "B": "version B only"}.get(str(v), "both versions")
+
+
 def fmt_question(q: dict, verb: str) -> str:
     opts = q.get("options") or []
     extra = f", {len(opts)} options, correct {q.get('correct_option')}" if opts else ""
-    return (f"{verb} {q.get('type')} question v{q.get('version')} worth {q.get('points')} pts at position "
+    return (f"{verb} {q.get('type')} question ({_version_words(q.get('version'))}) worth {q.get('points')} pts at position "
             f"{q.get('position')}{extra}: {_plain(q.get('prompt'), 150)} [question_id {q.get('id')}]")
+
+
+def setup_status(h: dict) -> str:
+    """One line on what a homework still needs, from get_homework's own `still_to_set_up`."""
+    todo = (h or {}).get("still_to_set_up") or []
+    if todo:
+        return "STILL TO SET UP (keep going, do not stop yet): " + "; ".join(map(str, todo)) + "."
+    return "Ready: both versions are fully set up (30 quiz points + a 10 point short answer + a task each)."
 
 
 async def run(tool: str, args: dict | None, fmt) -> str:
@@ -402,18 +436,21 @@ async def export_csv(kind: Literal["scores.csv", "activity.csv", "attendance.csv
 
 
 # ---- write
-_SETUP_NEXT = ("Next: each version's multiple-choice quiz must total 30 points (add_question type mcq), add one short "
-               "answer (type short, always 10 points), and make sure both versions have task instructions.")
+_SETUP_NEXT = ("Next, in ONE add_questions call: every multiple-choice question (each version's quiz totals exactly 30 "
+               "points) and one short answer per version (type short, always 10 points; give version A and B their own "
+               "wording when they differ). Write the question text only, never 'Version A'/'Version B' (that is what "
+               "the version field is for). Then call get_homework and check nothing is still to set up.")
 
 
 @tool
 async def create_homework(title: str, week: Week, due_date: str, due_time: str | None = None,
                           instructions_a: str | None = None, instructions_b: str | None = None,
                           marking_notes: str | None = None) -> str:
-    """Homework app: create a homework. week 1-4, due_date YYYY-MM-DD (Lagos), due_time HH:MM (default 21:00). instructions_a is James's task, instructions_b is Peter's; marking_notes are private (what a good answer looks like)."""
+    """Homework app: create a homework. week 1-4, due_date YYYY-MM-DD (Lagos), due_time HH:MM (default 21:00). instructions_a is James's task, instructions_b is Peter's (write just the task, never the words "Version A"/"Version B"); marking_notes are private (what a good answer looks like). Afterwards add the quiz with add_questions."""
     return await run("create_homework", {
-        "title": title, "week": week, "due_date": due_date, "due_time": due_time, "instructions_a": instructions_a,
-        "instructions_b": instructions_b, "marking_notes": marking_notes},
+        "title": title, "week": week, "due_date": due_date, "due_time": due_time,
+        "instructions_a": clean_label(instructions_a), "instructions_b": clean_label(instructions_b),
+        "marking_notes": marking_notes},
         lambda h: f"Created {h.get('title')} (week {h.get('week')}), due {h.get('due')} [homework_id {h.get('id')}]. {_SETUP_NEXT}")
 
 
@@ -425,7 +462,8 @@ async def update_homework(homework_id: str, title: str | None = None, week: Week
     """Homework app: change a homework's title, week, due date/time, task instructions or marking notes. Only the fields given change."""
     return await run("update_homework", {
         "homework_id": homework_id, "title": title, "week": week, "due_date": due_date, "due_time": due_time,
-        "instructions_a": instructions_a, "instructions_b": instructions_b, "marking_notes": marking_notes},
+        "instructions_a": clean_label(instructions_a), "instructions_b": clean_label(instructions_b),
+        "marking_notes": marking_notes},
         lambda h: f"Updated {h.get('title')} (week {h.get('week')}), due {h.get('due')} [homework_id {h.get('id')}].")
 
 
@@ -436,25 +474,79 @@ async def delete_homework(homework_id: str, confirm_title: str) -> str:
                      lambda r: f"Deleted the homework {r.get('deleted')}.")
 
 
+async def _status_after(homework_id: str) -> str:
+    """What the homework still needs after a change (empty if the app can't say)."""
+    try:
+        return setup_status(await asyncio.to_thread(homework_api.call, "get_homework", {"homework_id": homework_id}))
+    except Exception:
+        return ""
+
+
 @tool
 async def add_question(homework_id: str, type: Literal["mcq", "short"], prompt: str, version: Version | None = None,
                        options: list[str] | None = None, correct_option: int | None = None,
                        points: int | None = None, position: int | None = None) -> str:
-    """Homework app: add a question. type "mcq" (multiple choice, auto-marked; each version's quiz totals 30 points; give 2-6 options, correct_option counting from 0, and points) or "short" (the short answer, always 10 points). version "both" (default), "A" (James) or "B" (Peter)."""
-    return await run("add_question", {
-        "homework_id": homework_id, "type": type, "prompt": prompt, "version": version, "options": options,
-        "correct_option": correct_option, "points": points, "position": position},
+    """Homework app: add ONE question (to add several, use add_questions in a single call). type "mcq" (multiple choice, auto-marked; each version's quiz totals 30 points; give 2-6 options, correct_option counting from 0, and points) or "short" (the short answer, always 10 points). version "both" (default), "A" (James) or "B" (Peter). prompt is exactly what the child reads: never write "Version A" or "Version B" in it. The answer lists what is still missing."""
+    out = await run("add_question", {
+        "homework_id": homework_id, "type": type, "prompt": clean_label(prompt), "version": version,
+        "options": clean_options(options), "correct_option": correct_option, "points": points, "position": position},
         lambda q: fmt_question(q, "Added"))
+    if out.startswith("Tool failed"):
+        return out
+    return cap([out, await _status_after(homework_id)])
+
+
+class QuestionSpec(TypedDict, total=False):
+    type: Literal["mcq", "short"]
+    prompt: str
+    version: Version
+    options: list[str]
+    correct_option: int
+    points: int
+
+
+MAX_BATCH = 30
+
+
+@tool
+async def add_questions(homework_id: str, questions: list[QuestionSpec]) -> str:
+    """Homework app: add EVERY question of a homework in ONE call (up to 30), in order. Each item: type "mcq" or "short", prompt, version "both" (default) / "A" / "B", and for mcq options (2-6), correct_option (from 0) and points. Each version's multiple-choice questions must total 30 points and each version needs one "short" question (10 points; use two items with version A and B when the wording differs). prompt is exactly what the child reads: never write "Version A" or "Version B" in it. The answer reports every question added, any that failed, and what is still missing."""
+    if not isinstance(questions, list) or not questions:
+        return "Tool failed: homework app: give a non-empty list of questions."
+    done, failed = [], []
+    for n, q in enumerate(questions[:MAX_BATCH], 1):
+        if not isinstance(q, dict) or not q.get("prompt") or q.get("type") not in ("mcq", "short"):
+            failed.append(f"#{n}: needs type (mcq or short) and a prompt")
+            continue
+        try:
+            r = await asyncio.to_thread(homework_api.call, "add_question", {
+                "homework_id": homework_id, "type": q["type"], "prompt": clean_label(q["prompt"]),
+                "version": q.get("version"), "options": clean_options(q.get("options")),
+                "correct_option": q.get("correct_option"), "points": q.get("points"), "position": None})
+            done.append(fmt_question(r, f"#{n}"))
+        except homework_api.HomeworkApiError as e:
+            failed.append(f"#{n} ({_plain(q.get('prompt'), 50)}): {e.message}")
+    lines = [f"Added {len(done)} of {len(questions)} question(s)."]
+    if len(questions) > MAX_BATCH:
+        lines.append(f"Only the first {MAX_BATCH} were tried; send the rest in another add_questions call.")
+    if failed:
+        lines.append("FAILED (fix and send again, they were NOT added): " + " | ".join(failed))
+    lines += done
+    status = await _status_after(homework_id)
+    if status:
+        lines.append(status)
+    out = cap(lines)
+    return out if done else "Tool failed: homework app: no question was added. " + out
 
 
 @tool
 async def update_question(question_id: str, version: Version | None = None, prompt: str | None = None,
                           options: list[str] | None = None, correct_option: int | None = None,
                           points: int | None = None, position: int | None = None) -> str:
-    """Homework app: edit a question; only the fields given change (send options and correct_option together)."""
+    """Homework app: edit a question; only the fields given change (send options and correct_option together). Never put "Version A"/"Version B" in the prompt."""
     return await run("update_question", {
-        "question_id": question_id, "version": version, "prompt": prompt, "options": options,
-        "correct_option": correct_option, "points": points, "position": position},
+        "question_id": question_id, "version": version, "prompt": clean_label(prompt),
+        "options": clean_options(options), "correct_option": correct_option, "points": points, "position": position},
         lambda q: fmt_question(q, "Updated"))
 
 

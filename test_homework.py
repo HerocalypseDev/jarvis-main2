@@ -154,9 +154,9 @@ def test_csv_save_needs_a_csv_path_outside_the_code_folder(tmp_path):
     assert (tmp_path / "out" / "scores.csv").read_text() == "a,b\n1,2\n"
 
 
-def test_server_registers_the_23_tools_and_turns_app_errors_into_tool_failed(monkeypatch):
+def test_server_registers_the_24_tools_and_turns_app_errors_into_tool_failed(monkeypatch):
     names = {t.name for t in asyncio.run(srv.server.list_tools())}
-    assert len(names) == 23 and {"mark_submission", "mark_all_waiting", "delete_homework",
+    assert len(names) == 24 and {"add_questions","mark_submission", "mark_all_waiting", "delete_homework",
                                  "set_student_password", "export_csv", "get_overview"} <= names
 
     def boom(tool, args=None, timeout=30):
@@ -426,3 +426,63 @@ def test_shell_and_python_cannot_print_the_env_file(jarvis, monkeypatch):
     # ordinary uses stay allowed
     for cmd in ("python -c \"import os; print(bool(os.environ.get('HOMEWORK_APP_URL')))\"", "Get-Content .env.example", "dir"):
         assert jarvis._execute_tool_impl("run_shell", {"command": cmd}, "t") == "ok", cmd
+
+
+# ------------------------------------------------------------------------- creating a homework from the guide
+def test_version_labels_never_reach_the_kids_text():
+    for raw, want in [("Version A: Fill in this table", "Fill in this table"),
+                      ("Version B - Name one app", "Name one app"),
+                      ("(Version A) Hello", "Hello"), ("For Version B: x", "x"),
+                      ("Version A: Version B: twice", "twice"), ("Versions differ", "Versions differ"),
+                      ("A: stays", "A: stays"), (None, None)]:
+        assert srv.clean_label(raw) == want
+
+
+def test_add_questions_adds_all_in_one_call_strips_labels_and_reports_what_is_missing(monkeypatch):
+    sent = []
+
+    def fake(tool, args=None, timeout=30):
+        if tool == "add_question":
+            sent.append(args)
+            return {"id": f"q{len(sent)}", "type": args["type"], "version": args["version"] or "both",
+                    "points": args["points"] or 10, "position": len(sent), "options": args["options"] or [],
+                    "correct_option": args["correct_option"], "prompt": args["prompt"]}
+        return {"id": "h1", "title": "T", "week": 1, "still_to_set_up": ["Version B has no short answer"]}
+
+    monkeypatch.setattr(homework_api, "call", fake)
+    qs = [{"type": "mcq", "prompt": f"Q{i}?", "options": ["a", "Version A: b", "c"], "correct_option": 1, "points": 5}
+          for i in range(6)]
+    qs.append({"type": "short", "prompt": "Version A: Name one app.", "version": "A"})
+    qs.append({"type": "bad", "prompt": "x"})
+    out = asyncio.run(srv.add_questions("h1", qs))
+    assert len(sent) == 7 and "Added 7 of 8" in out and "FAILED" in out
+    assert sent[6]["prompt"] == "Name one app." and sent[0]["options"] == ["a", "b", "c"]
+    assert "STILL TO SET UP" in out and "version A only" in out and "vboth" not in out
+
+
+def test_add_question_cleans_the_label_and_tells_the_model_what_is_still_missing(monkeypatch):
+    seen = {}
+
+    def fake(tool, args=None, timeout=30):
+        if tool == "add_question":
+            seen.update(args)
+            return {"id": "q1", "type": "short", "version": "B", "points": 10, "position": 1, "prompt": args["prompt"]}
+        return {"id": "h1", "still_to_set_up": []}
+
+    monkeypatch.setattr(homework_api, "call", fake)
+    out = asyncio.run(srv.add_question("h1", "short", "Version B: Why?", "B"))
+    assert seen["prompt"] == "Why?" and "Ready" in out
+    monkeypatch.setattr(homework_api, "call", lambda t, a=None, timeout=30: (_ for _ in ()).throw(
+        homework_api.HomeworkApiError("Bad", 400)))
+    assert asyncio.run(srv.add_questions("h1", [])).startswith("Tool failed")
+    assert asyncio.run(srv.add_questions("h1", [{"type": "short", "prompt": "x"}])).startswith("Tool failed")
+
+
+def test_create_and_update_homework_strip_version_labels_from_the_tasks(monkeypatch):
+    seen = []
+    monkeypatch.setattr(homework_api, "call", lambda t, a=None, timeout=30: seen.append((t, a)) or
+                        {"id": "h1", "title": "T", "week": 1, "due": "Wed"})
+    asyncio.run(srv.create_homework("T", 1, "2026-10-07", None, "Version A: do x", "Version B: do y"))
+    asyncio.run(srv.update_homework("h1", instructions_a="Version A - z"))
+    assert seen[0][1]["instructions_a"] == "do x" and seen[0][1]["instructions_b"] == "do y"
+    assert seen[1][1]["instructions_a"] == "z"
