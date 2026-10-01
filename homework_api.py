@@ -29,7 +29,11 @@ class HomeworkApiError(Exception):
 
 
 def _base_url() -> str:
-    return (os.environ.get("HOMEWORK_APP_URL") or "").strip().rstrip("/")
+    url = (os.environ.get("HOMEWORK_APP_URL") or "").strip().strip("\"'").rstrip("/")
+    # "my-app.vercel.app" is what Vercel shows and what people paste: https is the only sensible reading.
+    if url and "://" not in url:
+        url = "https://" + url
+    return url
 
 
 def _token() -> str:

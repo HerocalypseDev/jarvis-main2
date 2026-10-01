@@ -1750,7 +1750,8 @@ row there each phase rather than only stating the total in chat.
 | 113 (homework app (LearnAi) as a private MCP server: API client, 21 app tools + AI marking with Claude (photos/PDF/docx/pptx/Scratch), never auto-releases flagged work, delete/password staged behind the confirmation gate, password kept out of the audit trail, two skills drafted, kept out of the public export; 19 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
 | 114 (graphify in every cloud session: cloud-only SessionStart hook pinned to the PC's 0.9.61, first graph refresh since 2026-09-27) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 115 (homework integration audit: confirm tier under any server name, no token-following redirects, get_activity shape drift, CSV/activity child-text framing, no overwriting teacher marks; LearnAi verified clean; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.00–$3.00 |
-| **Running total (final)** | | **~3589 min** | **~$230.35–$322.95** |
+| 116 (live debug report: HOMEWORK_APP_URL without https:// now defaults to https; run_shell/run_python refuse code that opens .env/mcp_servers.json (the model had printed the whole .env into its context); graphify refreshed; 2 new tests) | Sonnet 5.5 | ~10 min | ~$0.80–$1.20 |
+| **Running total (final)** | | **~3599 min** | **~$231.15–$324.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2170,6 +2171,10 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   redirect target, even http) and caps the answer size; `get_activity`'s new `{note, events}` shape is parsed (the old formatter would have
   failed), child file names are labelled, the CSV preview is framed as child data, raw fallback output scrubs links; a short answer marked
   0 is no longer shown "not marked yet"; AI marking never overwrites the teacher's own marks (`marked_by` != jarvis).
+- **First live run (2026-10-01 debug report)**: `HOMEWORK_APP_URL` was saved as `learn-ai-...vercel.app` (no scheme), so every tool said "doesn't look
+  like a web address"; `_base_url` now adds `https://` (and strips quotes). The model then went hunting with run_shell/run_python and printed the
+  whole `.env` into its context; `_secret_file_problem` now refuses shell/python code naming `.env`, `mcp_servers.json`, `jarvis_memory.db`, `face.key`
+  (`.env.example` and `os.environ.get(...)` stay fine). Lesson #17 ("check local project files first...") steered it away from the tools: delete it.
 - **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
   (needs ANTHROPIC credit), voice use end to end.
 
