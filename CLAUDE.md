@@ -1752,7 +1752,8 @@ row there each phase rather than only stating the total in chat.
 | 115 (homework integration audit: confirm tier under any server name, no token-following redirects, get_activity shape drift, CSV/activity child-text framing, no overwriting teacher marks; LearnAi verified clean; 6 new tests) | Sonnet 5.5 | ~25 min | ~$2.00–$3.00 |
 | 116 (live debug report: HOMEWORK_APP_URL without https:// now defaults to https; run_shell/run_python refuse code that opens .env/mcp_servers.json (the model had printed the whole .env into its context); graphify refreshed; 2 new tests) | Sonnet 5.5 | ~10 min | ~$0.80–$1.20 |
 | 117 (barge-in glitch: the mic loop called _interrupt_speech on every audio block while the key was held (DB write + log each time), and a streamed sentence was only stopped at its next network chunk; now once-per-press stats and an immediate abort of the active OutputStream; 1 new test) | Sonnet 5.5 | ~15 min | ~$1.00–$1.50 |
-| **Running total (final)** | | **~3614 min** | **~$232.15–$325.65** |
+| 118 (homework creation from the Teacher's Guide: only 3 of 6 questions added and Version A/B text in the tasks; new add_questions tool (whole quiz in one call), every add reports what is still to set up, Version labels stripped from prompts/options/tasks in code; 4 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~3634 min** | **~$233.65–$327.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2176,6 +2177,14 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   like a web address"; `_base_url` now adds `https://` (and strips quotes). The model then went hunting with run_shell/run_python and printed the
   whole `.env` into its context; `_secret_file_problem` now refuses shell/python code naming `.env`, `mcp_servers.json`, `jarvis_memory.db`, `face.key`
   (`.env.example` and `os.environ.get(...)` stay fine). Lesson #17 ("check local project files first...") steered it away from the tools: delete it.
+- **Creating a homework from the Teacher's Guide (2026-10-01 debug report)**: Gemini added 3 of the 6 quiz questions with one
+  `add_question` call each, then ended its turn with no text (the last tool result was read out as the reply), never added the short
+  answers, and copied "Version A:"/"Version B:" into `instructions_a/b`. Fixes (homework_mcp_server.py, tests at the end of
+  `test_homework.py`): new `add_questions` tool (24 tools now) adds up to 30 questions in one call and reports added / FAILED / what
+  is still to set up; `add_question` also appends the app's `still_to_set_up` ("STILL TO SET UP (keep going, do not stop yet)");
+  `clean_label` strips "Version A/B" labels (leading or "(Version A)") from prompts, options and instructions in create/update/add;
+  results say "version A only"/"both versions" instead of "vboth". The `homework_admin` skill text was NOT changed (skills need the
+  owner's review): it still says to add questions, which now works with either tool.
 - **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
   (needs ANTHROPIC credit), voice use end to end.
 
