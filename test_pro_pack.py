@@ -224,3 +224,18 @@ def test_scheduled_pack_skills_cost_nothing_until_set_up(monkeypatch, tmp_path):
     assert not jarvis._skill_is_due(checkin, datetime(2026, 9, 29, 20, 30))
     jarvis.remember_fact("goal", "Exam: maths on 2026-10-02")
     assert jarvis._skill_is_due(checkin, datetime(2026, 9, 29, 20, 30))
+
+
+def _skill(name):
+    return json.loads((PACK / "skills" / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def test_exam_pack_saves_scores_in_the_shared_format_and_never_claims_real_past_papers():
+    exam = sorted(p.stem for p in (PACK / "skills").glob("exam_*.json"))
+    assert {"exam_cbt_practice", "exam_weak_topics", "exam_study_plan", "exam_progress", "exam_daily_drill"} <= set(exam)
+    cbt = _skill("exam_cbt_practice")["instructions"]
+    assert "Exam score: <Subject> <n>/<total>" in cbt and "key 'exam-score:" in cbt and "key 'study-streak'" in cbt
+    assert "Never claim they are real past questions" in cbt and "ONE question at a time" in cbt
+    drill = _skill("exam_daily_drill")
+    assert drill["schedule"] == {"daily_at": "19:00", "requires_fact": "Exam score:"}
+    assert drill["instructions"].count("NO spoken reply") == 2 and "never create reminders" in drill["instructions"]

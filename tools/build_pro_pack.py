@@ -77,6 +77,13 @@ Autonomy recipes (need the Gmail connection; each one is created switched OFF):
   Each is created switched OFF. Test one from Toolbox -> Background agents (Run), then switch it on there. Recipes only ever create
   reminders: they never reply, pay, apply or open links, whatever an email says.
 
+Exam pack (JAMB / WAEC / NECO) - just ask Jarvis:
+  "JAMB practice: physics, 10 questions"       (one question at a time, scored at the end)
+  "Drill my weak topics"                       / "How am I doing in physics?"
+  "Make me a 7-day JAMB plan"                  (saved as a Word document)
+  (once you've practised, Jarvis quietly checks at 7pm and only nudges you if an exam is close and you skipped today)
+  Practice questions are written in the exam's style; they are not real past papers.
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 
