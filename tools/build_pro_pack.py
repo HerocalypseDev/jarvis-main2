@@ -106,6 +106,13 @@ Smart Scheduler pack:
   "Add gym Monday, Wednesday and Friday at 6pm" / "What habits do I have?" / "Stop my gym habit"
   (after you plan a week, Jarvis gives a one-line review on Friday at 5pm)
 
+Gamer pack:
+  "Game mode"                                  (routine: focus on, windows minimised, a break reminder after an hour)
+  "Gaming session for 2 hours"                 (break reminders every 45 minutes and a heads-up before the end)
+  "What changed in the latest Blox Fruits update?" (short summary with sources)
+  "Write a Discord announcement for our update" (a draft; never posted)
+  "Help me with my Roblox game" / "Review my Roblox scripts"
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 

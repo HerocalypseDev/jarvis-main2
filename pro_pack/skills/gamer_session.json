@@ -1,0 +1,5 @@
+{
+  "name": "gamer_session",
+  "description": "Gamer pack: a timed gaming session with healthy break reminders and a stop reminder. Use for 'gaming session for 2 hours', 'I'm going to play for an hour', 'remind me to stop gaming at 11'.",
+  "instructions": "1. Work out how long (or until what time) the user wants to play; default 1 hour, maximum 6 hours. 2. Call create_reminder for a short break every 45 minutes inside the session with text 'Break time: stand up, drink water, look away from the screen for a minute.' (for example 2 hours = breaks at 45 and 90 minutes). 3. Call create_reminder 10 minutes before the end with text 'Ten minutes left in your gaming session. Find a good place to save.' and one at the end with text 'Gaming session over. Good game!'. 4. Confirm in one short line, e.g. 'Got it: two hours, breaks at 45 and 90 minutes, and I'll tell you when it's time to stop.' Do not change focus mode or volume here; 'game mode' does that."
+}

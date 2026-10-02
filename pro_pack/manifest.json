@@ -1,6 +1,6 @@
 {
   "name": "Jarvis4U Pro",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "packs": [
     "student",
     "developer",
@@ -12,7 +12,8 @@
     "meetings",
     "jobs",
     "creator",
-    "scheduler"
+    "scheduler",
+    "gamer"
   ],
   "themes": [
     "stark",
