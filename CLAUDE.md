@@ -1766,7 +1766,8 @@ row there each phase rather than only stating the total in chat.
 | 123 (several homework deletes staged as one batch behind one yes: homework-delete-only, cap 10, dedupe, new queued_at per append, one combined summary, Review view lists every call; 7 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 124 (overdue exam items "cleared" but still in the briefing: list_reminders shows the open commitments behind "overdue" with how to close them, claim check for a fake "I've cleared them"; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 125 (Word-table job died at "I used 12 steps": read_file reads .docx (with tables)/.pdf/.pptx, step limit configurable, a used-up limit ends in an answer from what was gathered (tools off, Gemini/Ollama too); 2 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~3799 min** | **~$245.85–$345.45** |
+| 126 (hourly Gmail check re-announced the same unread mail: scheduled skills only see mail their earlier runs haven't seen, remembered only after a successful run; skill names the right Gmail tool; 2 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~3819 min** | **~$247.35–$347.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2249,6 +2250,16 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   line, which is why it is shown, and marks stay unreleased unless asked. A mark Jarvis already saved (marked_by jarvis) can be redone by marking again.
 - **Live use (2026-10-02)**: the owner has been using it against the real app and reports everything works (tools, attendance included).
   Not separately checked by a session: which marking backend answered on the PC.
+
+## Hourly mail check repeating itself (2026-10-02, debug report)
+
+- `gmail_watch` searched `is:unread` every hour and re-announced the same unread mail ("New sign-in detected on your Vercel account").
+  Now, during any scheduled skill run (`_command_ctx.scheduled_skill`), a mail search/list result (`_MAIL_LIST_TOOLS`, by the MCP
+  server's real tool name) goes through `_hide_mail_already_checked`: messages an earlier run of the same skill already saw are
+  dropped (with a "N message(s) left out, don't mention them again" note, or "No new email since the last check"), and the ids this
+  run saw are stored in `skill_seen_mail` (per skill, 30 days) only after the run finishes with the brain answering, so a failed run
+  forgets nothing. A user's own "check my email" is never filtered. `skills/gmail_watch.json` now names `mcp_gmail_search_emails`
+  (it was calling a non-existent `mcp_gmail_list_messages` first). Tests at the end of `test_smarter.py`. Not verified live.
 
 ## Step limit + reading documents (2026-10-02, found live)
 

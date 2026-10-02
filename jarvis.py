@@ -5489,6 +5489,77 @@ def _skill_is_due(skill: dict, now: datetime) -> bool:
 _BARE_ACK_RE = re.compile(r"^\W*(ok(ay)?|done|noted|nothing( new| important)?( here)?|all (good|clear)|no (reply|response) needed)\W*$", re.I)
 
 
+# Found live (2026-10-02): the hourly gmail_watch skill searches "is:unread", so every run got the same unread
+# mail back and re-announced it ("New sign-in detected on your Vercel account" hour after hour). A scheduled skill
+# now only sees mail its earlier runs haven't already seen: the ids shown in a run are remembered per skill once
+# the run finishes (a failed run remembers nothing, so nothing is lost), and later runs get them filtered out.
+SKILL_MAIL_SEEN_DAYS = 30
+_MAIL_LIST_TOOLS = {"search_emails", "list_emails", "list_messages", "search_messages"}
+_MAIL_ID_RE = re.compile(r"^\s*ID:\s*(\S+)", re.M | re.I)
+
+
+def _skill_mail_db():
+    conn = _memory_db_connect()
+    conn.execute("CREATE TABLE IF NOT EXISTS skill_seen_mail (skill TEXT NOT NULL, msg_id TEXT NOT NULL, "
+                 "seen_at TEXT NOT NULL, PRIMARY KEY (skill, msg_id))")
+    return conn
+
+
+def _skill_mail_seen_ids(skill: str) -> set[str]:
+    with _memory_db_lock:
+        conn = _skill_mail_db()
+        try:
+            return {r[0] for r in conn.execute("SELECT msg_id FROM skill_seen_mail WHERE skill = ?", (skill,))}
+        finally:
+            conn.close()
+
+
+def _remember_skill_mail(skill: str, ids: set[str]) -> None:
+    if not ids:
+        return
+    now = datetime.now()
+    with _memory_db_lock:
+        conn = _skill_mail_db()
+        try:
+            conn.executemany("INSERT OR IGNORE INTO skill_seen_mail (skill, msg_id, seen_at) VALUES (?, ?, ?)",
+                             [(skill, i, now.isoformat(timespec="seconds")) for i in ids])
+            conn.execute("DELETE FROM skill_seen_mail WHERE seen_at < ?",
+                         ((now - timedelta(days=SKILL_MAIL_SEEN_DAYS)).isoformat(timespec="seconds"),))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _hide_mail_already_checked(tool_name: str, result: str) -> str:
+    """During a scheduled skill run: drop messages an earlier run of the same skill already saw from a mail
+    search/list result (blocks of ID:/Subject:/From:/Date: lines), and note the ids this run saw."""
+    skill = getattr(_command_ctx, "scheduled_skill", None)
+    real = (_mcp_tool_index.get(tool_name) or (None, "_".join(tool_name.split("_")[-2:])))[1]
+    if not skill or real not in _MAIL_LIST_TOOLS or not isinstance(result, str) or _looks_failed(result):
+        return result
+    try:
+        seen = _skill_mail_seen_ids(skill)
+    except Exception as e:
+        log.debug("seen-mail lookup failed: %s", e)
+        return result
+    kept, dropped = [], 0
+    shown = getattr(_command_ctx, "mail_shown", None)
+    for block in re.split(r"\n\s*\n", result):
+        m = _MAIL_ID_RE.search(block)
+        if m and m.group(1) in seen:
+            dropped += 1
+            continue
+        if m and shown is not None:
+            shown.add(m.group(1))
+        kept.append(block)
+    if not dropped:
+        return result
+    note = (f"({dropped} message(s) left out: an earlier run of this check already saw them, so do not mention "
+            "them again.)")
+    body = "\n\n".join(b for b in kept if b.strip())
+    return (body + "\n\n" + note) if _MAIL_ID_RE.search(body) else "No new email since the last check. " + note
+
+
 def _run_scheduled_skill(skill: dict) -> None:
     log.info("Running scheduled skill %r.", skill["name"])
     # Session context: mark a scheduled task as in-flight so anything checking
@@ -5500,6 +5571,7 @@ def _run_scheduled_skill(skill: dict) -> None:
         f"(This is a scheduled, proactive run of your \"{skill['name']}\" skill — the user "
         f"didn't just ask for this out loud, act on the schedule instead.) {skill['instructions']}"
     )
+    _command_ctx.scheduled_skill, _command_ctx.mail_shown = skill["name"], set()
     try:
         # An unprompted run must stay quiet when the model gives no text: never fall back to the
         # last tool's result (e.g. a remember_fact ack), and treat a bare "OK"/"Done." as silence.
@@ -5508,9 +5580,12 @@ def _run_scheduled_skill(skill: dict) -> None:
             # Route through the interrupt gate instead of speaking immediately — a scheduled
             # skill is exactly the kind of unprompted interrupt session context exists for.
             queue_or_deliver_notification(reply)
+        if reply != _llm_unavailable_reply():  # the brain answered: what it saw counts as checked
+            _remember_skill_mail(skill["name"], _command_ctx.mail_shown)
     except Exception as e:
         log.warning("Scheduled skill %r failed: %s", skill["name"], e)
     finally:
+        _command_ctx.scheduled_skill, _command_ctx.mail_shown = None, None
         _set_scheduled_task_running(False)
         _set_last_skill_run(skill["name"], datetime.now())
 
@@ -10816,6 +10891,7 @@ def _execute_tool_impl(
                 problem = (_ensure_whatsapp_desktop()
                            if tool_name.startswith("mcp_whatsapp_") else None)
                 result = problem or execute_mcp_tool(tool_name, inp)
+                result = _hide_mail_already_checked(tool_name, result)
         elif tool_name in ("open_url", "play_media") and _is_whatsapp_web_url(inp.get("url")):
             result = _ensure_whatsapp_desktop() or (
                 "Opened the WhatsApp desktop app instead of WhatsApp Web. "
