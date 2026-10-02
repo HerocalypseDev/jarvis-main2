@@ -730,3 +730,41 @@ def test_read_file_reads_word_tables_and_slides(jarvis, tmp_path):
     assert jarvis._read_file_tool(str(tmp_path / "broken.docx")).startswith("Failed to read broken.docx")
     (tmp_path / "plain.txt").write_text("hello")
     assert jarvis._read_file_tool(str(tmp_path / "plain.txt")) == "hello"
+
+
+def test_scheduled_mail_check_never_reports_the_same_email_twice(jarvis, monkeypatch):
+    """Found live 2026-10-02: hourly gmail_watch searched is:unread and re-announced the same unread mail every hour."""
+    inbox = {"text": ("ID: a1\nSubject: New sign-in detected on your Vercel account\nFrom: Vercel <n@vercel.com>\n\n"
+                      "ID: a2\nSubject: Spotify offer\nFrom: Spotify <n@spotify.com>")}
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: inbox["text"])
+    monkeypatch.setitem(jarvis._mcp_tool_index, "mcp_gmail_search_emails", ("gmail", "search_emails"))
+    monkeypatch.setattr(jarvis, "record_recent_task", lambda *a, **k: None)
+    spoken = []
+    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda text, **k: spoken.append(text))
+    skill = {"name": "gmail_watch", "instructions": "check mail"}
+    seen = _script(monkeypatch, jarvis, [_call("mcp_gmail_search_emails", {"query": "is:unread"}),
+                                         _text("New sign-in on your Vercel account.")])
+    jarvis._run_scheduled_skill(skill)
+    assert spoken == ["New sign-in on your Vercel account."] and "a1" in str(seen[1]["messages"][-1]["content"])
+    # next hour: same two unread messages plus one new one -> only the new one reaches the model
+    inbox["text"] += "\n\nID: a3\nSubject: Your mum: call me\nFrom: Mum <mum@example.com>"
+    seen = _script(monkeypatch, jarvis, [_call("mcp_gmail_search_emails", {"query": "is:unread"}), _text("")])
+    jarvis._run_scheduled_skill(skill)
+    result = str(seen[1]["messages"][-1]["content"])
+    assert "a3" in result and "a1" not in result and "Vercel" not in result and "2 message(s) left out" in result
+    # nothing new at all -> told so plainly; a user's own "check my email" is never filtered
+    seen = _script(monkeypatch, jarvis, [_call("mcp_gmail_search_emails", {"query": "is:unread"}), _text("")])
+    jarvis._run_scheduled_skill(skill)
+    assert "No new email since the last check" in str(seen[1]["messages"][-1]["content"])
+    assert jarvis._hide_mail_already_checked("mcp_gmail_search_emails", inbox["text"]) == inbox["text"]
+
+
+def test_a_failed_scheduled_run_does_not_mark_mail_as_checked(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: "ID: b1\nSubject: Deadline tomorrow\nFrom: x")
+    monkeypatch.setitem(jarvis._mcp_tool_index, "mcp_gmail_search_emails", ("gmail", "search_emails"))
+    monkeypatch.setattr(jarvis, "record_recent_task", lambda *a, **k: None)
+    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda *a, **k: None)
+    replies = iter([_call("mcp_gmail_search_emails", {"query": "is:unread"}), None])
+    monkeypatch.setattr(jarvis, "_claude_request", lambda body, timeout: next(replies))
+    jarvis._run_scheduled_skill({"name": "gmail_watch", "instructions": "check mail"})
+    assert jarvis._skill_mail_seen_ids("gmail_watch") == set()
