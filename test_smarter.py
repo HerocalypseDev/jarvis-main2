@@ -1,5 +1,6 @@
 """Smarter/autonomous batch (2026-09-28): tool narrowing, claim checker, escalation, lessons memory,
 embedding retrieval, eval runner, autonomy upgrades, local brain. Isolated temp DB; no network."""
+import json
 import os
 
 import pytest
@@ -768,3 +769,62 @@ def test_a_failed_scheduled_run_does_not_mark_mail_as_checked(jarvis, monkeypatc
     monkeypatch.setattr(jarvis, "_claude_request", lambda body, timeout: next(replies))
     jarvis._run_scheduled_skill({"name": "gmail_watch", "instructions": "check mail"})
     assert jarvis._skill_mail_seen_ids("gmail_watch") == set()
+
+
+# --- Telegram pictures (2026-10-02, owner request) -------------------------------------------------------------------
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 2000
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 500
+
+
+def _fake_telegram(monkeypatch, jarvis, payload, file_size=None):
+    import io
+    urls = []
+
+    def urlopen(url, timeout=None):
+        urls.append(url)
+        if "/getFile?" in url:
+            body = json.dumps({"result": {"file_path": "photos/f.jpg", "file_size": file_size or len(payload)}}).encode()
+            return io.BytesIO(body)
+        return io.BytesIO(payload)
+    monkeypatch.setattr(jarvis.urllib.request, "urlopen", urlopen)
+    sent = []
+    monkeypatch.setattr(jarvis, "_telegram_send", lambda m: sent.append(m) or True)
+    return urls, sent
+
+
+def test_telegram_photo_reaches_jarvis_with_its_caption(jarvis, monkeypatch):
+    urls, sent = _fake_telegram(monkeypatch, jarvis, JPEG)
+    seen = {}
+    monkeypatch.setattr(jarvis, "handle_text_command", lambda t, reply_sink=None, source=None, **k: seen.update(
+        t=t, source=source, image=jarvis._command_ctx.attach_image, kind=jarvis._command_ctx.attach_image_type))
+    msg = {"photo": [{"file_id": "small", "file_size": 100}, {"file_id": "big", "file_size": 2000}],
+           "caption": "What anime is this?"}
+    assert jarvis._telegram_picture_id(msg) == "big"
+    jarvis._handle_telegram_picture(msg)
+    assert seen["t"].startswith("What anime is this?" + jarvis.PHONE_PICTURE_TAG) and seen["source"] == "phone"
+    assert seen["kind"] == "image/jpeg" and seen["image"] and sent == []
+    assert jarvis._command_ctx.attach_image is None          # never left behind for the next command
+    jarvis._handle_telegram_picture({"photo": [{"file_id": "x"}]})
+    assert seen["t"].startswith("What's in this picture?")
+
+
+def test_telegram_picture_problems_get_a_reply_not_silence(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "handle_text_command", lambda *a, **k: pytest.fail("must not run"))
+    _, sent = _fake_telegram(monkeypatch, jarvis, b"%PDF-1.7 not a picture")
+    jarvis._handle_telegram_picture({"document": {"file_id": "d", "mime_type": "image/png"}})
+    assert "not a picture I can read" in sent[-1]
+    _, sent = _fake_telegram(monkeypatch, jarvis, JPEG, file_size=jarvis.TELEGRAM_PICTURE_MAX_BYTES + 1)
+    jarvis._handle_telegram_picture({"photo": [{"file_id": "x"}]})
+    assert "too big" in sent[-1]
+    assert jarvis._telegram_picture_id({"document": {"file_id": "d", "mime_type": "application/pdf"}}) is None
+
+
+def test_an_attached_picture_keeps_its_real_type(jarvis, monkeypatch):
+    seen = _script(monkeypatch, jarvis, [_text("A cat.")])
+    import base64
+    jarvis._command_ctx.attach_image = base64.b64encode(PNG).decode()
+    jarvis._command_ctx.attach_image_type = "image/png"
+    assert jarvis.run_agent_loop("what is this" + jarvis.PHONE_PICTURE_TAG) == "A cat."
+    block = seen[0]["messages"][-1]["content"][0]
+    assert block["type"] == "image" and block["source"]["media_type"] == "image/png"
+    assert jarvis._command_ctx.attach_image is None and jarvis._command_ctx.attach_image_type is None
