@@ -124,6 +124,18 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("self_report", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:what have you been (?:up to|doing)(?: lately| today| recently)?"
                                r"|what(?:'s| has| have)? changed(?: (?:lately|recently|today|in you|with you))?"
                                r"|did (?:your|the) code change|what(?:'s| is) new with you)(?:,?\s*jarvis)?\W*\Z", re.I)),
+    # Internet speed test (2026-10-02): measured locally, no model call. "speed up the video" or "what's the speed of
+    # light" don't match: the words must be about the internet/network/Wi-Fi connection.
+    ("speedtest", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:please\s+|can you\s+|could you\s+)?(?:"
+                             r"(?:run|do|start)\s+(?:a\s+|an\s+)?(?:quick\s+)?(?:internet\s+|network\s+|wi-?fi\s+)?speed\s*test"
+                             r"|(?:internet\s+|network\s+|wi-?fi\s+)?speed\s*test"
+                             r"|(?:what(?:'?s| is)|check|test|measure|tell me)\s+(?:my\s+|the\s+|our\s+)?"
+                             r"(?:internet|network|wi-?fi|connection|broadband|data)(?:\s+connection)?\s+speed"
+                             r"|how fast is (?:my |the |our )?(?:internet|network|wi-?fi|connection|broadband|data)(?: connection)?"
+                             r")(?:\s+(?:right\s+)?now)?"
+                             # "...in megabytes", "in MB per second", "in kbps": jarvis_speedtest.parse_unit picks it
+                             r"(?:\s+(?:in|as|using)\s+(?:(?:mega|kilo|giga)\s?)?(?:bytes?|bits?|mbps|mb/s|mbs|mb|kbps|kb/s|kb|gbps|gb)"
+                             r"(?:\s+(?:per|a)\s+second)?)?(?:\s+(?:right\s+)?now)?(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
     ("repeat", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:repeat that|say that again|what did you say|come again|repeat)\W*\Z", re.I)),
     ("shorter", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:say that shorter|shorter|tl;?dr|summari[sz]e that|give me the short version|shorter please)\W*\Z", re.I)),
     ("last_actions", re.compile(r"\A\s*(?:jarvis,?\s*)?what (?:did|have) you (?:just )?(?:do|done)"

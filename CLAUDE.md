@@ -1769,7 +1769,8 @@ row there each phase rather than only stating the total in chat.
 | 126 (hourly Gmail check re-announced the same unread mail: scheduled skills only see mail their earlier runs haven't seen, remembered only after a successful run; skill names the right Gmail tool; 2 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 127 (homework-app confirmation code moved out of the public jarvis.py into a private `homework_gate.py` behind a generic `*_gate.py` add-on hook; 1 new test) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 128 (pictures over Telegram: photos/image files read with the caption as the request, kept in memory only, real type checked, 5 MB cap, other message kinds get a reply instead of silence; published to Jarvis4U; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3859 min** | **~$250.35–$352.05** |
+| 129 (internet speed test: no-browser Cloudflare test by voice or tool, data cap, units incl. "in megabytes", history comparison; 28 new tests) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~3889 min** | **~$252.35–$354.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2269,6 +2270,25 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   only). Video/voice/stickers/other files now get "I can read text messages and pictures here" instead of silence. Owner chose
   "read and answer, save nothing". Data exposure: the picture goes to the active brain, like an appshot. Tests at the end of
   `test_smarter.py`. Not verified live with a real Telegram photo.
+
+## Internet speed test (2026-10-02, owner request)
+
+- "What's my internet/network/Wi-Fi speed", "how fast is my internet", "run a speed test" (intent `speedtest`, whole
+  utterances only; "speed up the video"/"speed of light" don't match) runs `jarvis_speedtest` with **no model call** and no
+  browser; the agent tool `speed_test` (action run|last|history, optional `unit`) covers other wordings. Measures against
+  Cloudflare's public speed server (speed.cloudflare.com, stdlib http.client, honours an HTTPS proxy): ping = median of 8
+  tiny requests on an open connection (server time from Server-Timing subtracted), download = 4 streams for ~8 s with the
+  first second left out, upload = 4 streams for ~6 s, counted only once the server answered. ~15-20 s in all.
+- **Data cap**: `JARVIS_SPEEDTEST_MAX_MB` (default 40, 10-500, Settings) for the download, half that for the upload (uploads
+  reserve their bytes first so parallel streams can't overshoot). The answer says how much data it used (mobile data costs).
+  Only a fast line reaches the cap; at ~20 Mbps a test uses ~25 MB.
+- **Units**: answers in megabits per second by default (`JARVIS_SPEEDTEST_UNIT`, Settings: megabits/megabytes/kilobits/
+  kilobytes/gigabits); "...in megabytes" / "in MB per second" / "in kbps" picks one for that answer (`parse_unit`), and a
+  megabytes answer also gives the megabits figure in brackets (plans are sold in megabits).
+- It is a slow intent (`_SLOW_INTENTS`): computed after the dashboard session starts, with a spoken lead-in first; the test
+  waits for that line (`_await_ack`) because streaming speech would compete for the connection. One test at a time.
+  Results are kept in `speed_tests` (500 rows) so the answer can say faster/slower than last time. Tests: `test_speedtest.py`
+  (28, fake connections). Verified live from the cloud container against the real server; not on the owner's PC.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

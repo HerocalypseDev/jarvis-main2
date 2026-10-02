@@ -161,6 +161,14 @@ SETTINGS: list[dict] = [
     {"key": "JARVIS_NETSCAN_ANNOUNCE_LEFT", "label": "Announce named devices leaving", "kind": "bool", "default": "1",
      "help": "Say \"John's iPhone left the network\" when a named device has been gone from the scans for 5 minutes.",
      "live": "env"},
+    {"key": "JARVIS_SPEEDTEST_MAX_MB", "label": "Speed test data limit (MB)", "kind": "number", "default": "40",
+     "help": "\"What's my internet speed?\" downloads at most this much (and uploads half of it). A test usually stops "
+     "sooner, after about 8 seconds; only a fast line reaches the limit. 10-500.", "live": "env"},
+    {"key": "JARVIS_SPEEDTEST_UNIT", "label": "Speed test unit", "kind": "choice", "default": "megabits",
+     "choices": ["megabits", "megabytes", "kilobits", "kilobytes", "gigabits"],
+     "help": "How a speed test answers when you don't name a unit. Internet plans are sold in megabits per second; "
+     "megabytes per second (8 times smaller) is what a download window shows. Saying \"in megabytes\" always wins.",
+     "live": "env"},
     {"key": "JARVIS_BATTERY_SAVER", "label": "Battery saver", "kind": "bool", "default": "1",
      "help": "On battery: less background work when low, scanning paused and quiet announcements when very low.",
      "live": "env"},
