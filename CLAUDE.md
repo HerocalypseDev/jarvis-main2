@@ -1765,7 +1765,8 @@ row there each phase rather than only stating the total in chat.
 | 122 (an unrelated landscape picture handed in for the AI-audit table task scored 55/60: the marker now lists the task's requirements and describes the file literally, the task mark is capped in code by the share of requirements met, work that isn't the task is flagged and never auto-released, the teacher sees what the file showed; 6 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
 | 123 (several homework deletes staged as one batch behind one yes: homework-delete-only, cap 10, dedupe, new queued_at per append, one combined summary, Review view lists every call; 7 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 124 (overdue exam items "cleared" but still in the briefing: list_reminders shows the open commitments behind "overdue" with how to close them, claim check for a fake "I've cleared them"; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~3774 min** | **~$243.85–$342.65** |
+| 125 (Word-table job died at "I used 12 steps": read_file reads .docx (with tables)/.pdf/.pptx, step limit configurable, a used-up limit ends in an answer from what was gathered (tools off, Gemini/Ollama too); 2 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~3799 min** | **~$245.85–$345.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2248,6 +2249,20 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   line, which is why it is shown, and marks stay unreleased unless asked. A mark Jarvis already saved (marked_by jarvis) can be redone by marking again.
 - **Live use (2026-10-02)**: the owner has been using it against the real app and reports everything works (tools, attendance included).
   Not separately checked by a session: which marking backend answered on the PC.
+
+## Step limit + reading documents (2026-10-02, found live)
+
+- "Extract the animes and their release dates from my Word document" (a table) ended on Gemini with "I used 12 steps without
+  getting to an answer". Cause: `read_file` read the `.docx` as UTF-8 text (it is a zip), so the model got gibberish and spent
+  every step trying other ways to open it. `jarvis_docread.py` (tests at the end of `test_smarter.py`): `read_file` now returns
+  Word paragraphs and tables in document order (tables as `| cell | cell |` rows, merged cells once), PDF text via pypdf (first 60
+  pages, "no text layer" for scans) and PowerPoint slide text straight from the slide XML (python-pptx is not a dependency); a broken
+  file returns "Failed to read ...", plain text files are unchanged.
+- The step limit is `JARVIS_MAX_AGENT_STEPS` (default 12, clamped 4-40, read at start). Hitting it no longer ends in "I used N
+  steps": the loop's `for ... else` runs `_steps_used_up_reply`, one last round with `tool_choice: none` (Gemini: `toolConfig`
+  mode NONE; Ollama: tools left out) and `STEPS_USED_UP_NOTE` added to the last tool results, so the model answers from what it
+  gathered and says what's left. Each step is one model request, so raising the limit spends more of a free Gemini daily quota.
+  Not verified live against the real document.
 
 ## Hand-off guard (2026-09-25)
 

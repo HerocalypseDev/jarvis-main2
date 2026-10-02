@@ -126,7 +126,7 @@ def to_request(body: dict, model: str) -> dict:
     tools = [{"type": "function", "function": {"name": t["name"], "description": t.get("description", ""),
                                                "parameters": t.get("input_schema") or {"type": "object", "properties": {}}}}
              for t in body.get("tools") or [] if t.get("name")]
-    if tools:
+    if tools and (body.get("tool_choice") or {}).get("type") != "none":  # none = answer in words only
         req["tools"] = tools
     return req
 

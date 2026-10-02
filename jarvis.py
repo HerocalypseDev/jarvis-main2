@@ -119,6 +119,7 @@ import jarvis_memory_search as memory_search
 import jarvis_kg as kg
 import jarvis_notify_priority as notify_priority
 import jarvis_improvement_report as improvement_report
+import jarvis_docread
 import jarvis_untrusted
 import jarvis_deferred as deferred
 import jarvis_cascades as cascades
@@ -1503,7 +1504,12 @@ MAX_TOOL_CALLS_PER_TURN = 5  # cap on parallel tool calls Claude can request in 
 # simple command still stops as soon as Claude replies without a tool_use. Was 6, which a
 # compound multi-step instruction (search email, build a file, send it, confirm) could
 # exhaust and get cut off mid-task even with nothing going wrong.
-MAX_AGENT_ITERATIONS = 12
+MAX_AGENT_ITERATIONS = max(4, min(40, env_int("JARVIS_MAX_AGENT_STEPS", 12)))
+# When the steps run out mid-task, one last round with tools switched off asks for an answer from what was
+# gathered (found live 2026-10-02: Gemini got 12 steps into a job and the user only heard "I used 12 steps").
+STEPS_USED_UP_NOTE = ("[system] You have used all the tool steps for this request. Do not call any more tools. Answer the "
+                      "user now from what the tool results above already show; if part of the job is not done, say plainly "
+                      "which part, so they can ask for the rest.")
 # Output cap per agent-loop round. A whole document is written as one write_file call, so the old
 # 1536 cut such calls off mid-way (stop_reason max_tokens) and the command ended with no reply and
 # no file. Only generated tokens are billed, so a high cap costs nothing on short replies.
@@ -2021,7 +2027,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "read_file",
-        "description": "Read a text file and return its contents (truncated if very large). A relative path or bare filename is looked up in Jarvis_Workspace and its subfolders; absolute paths work anywhere.",
+        "description": "Read a file and return its contents (truncated if very large). Text files, and Word (.docx), PDF and PowerPoint (.pptx) files: their text and tables (as | cell | cell | rows) in one call, so never open those another way. A relative path or bare filename is looked up in Jarvis_Workspace and its subfolders; absolute paths work anywhere.",
         "input_schema": {
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -9595,7 +9601,12 @@ def _read_file_tool(path: str) -> str:
     if bad:
         return f"Refused to read {path}: {bad}."
     try:
-        data = jarvis_workspace.resolve_read_path(path).read_text(encoding="utf-8", errors="replace")
+        target = jarvis_workspace.resolve_read_path(path)
+        # Word/PDF/PowerPoint are zip/binary files: read as text they came back as gibberish, and the model burned
+        # every agent step trying other ways to open them (found live 2026-10-02 with a table in a .docx).
+        data = jarvis_docread.read_document(target)
+        if data is None:
+            data = target.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return f"Failed to read {path}: {e}"
     if len(data) > MAX_TOOL_RESULT_CHARS * 2:
@@ -11644,6 +11655,25 @@ def _claude_stream_first_round(body: dict, timeout: int, speak_live, on_first_to
 _RAW_TOOL_OUTPUT_RE = re.compile(r"^\s*(?:exit_code=|stdout:|stderr:|\[?\s*\"?\s*Cursor Position|Cursor Position|###\s|\{|\[)")
 
 
+def _steps_used_up_reply(model: str, system_blocks, messages: list, cached_tools, smart: bool) -> str:
+    """The answer after the step limit: the last user message (the tool results) gets STEPS_USED_UP_NOTE, and the
+    request goes out with tool_choice none so the model has to reply in words. '' when that fails too."""
+    last = messages[-1] if messages else None
+    if not (last and last.get("role") == "user" and isinstance(last.get("content"), list)):
+        return ""
+    last["content"] = list(last["content"]) + [{"type": "text", "text": STEPS_USED_UP_NOTE}]
+    body = {"model": model, "max_tokens": AGENT_MAX_TOKENS, "system": system_blocks,
+            "messages": _messages_with_cache_breakpoint(messages), "tools": cached_tools, "tool_choice": {"type": "none"}}
+    if smart:
+        body.update(thinking={"type": "adaptive"}, output_config={"effort": SMART_MODEL_EFFORT})
+    data = _claude_request(body, timeout=AGENT_ROUND_TIMEOUT_S)
+    if not data:
+        return ""
+    messages.append({"role": "assistant", "content": data.get("content", [])})
+    return " ".join(b.get("text", "").strip() for b in data.get("content", [])
+                    if b.get("type") == "text" and b.get("text")).strip()
+
+
 def _no_reply_fallback(last_result: str, used_tool_names: list[str]) -> str:
     """What to say when the model ended with tool calls and no text. A short, readable result (a staged
     confirmation, "Cancelled reminder #3.") is used as is; raw output (shell exit codes, screen dumps, JSON) is
@@ -12229,6 +12259,12 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             # Switched without thinking: earlier assistant turns have no thinking blocks to echo back.
             model, escalated = esc_model, True
             log.info("A tool failed; escalating the rest of this command to %s", model)
+    else:
+        # Every step went on tool calls and the model never answered: one final round with tools off.
+        log.warning("Agent loop used all %d steps; asking for an answer from what was gathered.", MAX_AGENT_ITERATIONS)
+        wrap = _steps_used_up_reply(model, system_blocks, messages, cached_tools, smart)
+        if wrap:
+            reply_parts.append(wrap)
 
     reply = " ".join(p.strip() for p in reply_parts if p.strip())
     if (
