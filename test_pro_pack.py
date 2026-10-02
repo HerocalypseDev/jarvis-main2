@@ -269,3 +269,13 @@ def test_creator_pack_makes_honest_drafts_and_never_sends():
     reply = _skill("creator_customer_reply")["instructions"]
     assert "Never promise a refund" in reply and "do not send anything" in reply
     assert "Content plan: <YYYY-MM-DD> / <platform> / <short title> / status idea" in _skill("creator_content_plan")["instructions"]
+
+
+def test_scheduler_only_adds_events_after_a_yes_and_the_review_is_gated():
+    plan = _skill("plan_my_week")["instructions"]
+    assert "Never create events or reminders before that yes" in plan
+    assert "Week plan: <YYYY>-W<week number>" in plan
+    assert "repeat_every_minutes 10080" in _skill("habit_blocks")["instructions"]
+    review = _skill("week_review")
+    assert review["schedule"] == {"daily_at": "17:00", "days": "fri", "requires_fact": "Week plan:"}
+    assert "NO spoken reply" in review["instructions"] and "Never create, move or cancel" in review["instructions"]

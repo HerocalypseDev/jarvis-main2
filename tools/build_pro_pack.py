@@ -101,6 +101,11 @@ Creator / Seller pack:
   "Reply to this customer" (copy their message first; a draft only, nothing is sent)
   "Tell me when I make a sale"                 (Selar/Paystack sale emails -> a reminder; created switched OFF)
 
+Smart Scheduler pack:
+  "Plan my week"                               (focus blocks around your calendar; added only after you say yes)
+  "Add gym Monday, Wednesday and Friday at 6pm" / "What habits do I have?" / "Stop my gym habit"
+  (after you plan a week, Jarvis gives a one-line review on Friday at 5pm)
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 
