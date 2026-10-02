@@ -445,8 +445,8 @@ def test_daily_plan_skips_commitments_something_else_already_handles(J, monkeypa
 
 
 def test_overdue_commitments_show_in_list_reminders_and_a_fake_clear_is_caught(J, monkeypatch):
-    """Found live 2026-10-02: "remove all overdue reminders about my post-UTME exam" ran list_reminders ("No upcoming
-    reminders"), Jarvis replied "I've cleared those old reminders", and the briefing kept saying "overdue: Post-UTME
+    """Found live 2026-10-02: "remove all overdue reminders about my entrance exam" ran list_reminders ("No upcoming
+    reminders"), Jarvis replied "I've cleared those old reminders", and the briefing kept saying "overdue: entrance
     exam results come out": those lines are autonomy commitments, which nothing had closed."""
     a = J.autonomy
     a.configure(J._autonomy_callbacks())
@@ -455,10 +455,10 @@ def test_overdue_commitments_show_in_list_reminders_and_a_fake_clear_is_caught(J
     monkeypatch.setattr(J, "_dashboard_get_pending", lambda: None)
     monkeypatch.setattr(J, "_current_command_source", lambda: "dashboard")
     past = (datetime.now() - timedelta(days=2)).isoformat(timespec="seconds")
-    cid = a._insert_commitment({}, "task", "Post-UTME exam results come out", "user", past, "q", 0.9, "conversation", "")
+    cid = a._insert_commitment({}, "task", "entrance exam results come out", "user", past, "q", 0.9, "conversation", "")
     listed = J.list_reminders(True)
     assert listed.startswith("No upcoming reminders.")
-    assert f"commitment #{cid} (overdue): Post-UTME exam results come out" in listed and "cancel_commitment" in listed
+    assert f"commitment #{cid} (overdue): entrance exam results come out" in listed and "cancel_commitment" in listed
     # claiming it was cleared with only a look-up behind it is caught; closing the commitment backs it
     reply = "I've cleared those old reminders and updated your records."
     assert J._unbacked_claims(reply, ["list_reminders", "memory_search", "remember_fact"]) == ["clear those"]
