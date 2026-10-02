@@ -192,6 +192,8 @@ def to_request(body: dict, model: str, think: bool = True) -> dict:
     tools = convert_tools(body.get("tools") or [])
     if tools:
         req["tools"] = tools
+        if (body.get("tool_choice") or {}).get("type") == "none":  # answer in words only (agent step limit)
+            req["toolConfig"] = {"functionCallingConfig": {"mode": "NONE"}}
     gen: dict = {"maxOutputTokens": int(body.get("max_tokens") or 1024)}
     tc = thinking_config(model) if think else None
     if tc:
