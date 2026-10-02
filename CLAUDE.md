@@ -2239,8 +2239,8 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   (so it is never auto-released); a marker that skipped the requirements list is flagged; the teacher's reply now starts with "The work shows: ...".
   Residual: a model can still misjudge what a file contains (a lite Gemini model most of all); the saved mark is only as good as its `evidence`
   line, which is why it is shown, and marks stay unreleased unless asked. A mark Jarvis already saved (marked_by jarvis) can be redone by marking again.
-- **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
-  (needs ANTHROPIC credit), voice use end to end.
+- **Live use (2026-10-02)**: the owner has been using it against the real app and reports everything works (tools, attendance included).
+  Not separately checked by a session: which marking backend answered on the PC.
 
 ## Hand-off guard (2026-09-25)
 
