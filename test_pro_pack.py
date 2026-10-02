@@ -317,3 +317,17 @@ def test_every_theme_keeps_text_readable_and_never_uses_a_red_accent():
         assert ratio(tokens["--color-on-accent"], tokens["--color-accent"]) >= 4.5, path.name
         r, g, b = (int(tokens["--color-accent"][i:i + 2], 16) for i in (1, 3, 5))
         assert not (r > 180 and g < 110 and b < 130), path.name  # a red accent would look like a danger warning
+
+
+def test_home_widgets_are_valid_specs_with_unique_ids():
+    import jarvis_pro
+    specs = json.loads((PACK / "widgets" / "home.json").read_text(encoding="utf-8"))
+    assert 1 <= len(specs) <= jarvis_pro.MAX_WIDGETS
+    ids = []
+    for spec in specs:
+        clean, why = jarvis_pro.validate_widget(spec)
+        assert clean is not None, (spec, why)
+        assert set(spec) <= set(clean) and all(clean[k] == v for k, v in spec.items()), f"{spec['id']}: changed by the loader"
+        ids.append(clean["id"])
+    assert len(ids) == len(set(ids))
+    assert "widgets" in json.loads((PACK / "manifest.json").read_text(encoding="utf-8"))["packs"]

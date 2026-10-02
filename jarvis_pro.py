@@ -7,6 +7,7 @@ download buyers get on Selar:
     pro/skills/*.json      extra skills, same format as skills/*.json
     pro/themes/*.css       dashboard colour themes (only :root colour tokens are used, see theme_css)
     pro/macros/*.json      routines: voice macros limited to low-risk tools (jarvis_macros.PACK_ALLOWED_TOOLS)
+    pro/widgets/*.json     Home dashboard widgets: data specs only (fixed types/sources, see validate_widget)
 
 It only switches on with a valid license key (jarvis_license). Without one, Jarvis runs exactly as
 the free version: nothing here changes behaviour. Pro skills go through the normal skill path, so
@@ -140,6 +141,67 @@ def theme_css(theme_id: str) -> str | None:
     if not tokens or not _readable(tokens):
         return None
     return ":root {\n" + "\n".join(f"  {k}: {v};" for k, v in tokens.items()) + "\n}\n"
+
+
+WIDGET_TYPES = ("list", "countdown", "score_trend", "board", "stat")
+WIDGET_SOURCES = ("facts", "reminders", "meetings")
+_WIDGET_ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
+_PREFIX_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]{0,30}:$")
+MAX_WIDGETS = 12
+
+
+def validate_widget(spec) -> tuple[dict | None, str]:
+    """(clean spec, "") or (None, reason). Only these keys are kept; everything else in a pack's spec is ignored,
+    so a widget can never carry markup, script, a SQL fragment or a path. The dashboard draws each type itself."""
+    if not isinstance(spec, dict):
+        return None, "a widget must be an object"
+    wid, title = str(spec.get("id") or ""), " ".join(str(spec.get("title") or "").split())
+    kind, source = spec.get("type"), spec.get("source")
+    if not _WIDGET_ID_RE.match(wid):
+        return None, f"bad widget id {wid!r}"
+    if not title or len(title) > 60 or "<" in title or ">" in title:
+        return None, f"{wid}: title must be 1-60 characters of plain text"
+    if kind not in WIDGET_TYPES:
+        return None, f"{wid}: type must be one of {', '.join(WIDGET_TYPES)}"
+    if source not in WIDGET_SOURCES:
+        return None, f"{wid}: source must be one of {', '.join(WIDGET_SOURCES)}"
+    prefix = str(spec.get("prefix") or "")
+    if source == "facts" and not _PREFIX_RE.match(prefix):
+        return None, f"{wid}: a facts widget needs a prefix like 'Exam score:'"
+    try:
+        limit = int(spec.get("limit") or 5)
+    except (TypeError, ValueError):
+        return None, f"{wid}: limit must be a number"
+    clean = {"id": wid, "title": title, "type": kind, "source": source, "limit": max(1, min(20, limit))}
+    if source == "facts":
+        clean["prefix"] = prefix
+    return clean, ""
+
+
+def widget_specs(log=None) -> list[dict]:
+    """Validated widget specs from pro/widgets/*.json (only with a valid key). A bad spec is skipped, never fatal."""
+    if not active():
+        return []
+    folder = pro_dir() / "widgets"
+    out, seen = [], set()
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            if log:
+                log(f"Pro widgets: {path.name} is not valid JSON; skipped.")
+            continue
+        for spec in data if isinstance(data, list) else [data]:
+            clean, why = validate_widget(spec)
+            if not clean:
+                if log:
+                    log(f"Pro widgets: {path.name}: {why}; skipped.")
+                continue
+            if clean["id"] in seen or len(out) >= MAX_WIDGETS:
+                continue
+            seen.add(clean["id"])
+            out.append(clean)
+    return out
 
 
 def status() -> dict:

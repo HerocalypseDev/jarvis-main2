@@ -1072,3 +1072,25 @@ p.consent-list { padding-left: 0; }
 .sidebar-extra .nav-link[href*="7e2611t04t"] .nav-icon { color: var(--color-error); }
 .sidebar-extra .nav-link[href*="1954zy6955"] .nav-icon { color: var(--color-warning); }
 .pro-theme-row { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-text-secondary); margin: var(--space-2) 0; }
+
+/* --- Jarvis4U Pro Home widgets (drawn by features.js from /api/feature/pro_widgets) ------------------- */
+.pill-pro { background: var(--color-accent-soft); color: var(--color-accent); border: 1px solid var(--color-accent-dim); }
+.pro-widgets { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-3, 12px); align-items: start; }
+.pro-widget { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-md, 8px);
+  padding: var(--space-3, 12px); min-width: 0; }
+.pro-widget.pro-w-board { grid-column: 1 / -1; }
+.pro-widget-title { margin: 0 0 var(--space-2, 8px); font-size: 0.85rem; color: var(--color-text-secondary);
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.pro-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2, 8px); }
+.pro-row > span:first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
+.pro-row > span:last-child:not(:first-child) { flex: 0 0 auto; }
+.pro-days { color: var(--color-accent); font-weight: 600; white-space: nowrap; }
+.pro-score { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pro-stat { display: flex; align-items: baseline; gap: var(--space-2, 8px); flex-wrap: wrap; }
+.pro-stat-value { font-size: 2rem; font-weight: 700; color: var(--color-accent); }
+.pro-board { display: flex; flex-wrap: wrap; gap: var(--space-2, 8px); }
+.pro-col { flex: 1 1 140px; min-width: 140px; background: var(--color-bg-secondary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px); padding: var(--space-2, 8px); }
+.pro-col-head { font-weight: 600; text-transform: capitalize; margin-bottom: 6px; }
+.pro-card { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-sm, 6px);
+  padding: 6px 8px; margin-top: 6px; font-size: 0.9rem; overflow-wrap: anywhere; }
