@@ -1775,7 +1775,8 @@ row there each phase rather than only stating the total in chat.
 | 132 (Creator/Seller pack: product page copy, captions, 7-day content plan tracked in memory, customer reply drafts, sale-alert recipe (starts off); pack 1.9.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 133 (Smart Scheduler pack: plan-my-week focus blocks added only after a yes, weekly habit reminders, gated Friday review; pack 1.10.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 134 (Gamer pack: Game mode routine, gaming sessions with break reminders, patch-note summaries with sources, Discord post drafts, Roblox dev help; pack 1.11.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~3959 min** | **~$258.35–$363.35** |
+| 135 (Pro themes Naija, Festive, Ocean (light theme dropped: the locked danger red is only ~3:1 on white); contrast test now covers every theme; pack 1.12.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
+| **Running total (final)** | | **~3974 min** | **~$259.35–$364.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

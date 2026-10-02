@@ -1,0 +1,21 @@
+/* Jarvis4U Pro theme: Naija. Token overrides only. */
+/* name: Naija */
+:root {
+  --color-bg-primary: #03100a;
+  --color-bg-secondary: #071a11;
+  --color-bg-tertiary: #0b2418;
+  --color-bg-inset: #020b07;
+  --color-bg-hover: #0f2c1e;
+  --color-bg-shine: #133524;
+  --color-border: #164a31;
+  --color-border-strong: #1f6b45;
+  --color-text-primary: #eefbf3;
+  --color-text-secondary: #bfe3cd;
+  --color-text-muted: #86b399;
+  --color-accent: #1fd178;
+  --color-accent-dim: #127a46;
+  --color-accent-hover: #4fe196;
+  --color-on-accent: #02140a;
+  --color-accent-soft: rgba(31, 209, 120, 0.12);
+  --shadow-glow: 0 0 12px rgba(31, 209, 120, 0.35);
+}
