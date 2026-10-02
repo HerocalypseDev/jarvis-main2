@@ -353,7 +353,7 @@ def test_homework_files_never_go_public():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     for name in ("homework_api.py", "homework_marker.py", "homework_mcp_server.py", "test_homework.py",
-                 "homework_guide.py", "homework_curriculum.json"):
+                 "homework_guide.py", "homework_curriculum.json", "homework_gate.py"):
         assert any(name.startswith(p) for p in mod.EXCLUDE), name
 
 
@@ -898,3 +898,17 @@ def test_reject_or_expiry_clears_the_whole_batch(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis.dashboard, "end_session", lambda *a, **k: None)
     jarvis._handle_text_command_impl("yes", None, {"tone": "neutral", "confidence": 0}, "voice")
     assert ran == [] and jarvis._pending_action is None
+
+
+def test_public_jarvis_py_holds_no_homework_app_code(jarvis, monkeypatch):
+    """The owner chose (2026-10-02) to keep the homework app out of the public copy: its confirmation tier lives in the
+    private homework_gate.py, loaded through jarvis.py's generic "*_gate.py" add-on hook."""
+    from pathlib import Path
+    src = Path(jarvis.__file__).read_text(encoding="utf-8").lower()
+    assert "learnai" not in src and "delete_homework" not in src and "student_password" not in src
+    assert any(g.__name__ == "homework_gate" for g in jarvis._CONFIRM_GATES)
+    ran = []
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(name) or "done")
+    monkeypatch.setattr(jarvis, "_CONFIRM_GATES", [])          # the public copy: no gate files -> nothing extra staged
+    assert jarvis._execute_tool_impl("mcp_homework_delete_homework", {"homework_id": "h1"}, "t") == "done"
+    assert ran == ["mcp_homework_delete_homework"] and jarvis._pending_action is None

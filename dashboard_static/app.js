@@ -295,7 +295,7 @@ function showPendingDetail(pending) {
   state.followedSessionId = null;
   location.hash = "#/sessions";
   const el = document.getElementById("detail-panel");
-  // A batch (only homework deletes can batch) lists every call, in the order they will run.
+  // A batch (only add-on tools marked batchable, see jarvis.py "Confirmation add-ons") lists every call, in the order they will run.
   const calls = [pending.tool_input].concat(pending.batch || []);
   const inputHtml = calls.length > 1
     ? `<p class="detail-section-label">All ${calls.length} calls (run in this order)</p>

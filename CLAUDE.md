@@ -1767,7 +1767,8 @@ row there each phase rather than only stating the total in chat.
 | 124 (overdue exam items "cleared" but still in the briefing: list_reminders shows the open commitments behind "overdue" with how to close them, claim check for a fake "I've cleared them"; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 125 (Word-table job died at "I used 12 steps": read_file reads .docx (with tables)/.pdf/.pptx, step limit configurable, a used-up limit ends in an answer from what was gathered (tools off, Gemini/Ollama too); 2 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 126 (hourly Gmail check re-announced the same unread mail: scheduled skills only see mail their earlier runs haven't seen, remembered only after a successful run; skill names the right Gmail tool; 2 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3819 min** | **~$247.35–$347.65** |
+| 127 (homework-app confirmation code moved out of the public jarvis.py into a private `homework_gate.py` behind a generic `*_gate.py` add-on hook; 1 new test) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~3839 min** | **~$248.85–$349.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2166,12 +2167,15 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
 - **Never shown, stored or logged**: the token, signed file links (downloaded once in memory, only name/type/size shown), a password
   (`set_student_password` never echoes it; `_redact_audit_input` hides any `*password*` value in `action_audit`).
 - **Confirmation**: `mcp_homework_delete_homework` and `mcp_homework_set_student_password` are staged by the existing gate
-  (`_HOMEWORK_CONFIRM` / `_homework_confirm_reason` in the `mcp_` branch of `_execute_tool_impl`): spoken yes or dashboard Approve, same
-  `skip_confirmation` re-run, nothing reimplemented. Everything else runs directly.
+  (spoken yes or dashboard Approve, same `skip_confirmation` re-run, nothing reimplemented). Everything else runs directly.
+  **Since 2026-10-02 this lives in the private `homework_gate.py`**, loaded by jarvis.py's generic "Confirmation add-ons" hook
+  (`_load_confirm_gates` imports every `*_gate.py` beside jarvis.py; `_gate_for` / `_addon_confirm_reason` /
+  `_batch_pending_call` / `_run_confirmed_batch`), so the public jarvis.py holds no homework-app code (owner's choice; pinned by
+  `test_public_jarvis_py_holds_no_homework_app_code`). Don't put homework names or tool names back into jarvis.py.
 - **Several deletes, one yes (2026-10-02)**: "delete these 3 homeworks" staged the first and dropped the rest ("Another
-  confirmation is already pending"). Now ONLY a homework delete can join a pending homework delete (`_batch_homework_delete`):
+  confirmation is already pending"). Now ONLY a homework delete can join a pending homework delete (`_batch_pending_call` + `BATCH_MAX` in `homework_gate.py`):
   extra inputs go in the pending action's `batch` list (main `tool_input` = first), same tool name, same source and still inside
-  `PENDING_ACTION_TTL_S` (a stale one is never revived), duplicate homework_id skipped, max `HOMEWORK_DELETE_BATCH_MAX` (10)
+  `PENDING_ACTION_TTL_S` (a stale one is never revived), duplicate homework_id skipped, max 10 (`BATCH_MAX`)
   in total. Every append sets a new `queued_at` (so a dashboard Approve of the version reviewed earlier runs nothing) and restarts
   the TTL. A yes / Approve runs each call in order through `_execute_tool(..., skip_confirmation=True)`, each with its own
   `confirm_title`; a failure doesn't stop the rest; one summary ("Deleted 3 homeworks." / "Deleted 2 of 3 ... Not deleted: ...").
