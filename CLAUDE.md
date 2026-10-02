@@ -1576,6 +1576,12 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   elsewhere (`handled_by_tool`/`covered_by`/`executor=jarvis`; the reminder/calendar/job shows them while live),
   and `cancel_reminder` also cancels the open commitment about the same thing (`_close_commitments_for_reminder`,
   same 60% content-word rule). Test at the end of `test_executive.py`.
+- **"Cleared" overdue items that were never cleared (2026-10-02, debug report)**: "remove all overdue reminders about my post-UTME
+  exam" ran `list_reminders` ("No upcoming reminders"), then Jarvis said "I've cleared those old reminders" while the briefing kept
+  "overdue: Post-UTME exam results come out" (autonomy commitments, never closed). `list_reminders` now appends the open commitments
+  the briefing lists (`_briefing_deadline_commitments`, shared with the briefing's deadlines fetcher) with their ids and "use the
+  autonomy tool cancel_commitment/complete_commitment"; a new claim-checker entry "clear those" catches "I've cleared/removed ...
+  reminders/deadlines/overdue items" with no cancel/complete/autonomy tool behind it. Test at the end of `test_executive.py`.
 
 ## Smarter + autonomous batch (2026-09-28)
 
@@ -1758,7 +1764,8 @@ row there each phase rather than only stating the total in chat.
 | 121 (new 24-page Teacher's Guide: each homework now has a complete Version A and Version B with an answer key; curriculum data rebuilt per version and cross-checked word for word and key by key against the PDF, answer key moved to private marking notes, question matching tolerant of older-edition questions with in-place correction (never deleting answers); 3 tests changed, 2 new) | Sonnet 5.5 | ~30 min | ~$2.00–$3.00 |
 | 122 (an unrelated landscape picture handed in for the AI-audit table task scored 55/60: the marker now lists the task's requirements and describes the file literally, the task mark is capped in code by the share of requirements met, work that isn't the task is flagged and never auto-released, the teacher sees what the file showed; 6 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
 | 123 (several homework deletes staged as one batch behind one yes: homework-delete-only, cap 10, dedupe, new queued_at per append, one combined summary, Review view lists every call; 7 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3759 min** | **~$242.65–$340.95** |
+| 124 (overdue exam items "cleared" but still in the briefing: list_reminders shows the open commitments behind "overdue" with how to close them, claim check for a fake "I've cleared them"; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~3774 min** | **~$243.85–$342.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

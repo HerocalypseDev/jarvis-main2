@@ -5024,14 +5024,52 @@ def list_reminders(include_delivered: bool = False) -> str:
             rows = conn.execute(sql).fetchall()
         finally:
             conn.close()
-    if not rows:
-        return "No upcoming reminders."
     lines = []
     for rid, text, due_at, repeat, delivered_at in rows:
         tag = " [delivered]" if delivered_at else ""
         repeat_note = f", repeating every {repeat:.0f} min" if repeat else ""
         lines.append(f"#{rid} at {due_at}{repeat_note}: {text}{tag}")
-    return "\n".join(lines)
+    out = "\n".join(lines) if lines else "No upcoming reminders."
+    return out + _tracked_deadlines_note()
+
+
+def _briefing_deadline_commitments(now: datetime | None = None, horizon_h: float = 24) -> list[dict]:
+    """The open autonomy commitments the briefing / "what's urgent" list as deadlines ("overdue: X"): due within
+    horizon_h or already past, not quarantined, and not already shown by a reminder/calendar event/Jarvis job."""
+    if not autonomy.enabled():
+        return []
+    now = now or datetime.now()
+    out = []
+    for c in autonomy.status()["commitments"]:
+        if c.get("quarantined") or _commitment_handled_elsewhere(c):
+            continue
+        due = briefing._when(c.get("deadline_iso") or "")
+        if due is not None and due <= now + timedelta(hours=horizon_h):
+            out.append(c)
+    return out
+
+
+def _tracked_deadlines_note() -> str:
+    """Found live (2026-10-02): "remove all overdue reminders about my exam" listed reminders, found none, and
+    Jarvis said it had cleared them, while the briefing kept saying "overdue: Post-UTME exam results come out".
+    Those lines are autonomy commitments, not reminders, so list_reminders now shows them with how to close them."""
+    try:
+        rows = _briefing_deadline_commitments()
+    except Exception as e:
+        log.debug("tracked deadlines for list_reminders failed: %s", e)
+        return ""
+    if not rows:
+        return ""
+    now = datetime.now()
+    lines = []
+    for c in rows[:15]:
+        due = briefing._when(c.get("deadline_iso") or "")
+        when = "overdue" if due and due < now else f"due {c.get('deadline_iso')}"
+        lines.append(f"commitment #{c['id']} ({when}): {(c.get('description') or c.get('title') or '')[:100]}")
+    return ("\n\nAlso tracked deadlines (these are what the briefing and \"what's urgent\" call overdue/due; they are "
+            "autonomy commitments, NOT reminders, so cancel_reminder can't clear them. To clear one, call the autonomy "
+            "tool with action cancel_commitment (no longer needed) or complete_commitment (done) and its id):\n"
+            + "\n".join(lines))
 
 
 def _commitment_handled_elsewhere(c: dict) -> bool:
@@ -7342,13 +7380,9 @@ def _briefing_fetchers(kind: str, now: datetime) -> dict:
         return briefing.mail_items([m for m in sleep_mail.parse_search(found) if m.get("sender") not in own])
 
     def deadlines():
-        if not autonomy.enabled():
-            return []
         # A commitment a reminder / calendar event / Jarvis job already handles is shown by that thing while
         # it is live; listing it here too kept "overdue: X" up after the reminder fired or was cleared.
-        rows = [c for c in autonomy.status()["commitments"] if not c.get("quarantined")
-                and not _commitment_handled_elsewhere(c)]
-        return briefing.deadline_items(rows, now, 24)
+        return briefing.deadline_items(_briefing_deadline_commitments(now, 24), now, 24)
 
     def needs_you():
         if not autonomy.enabled():
@@ -10454,6 +10488,12 @@ _ACTION_CLAIMS = [
                 r"[^.!?]{0,110}\b(?:form|fields?|box(?:es)?|space|answer boxes|browser|page|screen|text ?box|application|answers?)\b"
                 r"|\b(?:form|fields?|answers?) (?:has been |have been |was |were |is |are )?(?:filled|typed|written|entered)\b", re.I),
      re.compile(r"type|fill|multiedit|paste|write_file", re.I)),  # write_file: "I've written the answer down in a note"
+    ("clear those",  # found live 2026-10-02: "I've cleared those old reminders" after only list_reminders ran
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:cleared|removed|deleted|cancelled|canceled|dismissed|closed|wiped)\b"
+                r"[^.!?]{0,40}\b(?:reminders?|deadlines?|overdue|commitments?|items?|tasks?|alerts?)\b"
+                r"|\b(?:reminders?|deadlines?|commitments?|overdue items?)\b (?:have been |has been |were |was |are |is )?"
+                r"(?:cleared|removed|deleted|cancelled|canceled|closed)\b", re.I),
+     re.compile(r"cancel|complete|delete|remove|clear|autonomy|forget|dismiss", re.I)),
     ("remember that",
      re.compile(r"\bi'?ll remember\b|\b(?:i'?ve|i have)\s+(?:noted|remembered|saved)\b[^.!?]{0,20}\b(?:that|it|this)\b"
                 r"[^.!?]{0,20}\b(?:memory|remember)?", re.I),
