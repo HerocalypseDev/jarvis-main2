@@ -1,0 +1,21 @@
+/* Jarvis4U Pro theme: Ocean. Token overrides only. */
+/* name: Ocean */
+:root {
+  --color-bg-primary: #02101a;
+  --color-bg-secondary: #061a26;
+  --color-bg-tertiary: #0a2432;
+  --color-bg-inset: #010b12;
+  --color-bg-hover: #0e2d3d;
+  --color-bg-shine: #113647;
+  --color-border: #134a5e;
+  --color-border-strong: #1c6a82;
+  --color-text-primary: #e6f8fb;
+  --color-text-secondary: #b3dbe3;
+  --color-text-muted: #7fb0bc;
+  --color-accent: #22d3c5;
+  --color-accent-dim: #127a72;
+  --color-accent-hover: #5ae3d8;
+  --color-on-accent: #01141a;
+  --color-accent-soft: rgba(34, 211, 197, 0.12);
+  --shadow-glow: 0 0 12px rgba(34, 211, 197, 0.35);
+}

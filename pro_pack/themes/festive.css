@@ -1,0 +1,22 @@
+/* Jarvis4U Pro theme: Festive. Token overrides only. Gold on deep evergreen; no red accent, so normal
+   buttons never look like the (locked) red danger colour. */
+/* name: Festive */
+:root {
+  --color-bg-primary: #07120c;
+  --color-bg-secondary: #0c1b13;
+  --color-bg-tertiary: #11241a;
+  --color-bg-inset: #040c08;
+  --color-bg-hover: #162d21;
+  --color-bg-shine: #1b3527;
+  --color-border: #2d4a2a;
+  --color-border-strong: #5b6b2e;
+  --color-text-primary: #fdf6e3;
+  --color-text-secondary: #e9dcb8;
+  --color-text-muted: #b9ab83;
+  --color-accent: #f2c14e;
+  --color-accent-dim: #8a6a1f;
+  --color-accent-hover: #f7d27c;
+  --color-on-accent: #1a1200;
+  --color-accent-soft: rgba(242, 193, 78, 0.12);
+  --shadow-glow: 0 0 12px rgba(242, 193, 78, 0.35);
+}

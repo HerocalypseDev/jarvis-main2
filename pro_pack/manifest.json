@@ -1,19 +1,29 @@
 {
   "name": "Jarvis4U Pro",
-  "version": "1.5.1",
+  "version": "2.0.0",
   "packs": [
     "student",
     "developer",
     "work",
     "routines",
     "research",
-    "recipes"
+    "recipes",
+    "exam",
+    "meetings",
+    "jobs",
+    "creator",
+    "scheduler",
+    "gamer",
+    "widgets"
   ],
   "themes": [
     "stark",
     "ultraviolet",
     "emerald",
     "solar",
-    "mono"
+    "mono",
+    "naija",
+    "festive",
+    "ocean"
   ]
 }

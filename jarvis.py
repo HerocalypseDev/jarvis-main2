@@ -106,6 +106,7 @@ import jarvis_speedtest as speedtest
 import jarvis_settings as settings
 import jarvis_license as license_mod
 import jarvis_pro as pro
+import jarvis_pro_widgets as pro_widgets
 import jarvis_clipboard_history as clip_history
 import jarvis_everything as everything
 import jarvis_macros as macros
@@ -6706,6 +6707,49 @@ def _feature_license(action: str, payload: dict):
         _log_action_audit("pro_license", {"action": "deactivate"}, "(dashboard)", "removed")
         return {"ok": True, **pro.status()}
     raise ValueError(f"unknown action {action!r}")
+
+
+def _pro_widget_rows(source: str, prefix: str = "") -> list:
+    """Read-only rows for a Pro widget source. `prefix` is only ever a SQL parameter, never part of the query."""
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            if source == "facts":
+                return [r[0] for r in conn.execute(
+                    "SELECT content FROM memory_facts WHERE superseded_at IS NULL AND substr(content, 1, ?) = ? "
+                    "ORDER BY created_at DESC, id DESC LIMIT 200", (len(prefix), prefix)).fetchall()]
+            if source == "reminders":
+                return [tuple(r) for r in conn.execute(
+                    "SELECT text, due_at FROM reminders WHERE delivered_at IS NULL AND cancelled_at IS NULL "
+                    "ORDER BY due_at LIMIT 20").fetchall()]
+            if source == "meetings":
+                return [tuple(r) for r in conn.execute(
+                    "SELECT title, started_at, status FROM meetings ORDER BY started_at DESC LIMIT 10").fetchall()]
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+    return []
+
+
+@_feature("pro_widgets")
+def _feature_pro_widgets(action: str, payload: dict):
+    """Jarvis4U Pro Home widgets: read-only. Specs come from pro/widgets/*.json (data, validated by
+    jarvis_pro.validate_widget); the rows are read here and computed by jarvis_pro_widgets; the dashboard draws the
+    fixed widget types itself. Without a valid key: inactive and empty, so the free Home page never changes."""
+    if action != "get":
+        raise ValueError(f"unknown action {action!r}")
+    if not pro.active():
+        return {"active": False, "widgets": []}
+    today = datetime.now().date()
+    widgets = []
+    for spec in pro.widget_specs(log=_log_pack_skip_once):
+        try:
+            rows = _pro_widget_rows(spec["source"], spec.get("prefix") or "")
+            widgets.append(pro_widgets.compute(spec, rows, today))
+        except Exception as exc:  # one broken widget never breaks the others or the Home page
+            log.warning("Pro widget %s failed: %s", spec.get("id"), exc)
+    return {"active": True, "widgets": widgets}
 
 
 @_feature("clipboard")

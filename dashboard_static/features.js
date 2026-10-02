@@ -458,3 +458,62 @@ document.getElementById("pro-theme")?.addEventListener("change", (e) => {
   applyProTheme(e.target.value);
 });
 applyProTheme(savedProTheme());
+
+// --- Jarvis4U Pro Home widgets: GET /api/feature/pro_widgets (read-only) ------------------------------
+// The pack only describes widgets (fixed types, fixed read-only sources). Every widget is drawn here by fixed
+// code and every string goes through esc(): no HTML, CSS or script from a pack ever reaches the page.
+function proSparkline(points) {
+  if (!points || points.length < 2) return "";
+  const w = 64, h = 24, step = w / (points.length - 1);
+  const xy = points.map((p, i) => `${(i * step).toFixed(1)},${(h - (Math.max(0, Math.min(100, p)) / 100) * h).toFixed(1)}`);
+  return `<svg class="pro-spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">
+    <polyline points="${xy.join(" ")}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linejoin="round"/></svg>`;
+}
+
+function proWidgetBody(wg) {
+  if (wg.type === "stat") {
+    return `<div class="pro-stat"><span class="pro-stat-value">${esc(String(wg.value))}</span>
+      <span class="muted">${esc(wg.caption || "")}</span></div>`;
+  }
+  if (wg.type === "countdown") {
+    return `<ul class="list compact">${(wg.items || []).map((it) => `<li class="list-item compact pro-row">
+      <span>${esc(it.label)}</span><span class="pro-days">${it.days === 0 ? "today" : esc(String(it.days)) + (it.days === 1 ? " day" : " days")}</span></li>`).join("")}</ul>`;
+  }
+  if (wg.type === "score_trend") {
+    return `<ul class="list compact">${(wg.subjects || []).map((s) => {
+      const delta = s.latest - s.first;
+      const trend = s.sessions > 1 ? ` <span class="muted">(${delta >= 0 ? "+" : ""}${esc(String(delta))})</span>` : "";
+      return `<li class="list-item compact pro-row"><span>${esc(s.subject)}<br><span class="muted">${esc(String(s.sessions))} session${s.sessions === 1 ? "" : "s"}${s.weak ? " · weak: " + esc(s.weak) : ""}</span></span>
+        <span class="pro-score">${proSparkline(s.points)}<strong>${esc(String(s.latest))}%</strong>${trend}</span></li>`;
+    }).join("")}</ul>`;
+  }
+  if (wg.type === "board") {
+    return `<div class="pro-board">${(wg.columns || []).map((c) => `<div class="pro-col">
+      <div class="pro-col-head">${esc(c.status)} <span class="muted">${esc(String(c.count))}</span></div>
+      ${(c.items || []).map((it) => `<div class="pro-card">${esc(it)}</div>`).join("")}</div>`).join("")}</div>`;
+  }
+  return `<ul class="list compact">${(wg.items || []).map((it) => `<li class="list-item compact pro-row">
+    <span>${esc(it.label)}</span>${it.when ? `<span class="muted">${esc(it.when)}</span>` : ""}</li>`).join("")}</ul>`;
+}
+
+async function refreshProWidgets() {
+  const box = document.getElementById("home-pro");
+  const grid = document.getElementById("home-pro-widgets");
+  if (!box || !grid) return;
+  try {
+    const res = await fetch("/api/feature/pro_widgets", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (!data.active) { box.hidden = true; return; }
+    const shown = (data.widgets || []).filter((wg) => !wg.empty);
+    box.hidden = false;
+    grid.innerHTML = shown.length
+      ? shown.map((wg) => `<section class="pro-widget pro-w-${esc(wg.type)}"><h4 class="pro-widget-title">${esc(wg.title)}</h4>${proWidgetBody(wg)}</section>`).join("")
+      : '<p class="muted">Your Pro widgets fill in as you use the packs: save an exam, do a practice test, track a job application or plan your week.</p>';
+  } catch (e) {
+    box.hidden = true;  // widgets are extras: never show a broken Home because of them
+  }
+}
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshProWidgets(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshProWidgets();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshProWidgets(); }, 30000);
