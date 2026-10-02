@@ -297,6 +297,20 @@ Rules:
   - `build_pro_pack.py` now refuses: non-data files, reading skills without `DATA_SENTENCE`, scheduled skills without
     `requires_fact`, agent recipes without `enabled false` or that switch one on, skills that write to autonomy, and
     routines the loader would skip.
+- **Second wave (2026-10-02, PRO_ROADMAP.md "Second wave")**: packs 1.6-1.12 = Exam (JAMB/WAEC/NECO CBT practice,
+  weak topics, study plan, progress, 19:00 drill gated on `Exam score:`), Meeting Memory (decisions, what I owe, recap email
+  draft, pre-brief; transcripts are data), Job Hunt (CV/cover letter never invent experience, tracker), Creator/Seller (copy,
+  captions, content plan, customer reply drafts, `recipe_sale_alert` starts off), Smart Scheduler (plan week only after a yes,
+  habits, Friday review gated on `Week plan:`), Gamer (session breaks, patch notes, Discord drafts, Roblox helper, "Game mode"
+  routine), themes Naija/Festive/Ocean. Packs share fact formats (`Exam:`, `Exam score:`, `Study streak:`, `Job application:`,
+  `Content plan:`, `Habit:`, `Week plan:`), which the widgets read: keep them stable.
+- **P14 Home widgets (pack 2.0.0)**: `pro/widgets/*.json` declares widgets as data only: fixed `type` (list/countdown/
+  score_trend/board/stat) and fixed read-only `source` (facts by a plain `Prefix:`, reminders, meetings);
+  `jarvis_pro.validate_widget` keeps only known keys, max 12. Rows are read by `jarvis._pro_widget_rows` (parameterised SELECTs),
+  computed by `jarvis_pro_widgets.compute` (pure), served by `@_feature("pro_widgets")` (get only; `{"active": false}` without a
+  key) and drawn by fixed code in `features.js` with `esc()` ("Your progress" block on Home, empty widgets hidden, 30 s poll).
+  Nothing from a pack is executed or inserted as HTML. Risk: same data the Memory route already shows, same Host/Origin guard.
+  Tests: `test_pro_widgets.py` (9), `test_pro_pack.py` widget spec test. Headless check at 1440/390 px with seeded data.
 - Not built yet (don't advertise): early access, the installer, and anything past the phase last shipped.
 
 ## Speech shaping (2026-09-18)
@@ -1776,7 +1790,8 @@ row there each phase rather than only stating the total in chat.
 | 133 (Smart Scheduler pack: plan-my-week focus blocks added only after a yes, weekly habit reminders, gated Friday review; pack 1.10.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 134 (Gamer pack: Game mode routine, gaming sessions with break reminders, patch-note summaries with sources, Discord post drafts, Roblox dev help; pack 1.11.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 135 (Pro themes Naija, Festive, Ocean (light theme dropped: the locked danger red is only ~3:1 on white); contrast test now covers every theme; pack 1.12.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
-| **Running total (final)** | | **~3974 min** | **~$259.35–$364.75** |
+| 136 (Pro Phase 14: Home widgets (fixed widget types/sources as pack data, computed read-only in the core, drawn with escaped fixed JS, key-gated route; headless check at 1440/390 px; 9 + 1 new tests)) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
+| **Running total (final)** | | **~4024 min** | **~$263.35–$370.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

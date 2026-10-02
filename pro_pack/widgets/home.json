@@ -1,0 +1,11 @@
+[
+  {"id": "exams", "title": "Exams coming up", "type": "countdown", "source": "facts", "prefix": "Exam:", "limit": 4},
+  {"id": "streak", "title": "Study streak", "type": "stat", "source": "facts", "prefix": "Study streak:"},
+  {"id": "scores", "title": "Practice scores", "type": "score_trend", "source": "facts", "prefix": "Exam score:", "limit": 4},
+  {"id": "week", "title": "This week", "type": "list", "source": "facts", "prefix": "Week plan:", "limit": 1},
+  {"id": "upcoming", "title": "Coming up", "type": "list", "source": "reminders", "limit": 5},
+  {"id": "habits", "title": "Habits", "type": "list", "source": "facts", "prefix": "Habit:", "limit": 5},
+  {"id": "meetings", "title": "Recent meetings", "type": "list", "source": "meetings", "limit": 3},
+  {"id": "jobs", "title": "Job applications", "type": "board", "source": "facts", "prefix": "Job application:", "limit": 6},
+  {"id": "content", "title": "Content plan", "type": "board", "source": "facts", "prefix": "Content plan:", "limit": 5}
+]
