@@ -1754,7 +1754,8 @@ row there each phase rather than only stating the total in chat.
 | 117 (barge-in glitch: the mic loop called _interrupt_speech on every audio block while the key was held (DB write + log each time), and a streamed sentence was only stopped at its next network chunk; now once-per-press stats and an immediate abort of the active OutputStream; 1 new test) | Sonnet 5.5 | ~15 min | ~$1.00–$1.50 |
 | 118 (homework creation from the Teacher's Guide: only 3 of 6 questions added and Version A/B text in the tasks; new add_questions tool (whole quiz in one call), every add reports what is still to set up, Version labels stripped from prompts/options/tasks in code; 4 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
 | 119 (Teacher's Guide as data: all 8 homeworks (quiz, short answers, tasks, marking notes) + 4 lessons extracted from the PDF into `homework_curriculum.json`; new tools guide_overview/guide_homework/guide_lesson/add_guide_questions/create_guide_homework; homework_admin skill updated; 7 new tests) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
-| **Running total (final)** | | **~3669 min** | **~$236.15–$331.35** |
+| 120 (debug report: "credit balance too low" when marking while Jarvis ran on Gemini: marking now follows Jarvis's brain (Gemini when it is the provider, or when no Anthropic key), falls back to Gemini when Claude has no credit/key, Gemini marks are saved but never auto-released; 5 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~3689 min** | **~$237.65–$333.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2196,6 +2197,14 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   which tool to call (skill context budget can drop skills, so the tool descriptions carry the same guidance). If the guide changes, regenerate
   the JSON (it is plain data; keep 6 x 5 points + two 10-point short answers per homework). Homework 1 already created in the app from the earlier
   run (3 questions, "Version A:" task text) can be completed with `add_guide_questions(homework_id, replace_tasks=true)`.
+- **Marking on Gemini (2026-10-02 debug report)**: "can you mark it" failed with "credit balance is too low" while Jarvis ran on Gemini, because
+  marking is its own Claude call inside the MCP server (`ANTHROPIC_API_KEY`), separate from the brain. `homework_marker.ask_model` now picks
+  the backend (`marking_backend()`): `HOMEWORK_MARKING_BACKEND` auto|claude|gemini (default auto = Jarvis's provider from `llm_provider.json`
+  / `JARVIS_LLM_PROVIDER`; no Anthropic key but a Gemini key also means Gemini), and in auto a Claude account failure (credit, key, rate
+  limit, unreachable) retries the same request on Gemini (`jarvis_gemini.call`, files go in as inline data, JSON parsed from text and
+  coerced). `HOMEWORK_GEMINI_MODEL` can name a stronger Gemini model for marking (default: the brain's model; a lite model with minimal
+  thinking marks less carefully). **A Gemini mark is saved but never auto-released** (flagged "marked with Gemini ... read before releasing";
+  `HOMEWORK_GEMINI_AUTO_RELEASE=1` lifts that); usage is logged under the model that answered. Not verified live (needs the real app + key).
 - **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
   (needs ANTHROPIC credit), voice use end to end.
 

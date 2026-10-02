@@ -322,11 +322,14 @@ def make_client():
     return anthropic.Anthropic(timeout=180, max_retries=2)
 
 
-def ask_model(blocks: list[dict], client=None) -> tuple[dict | None, str, dict]:
+def ask_claude(blocks: list[dict], client=None) -> tuple[dict | None, str, dict]:
     """(parsed marks or None, problem text, usage dict). One tool-less call, structured JSON back."""
     import anthropic
 
-    client = client or make_client()
+    try:
+        client = client or make_client()
+    except Exception:  # no ANTHROPIC_API_KEY at all
+        return None, "no Anthropic API key is set (ANTHROPIC_API_KEY)", {}
     model = model_name()
     request = dict(
         model=model,
@@ -361,6 +364,7 @@ def ask_model(blocks: list[dict], client=None) -> tuple[dict | None, str, dict]:
             continue
         break
     usage = response.usage.to_dict() if hasattr(response.usage, "to_dict") else dict(response.usage or {})
+    usage = {**usage, "_backend": "claude", "_model": model}
     if response.stop_reason == "refusal":
         return None, "Claude declined to mark this one", usage
     if response.stop_reason == "max_tokens":
@@ -370,6 +374,133 @@ def ask_model(blocks: list[dict], client=None) -> tuple[dict | None, str, dict]:
         return json.loads(text), "", usage
     except ValueError:
         return None, "the marking answer wasn't readable", usage
+
+
+# ---- which brain marks (2026-10-02): the same one Jarvis is using, so a Gemini setup needs no Anthropic credit
+def marking_setting() -> str:
+    v = (os.environ.get("HOMEWORK_MARKING_BACKEND") or "auto").strip().lower()
+    return v if v in ("auto", "claude", "gemini") else "auto"
+
+
+def gemini_ready() -> bool:
+    try:
+        import jarvis_gemini
+        return bool(jarvis_gemini.api_key())
+    except Exception:
+        return False
+
+
+def marking_backend() -> str:
+    """"gemini" or "claude". auto = Jarvis's own brain (llm_provider.json / JARVIS_LLM_PROVIDER): on Gemini the
+    marking runs on Gemini too; with no Anthropic key but a Gemini key it also uses Gemini."""
+    setting = marking_setting()
+    if setting != "auto":
+        return setting
+    try:
+        import jarvis_gemini
+        provider = jarvis_gemini.get_provider(Path(__file__).resolve().parent / "llm_provider.json")
+    except Exception:
+        provider = "claude"
+    if provider == "gemini" and gemini_ready():
+        return "gemini"
+    if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip() and gemini_ready():
+        return "gemini"
+    return "claude"
+
+
+def _claude_unusable(problem: str) -> bool:
+    """A failure that is about the account, not this submission: credit, key, rate limit, unreachable."""
+    p = (problem or "").lower()
+    return any(t in p for t in ("credit balance", "api key", "rate-limited", "couldn't reach claude"))
+
+
+GEMINI_JSON_RULES = ("\n\nReply with ONLY one JSON object, no markdown and no code fence, that follows this JSON schema "
+                     "exactly:\n" + json.dumps(MARK_SCHEMA))
+
+
+def _parse_json_object(text: str) -> dict | None:
+    text = (text or "").strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+    for candidate in (text, text[text.find("{"):text.rfind("}") + 1] if "{" in text else ""):
+        try:
+            value = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _coerce_marks(raw: dict) -> dict:
+    """Gemini is looser with types than a schema-constrained Claude call: whole numbers, booleans, lists."""
+    def whole(v):
+        try:
+            return int(round(float(v)))
+        except (TypeError, ValueError):
+            return 0
+
+    raw["task_points"] = whole(raw.get("task_points"))
+    raw["short_answers"] = [{**x, "question_id": str(x.get("question_id", "")), "points": whole(x.get("points"))}
+                            for x in raw.get("short_answers") or [] if isinstance(x, dict)]
+    raw["needs_human_review"] = raw.get("needs_human_review") in (True, "true", "True")
+    raw["review_reasons"] = [str(r) for r in (raw.get("review_reasons") or [])] if isinstance(
+        raw.get("review_reasons"), list) else []
+    if raw.get("confidence") not in ("high", "medium", "low"):
+        raw["confidence"] = "low"
+    return raw
+
+
+def ask_gemini(blocks: list[dict], gemini_call=None) -> tuple[dict | None, str, dict]:
+    """Same contract as ask_claude, on Gemini (images and PDFs go in as inline data). The answer is parsed from JSON text."""
+    import jarvis_gemini as g
+
+    if not g.api_key():
+        return None, "no Gemini API key is set (GEMINI_API_KEY)", {}
+    body = {"max_tokens": 16000, "system": SYSTEM_PROMPT + GEMINI_JSON_RULES,
+            "messages": [{"role": "user", "content": blocks}]}
+    override = (os.environ.get("HOMEWORK_GEMINI_MODEL") or "").strip()
+    if override:
+        body["model"] = override
+    call = gemini_call or (lambda b: g.call(b, 170, g.http_post))
+    try:
+        response = call(body)
+    except Exception as e:
+        return None, f"couldn't reach Gemini to mark it ({type(e).__name__})", {}
+    if not response:
+        reason = ""
+        try:
+            reason = g.last_error_reason()
+        except Exception:
+            pass
+        return None, "couldn't reach Gemini to mark it" + (f" ({reason})" if reason else ""), {}
+    usage = {**(response.get("usage") or {}), "_backend": "gemini", "_model": response.get("model") or g.model_name()}
+    if response.get("stop_reason") == "max_tokens":
+        return None, "the marking answer was cut off", usage
+    text = "".join(b.get("text", "") for b in response.get("content") or [] if b.get("type") == "text")
+    raw = _parse_json_object(text)
+    if raw is None:
+        return None, "the marking answer wasn't readable", usage
+    return _coerce_marks(raw), "", usage
+
+
+def ask_model(blocks: list[dict], client=None, gemini_call=None) -> tuple[dict | None, str, dict]:
+    """(parsed marks or None, problem text, usage dict). Claude or Gemini (see marking_backend); if Claude can't be
+    used at all (no credit, bad key, no key) and a Gemini key exists, the same request goes to Gemini."""
+    if client is not None:  # an explicit Claude client (tests)
+        return ask_claude(blocks, client)
+    if marking_backend() == "gemini":
+        return ask_gemini(blocks, gemini_call)
+    raw, problem, usage = ask_claude(blocks)
+    if raw is None and marking_setting() != "claude" and gemini_ready() and _claude_unusable(problem):
+        raw2, problem2, usage2 = ask_gemini(blocks, gemini_call)
+        if raw2 is not None:
+            return raw2, "", usage2
+        return None, f"{problem}; Gemini didn't work either ({problem2})", usage
+    return raw, problem, usage
+
+
+def _used_model(usage: dict) -> str:
+    return str((usage or {}).get("_model") or model_name())
 
 
 # --------------------------------------------------------------------------------------------- validation
@@ -483,15 +614,17 @@ def mark_submission(homework_id: str, student: str, release: bool = False, save:
     blocks = list(ev.file_blocks) + [{"type": "text", "text": build_brief(sub, ev)}]
     raw, problem, usage = ask_model(blocks, client)
     if raw is None:
-        log_marking(homework_id, who, model_name(), usage, None, True)
+        log_marking(homework_id, who, _used_model(usage), usage, None, True)
         return f"⚠ Needs your review: {who} - {title} was not marked: {problem}. Nothing was saved."
     marks, flags = validate_marks(raw, sub, ev)
+    if usage.get("_backend") == "gemini" and (os.environ.get("HOMEWORK_GEMINI_AUTO_RELEASE") or "") != "1":
+        flags.append("marked with Gemini (a lighter model than Claude): read the marks and comment before releasing")
     got, out_of = quiz_score(sub)
     short_total = sum(marks["short_answer_points"].values())
     head = "⚠ Needs your review: " + "; ".join(flags) + "\n" if flags else ""
     do_release = bool(release) and not flags
     if not save:
-        log_marking(homework_id, who, model_name(), usage, None, bool(flags))
+        log_marking(homework_id, who, _used_model(usage), usage, None, bool(flags))
         return (f"{head}Preview (not saved) for {who} - {title}: quiz {got}/{out_of}, short answer "
                 f"{short_total}/{SHORT_MAX * max(1, len(marks['short_answer_points']))}, task {marks['task_points']}/60. "
                 f"Comment: \"{marks['comment']}\" Teacher note: {marks['notes_for_teacher']}")
@@ -502,9 +635,9 @@ def mark_submission(homework_id: str, student: str, release: bool = False, save:
             "comment": marks["comment"], "release": "release" if do_release else "keep",
         }) or {}
     except homework_api.HomeworkApiError as e:
-        log_marking(homework_id, who, model_name(), usage, None, True)
+        log_marking(homework_id, who, _used_model(usage), usage, None, True)
         return f"Tool failed: the marks for {who} were worked out but not saved: {e.message}"
-    log_marking(homework_id, who, model_name(), usage, saved.get("final_points"), bool(flags))
+    log_marking(homework_id, who, _used_model(usage), usage, saved.get("final_points"), bool(flags))
     if do_release:
         state = "Saved and released" + ("" if saved.get("visible_to_child") else  f" ({who} sees it after the deadline)")
     elif release and flags:
