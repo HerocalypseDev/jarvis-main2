@@ -220,7 +220,8 @@ def test_validate_marks_clamps_drops_unknown_ids_and_flags_gaps():
     raw = {"short_answers": [{"question_id": "q2", "points": 14, "reason": ""},
                              {"question_id": "made-up", "points": 10, "reason": ""}],
            "task_points": 75, "comment_for_child": "  Great robot, James!  ", "confidence": "high",
-           "needs_human_review": False, "review_reasons": []}
+           "needs_human_review": False, "review_reasons": [],
+           "requirements": [{"requirement": "a robot design", "met": "yes"}]}
     marks, flags = hm.validate_marks(raw, submission())
     assert marks["short_answer_points"] == {"q2": 10} and marks["task_points"] == 60 and not flags
     assert marks["comment"] == "Great robot, James!"
@@ -269,7 +270,8 @@ class FakeClient:
 
 GOOD = {"short_answers": [{"question_id": "q2", "points": 8, "reason": "clear"}], "task_points": 50,
         "task_breakdown": "25+15+10", "comment_for_child": "James, your robot design is clever. Next time label the parts.",
-        "notes_for_teacher": "Solid work.", "confidence": "high", "needs_human_review": False, "review_reasons": []}
+        "notes_for_teacher": "Solid work.", "confidence": "high", "needs_human_review": False, "review_reasons": [],
+        "evidence": "A table of three apps with what the AI does and an example, plus one screenshot.", "requirements": [{"requirement": "table of 3 apps", "met": "yes"}, {"requirement": "what the AI does", "met": "yes"}, {"requirement": "1 screenshot", "met": "yes"}]}
 
 
 def test_mark_submission_happy_path_saves_and_releases_when_asked():
@@ -738,3 +740,55 @@ def test_claude_with_no_credit_falls_back_to_gemini_and_a_real_claude_answer_doe
 def test_marking_log_names_the_model_that_really_answered():
     assert hm._used_model({"_model": "gemini-test"}) == "gemini-test"
     assert hm._used_model({}) == hm.model_name()
+
+
+# ------------------------------------------------- the 60 task marks must match what the work really is (2026-10-02)
+def _requirements(*met):
+    return [{"requirement": f"thing {i}", "met": m} for i, m in enumerate(met, 1)]
+
+
+def test_an_unrelated_picture_cannot_score_high_whatever_the_model_said():
+    """The owner's report: a random landscape picture handed in for 'fill in a table of 3 apps + a screenshot' got 55/60."""
+    raw = {**GOOD, "task_points": 55, "evidence": "A purple flower field and clouds, no table and no text.",
+           "requirements": _requirements("no", "no", "no")}
+    marks, flags = hm.validate_marks(raw, submission())
+    assert marks["task_points"] == 0 and any("doesn't seem to be what the task asked" in f for f in flags)
+    assert "lowered from 55 to 0" in marks["notes_for_teacher"] and "purple flower" in marks["evidence"]
+    raw["requirements"] = _requirements("no", "no", "partly")          # even a generous reading stays low
+    assert hm.validate_marks(raw, submission())[0]["task_points"] <= 10
+
+
+def test_the_task_mark_is_capped_by_the_share_of_requirements_met():
+    raw = {**GOOD, "task_points": 58, "requirements": _requirements("yes", "yes", "no", "no")}
+    marks, flags = hm.validate_marks(raw, submission())
+    assert marks["task_points"] == 30 and not flags                    # half done: capped, but it is not a flag
+    raw = {**GOOD, "task_points": 28, "requirements": _requirements("yes", "yes", "no", "no")}
+    assert hm.validate_marks(raw, submission())[0]["task_points"] == 28   # a lower mark is never raised
+    raw = {**GOOD, "task_points": 60, "requirements": _requirements("yes", "partly", "yes")}
+    assert hm.validate_marks(raw, submission())[0]["task_points"] == 50
+
+
+def test_a_marker_that_skipped_the_requirements_check_is_flagged_not_trusted():
+    raw = {k: v for k, v in GOOD.items() if k not in ("requirements", "evidence")}
+    marks, flags = hm.validate_marks(raw, submission())
+    assert any("didn't check the work against" in f for f in flags)
+
+
+def test_unrelated_work_is_never_released_and_the_teacher_sees_what_the_file_showed():
+    raw = {**GOOD, "task_points": 55, "evidence": "A picture of a purple field.", "requirements": _requirements("no", "no")}
+    api = FakeApi(submission())
+    out = hm.mark_submission("h1", "James", release=True, api=api, client=FakeClient(raw))
+    assert api.saved[0]["release"] == "keep" and api.saved[0]["task_points"] == 0
+    assert out.startswith("\u26a0 Needs your review") and "The work shows: A picture of a purple field." in out
+
+
+def test_marking_prompt_and_schema_demand_requirements_and_literal_evidence():
+    assert "requirements" in hm.MARK_SCHEMA["required"] and "evidence" in hm.MARK_SCHEMA["required"]
+    assert "describe in one or two plain sentences what the files actually show" in hm.SYSTEM_PROMPT
+    assert "does NOT earn marks" in hm.SYSTEM_PROMPT
+
+
+def test_gemini_answers_are_coerced_to_the_requirements_shape():
+    raw = hm._coerce_marks({"task_points": 12, "requirements": [{"requirement": "table", "met": "YES"},
+                                                                {"requirement": "x", "met": "maybe"}, {"met": "yes"}]})
+    assert raw["requirements"] == [{"requirement": "table", "met": "yes"}, {"requirement": "x", "met": "no"}]

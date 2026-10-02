@@ -1756,7 +1756,8 @@ row there each phase rather than only stating the total in chat.
 | 119 (Teacher's Guide as data: all 8 homeworks (quiz, short answers, tasks, marking notes) + 4 lessons extracted from the PDF into `homework_curriculum.json`; new tools guide_overview/guide_homework/guide_lesson/add_guide_questions/create_guide_homework; homework_admin skill updated; 7 new tests) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
 | 120 (debug report: "credit balance too low" when marking while Jarvis ran on Gemini: marking now follows Jarvis's brain (Gemini when it is the provider, or when no Anthropic key), falls back to Gemini when Claude has no credit/key, Gemini marks are saved but never auto-released; 5 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
 | 121 (new 24-page Teacher's Guide: each homework now has a complete Version A and Version B with an answer key; curriculum data rebuilt per version and cross-checked word for word and key by key against the PDF, answer key moved to private marking notes, question matching tolerant of older-edition questions with in-place correction (never deleting answers); 3 tests changed, 2 new) | Sonnet 5.5 | ~30 min | ~$2.00–$3.00 |
-| **Running total (final)** | | **~3719 min** | **~$239.65–$336.55** |
+| 122 (an unrelated landscape picture handed in for the AI-audit table task scored 55/60: the marker now lists the task's requirements and describes the file literally, the task mark is capped in code by the share of requirements met, work that isn't the task is flagged and never auto-released, the teacher sees what the file showed; 6 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~3739 min** | **~$241.15–$338.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2218,6 +2219,16 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   coerced). `HOMEWORK_GEMINI_MODEL` can name a stronger Gemini model for marking (default: the brain's model; a lite model with minimal
   thinking marks less carefully). **A Gemini mark is saved but never auto-released** (flagged "marked with Gemini ... read before releasing";
   `HOMEWORK_GEMINI_AUTO_RELEASE=1` lifts that); usage is logged under the model that answered. Not verified live (needs the real app + key).
+- **Unrelated picture scored 55/60 (2026-10-02, owner report)**: the marker only asked the model to "judge how well the work does what the
+  instructions ask"; code clamped 0-60 and zeroed a missing file, but nothing checked that the file was the task. A random landscape image for
+  "fill in a table for 3 apps + 1 screenshot" got praised for effort. Fixes (`homework_marker.py`, tests at the end of `test_homework.py`): the model
+  must first list the task's `requirements` (each met yes/partly/no) and describe the files literally in `evidence` (both required in
+  MARK_SCHEMA, also asked of Gemini and coerced); the prompt says work that is not the task earns no credit for effort or looks and scores 0-5;
+  `cap_task_by_requirements` then **caps the task mark in code** at 60 x (yes=1, partly=0.5, no=0 averaged) - a lower model mark is never raised -
+  so a model cannot be talked into a high mark; if <= 25% is met it also flags "the uploaded work doesn't seem to be what the task asked for"
+  (so it is never auto-released); a marker that skipped the requirements list is flagged; the teacher's reply now starts with "The work shows: ...".
+  Residual: a model can still misjudge what a file contains (a lite Gemini model most of all); the saved mark is only as good as its `evidence`
+  line, which is why it is shown, and marks stay unreleased unless asked. A mark Jarvis already saved (marked_by jarvis) can be redone by marking again.
 - **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
   (needs ANTHROPIC credit), voice use end to end.
 
