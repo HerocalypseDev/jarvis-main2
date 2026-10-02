@@ -68,6 +68,33 @@ def as_jarvis_instruction(text: str) -> str | None:
     return body[:1].upper() + body[1:] if body else None
 
 
+# "In 10 minutes run the internet test again" was saved as a reminder ("Run the internet speed test") that was only
+# read out at 21:34 (debug report 2026-10-02): the model picked create_reminder over schedule_jarvis_task. A reminder
+# whose text is a job Jarvis can do itself, from a request that never asked to be reminded, becomes a job instead.
+_ASKED_FOR_REMINDER_RE = re.compile(r"\b(?:remind|reminder|alarm|nudge me|ping me|tell me to|let me know to|"
+                                    r"don'?t let me forget)\b", re.I)
+_JARVIS_WORK_RE = re.compile(r"^\s*(?:please\s+)?(?:to\s+)?(?:re-?)?(?:run|perform|repeat|redo|check|test|measure|"
+                             r"search|look\s+up|find|scan|summari[sz]e|research|download|refresh)\b", re.I)
+_WORK_VERB_RE = re.compile(r"\b(?:re-?)?(?:run|perform|repeat|redo|check|test|measure|search|look\s+up|find|scan|"
+                           r"summari[sz]e|research|download|refresh)\b", re.I)
+
+
+def as_work_for_jarvis(reminder_text: str, request: str) -> str | None:
+    """The job instruction when a reminder is really work for Jarvis, else None. Only when the user's own request
+    asked Jarvis to DO it (a work verb, no "remind me"), and the reminder starts with that kind of verb. A job that
+    turns out to be something only the user can do still reminds them (see the instruction's last sentence)."""
+    text = re.sub(r"\s+", " ", reminder_text or "").strip().rstrip(".")
+    if not text or not request or _ASKED_FOR_REMINDER_RE.search(request):
+        return None
+    if not _JARVIS_WORK_RE.match(text) or not _WORK_VERB_RE.search(request):
+        return None
+    text = re.sub(r"^\s*(?:please\s+)?(?:to\s+)?", "", text)
+    text = re.sub(r"\s+as (?:requested|asked)$", "", text, flags=re.I)
+    body = text[:1].upper() + text[1:]
+    return (f"{body}. Then tell the user the result. (If this turns out to be something only the user can do, "
+            f"just remind them: \"Reminder: {body}.\")")
+
+
 def _norm(t: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", (t or "").lower())).strip()
 

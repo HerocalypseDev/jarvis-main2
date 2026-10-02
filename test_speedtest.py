@@ -182,3 +182,26 @@ def test_spoken_unit_reaches_the_answer(monkeypatch):
                         lambda connect, lock, runner=None, unit=None: f"unit={unit}")
     monkeypatch.setattr(jarvis, "_current_command_source", lambda: "phone")
     assert jarvis._deterministic_intent_reply("speedtest", "what's my internet speed in megabytes") == "unit=megabytes"
+
+
+@pytest.mark.parametrize("said, intent", [
+    ("Hey, Jarvis. Perform a speed test.", "speedtest"), ("run the internet test again", "speedtest"),
+    ("ok jarvis run my wifi test", "speedtest"), ("run a test", "complex"), ("run the test", "complex"),
+    ("in 10mins time run the internet test again", "complex"),  # later = a scheduled job, not now
+])
+def test_more_ways_of_asking(said, intent):
+    assert latency.classify_intent(said) == intent
+
+
+def test_one_network_hiccup_is_retried(monkeypatch):
+    monkeypatch.setattr(st, "RETRY_DELAY_S", 0)
+    tries = {"n": 0}
+    log = []
+
+    def flaky():
+        tries["n"] += 1
+        if tries["n"] == 1:
+            raise OSError("[Errno 11002] getaddrinfo failed")
+        return _FakeConn(log)
+    r = st.run(flaky, down_s=0.2, up_s=0.2, cap_mb=10)
+    assert r["ok"] and tries["n"] > 2

@@ -34,6 +34,7 @@ PING_COUNT = 8
 SOCKET_TIMEOUT_S = 15.0
 BLOCK = 64 * 1024
 KEEP_ROWS = 500
+RETRY_DELAY_S = 2.0
 
 _running = threading.Lock()
 
@@ -239,7 +240,13 @@ def run(factory: Callable | None = None, down_s: float = DOWN_SECONDS, up_s: flo
     t0 = time.perf_counter()
     try:
         try:
-            ping, jitter, colo = _ping(factory)
+            try:
+                ping, jitter, colo = _ping(factory)
+            except OSError:
+                # One DNS/connection hiccup ("getaddrinfo failed", 2026-10-02) shouldn't fail the whole test: the
+                # same request worked minutes later. One retry, a moment later.
+                time.sleep(RETRY_DELAY_S)
+                ping, jitter, colo = _ping(factory)
         except Exception as e:
             return {"ok": False, "error": f"couldn't reach the speed test server ({str(e)[:120] or type(e).__name__})"}
         result = {"ok": True, "ping_ms": round(ping, 1), "jitter_ms": round(jitter, 1), "server": colo}
