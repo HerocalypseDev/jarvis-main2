@@ -1,0 +1,31 @@
+[
+  {
+    "name": "Game mode",
+    "phrases": [
+      "game mode",
+      "gaming mode",
+      "time to game"
+    ],
+    "steps": [
+      {
+        "tool": "focus_mode",
+        "input": {
+          "action": "on"
+        }
+      },
+      {
+        "tool": "system_action",
+        "input": {
+          "system_action": "minimize_all"
+        }
+      },
+      {
+        "tool": "create_reminder",
+        "input": {
+          "text": "You've been gaming for an hour. Stretch, drink some water, rest your eyes for 5 minutes.",
+          "due_in_minutes": 60
+        }
+      }
+    ]
+  }
+]

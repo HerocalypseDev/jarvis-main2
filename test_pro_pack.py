@@ -279,3 +279,17 @@ def test_scheduler_only_adds_events_after_a_yes_and_the_review_is_gated():
     review = _skill("week_review")
     assert review["schedule"] == {"daily_at": "17:00", "days": "fri", "requires_fact": "Week plan:"}
     assert "NO spoken reply" in review["instructions"] and "Never create, move or cancel" in review["instructions"]
+
+
+def test_gamer_pack_routine_is_allowlisted_and_drafts_are_never_posted():
+    import jarvis_latency
+    import jarvis_macros as macros
+
+    specs = json.loads((PACK / "macros" / "gamer.json").read_text(encoding="utf-8"))
+    loaded = macros.pack_macros(specs, macros.PACK_ALLOWED_TOOLS,
+                                is_core_phrase=lambda p: jarvis_latency.classify_intent(p) != "complex")
+    assert [m["name"] for m in loaded] == ["Game mode"]
+    assert {st["tool"] for st in loaded[0]["steps"]} <= macros.PACK_ALLOWED_TOOLS
+    gamer = sorted(p.stem for p in (PACK / "skills").glob("gamer_*.json"))
+    assert gamer == ["gamer_discord_post", "gamer_patch_notes", "gamer_roblox_dev", "gamer_session"]
+    assert "never post it" in _skill("gamer_discord_post")["instructions"]

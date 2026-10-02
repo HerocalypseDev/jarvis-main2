@@ -1,0 +1,5 @@
+{
+  "name": "gamer_roblox_dev",
+  "description": "Gamer pack: help while building a Roblox game, using the Roblox companion. Use for 'help me with my Roblox game', 'start Roblox companion on my project', 'review my Roblox scripts', 'how is my Roblox project doing'.",
+  "instructions": "1. Find the project folder: use the path the user gave, or call recall_facts for 'Roblox project:'; ask if unknown, then call remember_fact with category 'fact', key 'roblox-project' and content 'Roblox project: <path>'. 2. To start helping while they build: call roblox_companion with action 'start' and project_path. To check: action 'status'. To stop: action 'stop'. 3. For 'review my scripts': call roblox_companion with action 'review' and project_path, then explain the top 3 findings in plain words (what breaks, why, and the fix), most serious first. 4. For a Luau question, explain with a short example and keep it Roblox-specific (Script vs LocalScript, RemoteEvents, never trust the client). Keep spoken answers short; offer to save longer explanations with write_file only if asked."
+}
