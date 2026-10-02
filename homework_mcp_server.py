@@ -28,6 +28,7 @@ except Exception:  # dotenv is optional for this server
     pass
 
 import homework_api
+import homework_guide
 import homework_marker
 from jarvis_untrusted import frame_untrusted, neutralize_injection
 
@@ -486,7 +487,7 @@ async def _status_after(homework_id: str) -> str:
 async def add_question(homework_id: str, type: Literal["mcq", "short"], prompt: str, version: Version | None = None,
                        options: list[str] | None = None, correct_option: int | None = None,
                        points: int | None = None, position: int | None = None) -> str:
-    """Homework app: add ONE question (to add several, use add_questions in a single call). type "mcq" (multiple choice, auto-marked; each version's quiz totals 30 points; give 2-6 options, correct_option counting from 0, and points) or "short" (the short answer, always 10 points). version "both" (default), "A" (James) or "B" (Peter). prompt is exactly what the child reads: never write "Version A" or "Version B" in it. The answer lists what is still missing."""
+    """Homework app: add ONE question of your own (for the Teacher's Guide homeworks 1-8 use add_guide_questions instead, which has every question; to add several of your own, use add_questions in a single call). type "mcq" (multiple choice, auto-marked; each version's quiz totals 30 points; give 2-6 options, correct_option counting from 0, and points) or "short" (the short answer, always 10 points). version "both" (default), "A" (James) or "B" (Peter). prompt is exactly what the child reads: never write "Version A" or "Version B" in it. The answer lists what is still missing."""
     out = await run("add_question", {
         "homework_id": homework_id, "type": type, "prompt": clean_label(prompt), "version": version,
         "options": clean_options(options), "correct_option": correct_option, "points": points, "position": position},
@@ -510,7 +511,7 @@ MAX_BATCH = 30
 
 @tool
 async def add_questions(homework_id: str, questions: list[QuestionSpec]) -> str:
-    """Homework app: add EVERY question of a homework in ONE call (up to 30), in order. Each item: type "mcq" or "short", prompt, version "both" (default) / "A" / "B", and for mcq options (2-6), correct_option (from 0) and points. Each version's multiple-choice questions must total 30 points and each version needs one "short" question (10 points; use two items with version A and B when the wording differs). prompt is exactly what the child reads: never write "Version A" or "Version B" in it. The answer reports every question added, any that failed, and what is still missing."""
+    """Homework app: add EVERY question of a homework you are writing yourself in ONE call (up to 30), in order. For the Teacher's Guide homeworks 1-8 use add_guide_questions instead. Each item: type "mcq" or "short", prompt, version "both" (default) / "A" / "B", and for mcq options (2-6), correct_option (from 0) and points. Each version's multiple-choice questions must total 30 points and each version needs one "short" question (10 points; use two items with version A and B when the wording differs). prompt is exactly what the child reads: never write "Version A" or "Version B" in it. The answer reports every question added, any that failed, and what is still missing."""
     if not isinstance(questions, list) or not questions:
         return "Tool failed: homework app: give a non-empty list of questions."
     done, failed = [], []
@@ -548,6 +549,111 @@ async def update_question(question_id: str, version: Version | None = None, prom
         "question_id": question_id, "version": version, "prompt": clean_label(prompt),
         "options": clean_options(options), "correct_option": correct_option, "points": points, "position": position},
         lambda q: fmt_question(q, "Updated"))
+
+
+# ---- the Teacher's Guide (homework_curriculum.json): "add the questions" copies the guide exactly
+async def _add_specs(homework_id: str, specs: list[dict]) -> tuple[list[str], list[str]]:
+    done, failed = [], []
+    for n, q in enumerate(specs, 1):
+        try:
+            r = await asyncio.to_thread(homework_api.call, "add_question", {
+                "homework_id": homework_id, "type": q["type"], "prompt": clean_label(q["prompt"]),
+                "version": q.get("version"), "options": q.get("options"), "correct_option": q.get("correct_option"),
+                "points": q.get("points"), "position": None})
+            done.append(fmt_question(r, f"#{n}"))
+        except homework_api.HomeworkApiError as e:
+            failed.append(f"{_plain(q.get('prompt'), 50)}: {e.message}")
+    return done, failed
+
+
+async def _apply_guide(homework_id: str, hw: dict, replace_tasks: bool) -> str:
+    """Fill an app homework from the guide: the quiz + short answers still missing, the task text (A and B) and the
+    marking notes when they are empty (or when replace_tasks). Safe to repeat: nothing already there is added twice."""
+    try:
+        cur = await asyncio.to_thread(homework_api.call, "get_homework", {"homework_id": homework_id})
+    except homework_api.HomeworkApiError as e:
+        return f"Tool failed: homework app: {e.message}"
+    specs = homework_guide.missing_specs(hw, (cur or {}).get("questions") or [])
+    done, failed = await _add_specs(homework_id, specs)
+    lines = [f"{homework_guide.app_title(hw)}: added {len(done)} of {len(specs)} missing question(s) from the guide "
+             f"({len(homework_guide.question_specs(hw)) - len(specs)} were already there)."]
+    fields = {}
+    for key, text in (("instructions_a", homework_guide.task_text(hw, "A")),
+                      ("instructions_b", homework_guide.task_text(hw, "B")),
+                      ("marking_notes", hw["marking_notes"])):
+        have = str((cur or {}).get(key) or "").strip()
+        if replace_tasks or not have:
+            fields[key] = text
+        elif clean_label(have) != text:
+            lines.append(f"Kept the existing {key.replace('_', ' ')} (different from the guide; replace_tasks=true overwrites it).")
+    if fields:
+        try:
+            await asyncio.to_thread(homework_api.call, "update_homework", {"homework_id": homework_id, **fields})
+            lines.append("Set from the guide: " + ", ".join(k.replace("_", " ") for k in fields) + ".")
+        except homework_api.HomeworkApiError as e:
+            failed.append(f"task text: {e.message}")
+    if failed:
+        lines.append("FAILED (not added, run it again): " + " | ".join(failed))
+    lines += done
+    status = await _status_after(homework_id)
+    if status:
+        lines.append(status)
+    out = cap(lines)
+    return out if (done or fields or not failed) else "Tool failed: homework app: nothing was added. " + out
+
+
+@tool
+async def guide_overview() -> str:
+    """Teacher's Guide: the 8 homeworks of the 4-week AI course (number, title, week, due date) plus the scoring rules (quiz 30 + short answer 10 + task 60) and which student is Version A or B. The guide's questions are stored locally, so never retype them from the PDF."""
+    return cap(homework_guide.format_overview().splitlines())
+
+
+@tool
+async def guide_homework(number: int) -> str:
+    """Teacher's Guide: one homework in full (number 1-8): the 6 quiz questions with their correct answers, the short answers for versions A and B, the tasks and the marking guide. Read-only."""
+    hw = homework_guide.get(number)
+    return cap(homework_guide.format_homework(hw).splitlines()) if hw else "Tool failed: homework guide: number must be 1 to 8."
+
+
+@tool
+async def guide_lesson(week: int) -> str:
+    """Teacher's Guide: the Sunday lesson for a week (1-4): goal, key terms, the theory points and the practical. Read-only; use it to explain a topic or check what was taught."""
+    lsn = homework_guide.lesson(week)
+    return cap(homework_guide.format_lesson(lsn).splitlines()) if lsn else "Tool failed: homework guide: week must be 1 to 4."
+
+
+@tool
+async def add_guide_questions(homework_id: str, number: int | None = None, replace_tasks: bool = False) -> str:
+    """Homework app: THE way to add questions to a homework from the Teacher's Guide - when the user says "add the questions", "add the quiz" or "set up the homework", use this, in ONE call. It adds the guide's 6 multiple-choice questions (30 points), the short answer for James (A) and Peter (B), and fills the task text and marking notes, exactly as written in the guide. number is the guide homework 1-8 (found from the title like "Homework 3" or "AI audit" when left out). Safe to run again: it only adds what is missing. replace_tasks true overwrites task text that is already there."""
+    try:
+        cur = await asyncio.to_thread(homework_api.call, "get_homework", {"homework_id": homework_id})
+    except homework_api.HomeworkApiError as e:
+        return f"Tool failed: homework app: {e.message}"
+    hw = homework_guide.get(number) if number is not None else homework_guide.find_for_title(
+        (cur or {}).get("title") or "", (cur or {}).get("week"))
+    if not hw:
+        return ("Tool failed: homework guide: couldn't tell which guide homework this is from its title; "
+                "say the number (1-8). " + homework_guide.format_overview())
+    return await _apply_guide(homework_id, hw, replace_tasks)
+
+
+@tool
+async def create_guide_homework(number: int, due_date: str | None = None, due_time: str | None = None) -> str:
+    """Homework app: create a homework straight from the Teacher's Guide (number 1-8) with everything in it: title, week, due date (the guide's own date unless due_date YYYY-MM-DD is given; time 21:00 Lagos unless due_time HH:MM), the 6 quiz questions, both short answers, both tasks and the marking notes. Use this for "make homework 3 on the app". To fill an existing homework use add_guide_questions."""
+    hw = homework_guide.get(number)
+    if not hw:
+        return "Tool failed: homework guide: number must be 1 to 8."
+    try:
+        h = await asyncio.to_thread(homework_api.call, "create_homework", {
+            "title": homework_guide.app_title(hw), "week": hw["week"], "due_date": due_date or hw["due_date"],
+            "due_time": due_time or hw["due_time"], "instructions_a": None, "instructions_b": None, "marking_notes": None})
+    except homework_api.HomeworkApiError as e:
+        return f"Tool failed: homework app: {e.message}"
+    out = await _apply_guide(str(h.get("id")), hw, True)
+    head = f"Created {h.get('title')} (week {h.get('week')}), due {h.get('due')} [homework_id {h.get('id')}]."
+    if out.startswith("Tool failed"):
+        return f"{out} (The homework itself WAS created: {head})"
+    return cap([head, out])
 
 
 @tool

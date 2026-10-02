@@ -156,7 +156,7 @@ def test_csv_save_needs_a_csv_path_outside_the_code_folder(tmp_path):
 
 def test_server_registers_the_24_tools_and_turns_app_errors_into_tool_failed(monkeypatch):
     names = {t.name for t in asyncio.run(srv.server.list_tools())}
-    assert len(names) == 24 and {"add_questions","mark_submission", "mark_all_waiting", "delete_homework",
+    assert len(names) == 29 and {"add_questions", "add_guide_questions", "create_guide_homework", "guide_homework", "guide_lesson", "guide_overview","mark_submission", "mark_all_waiting", "delete_homework",
                                  "set_student_password", "export_csv", "get_overview"} <= names
 
     def boom(tool, args=None, timeout=30):
@@ -350,7 +350,8 @@ def test_homework_files_never_go_public():
     spec = importlib.util.spec_from_file_location("export_public", Path(__file__).parent / "tools" / "export_public.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    for name in ("homework_api.py", "homework_marker.py", "homework_mcp_server.py", "test_homework.py"):
+    for name in ("homework_api.py", "homework_marker.py", "homework_mcp_server.py", "test_homework.py",
+                 "homework_guide.py", "homework_curriculum.json"):
         assert any(name.startswith(p) for p in mod.EXCLUDE), name
 
 
@@ -486,3 +487,118 @@ def test_create_and_update_homework_strip_version_labels_from_the_tasks(monkeypa
     asyncio.run(srv.update_homework("h1", instructions_a="Version A - z"))
     assert seen[0][1]["instructions_a"] == "do x" and seen[0][1]["instructions_b"] == "do y"
     assert seen[1][1]["instructions_a"] == "z"
+
+
+# ------------------------------------------------------------------------------------- the Teacher's Guide data
+import homework_guide as guide  # noqa: E402
+
+
+def test_guide_has_all_eight_homeworks_complete_and_clean():
+    hws = guide.homeworks()
+    assert [h["number"] for h in hws] == list(range(1, 9)) and len(guide.lessons()) == 4
+    for h in hws:
+        assert len(h["quiz"]) == 6                              # 6 x 5 = 30 points
+        for q in h["quiz"]:
+            assert len(q["options"]) == 3 and 0 <= q["answer"] < 3 and q["q"].strip()
+        assert h["short_a"].strip() and h["short_b"].strip() and h["task_a"].strip() and h["task_b"].strip()
+        assert h["marking_notes"].startswith("Marking guide")
+        assert h["due_date"].startswith("2026-10-") and h["due_time"] == "21:00"
+        specs = guide.question_specs(h)
+        assert sum(s["points"] for s in specs if s["type"] == "mcq") == 30
+        shorts = [s for s in specs if s["type"] == "short"]
+        assert sorted(s["version"] for s in shorts) == ["A", "B"] and all(s["points"] == 10 for s in shorts)
+        # the labels are for Jarvis only: never in text the children read
+        kids_text = [s["prompt"] for s in specs] + [o for s in specs for o in s.get("options", [])] + [
+            guide.task_text(h, "A"), guide.task_text(h, "B")]
+        assert not any("version a" in t.lower() or "version b" in t.lower() for t in kids_text), h["number"]
+    assert guide.get(1)["quiz"][1]["options"][guide.get(1)["quiz"][1]["answer"]] == "learns from lots of examples"
+    assert guide.get(9) is None and guide.lesson(5) is None
+
+
+def test_guide_homework_is_found_from_the_app_title():
+    assert guide.find_for_title("Homework 1 - AI audit", 1)["number"] == 1
+    assert guide.find_for_title("Prompt portfolio", 2)["number"] == 4
+    assert guide.find_for_title("Week1 Homework", 1) is None and guide.find_for_title("Homework 9") is None
+
+
+class GuideApi:
+    """Stands in for the app: remembers questions and fields, answers get_homework like the real one."""
+
+    def __init__(self, title="Homework 1 - AI audit", questions=None, **fields):
+        self.hw = {"id": "h1", "title": title, "week": 1, "due": "Wed 7 Oct", "questions": list(questions or []),
+                   "instructions_a": None, "instructions_b": None, "marking_notes": None, **fields}
+        self.calls = []
+
+    def __call__(self, tool, args=None, timeout=30):
+        self.calls.append((tool, args))
+        if tool == "get_homework":
+            n = len(self.hw["questions"])
+            return {**self.hw, "still_to_set_up": [] if n >= 8 else [f"{8 - n} more question(s)"]}
+        if tool == "add_question":
+            q = {"id": f"q{len(self.hw['questions']) + 1}", "type": args["type"], "version": args["version"] or "both",
+                 "points": args["points"], "position": len(self.hw["questions"]) + 1, "prompt": args["prompt"],
+                 "options": args["options"] or [], "correct_option": args["correct_option"]}
+            self.hw["questions"].append(q)
+            return q
+        if tool == "update_homework":
+            self.hw.update({k: v for k, v in args.items() if k != "homework_id"})
+            return self.hw
+        if tool == "create_homework":
+            self.hw.update(title=args["title"], week=args["week"])
+            return self.hw
+        raise AssertionError(tool)
+
+
+def test_add_guide_questions_adds_the_whole_homework_exactly_and_is_safe_to_repeat(monkeypatch):
+    api = GuideApi()
+    monkeypatch.setattr(homework_api, "call", api)
+    out = asyncio.run(srv.add_guide_questions("h1"))
+    qs = api.hw["questions"]
+    assert len(qs) == 8 and "added 8 of 8" in out and "Ready" in out
+    assert [q["type"] for q in qs].count("mcq") == 6 and sum(q["points"] for q in qs if q["type"] == "mcq") == 30
+    assert sorted(q["version"] for q in qs if q["type"] == "short") == ["A", "B"]
+    assert api.hw["instructions_a"].startswith("Fill in this table for 3 apps") and "Version" not in api.hw["instructions_b"]
+    assert api.hw["marking_notes"].startswith("Marking guide")
+    n_calls = len(api.calls)
+    again = asyncio.run(srv.add_guide_questions("h1"))
+    assert len(api.hw["questions"]) == 8 and "added 0 of 0" in again       # nothing duplicated
+    assert not [c for c in api.calls[n_calls:] if c[0] in ("add_question", "update_homework")]
+
+
+def test_add_guide_questions_only_adds_what_is_missing_and_keeps_existing_task_text(monkeypatch):
+    first3 = [{"prompt": q["q"], "version": "both", "type": "mcq"} for q in guide.get(1)["quiz"][:3]]
+    api = GuideApi(questions=first3, instructions_a="Version A: my own task")
+    monkeypatch.setattr(homework_api, "call", api)
+    out = asyncio.run(srv.add_guide_questions("h1", 1))
+    assert len(api.hw["questions"]) == 8 and "added 5 of 5" in out and "3 were already there" in out
+    assert api.hw["instructions_a"] == "Version A: my own task" and "Kept the existing instructions a" in out
+    asyncio.run(srv.add_guide_questions("h1", 1, True))
+    assert api.hw["instructions_a"].startswith("Fill in this table")
+
+
+def test_add_guide_questions_needs_a_known_homework_number(monkeypatch):
+    monkeypatch.setattr(homework_api, "call", GuideApi(title="Week1 Homework"))
+    out = asyncio.run(srv.add_guide_questions("h1"))
+    assert out.startswith("Tool failed") and "say the number" in out and "Homework 8" in out
+    assert asyncio.run(srv.add_guide_questions("h1", 12)).startswith("Tool failed")
+
+
+def test_create_guide_homework_builds_everything_with_the_guide_dates(monkeypatch):
+    api = GuideApi(title="x")
+    monkeypatch.setattr(homework_api, "call", api)
+    out = asyncio.run(srv.create_guide_homework(3))
+    create = next(a for t, a in api.calls if t == "create_homework")
+    assert create["title"] == "Homework 3 - How an LLM works" and create["week"] == 2
+    assert create["due_date"] == "2026-10-14" and create["due_time"] == "21:00"
+    assert len(api.hw["questions"]) == 8 and "Created" in out and "Ready" in out
+    api2 = GuideApi(title="x")
+    monkeypatch.setattr(homework_api, "call", api2)
+    asyncio.run(srv.create_guide_homework(4, due_date="2026-11-04", due_time="20:30"))
+    assert next(a for t, a in api2.calls if t == "create_homework")["due_date"] == "2026-11-04"
+    assert asyncio.run(srv.create_guide_homework(0)).startswith("Tool failed")
+
+
+def test_guide_readers_answer_without_the_app():
+    assert "Homework 8" in asyncio.run(srv.guide_overview())
+    assert "[correct]" in asyncio.run(srv.guide_homework(5)) and asyncio.run(srv.guide_homework(99)).startswith("Tool failed")
+    assert "next-token" in asyncio.run(srv.guide_lesson(2)) and asyncio.run(srv.guide_lesson(9)).startswith("Tool failed")

@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1790917235.7545853,
-    "seen": 1790917249.9949133,
-    "ast_hash": "3dfbdd43f53fcb38f1f11103083643eb",
+    "mtime": 1790888355.7419415,
+    "seen": 1790888367.009069,
+    "ast_hash": "126e56094bd81d885eeeacf4db3b9e32",
     "semantic_hash": ""
   },
   "README.md": {
@@ -942,9 +942,9 @@
     "semantic_hash": ""
   },
   "homework_mcp_server.py": {
-    "mtime": 1790917152.9507003,
-    "seen": 1790917249.9945025,
-    "ast_hash": "2158c39e468f5c36de72e49b6a48393d",
+    "mtime": 1790888348.6238368,
+    "seen": 1790888367.0088713,
+    "ast_hash": "b0c1ea427ff7227a8b8c7c4a924bae4d",
     "semantic_hash": ""
   },
   "jarvis_daily_plan.py": {
@@ -1212,9 +1212,9 @@
     "semantic_hash": ""
   },
   "skills/homework_admin.json": {
-    "mtime": 1790917128.8717494,
-    "seen": 1790917249.9948075,
-    "ast_hash": "097d89a8b1cd29338390a1f63257409b",
+    "mtime": 1790881670.1588619,
+    "seen": 1790882548.5936625,
+    "ast_hash": "57759c53d27c06000d830019350dbc97",
     "semantic_hash": ""
   },
   "skills/homework_watch.json": {
@@ -1236,9 +1236,9 @@
     "semantic_hash": ""
   },
   "test_homework.py": {
-    "mtime": 1790888901.1517742,
-    "seen": 1790917249.9948635,
-    "ast_hash": "f990e850d2fee942e3a348aa87c6e05f",
+    "mtime": 1790888348.6238368,
+    "seen": 1790888367.0090396,
+    "ast_hash": "99bb88c3b60993d7a7ca82361931efba",
     "semantic_hash": ""
   },
   "test_license.py": {
@@ -1353,18 +1353,6 @@
     "mtime": 1790669022.1696463,
     "seen": 1790882548.593735,
     "ast_hash": "9b5c15e34324aef008095d98180799c8",
-    "semantic_hash": ""
-  },
-  "homework_curriculum.json": {
-    "mtime": 1790888833.6094048,
-    "seen": 1790917249.9944944,
-    "ast_hash": "717130f2f1096dde9d9a9cab5346914b",
-    "semantic_hash": ""
-  },
-  "homework_guide.py": {
-    "mtime": 1790888853.7150283,
-    "seen": 1790917249.9944978,
-    "ast_hash": "a5f5c4c6dddda449179877eab6b1ead6",
     "semantic_hash": ""
   }
 }

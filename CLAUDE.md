@@ -1753,7 +1753,8 @@ row there each phase rather than only stating the total in chat.
 | 116 (live debug report: HOMEWORK_APP_URL without https:// now defaults to https; run_shell/run_python refuse code that opens .env/mcp_servers.json (the model had printed the whole .env into its context); graphify refreshed; 2 new tests) | Sonnet 5.5 | ~10 min | ~$0.80–$1.20 |
 | 117 (barge-in glitch: the mic loop called _interrupt_speech on every audio block while the key was held (DB write + log each time), and a streamed sentence was only stopped at its next network chunk; now once-per-press stats and an immediate abort of the active OutputStream; 1 new test) | Sonnet 5.5 | ~15 min | ~$1.00–$1.50 |
 | 118 (homework creation from the Teacher's Guide: only 3 of 6 questions added and Version A/B text in the tasks; new add_questions tool (whole quiz in one call), every add reports what is still to set up, Version labels stripped from prompts/options/tasks in code; 4 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3634 min** | **~$233.65–$327.85** |
+| 119 (Teacher's Guide as data: all 8 homeworks (quiz, short answers, tasks, marking notes) + 4 lessons extracted from the PDF into `homework_curriculum.json`; new tools guide_overview/guide_homework/guide_lesson/add_guide_questions/create_guide_homework; homework_admin skill updated; 7 new tests) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
+| **Running total (final)** | | **~3669 min** | **~$236.15–$331.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2185,6 +2186,16 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   `clean_label` strips "Version A/B" labels (leading or "(Version A)") from prompts, options and instructions in create/update/add;
   results say "version A only"/"both versions" instead of "vboth". The `homework_admin` skill text was NOT changed (skills need the
   owner's review): it still says to add questions, which now works with either tool.
+- **Teacher's Guide as data (2026-10-02, user: "train Jarvis to use those questions")**: `homework_curriculum.json` (extracted from the
+  owner's Teacher's Guide PDF: 8 homeworks with 6 quiz questions + correct answers, short answers A/B, tasks A/B, marking notes, guide due
+  dates in Oct 2026, plus the 4 Sunday lessons) and `homework_guide.py` (pure helpers). Both are private (`homework_` prefix = export-excluded,
+  pinned by test). MCP tools (29 now): `guide_overview`, `guide_homework(n)`, `guide_lesson(week)` (read-only), `add_guide_questions(homework_id,
+  number?, replace_tasks?)` (adds only the questions still missing, matched on text+version, so it is safe to repeat; fills task text and marking
+  notes when empty; number found from the title "Homework N"/guide title) and `create_guide_homework(n, due_date?, due_time?)`. The model never
+  retypes the guide, and no child-facing text contains "Version A/B" (pinned over all 8 homeworks). `skills/homework_admin.json` now tells Jarvis
+  which tool to call (skill context budget can drop skills, so the tool descriptions carry the same guidance). If the guide changes, regenerate
+  the JSON (it is plain data; keep 6 x 5 points + two 10-point short answers per homework). Homework 1 already created in the app from the earlier
+  run (3 questions, "Version A:" task text) can be completed with `add_guide_questions(homework_id, replace_tasks=true)`.
 - **Not verified live**: the real app endpoint (needs the Vercel token + the Supabase `001_jarvis.sql` migration), a real marking call
   (needs ANTHROPIC credit), voice use end to end.
 
