@@ -89,6 +89,12 @@ Meeting Memory pack (works with "start meeting notes" / "stop meeting notes"):
   "Turn my last meeting into an email"         (a draft saved in your workspace; never sent unless you say so)
   "Brief me for my next meeting"               (uses your calendar + earlier meeting notes)
 
+Job Hunt pack - copy the job advert first, then ask:
+  "Tailor my CV for this job"                  / "Write a cover letter for this job"   (saved as Word documents)
+  "I applied to Flutterwave for junior QA"     / "What jobs have I applied to?"        (follow-up reminder after 7 days)
+  "Prep me for the QA interview"               (mock interview with feedback)
+  Jarvis never invents experience, grades or skills; anything you lack is listed as a gap for you to decide.
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 

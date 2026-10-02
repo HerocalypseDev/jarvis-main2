@@ -1,6 +1,6 @@
 {
   "name": "Jarvis4U Pro",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "packs": [
     "student",
     "developer",
@@ -9,7 +9,8 @@
     "research",
     "recipes",
     "exam",
-    "meetings"
+    "meetings",
+    "jobs"
   ],
   "themes": [
     "stark",

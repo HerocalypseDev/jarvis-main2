@@ -250,3 +250,13 @@ def test_meeting_memory_treats_transcripts_as_data_and_never_sends():
         assert "meeting_notes with action 'list'" in text, path.name
     assert "never send it" in _skill("meeting_to_email")["instructions"]
     assert "Never create reminders without that yes" in _skill("meeting_owe")["instructions"]
+
+
+def test_job_hunt_never_invents_experience_and_tracks_in_the_shared_format():
+    job = sorted(p.stem for p in (PACK / "skills").glob("job_*.json"))
+    assert job == ["job_cover_letter", "job_cv_tailor", "job_interview_prep", "job_tracker"]
+    for name in ("job_cv_tailor", "job_cover_letter"):
+        assert "NEVER invent" in _skill(name)["instructions"], name
+    tracker = _skill("job_tracker")["instructions"]
+    assert "Job application: <Company> / <Role> / applied <YYYY-MM-DD> / status <status>" in tracker
+    assert "key 'job:<company lower case>:<role lower case>'" in tracker

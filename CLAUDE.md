@@ -1771,7 +1771,8 @@ row there each phase rather than only stating the total in chat.
 | 128 (pictures over Telegram: photos/image files read with the caption as the request, kept in memory only, real type checked, 5 MB cap, other message kinds get a reply instead of silence; published to Jarvis4U; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 129 (Pro second wave plan (PRO_ROADMAP Phases 7-14) + Exam pack: CBT practice, weak-topic drill, study plan .docx, progress, gated 7pm nudge; pack 1.6.0; 1 new test) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 130 (Meeting Memory pack: decisions, what I owe, meeting-to-email draft, pre-meeting brief; builder treats meeting_notes as outside text; pack 1.7.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~3899 min** | **~$253.55–$356.55** |
+| 131 (Job Hunt pack: CV tailoring and cover letter .docx (never invents experience), application tracker with follow-up reminders, mock interview; pack 1.8.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~3914 min** | **~$254.75–$358.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
