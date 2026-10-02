@@ -439,13 +439,19 @@ def _is_confirmation_yes(transcript: str) -> bool:
 _HOMEWORK_CONFIRM = {"delete_homework", "set_student_password"}
 
 
-def _homework_confirm_reason(tool_name: str, inp: dict) -> str | None:
+def _homework_real_name(tool_name: str) -> str | None:
+    """The homework server's own name for this tool if it is one of the confirm-tier tools, else None."""
     if not tool_name.startswith("mcp_"):
         return None
     real = (globals().get("_mcp_tool_index", {}).get(tool_name) or (None, None))[1]
     if real is None:  # not connected yet / unknown: fall back to the name Jarvis exposes
         real = next((n for n in _HOMEWORK_CONFIRM if tool_name.lower().endswith("_" + n)), None)
-    if real not in _HOMEWORK_CONFIRM:
+    return real if real in _HOMEWORK_CONFIRM else None
+
+
+def _homework_confirm_reason(tool_name: str, inp: dict) -> str | None:
+    real = _homework_real_name(tool_name)
+    if real is None:
         return None
     if real == "delete_homework":
         title = str(inp.get("confirm_title") or inp.get("homework_id") or "that homework")[:80]
@@ -468,6 +474,65 @@ def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -
         }
     dashboard.notify({"type": "pending_action", "data": dict(_pending_action)})
     return True
+
+
+# "Delete these 3 homeworks" makes 3 delete calls in one turn, but there is only one pending slot, so calls 2 and 3
+# used to be dropped. ONLY this tool may batch: further calls join the pending one (extra inputs in "batch") and one
+# yes runs them all. Every other tool still gets "Another confirmation is already pending".
+HOMEWORK_DELETE_BATCH_MAX = 10
+
+
+def _pending_calls(step: dict) -> list[dict]:
+    """Every tool input a staged action will run, in order: the main one, then any batched ones."""
+    return [step.get("tool_input") or {}] + list(step.get("batch") or [])
+
+
+def _homework_label(inp: dict) -> str:
+    title = str(inp.get("confirm_title") or "").strip()[:60]
+    return f'"{title}"' if title else f"id {str(inp.get('homework_id') or '?')[:12]}"
+
+
+def _join_labels(labels: list[str]) -> str:
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+
+
+def _batch_homework_delete(tool_name: str, tool_input: dict) -> str | None:
+    """Adds a homework delete to a pending homework delete. Returns the message for the model, or None when this
+    call can't join (nothing pending, a different tool, a stale one, or one staged from another source)."""
+    global _pending_action
+    if _homework_real_name(tool_name) != "delete_homework":
+        return None
+    with _pending_action_lock:
+        p = _pending_action
+        now = time.monotonic()
+        if (p is None or p.get("tool_name") != tool_name
+                or now - float(p.get("queued_at", now)) > PENDING_ACTION_TTL_S
+                or p.get("source") != (_current_command_source() or "unattended")):
+            return None
+        calls = _pending_calls(p)
+        new_id = str(tool_input.get("homework_id") or "")
+        if any(str(c.get("homework_id") or "") == new_id for c in calls):
+            labels = [_homework_label(c) for c in calls]
+            return (f"{_homework_label(tool_input)} is already staged, not run. {len(calls)} homework deletion"
+                    f"{'s' if len(calls) != 1 else ''} waiting: {_join_labels(labels)}. "
+                    f"Say yes to delete {'all ' + str(len(calls)) if len(calls) > 1 else 'it'}.")
+        if len(calls) >= HOMEWORK_DELETE_BATCH_MAX:
+            return (f"Not added: at most {HOMEWORK_DELETE_BATCH_MAX} homework deletions can wait for one yes. "
+                    f"{len(calls)} are staged, not run; say yes to delete them, then ask again for the rest.")
+        calls.append(dict(tool_input))
+        labels = [_homework_label(c) for c in calls]
+        _pending_action = {
+            **p, "batch": [dict(c) for c in calls[1:]],
+            "reason": (f"permanently delete {len(calls)} homeworks ({_join_labels(labels)}) "
+                       "with every answer, file record and grade"),
+            # What would run changed, so an Approve of the version reviewed before must not run this one
+            # (_pending_matches compares queued_at), and the TTL starts again.
+            "queued_at": max(now, float(p.get("queued_at", 0)) + 1e-3),
+        }
+        snapshot = dict(_pending_action)
+    dashboard.notify({"type": "pending_action", "data": snapshot})
+    return (f"{len(calls)} homework deletions staged, not run: {_join_labels(labels)}. "
+            f"Say yes to delete all {len(calls)}.")
 
 
 def _pending_matches(step: dict | None, expect) -> bool:
@@ -493,14 +558,36 @@ def _execute_confirmed_action(step: dict, reply_sink=None) -> None:
     tool_name = str(step.get("tool_name") or "")
     tool_input = step.get("tool_input") or {}
     log.info("Confirmed by user: executing staged %s(%r)", tool_name, tool_input)
-    result = _execute_tool(tool_name, tool_input, transcript="", skip_confirmation=True)
-    reply = result or "Done."
+    if step.get("batch"):
+        reply = _run_confirmed_batch(tool_name, _pending_calls(step))
+    else:
+        result = _execute_tool(tool_name, tool_input, transcript="", skip_confirmation=True)
+        reply = result or "Done."
     # A phone-originated command already got its "Message received." ack up front, in
     # handle_text_command — the full result goes back to the phone only, not spoken locally.
     if reply_sink:
         reply_sink(reply)
     else:
         _speak_shaped(reply)
+
+
+def _run_confirmed_batch(tool_name: str, calls: list[dict]) -> str:
+    """Runs each confirmed call in order through the normal confirmed path; one failure never stops the rest.
+    Returns one short summary (only homework deletes batch, see _batch_homework_delete)."""
+    failed = []
+    for inp in calls:
+        try:
+            result = _execute_tool(tool_name, inp, transcript="", skip_confirmation=True)
+        except Exception as e:
+            result = f"Tool failed: {e}"
+        if _looks_failed(result):
+            why = re.sub(r"^(?:tool failed:\s*)?(?:homework app:\s*)?", "", str(result or "no answer").strip(),
+                         flags=re.I)
+            failed.append(f"{_homework_label(inp)} ({why[:80].rstrip('.')})")
+    n, ok = len(calls), len(calls) - len(failed)
+    if not failed:
+        return f"Deleted {n} homeworks."
+    return f"Deleted {ok} of {n} homeworks. Not deleted: " + "; ".join(failed) + "."
 
 
 def _dashboard_get_pending() -> dict | None:
@@ -10661,7 +10748,9 @@ def _execute_tool_impl(
                         'Say "yes" on your next turn to actually run it.'
                     )
                 else:
-                    result = "Another confirmation is already pending; ignoring this one."
+                    # A homework delete may join a pending homework delete; anything else is still refused.
+                    result = (_batch_homework_delete(tool_name, dict(inp))
+                              or "Another confirmation is already pending; ignoring this one.")
             elif tool_name.startswith("mcp_whatsapp_") and tool_name.endswith("_navigate"):
                 result = ("Don't navigate the WhatsApp app anywhere: it is the desktop app, already "
                           "on WhatsApp. Use browser_snapshot, then click/type instead.")

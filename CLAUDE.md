@@ -1757,7 +1757,8 @@ row there each phase rather than only stating the total in chat.
 | 120 (debug report: "credit balance too low" when marking while Jarvis ran on Gemini: marking now follows Jarvis's brain (Gemini when it is the provider, or when no Anthropic key), falls back to Gemini when Claude has no credit/key, Gemini marks are saved but never auto-released; 5 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
 | 121 (new 24-page Teacher's Guide: each homework now has a complete Version A and Version B with an answer key; curriculum data rebuilt per version and cross-checked word for word and key by key against the PDF, answer key moved to private marking notes, question matching tolerant of older-edition questions with in-place correction (never deleting answers); 3 tests changed, 2 new) | Sonnet 5.5 | ~30 min | ~$2.00–$3.00 |
 | 122 (an unrelated landscape picture handed in for the AI-audit table task scored 55/60: the marker now lists the task's requirements and describes the file literally, the task mark is capped in code by the share of requirements met, work that isn't the task is flagged and never auto-released, the teacher sees what the file showed; 6 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3739 min** | **~$241.15–$338.75** |
+| 123 (several homework deletes staged as one batch behind one yes: homework-delete-only, cap 10, dedupe, new queued_at per append, one combined summary, Review view lists every call; 7 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~3759 min** | **~$242.65–$340.95** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2158,6 +2159,15 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
 - **Confirmation**: `mcp_homework_delete_homework` and `mcp_homework_set_student_password` are staged by the existing gate
   (`_HOMEWORK_CONFIRM` / `_homework_confirm_reason` in the `mcp_` branch of `_execute_tool_impl`): spoken yes or dashboard Approve, same
   `skip_confirmation` re-run, nothing reimplemented. Everything else runs directly.
+- **Several deletes, one yes (2026-10-02)**: "delete these 3 homeworks" staged the first and dropped the rest ("Another
+  confirmation is already pending"). Now ONLY a homework delete can join a pending homework delete (`_batch_homework_delete`):
+  extra inputs go in the pending action's `batch` list (main `tool_input` = first), same tool name, same source and still inside
+  `PENDING_ACTION_TTL_S` (a stale one is never revived), duplicate homework_id skipped, max `HOMEWORK_DELETE_BATCH_MAX` (10)
+  in total. Every append sets a new `queued_at` (so a dashboard Approve of the version reviewed earlier runs nothing) and restarts
+  the TTL. A yes / Approve runs each call in order through `_execute_tool(..., skip_confirmation=True)`, each with its own
+  `confirm_title`; a failure doesn't stop the rest; one summary ("Deleted 3 homeworks." / "Deleted 2 of 3 ... Not deleted: ...").
+  Reject/expiry clears the whole batch. Review view lists every call. Never extend batching to run_shell/run_python/other tools.
+  Tests at the end of `test_homework.py`.
 - **Marking** (inside the MCP server, because Jarvis's MCP client only passes text back): one tool-less Claude call per submission
   (`client.beta.messages.create`, `output_config.effort high` + `format json_schema` MARK_SCHEMA, `fallbacks="default"` beta; no thinking
   param). Files: images (upright, long edge <= 1568), PDFs (document block; > 30 pages -> text of the first 30), .docx/.pptx text + up to 5

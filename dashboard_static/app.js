@@ -295,6 +295,13 @@ function showPendingDetail(pending) {
   state.followedSessionId = null;
   location.hash = "#/sessions";
   const el = document.getElementById("detail-panel");
+  // A batch (only homework deletes can batch) lists every call, in the order they will run.
+  const calls = [pending.tool_input].concat(pending.batch || []);
+  const inputHtml = calls.length > 1
+    ? `<p class="detail-section-label">All ${calls.length} calls (run in this order)</p>
+       <pre class="detail-code">${prettyCodeHtml(calls)}</pre>`
+    : `<p class="detail-section-label">Full input</p>
+       <pre class="detail-code">${prettyCodeHtml(pending.tool_input)}</pre>`;
   el.innerHTML = `
     <div class="detail-card">
       <div class="detail-header">
@@ -302,11 +309,10 @@ function showPendingDetail(pending) {
       </div>
       <p class="danger-text"><strong>${esc(pending.tool_name)}</strong> would ${esc(pending.reason)}.</p>
       <div>
-        <p class="detail-section-label">Full input</p>
-        <pre class="detail-code">${prettyCodeHtml(pending.tool_input)}</pre>
+        ${inputHtml}
       </div>
       <div class="detail-actions">
-        <button class="btn btn-danger" id="approve-btn">Approve &amp; Run</button>
+        <button class="btn btn-danger" id="approve-btn">Approve &amp; Run${calls.length > 1 ? " all " + calls.length : ""}</button>
         <button class="btn btn-ghost" id="reject-btn">Reject</button>
       </div>
       <p id="pending-action-status" class="muted"></p>

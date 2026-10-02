@@ -792,3 +792,109 @@ def test_gemini_answers_are_coerced_to_the_requirements_shape():
     raw = hm._coerce_marks({"task_points": 12, "requirements": [{"requirement": "table", "met": "YES"},
                                                                 {"requirement": "x", "met": "maybe"}, {"met": "yes"}]})
     assert raw["requirements"] == [{"requirement": "table", "met": "yes"}, {"requirement": "x", "met": "no"}]
+
+
+# ------------------------------------------------------------------- several deletes, one yes (2026-10-02)
+DEL = "mcp_homework_delete_homework"
+
+
+def _del(n):
+    return {"homework_id": f"h{n}", "confirm_title": f"Homework {n}"}
+
+
+def _stage(jarvis, *ns):
+    return [jarvis._execute_tool_impl(DEL, _del(n), "delete homeworks") for n in ns]
+
+
+def test_three_deletes_in_a_row_stage_one_batch(jarvis, monkeypatch):
+    ran = []
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(inp) or "done")
+    outs = _stage(jarvis, 1, 2, 3)
+    assert ran == [] and not any("already pending" in o for o in outs)
+    assert outs[-1] == ('3 homework deletions staged, not run: "Homework 1", "Homework 2" and "Homework 3". '
+                        "Say yes to delete all 3.")
+    p = jarvis._dashboard_get_pending()
+    assert p["tool_input"] == _del(1) and p["batch"] == [_del(2), _del(3)]
+    assert "3 homeworks" in p["reason"] and all(jarvis._looks_staged(o) for o in outs)
+
+
+def test_same_homework_twice_is_not_added_twice(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: "done")
+    outs = _stage(jarvis, 1, 2, 2, 1)
+    assert jarvis._dashboard_get_pending()["batch"] == [_del(2)]
+    assert "already staged, not run" in outs[2] and "Say yes to delete all 2" in outs[3]
+
+
+def test_batch_is_capped_at_ten(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: "done")
+    outs = _stage(jarvis, *range(1, 12))
+    assert len(jarvis._pending_calls(jarvis._dashboard_get_pending())) == 10
+    assert outs[-1].startswith("Not added: at most 10 homework deletions") and "10 are staged, not run" in outs[-1]
+    assert _del(11) not in jarvis._pending_calls(jarvis._dashboard_get_pending())
+
+
+def test_adding_to_the_batch_makes_an_old_approval_run_nothing(jarvis, monkeypatch):
+    ran = []
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(inp) or "done")
+    monkeypatch.setattr(jarvis.threading, "Thread",
+                        lambda target, args=(), daemon=None, **k: type("T", (), {"start": lambda self: target(*args)})())
+    monkeypatch.setattr(jarvis, "_speak_shaped", lambda *a, **k: None)
+    _stage(jarvis, 1)
+    reviewed = jarvis._dashboard_get_pending()["queued_at"]
+    _stage(jarvis, 2)                                                   # the batch changed after the review
+    assert jarvis._dashboard_get_pending()["queued_at"] != reviewed
+    msg = jarvis._dashboard_approve_pending(reviewed)
+    assert ran == [] and "Nothing ran" in msg and jarvis._dashboard_get_pending() is not None
+    assert jarvis._dashboard_approve_pending(jarvis._dashboard_get_pending()["queued_at"]).startswith("Approved")
+    assert ran == [_del(1), _del(2)]
+
+
+def test_yes_runs_every_delete_in_order_and_one_failure_does_not_stop_the_rest(jarvis, monkeypatch):
+    ran = []
+
+    def fake(name, inp):
+        ran.append(inp["homework_id"])
+        return "Tool failed: homework app: confirm_title doesn't match." if inp["homework_id"] == "h2" else "Deleted."
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", fake)
+    _stage(jarvis, 1, 2, 3)
+    replies = []
+    jarvis._execute_confirmed_action(jarvis._take_pending_action(), replies.append)
+    assert ran == ["h1", "h2", "h3"]                                    # each with its own confirm_title, in order
+    assert replies == ['Deleted 2 of 3 homeworks. Not deleted: "Homework 2" (confirm_title doesn\'t match).']
+    ran.clear()
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(inp) or "Deleted.")
+    _stage(jarvis, 4, 5)
+    jarvis._execute_confirmed_action(jarvis._take_pending_action(), replies.append)
+    assert replies[-1] == "Deleted 2 homeworks." and ran == [_del(4), _del(5)]
+
+
+def test_homework_deletes_never_mix_with_another_pending_tool(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: "done")
+    assert jarvis._queue_pending_confirmation("run_shell", {"command": "shutdown /s"}, "shut down")
+    out = _stage(jarvis, 1)[0]
+    assert out == "Another confirmation is already pending; ignoring this one."
+    assert jarvis._dashboard_get_pending()["tool_name"] == "run_shell" and "batch" not in jarvis._dashboard_get_pending()
+    jarvis._take_pending_action()
+    _stage(jarvis, 1)
+    out = jarvis._execute_tool_impl("mcp_homework_set_student_password", {"student": "Peter", "password": "abcdef"}, "t")
+    assert out == "Another confirmation is already pending; ignoring this one."
+    assert jarvis._execute_tool_impl("run_shell", {"command": "shutdown /s /t 0"}, "t") == \
+        "Another confirmation is already pending; ignoring this one."
+    assert "batch" not in jarvis._dashboard_get_pending()
+
+
+def test_reject_or_expiry_clears_the_whole_batch(jarvis, monkeypatch):
+    ran = []
+    monkeypatch.setattr(jarvis, "execute_mcp_tool", lambda name, inp: ran.append(inp) or "done")
+    _stage(jarvis, 1, 2, 3)
+    assert jarvis._dashboard_reject_pending() and jarvis._dashboard_get_pending() is None
+    _stage(jarvis, 1, 2, 3)
+    jarvis._pending_action = {**jarvis._pending_action,
+                              "queued_at": jarvis.time.monotonic() - jarvis.PENDING_ACTION_TTL_S - 5}
+    assert "already pending" in _stage(jarvis, 4)[0]                   # a stale batch is never revived by adding to it
+    monkeypatch.setattr(jarvis, "flush_pending_notifications", lambda: None)
+    monkeypatch.setattr(jarvis, "run_agent_loop", lambda *a, **k: "")
+    monkeypatch.setattr(jarvis.dashboard, "start_session", lambda *a, **k: 1)
+    monkeypatch.setattr(jarvis.dashboard, "end_session", lambda *a, **k: None)
+    jarvis._handle_text_command_impl("yes", None, {"tone": "neutral", "confidence": 0}, "voice")
+    assert ran == [] and jarvis._pending_action is None
