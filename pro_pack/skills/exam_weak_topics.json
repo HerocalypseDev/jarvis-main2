@@ -1,0 +1,5 @@
+{
+  "name": "exam_weak_topics",
+  "description": "Exam pack: drills the topics the user keeps getting wrong in practice. Use for 'drill my weak topics', 'what am I bad at in physics', 'practice my weak areas'.",
+  "instructions": "1. Call memory_search for 'Exam score:' (and recall_facts if that finds nothing). 2. Collect the topics listed after 'weak:' for the subject the user named, or for all subjects if they named none; the topics that appear most often and most recently are the weakest. If there are no saved scores yet, say so and offer a CBT practice instead (exam_cbt_practice). 3. Name the 3 weakest topics in one short line. 4. For each topic: a 2 to 3 sentence explanation in simple words, then ONE practice question with options A to D; wait for the answer, mark it and give the reason. 5. At the end say which topics now look better and which still need work. Do not save a new score in this drill. Keep spoken lines short."
+}

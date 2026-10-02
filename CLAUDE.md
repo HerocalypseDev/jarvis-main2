@@ -1769,7 +1769,8 @@ row there each phase rather than only stating the total in chat.
 | 126 (hourly Gmail check re-announced the same unread mail: scheduled skills only see mail their earlier runs haven't seen, remembered only after a successful run; skill names the right Gmail tool; 2 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 127 (homework-app confirmation code moved out of the public jarvis.py into a private `homework_gate.py` behind a generic `*_gate.py` add-on hook; 1 new test) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 128 (pictures over Telegram: photos/image files read with the caption as the request, kept in memory only, real type checked, 5 MB cap, other message kinds get a reply instead of silence; published to Jarvis4U; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3859 min** | **~$250.35–$352.05** |
+| 129 (Pro second wave plan (PRO_ROADMAP Phases 7-14) + Exam pack: CBT practice, weak-topic drill, study plan .docx, progress, gated 7pm nudge; pack 1.6.0; 1 new test) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~3884 min** | **~$252.35–$354.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
