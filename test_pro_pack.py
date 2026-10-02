@@ -109,7 +109,7 @@ def test_autonomy_recipes_start_switched_off_and_only_create_reminders():
     import jarvis_agents
 
     recipes = sorted((PACK / "skills").glob("recipe_*.json"))
-    assert len(recipes) == 3
+    assert len(recipes) == 4  # invoice, job alerts, deadline mail, sale alert (Creator pack)
     for path in recipes:
         text = json.loads(path.read_text(encoding="utf-8"))["instructions"]
         assert "action 'create'" in text and "enabled false" in text, path.name
@@ -260,3 +260,12 @@ def test_job_hunt_never_invents_experience_and_tracks_in_the_shared_format():
     tracker = _skill("job_tracker")["instructions"]
     assert "Job application: <Company> / <Role> / applied <YYYY-MM-DD> / status <status>" in tracker
     assert "key 'job:<company lower case>:<role lower case>'" in tracker
+
+
+def test_creator_pack_makes_honest_drafts_and_never_sends():
+    creator = sorted(p.stem for p in (PACK / "skills").glob("creator_*.json"))
+    assert creator == ["creator_captions", "creator_content_plan", "creator_customer_reply", "creator_product_copy"]
+    assert "Honest claims only" in _skill("creator_product_copy")["instructions"]
+    reply = _skill("creator_customer_reply")["instructions"]
+    assert "Never promise a refund" in reply and "do not send anything" in reply
+    assert "Content plan: <YYYY-MM-DD> / <platform> / <short title> / status idea" in _skill("creator_content_plan")["instructions"]

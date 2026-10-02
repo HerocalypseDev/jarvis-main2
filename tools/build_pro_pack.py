@@ -95,6 +95,12 @@ Job Hunt pack - copy the job advert first, then ask:
   "Prep me for the QA interview"               (mock interview with feedback)
   Jarvis never invents experience, grades or skills; anything you lack is listed as a gap for you to decide.
 
+Creator / Seller pack:
+  "Write a Selar description for my product"   / "Captions for my TikTok about my new ebook"
+  "Plan my content for next week"              (Word document + "what's on my content plan?")
+  "Reply to this customer" (copy their message first; a draft only, nothing is sent)
+  "Tell me when I make a sale"                 (Selar/Paystack sale emails -> a reminder; created switched OFF)
+
 Updates: new packs are added to the same download on Selar; download it again and replace the
 "pro" folder. Your license key keeps working.
 

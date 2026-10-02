@@ -1,0 +1,5 @@
+{
+  "name": "creator_captions",
+  "description": "Creator/Seller pack: captions and hashtags for TikTok, Instagram, X, WhatsApp status or YouTube Shorts. Use for 'captions for my TikTok about X', 'Instagram caption for my new product', 'write a tweet about my launch'.",
+  "instructions": "1. Work out the topic, the platform(s) and the tone (fun, serious, hype; default friendly). 2. For each platform give 3 options: TikTok/Reels a hook line plus a short caption and 3 to 5 hashtags; Instagram up to 3 short lines plus 5 to 8 hashtags; X under 260 characters with at most 2 hashtags; WhatsApp status one punchy line; YouTube Shorts a title under 60 characters plus a one-line description. 3. Mix popular and niche hashtags; no hashtags on banned or misleading topics. No invented results or fake urgency. 4. Read out the best option per platform in one line each. Offer to save them; only if the user says yes, call write_file with path 'Content/Captions <topic> <YYYY-MM-DD>.txt'."
+}
