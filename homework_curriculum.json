@@ -1,0 +1,633 @@
+{
+ "source": "Introduction to AI - Teacher's Guide (AI Basics for Kids - 4-Week Sunday Class), 17 pages, Oct 1 2026",
+ "scoring": "Every homework is 100 points: multiple choice 30 (6 x 5, auto-marked) + short answer 10 (marked by the teacher) + task/upload 60 (marked by the teacher with a comment). Late work loses 10 points per day after 9pm, up to 50.",
+ "versions": "Version A = James (younger, 11): more creative, more choice, shorter written parts. Version B = Peter (older, 12): more analysis, a stretch question. Both cover the same ideas.",
+ "homeworks": [
+  {
+   "number": 1,
+   "week": 1,
+   "title": "AI audit",
+   "due_date": "2026-10-07",
+   "due_time": "21:00",
+   "quiz_note": "same for both",
+   "quiz": [
+    {
+     "q": "AI is:",
+     "options": [
+      "any computer",
+      "a computer system that can do things that usually need human thinking",
+      "a robot that looks like a person"
+     ],
+     "answer": 1
+    },
+    {
+     "q": "Machine learning means the computer:",
+     "options": [
+      "learns from lots of examples",
+      "only follows rules a person typed",
+      "never makes mistakes"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Which one uses AI?",
+     "options": [
+      "a light switch",
+      "a calculator",
+      "face unlock on a phone"
+     ],
+     "answer": 2
+    },
+    {
+     "q": "ChatGPT came out in:",
+     "options": [
+      "1997",
+      "2010",
+      "2022"
+     ],
+     "answer": 2
+    },
+    {
+     "q": "In 1997, a computer called Deep Blue beat the world champion at:",
+     "options": [
+      "chess",
+      "football",
+      "Ludo"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "All AI today is \"narrow AI\". That means it:",
+     "options": [
+      "is good at one kind of job",
+      "can do everything a human can",
+      "is very small"
+     ],
+     "answer": 0
+    }
+   ],
+   "short_a": "Name one app you use that has AI. What does the AI do?",
+   "short_b": "Name one app you use that has AI. What does the AI do, and what do you think it learned from?",
+   "task_common": "Table columns: App | What the AI does | My example. Example row: YouTube | Suggests videos | It showed me more football videos after I watched some.",
+   "task_a": "Fill in this table for 3 apps you use, and add 1 screenshot.",
+   "task_b": "Fill in this table for 5 apps you use, with an extra column: \"Can it get things wrong? How?\" Add 2 screenshots.",
+   "marking_notes": "Marking guide: real AI examples (25), clear \"what it does\" (20), neat and complete (15)."
+  },
+  {
+   "number": 2,
+   "week": 1,
+   "title": "AI milestone write-up",
+   "due_date": "2026-10-10",
+   "due_time": "21:00",
+   "quiz_note": "same for both",
+   "quiz": [
+    {
+     "q": "The examples an AI learns from are called:",
+     "options": [
+      "training data",
+      "a password",
+      "a website"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "After learning, AI makes a guess about something new. That guess is a:",
+     "options": [
+      "prediction",
+      "battery",
+      "rule"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "If an AI learns from bad examples, it will:",
+     "options": [
+      "give better answers",
+      "make more mistakes",
+      "stop working forever"
+     ],
+     "answer": 1
+    },
+    {
+     "q": "Who asked \"Can machines think?\" in 1950?",
+     "options": [
+      "Alan Turing",
+      "Bill Gates",
+      "Elon Musk"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "In 2016, AlphaGo beat the world's best player at:",
+     "options": [
+      "Go",
+      "Ludo",
+      "football"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "The 4 steps of how AI learns, in order, are:",
+     "options": [
+      "data, training, model, prediction",
+      "prediction, data, model, training",
+      "model, data, prediction, training"
+     ],
+     "answer": 0
+    }
+   ],
+   "short_a": "Fill in the blanks: \"First the AI gets lots of ____. Then it learns ____. Then it makes a ____.\"",
+   "short_b": "In 2-3 sentences, explain how an email app learns to spot spam emails.",
+   "task_common": "",
+   "task_a": "Make one \"AI history card\" for an event from class (1950, 1997, 2016 or 2022). Write the year, what happened, and why it was a big deal, in 4-5 sentences. Add a picture and the website where you found the information.",
+   "task_b": "Make two AI history cards (4-5 sentences each). Add one sentence about how AI changed between the two events, and list the websites you used.",
+   "marking_notes": "Marking guide: correct facts (25), own words (20), picture and website included (15). Short answer (Version A) expected blanks: data/examples, patterns, prediction."
+  },
+  {
+   "number": 3,
+   "week": 2,
+   "title": "How an LLM works",
+   "due_date": "2026-10-14",
+   "due_time": "21:00",
+   "quiz_note": "same for both",
+   "quiz": [
+    {
+     "q": "ChatGPT and Claude are a type of AI called:",
+     "options": [
+      "a large language model (LLM)",
+      "a video game",
+      "a calculator"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A chatbot writes its answer:",
+     "options": [
+      "one small piece at a time",
+      "by copying a saved answer",
+      "by secretly asking a person"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A token is:",
+     "options": [
+      "a small piece of a word or sentence",
+      "a coin",
+      "a password"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "When AI says something false but sounds very sure, it is called a:",
+     "options": [
+      "hallucination",
+      "download",
+      "update"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Chatbots learned by reading:",
+     "options": [
+      "huge amounts of text from books and websites",
+      "only one book",
+      "your private messages"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Why might a chatbot not know yesterday's news?",
+     "options": [
+      "It only learned from information up to a certain date",
+      "It is sleeping",
+      "It doesn't like news"
+     ],
+     "answer": 0
+    }
+   ],
+   "short_a": "\"The capital of Nigeria is ____.\" What word would a chatbot predict next, and why?",
+   "short_b": "Why can a chatbot sound very sure but still be wrong? Answer in 2 sentences.",
+   "task_common": "Upload a photo or document.",
+   "task_a": "Draw 3 boxes with arrows: \"You type a question\" -> \"The chatbot predicts words one by one\" -> \"You get an answer\". Under it, write 3 sentences explaining your drawing.",
+   "task_b": "Draw 4 boxes with arrows, starting with \"It learned from lots of text\". Under it, write 5-6 sentences explaining your drawing, including what a hallucination is.",
+   "marking_notes": "Marking guide: correct steps (25), clear drawing (15), own words (20)."
+  },
+  {
+   "number": 4,
+   "week": 2,
+   "title": "Prompt portfolio",
+   "due_date": "2026-10-17",
+   "due_time": "21:00",
+   "quiz_note": "same for both",
+   "quiz": [
+    {
+     "q": "Which prompt is better?",
+     "options": [
+      "\"History\"",
+      "\"Tell me about history\"",
+      "\"Explain 3 facts about the Benin Kingdom for a 12-year-old, in short bullet points\""
+     ],
+     "answer": 2
+    },
+    {
+     "q": "\"Answer in 5 bullet points\" tells the AI the:",
+     "options": [
+      "format",
+      "role",
+      "task"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "\"Act as a maths teacher\" tells the AI its:",
+     "options": [
+      "role",
+      "format",
+      "context"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "If the AI's answer isn't good, you should:",
+     "options": [
+      "ask again and say what to change",
+      "give up",
+      "type in capital letters"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "\"For a 12-year-old with a test on Friday\" is the:",
+     "options": [
+      "context",
+      "role",
+      "format"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "\"Explain fractions\" is the:",
+     "options": [
+      "task",
+      "format",
+      "role"
+     ],
+     "answer": 0
+    }
+   ],
+   "short_a": "Make \"help me with science\" better by saying who it is for and how you want the answer.",
+   "short_b": "Rewrite \"make me a study plan\" using Role, Task, Context and Format.",
+   "task_common": "Don't test these at home; we try them together on Claude next Sunday.",
+   "task_a": "Write 3 weak prompts, then make each one strong. In each strong prompt, mark the Role, Task, Context and Format.",
+   "task_b": "Do the same with 4 prompts, then write one follow-up message you would send if the first answer wasn't good enough.",
+   "marking_notes": "Marking guide: strong prompts with all four parts (40), parts marked correctly (20)."
+  },
+  {
+   "number": 5,
+   "week": 3,
+   "title": "Fact-check report",
+   "due_date": "2026-10-21",
+   "due_time": "21:00",
+   "quiz_note": "same for both",
+   "quiz": [
+    {
+     "q": "When AI tells you a fact, you should:",
+     "options": [
+      "check it on a trusted website",
+      "believe it straight away",
+      "share it quickly"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A deepfake is:",
+     "options": [
+      "a fake video, picture or voice made with AI",
+      "a deep swimming pool",
+      "a computer game"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Which is SAFE to type into an AI app?",
+     "options": [
+      "your password",
+      "your home address",
+      "\"Explain how rain forms\""
+     ],
+     "answer": 2
+    },
+    {
+     "q": "You see a shocking video online. What should you do first?",
+     "options": [
+      "share it",
+      "check if trusted news websites are reporting it",
+      "comment on it"
+     ],
+     "answer": 1
+    },
+    {
+     "q": "AI can sometimes make up:",
+     "options": [
+      "fake book names and fake websites",
+      "real money",
+      "electricity"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Which is a trusted place to check a fact?",
+     "options": [
+      "a random comment",
+      "an official or well-known news website",
+      "a meme page"
+     ],
+     "answer": 1
+    }
+   ],
+   "short_a": "Name 2 things you should never type into an AI app.",
+   "short_b": "Name 3 things you should never type into an AI app, and say why one of them is dangerous.",
+   "task_common": "Use the facts Claude gave in Sunday's class (from your notes).",
+   "task_a": "Check 2 facts. For each, write the fact, one website you used to check it, and whether it is true or false.",
+   "task_b": "Check 3 facts. For each, write the fact, two websites you used, whether it is true, false or partly true, and one sentence on how you decided.",
+   "marking_notes": "Marking guide: real websites used (25), correct true/false answers (25), neat and complete (10)."
+  },
+  {
+   "number": 6,
+   "week": 3,
+   "title": "Showcase presentation draft",
+   "due_date": "2026-10-24",
+   "due_time": "21:00",
+   "quiz_note": "same for both, a review of Weeks 1-3",
+   "quiz": [
+    {
+     "q": "The examples an AI learns from are called:",
+     "options": [
+      "training data",
+      "rules",
+      "screens"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A chatbot writes its answer:",
+     "options": [
+      "one small piece at a time",
+      "by copying a saved answer",
+      "randomly"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "\"Answer in a table\" tells the AI the:",
+     "options": [
+      "format",
+      "role",
+      "task"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Before sharing something AI told you, you should:",
+     "options": [
+      "check it",
+      "share it fast",
+      "add emojis"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A deepfake is:",
+     "options": [
+      "a fake video, picture or voice made with AI",
+      "a deep swimming pool",
+      "a computer game"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Which is safe to type into an AI app?",
+     "options": [
+      "your password",
+      "\"Explain how volcanoes form\"",
+      "your home address"
+     ],
+     "answer": 1
+    }
+   ],
+   "short_a": "What is your presentation topic, and what is one thing you will teach your parents?",
+   "short_b": "What is your presentation topic, and what are your 3 main points?",
+   "task_common": "Upload slides as PowerPoint, Google Slides or PDF. Write the slides yourself; don't use AI to write them.",
+   "task_a": "4 slides: a title slide, 2 slides with 3 bullet points each, and a slide saying where you found your information.",
+   "task_b": "5-6 slides in the same style, with a short note under each slide of what you will say.",
+   "marking_notes": "Marking guide: correct information (25), clear and neat slides (25), sources slide (10)."
+  },
+  {
+   "number": 7,
+   "week": 4,
+   "title": "Final quiz and code exercise",
+   "due_date": "2026-10-28",
+   "due_time": "21:00",
+   "quiz_note": "same for both",
+   "quiz": [
+    {
+     "q": "AI that is good at one kind of job is called:",
+     "options": [
+      "narrow AI",
+      "general AI",
+      "tiny AI"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "AI learns from:",
+     "options": [
+      "lots of examples (data)",
+      "magic",
+      "electricity only"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A chatbot writes its answer:",
+     "options": [
+      "one small piece at a time",
+      "by copying a saved answer",
+      "randomly"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "When AI confidently says something false, it is called a:",
+     "options": [
+      "hallucination",
+      "download",
+      "password"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "In Python, print() is used to:",
+     "options": [
+      "show text on the screen",
+      "save a file",
+      "switch off the computer"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "In Python, \"if\" is used to:",
+     "options": [
+      "make a decision",
+      "draw a picture",
+      "end the program"
+     ],
+     "answer": 0
+    }
+   ],
+   "short_a": "What does your chatbot do when someone types something it doesn't know? Why?",
+   "short_b": "AI can write code. Why must a programmer still read and test it?",
+   "task_common": "Upload the .py file and a screenshot of it running.",
+   "task_a": "Add 2 new questions to your chatbot from class, each with its own replies using if/elif/else.",
+   "task_b": "Add 3 new questions to your chatbot, and make at least one reply use the person's name.",
+   "marking_notes": "Marking guide: program runs (25), new questions work (25), friendly replies (10)."
+  },
+  {
+   "number": 8,
+   "week": 4,
+   "title": "Course reflection",
+   "due_date": "2026-10-31",
+   "due_time": "21:00",
+   "quiz_note": "same for both, a review of the whole course",
+   "quiz": [
+    {
+     "q": "Machine learning means the computer:",
+     "options": [
+      "learns from lots of examples",
+      "only follows rules a person typed",
+      "never makes mistakes"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A chatbot writes its answer:",
+     "options": [
+      "one small piece at a time",
+      "by copying a saved answer",
+      "randomly"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "\"Act as a maths teacher\" is which part of a prompt?",
+     "options": [
+      "role",
+      "format",
+      "task"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "Before sharing a shocking video, you should:",
+     "options": [
+      "check trusted news websites",
+      "share it quickly",
+      "comment on it"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A list of steps to solve a problem is called:",
+     "options": [
+      "an algorithm",
+      "a bug",
+      "a token"
+     ],
+     "answer": 0
+    },
+    {
+     "q": "A mistake in code is called a:",
+     "options": [
+      "bug",
+      "variable",
+      "prompt"
+     ],
+     "answer": 0
+    }
+   ],
+   "short_a": "What is one difference between your Python chatbot and Claude?",
+   "short_b": "Why can't your Python chatbot answer new questions, while Claude can?",
+   "task_common": "",
+   "task_a": "Write 5-6 sentences: your favourite thing you learned, something that surprised you, and what you want to learn next.",
+   "task_b": "Write 8-10 sentences on the same points, plus one goal for learning more about AI or coding.",
+   "marking_notes": "Marking guide: answers all the questions (30), honest and specific (20), neat writing (10)."
+  }
+ ],
+ "lessons": [
+  {
+   "week": 1,
+   "sunday": "2026-10-04",
+   "title": "What AI is and how it works",
+   "goal": "Define AI correctly, explain how machine learning differs from normal programming, name the main milestones in AI history, and judge what a chatbot does well and badly.",
+   "key_terms": "artificial intelligence, algorithm, machine learning, training data, model, prediction, narrow AI, general AI, supervised / unsupervised / reinforcement learning",
+   "theory": [
+    "AI is computer systems doing tasks that normally need human intelligence: understanding language, recognising images, making decisions, creating content.",
+    "Normal programming: a person writes every rule. Machine learning: the computer is shown huge numbers of examples and works out the patterns itself.",
+    "Narrow AI does one kind of task (face unlock, translation, chatbots). General AI would match humans at almost everything; it does not exist yet.",
+    "History: 1950 Alan Turing asks \"Can machines think?\" (Turing Test); 1956 Dartmouth workshop names the field; 1997 Deep Blue beats Kasparov at chess; 2016 AlphaGo beats Lee Sedol at Go; 2022 ChatGPT launches.",
+    "Progress sped up after 2010: more data from the internet, faster chips, better methods.",
+    "How machine learning works: training data -> training (finding patterns) -> model (the learned result) -> prediction (its best guess on something new). Example: a spam filter learning from millions of emails marked spam or not spam.",
+    "Three types: supervised (labelled examples), unsupervised (finds groups by itself), reinforcement (trial, reward and penalty).",
+    "A model is only as good as its data; bad or one-sided data gives bad or unfair results."
+   ],
+   "practical": "AI audit of the apps they use (the AI feature, what it predicts, what data it learned from); live test of Claude's strengths and limits."
+  },
+  {
+   "week": 2,
+   "sunday": "2026-10-11",
+   "title": "How chatbots work and how to use them well",
+   "goal": "Explain how a chatbot produces an answer, why it sometimes makes things up, and how to write a prompt that gets a much better result.",
+   "key_terms": "large language model (LLM), token, next-token prediction, parameters, training, fine-tuning, hallucination, knowledge cutoff, context window, diffusion model, prompt",
+   "theory": [
+    "An LLM is a machine learning model trained on enormous amounts of text: books, websites, articles, code.",
+    "It reads and writes in tokens: small pieces of text, often part of a word (one English word is roughly 1-2 tokens). Its core skill is predicting the next token, again and again, to build a whole answer.",
+    "Parameters are billions of adjustable numbers tuned during training. Two stages: pre-training (patterns from huge text) and fine-tuning (people rate answers so it learns to be helpful).",
+    "Hallucination: it predicts what sounds right, not what is checked to be true. Knowledge cutoff: it only learned up to a certain date unless it can search the web. Tokens explain odd failures like counting letters. Context window: what it can hold in mind in one conversation.",
+    "Image generators use diffusion models: start from random noise and remove it step by step, guided by the text prompt.",
+    "Prompt framework: Role (who the AI should act as), Task (what exactly to do), Context (who it is for, background), Format (list, table, length). Follow-up prompts: ask to shorten, simplify or correct."
+   ],
+   "practical": "Prompt structure (role, task, context, format); rewrite weak prompts (\"help me with maths\", \"write a story\", \"make a study plan\") and test them live on Claude."
+  },
+  {
+   "week": 3,
+   "sunday": "2026-10-18",
+   "title": "Checking AI and staying safe",
+   "goal": "Fact-check an AI answer properly, judge whether an image, video or voice may be AI-made, and know what personal information never goes into an AI app. Each student also picks a showcase topic.",
+   "key_terms": "verification, reliable source, cross-checking, fabricated citation, deepfake, voice cloning, reverse image search, personal data, bias",
+   "theory": [
+    "Treat an AI answer as a first draft, not a final fact, especially for names, numbers, dates and quotes. Cross-check with at least two reliable sources (official websites, established news outlets, encyclopedias, textbooks) and check the date.",
+    "AI can invent sources: book titles, links or quotes that do not exist. Always confirm a source is real.",
+    "A deepfake is AI-made or AI-edited video, audio or images showing a real person doing or saying something they never did. Voice cloning: a few seconds of voice can be enough, which scammers use in fake emergency calls.",
+    "Clues (odd hands or teeth, warped text, mismatched shadows, lips out of sync) are disappearing. Better checks: who posted it first, is a trusted outlet reporting it, what does a reverse image search show. Shocking content deserves more checking, not faster sharing.",
+    "Privacy: many AI apps store conversations and some use them to improve models. Never type passwords, home address, school name, phone numbers, ID or bank details, or private photos. Check app settings for chat history and data use.",
+    "Bias comes from training data that over- or under-represents groups. For school, AI is a tutor (explain, quiz, give feedback), not a ghostwriter."
+   ],
+   "practical": "Test the prompt portfolios on Claude; fact-check Claude's answers with two reliable sources; choose showcase topics and write three main points."
+  },
+  {
+   "week": 4,
+   "sunday": "2026-10-25",
+   "title": "AI and code, then the showcase",
+   "goal": "Write and run a first Python program and present to the parents.",
+   "key_terms": "code, programming language, algorithm, variable, input, output, condition (if/else), bug, AI coding assistant",
+   "theory": [
+    "Code is exact instructions a computer follows, with no guessing. A programming language is how we write them. Python is the most popular language for AI because it is readable and has strong AI libraries.",
+    "An algorithm is a step-by-step method to solve a problem. Building blocks: variables (storing information), input and output (asking and showing), conditions (if this, do that; otherwise, do something else).",
+    "AI coding assistants are LLMs trained on huge amounts of public code, using the same next-token prediction. They write and explain code fast, but the code can contain bugs, so a programmer must read, test and understand it.",
+    "Careers: machine learning engineer, data scientist, AI researcher, AI safety researcher, software developer. Base skills: maths, programming, clear writing, learning to check your work."
+   ],
+   "practical": "A rule-based mini chatbot in Python (input, variables, if/elif/else), then add at least three new rules each; contrast with Claude, which can answer almost anything."
+  }
+ ]
+}
