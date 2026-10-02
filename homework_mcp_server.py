@@ -566,26 +566,44 @@ async def _add_specs(homework_id: str, specs: list[dict]) -> tuple[list[str], li
     return done, failed
 
 
-async def _apply_guide(homework_id: str, hw: dict, replace_tasks: bool) -> str:
+async def _apply_guide(homework_id: str, hw: dict, replace_existing: bool) -> str:
     """Fill an app homework from the guide: the quiz + short answers still missing, the task text (A and B) and the
-    marking notes when they are empty (or when replace_tasks). Safe to repeat: nothing already there is added twice."""
+    marking notes when they are empty. Safe to repeat: nothing already there is added twice. Existing questions are never
+    deleted (that would delete the children's answers to them); with replace_existing a multiple-choice question whose options
+    or correct answer differ from the guide is corrected in place, and task text / marking notes are overwritten."""
     try:
         cur = await asyncio.to_thread(homework_api.call, "get_homework", {"homework_id": homework_id})
     except homework_api.HomeworkApiError as e:
         return f"Tool failed: homework app: {e.message}"
-    specs = homework_guide.missing_specs(hw, (cur or {}).get("questions") or [])
+    existing = (cur or {}).get("questions") or []
+    specs = homework_guide.missing_specs(hw, existing)
     done, failed = await _add_specs(homework_id, specs)
     lines = [f"{homework_guide.app_title(hw)}: added {len(done)} of {len(specs)} missing question(s) from the guide "
              f"({len(homework_guide.question_specs(hw)) - len(specs)} were already there)."]
+    diffs = homework_guide.differences(hw, existing)
+    if diffs and replace_existing:
+        fixed = 0
+        for q, spec in diffs:
+            try:
+                await asyncio.to_thread(homework_api.call, "update_question", {
+                    "question_id": q.get("id"), "options": spec["options"], "correct_option": spec["correct_option"]})
+                fixed += 1
+            except homework_api.HomeworkApiError as e:
+                failed.append(f"fixing '{_plain(spec['prompt'], 40)}': {e.message}")
+        lines.append(f"Corrected {fixed} existing question(s) to match the guide (options and right answer).")
+    elif diffs:
+        lines.append(f"{len(diffs)} existing question(s) differ from the guide's options or right answer "
+                     "(replace_existing=true corrects them in place; their answers are kept): "
+                     + "; ".join(_plain(spec["prompt"], 40) for _, spec in diffs))
     fields = {}
     for key, text in (("instructions_a", homework_guide.task_text(hw, "A")),
                       ("instructions_b", homework_guide.task_text(hw, "B")),
-                      ("marking_notes", hw["marking_notes"])):
+                      ("marking_notes", homework_guide.marking_notes(hw))):
         have = str((cur or {}).get(key) or "").strip()
-        if replace_tasks or not have:
+        if replace_existing or not have:
             fields[key] = text
-        elif clean_label(have) != text:
-            lines.append(f"Kept the existing {key.replace('_', ' ')} (different from the guide; replace_tasks=true overwrites it).")
+        elif have != text:
+            lines.append(f"Kept the existing {key.replace('_', ' ')} (different from the guide; replace_existing=true overwrites it).")
     if fields:
         try:
             await asyncio.to_thread(homework_api.call, "update_homework", {"homework_id": homework_id, **fields})
@@ -623,8 +641,8 @@ async def guide_lesson(week: int) -> str:
 
 
 @tool
-async def add_guide_questions(homework_id: str, number: int | None = None, replace_tasks: bool = False) -> str:
-    """Homework app: THE way to add questions to a homework from the Teacher's Guide - when the user says "add the questions", "add the quiz" or "set up the homework", use this, in ONE call. It adds the guide's 6 multiple-choice questions (30 points), the short answer for James (A) and Peter (B), and fills the task text and marking notes, exactly as written in the guide. number is the guide homework 1-8 (found from the title like "Homework 3" or "AI audit" when left out). Safe to run again: it only adds what is missing. replace_tasks true overwrites task text that is already there."""
+async def add_guide_questions(homework_id: str, number: int | None = None, replace_existing: bool = False) -> str:
+    """Homework app: THE way to add questions to a homework from the Teacher's Guide - when the user says "add the questions", "add the quiz" or "set up the homework", use this, in ONE call. It adds the guide's 6 multiple-choice questions (30 points), the short answer for James (A) and Peter (B), and fills each version's task text and the marking notes, exactly as written in the guide (each version is complete in the guide; the answer key stays in the private marking notes). number is the guide homework 1-8 (found from the title like "Homework 3" or "AI audit" when left out). Safe to run again: it only adds what is missing. replace_existing true overwrites task text and marking notes that are already there and corrects existing multiple-choice options/answers in place (answers already given are kept; nothing is deleted)."""
     try:
         cur = await asyncio.to_thread(homework_api.call, "get_homework", {"homework_id": homework_id})
     except homework_api.HomeworkApiError as e:
@@ -634,7 +652,7 @@ async def add_guide_questions(homework_id: str, number: int | None = None, repla
     if not hw:
         return ("Tool failed: homework guide: couldn't tell which guide homework this is from its title; "
                 "say the number (1-8). " + homework_guide.format_overview())
-    return await _apply_guide(homework_id, hw, replace_tasks)
+    return await _apply_guide(homework_id, hw, replace_existing)
 
 
 @tool
