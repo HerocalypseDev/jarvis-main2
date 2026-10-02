@@ -5057,7 +5057,7 @@ def _briefing_deadline_commitments(now: datetime | None = None, horizon_h: float
 
 def _tracked_deadlines_note() -> str:
     """Found live (2026-10-02): "remove all overdue reminders about my exam" listed reminders, found none, and
-    Jarvis said it had cleared them, while the briefing kept saying "overdue: Post-UTME exam results come out".
+    Jarvis said it had cleared them, while the briefing kept saying "overdue: entrance exam results come out".
     Those lines are autonomy commitments, not reminders, so list_reminders now shows them with how to close them."""
     try:
         rows = _briefing_deadline_commitments()
