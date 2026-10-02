@@ -1755,7 +1755,8 @@ row there each phase rather than only stating the total in chat.
 | 118 (homework creation from the Teacher's Guide: only 3 of 6 questions added and Version A/B text in the tasks; new add_questions tool (whole quiz in one call), every add reports what is still to set up, Version labels stripped from prompts/options/tasks in code; 4 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
 | 119 (Teacher's Guide as data: all 8 homeworks (quiz, short answers, tasks, marking notes) + 4 lessons extracted from the PDF into `homework_curriculum.json`; new tools guide_overview/guide_homework/guide_lesson/add_guide_questions/create_guide_homework; homework_admin skill updated; 7 new tests) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
 | 120 (debug report: "credit balance too low" when marking while Jarvis ran on Gemini: marking now follows Jarvis's brain (Gemini when it is the provider, or when no Anthropic key), falls back to Gemini when Claude has no credit/key, Gemini marks are saved but never auto-released; 5 new tests) | Sonnet 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3689 min** | **~$237.65–$333.55** |
+| 121 (new 24-page Teacher's Guide: each homework now has a complete Version A and Version B with an answer key; curriculum data rebuilt per version and cross-checked word for word and key by key against the PDF, answer key moved to private marking notes, question matching tolerant of older-edition questions with in-place correction (never deleting answers); 3 tests changed, 2 new) | Sonnet 5.5 | ~30 min | ~$2.00–$3.00 |
+| **Running total (final)** | | **~3719 min** | **~$239.65–$336.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2197,6 +2198,18 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   which tool to call (skill context budget can drop skills, so the tool descriptions carry the same guidance). If the guide changes, regenerate
   the JSON (it is plain data; keep 6 x 5 points + two 10-point short answers per homework). Homework 1 already created in the app from the earlier
   run (3 questions, "Version A:" task text) can be completed with `add_guide_questions(homework_id, replace_tasks=true)`.
+- **New 24-page Teacher's Guide (2026-10-02)**: the guide now gives every homework as a complete **Version A (younger, James)** and **Version B
+  (older, Peter)**, each with its own multiple-choice list, short answer, step-by-step task (+ example) and a "don't paste" answer key; the marking
+  guide is shared. `homework_curriculum.json` was rebuilt in that shape (`quiz`/`short`/`task`/`short_key` keyed by A/B, `marking_guide`) and checked by
+  script against the PDF text: every quiz sentence and option verbatim, all 16 answer keys, every word of every short answer/task. In this edition the
+  A and B quizzes are word for word the same, so `question_specs` adds one "both" question per quiz item (6 x 5 = 30) plus a short answer per version
+  (10 each); if a future edition makes the quizzes differ they are added as separate A and B questions. The answer key is **never** in a child-facing field:
+  it goes into the private marking notes (`marking_notes(hw)`: marking guide + "what a good short answer looks like" for each student), which the AI marker
+  reads. `add_guide_questions(homework_id, number?, replace_existing?)` (renamed from `replace_tasks`): a question already in the app counts as present when
+  its text matches (a "both" question covers A and B), so repeating is safe; a multiple-choice question whose options/right answer differ from the guide
+  (made from the older edition) is reported, and with `replace_existing=true` is **corrected in place via update_question - never deleted**, because
+  deleting a question deletes the children's answers to it (James's Homework 1 is already handed in). Task text and marking notes are only overwritten
+  with `replace_existing=true`.
 - **Marking on Gemini (2026-10-02 debug report)**: "can you mark it" failed with "credit balance is too low" while Jarvis ran on Gemini, because
   marking is its own Claude call inside the MCP server (`ANTHROPIC_API_KEY`), separate from the brain. `homework_marker.ask_model` now picks
   the backend (`marking_backend()`): `HOMEWORK_MARKING_BACKEND` auto|claude|gemini (default auto = Jarvis's provider from `llm_provider.json`

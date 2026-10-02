@@ -73,40 +73,87 @@ def app_title(hw: dict) -> str:
 
 
 def task_text(hw: dict, which: str) -> str:
-    """The task the child sees (Version A or B). No "Version A/B" label: the field it goes in says which."""
-    base = hw["task_a"] if str(which).upper() == "A" else hw["task_b"]
-    common = (hw.get("task_common") or "").strip()
-    return f"{base} {common}".strip()
+    """The task the child sees (Version A or B), exactly as the guide words it. No "Version A/B" label: the field it goes in says which."""
+    return hw["task"][str(which).upper()].strip()
+
+
+def marking_notes(hw: dict) -> str:
+    """Private notes for the teacher/marker: the marking guide plus what a good short answer looks like for each student.
+    (The guide's answer key is "for you only; don't paste it", so it lives here and never in anything the child reads.)"""
+    return (f"{hw['marking_guide']} Short answer, what a good one looks like (teacher only): "
+            f"younger student (James): {hw['short_key']['A']} older student (Peter): {hw['short_key']['B']}")
+
+
+def _mcq_spec(q: dict, version: str) -> dict:
+    return {"type": "mcq", "prompt": q["q"], "options": list(q["options"]), "correct_option": q["answer"],
+            "points": MCQ_POINTS, "version": version}
 
 
 def question_specs(hw: dict) -> list[dict]:
-    """The questions to add: the 6 multiple-choice (30 points, both versions) and one short answer per version (10 points)."""
-    specs = [{"type": "mcq", "prompt": q["q"], "options": list(q["options"]), "correct_option": q["answer"],
-              "points": MCQ_POINTS, "version": "both"} for q in hw["quiz"]]
-    specs.append({"type": "short", "prompt": hw["short_a"], "points": SHORT_POINTS, "version": "A"})
-    specs.append({"type": "short", "prompt": hw["short_b"], "points": SHORT_POINTS, "version": "B"})
+    """The questions to add: the 6 multiple-choice (30 points) and the short answer (10 points) for each version. The guide
+    gives each version in full; where both versions are word for word the same one question is added for both."""
+    quiz_a, quiz_b = hw["quiz"]["A"], hw["quiz"]["B"]
+    if quiz_a == quiz_b:
+        specs = [_mcq_spec(q, "both") for q in quiz_a]
+    else:
+        specs = [_mcq_spec(q, "A") for q in quiz_a] + [_mcq_spec(q, "B") for q in quiz_b]
+    short_a, short_b = hw["short"]["A"], hw["short"]["B"]
+    if short_a == short_b:
+        specs.append({"type": "short", "prompt": short_a, "points": SHORT_POINTS, "version": "both"})
+    else:
+        specs.append({"type": "short", "prompt": short_a, "points": SHORT_POINTS, "version": "A"})
+        specs.append({"type": "short", "prompt": short_b, "points": SHORT_POINTS, "version": "B"})
     return specs
 
 
-def spec_key(prompt, version) -> tuple[str, str]:
-    return (_norm(prompt), str(version or "both"))
+def _same_prompt(spec: dict, q: dict) -> bool:
+    return _norm(q.get("prompt")) == _norm(spec["prompt"])
+
+
+def matches(spec: dict, existing: list[dict]) -> list[dict]:
+    """The questions already in the app that cover this spec (same text; a "both" question covers A and B; for a "both"
+    spec the app may hold the A and B copies instead)."""
+    same = [q for q in existing or [] if _same_prompt(spec, q)]
+    if spec["version"] == "both":
+        both = [q for q in same if str(q.get("version") or "both") == "both"]
+        if both:
+            return both
+        a = [q for q in same if q.get("version") == "A"]
+        b = [q for q in same if q.get("version") == "B"]
+        return a + b if a and b else []
+    return [q for q in same if str(q.get("version") or "both") in (spec["version"], "both")]
 
 
 def missing_specs(hw: dict, existing: list[dict]) -> list[dict]:
-    """Specs not already in the app's homework (matched on question text and version), so re-running never duplicates."""
-    have = {spec_key(q.get("prompt"), q.get("version")) for q in existing or []}
-    return [s for s in question_specs(hw) if spec_key(s["prompt"], s["version"]) not in have]
+    """Specs not already in the app's homework, so re-running never duplicates."""
+    return [s for s in question_specs(hw) if not matches(s, existing)]
+
+
+def differences(hw: dict, existing: list[dict]) -> list[tuple[dict, dict]]:
+    """(app question, spec) pairs where a multiple-choice question is in the app but its options or correct answer differ
+    from the guide (e.g. made from an older edition of the guide)."""
+    out = []
+    for spec in question_specs(hw):
+        if spec["type"] != "mcq":
+            continue
+        for q in matches(spec, existing):
+            opts = [_norm(o) for o in q.get("options") or []]
+            if opts != [_norm(o) for o in spec["options"]] or q.get("correct_option") != spec["correct_option"]:
+                out.append((q, spec))
+    return out
 
 
 def format_homework(hw: dict) -> str:
     letters = "abc"
-    lines = [f"{app_title(hw)} (week {hw['week']}), guide due date {hw['due_date']} {hw['due_time']}",
-             f"Quiz ({hw.get('quiz_note') or 'same for both'}; 6 x {MCQ_POINTS} = 30 points):"]
-    for i, q in enumerate(hw["quiz"], 1):
-        opts = "  ".join(f"({letters[j]}) {o}{' [correct]' if j == q['answer'] else ''}" for j, o in enumerate(q["options"]))
-        lines.append(f"{i}. {q['q']} {opts}")
-    lines += [f"Short answer ({SHORT_POINTS} points): A: {hw['short_a']}", f"  B: {hw['short_b']}",
-              f"Task (60 points): A: {task_text(hw, 'A')}", f"  B: {task_text(hw, 'B')}", hw["marking_notes"]]
+    lines = [f"{app_title(hw)} (week {hw['week']}), guide due date {hw['due_date']} {hw['due_time']}"]
+    for v, who in (("A", "younger student, James"), ("B", "older student, Peter")):
+        lines.append(f"Version {v} ({who}) - multiple choice (6 x {MCQ_POINTS} = 30 points):")
+        for i, q in enumerate(hw["quiz"][v], 1):
+            opts = "  ".join(f"({letters[j]}) {o}{' [correct]' if j == q['answer'] else ''}" for j, o in enumerate(q["options"]))
+            lines.append(f"{i}. {q['q']} {opts}")
+        lines.append(f"Short answer ({SHORT_POINTS} points): {hw['short'][v]}")
+        lines.append(f"Task (60 points): {task_text(hw, v)}")
+    lines.append(marking_notes(hw))
     return "\n".join(lines)
 
 

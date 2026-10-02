@@ -497,22 +497,39 @@ def test_guide_has_all_eight_homeworks_complete_and_clean():
     hws = guide.homeworks()
     assert [h["number"] for h in hws] == list(range(1, 9)) and len(guide.lessons()) == 4
     for h in hws:
-        assert len(h["quiz"]) == 6                              # 6 x 5 = 30 points
-        for q in h["quiz"]:
-            assert len(q["options"]) == 3 and 0 <= q["answer"] < 3 and q["q"].strip()
-        assert h["short_a"].strip() and h["short_b"].strip() and h["task_a"].strip() and h["task_b"].strip()
-        assert h["marking_notes"].startswith("Marking guide")
+        for v in "AB":                                          # each version is complete on its own
+            assert len(h["quiz"][v]) == 6                       # 6 x 5 = 30 points
+            for q in h["quiz"][v]:
+                assert len(q["options"]) == 3 and 0 <= q["answer"] < 3 and q["q"].strip()
+            assert h["short"][v].strip() and h["task"][v].strip() and h["short_key"][v].strip()
+        assert h["marking_guide"].startswith("Marking guide")
         assert h["due_date"].startswith("2026-10-") and h["due_time"] == "21:00"
         specs = guide.question_specs(h)
-        assert sum(s["points"] for s in specs if s["type"] == "mcq") == 30
+        assert sum(s["points"] for s in specs if s["type"] == "mcq") == 30       # per version, 'both' counted once
         shorts = [s for s in specs if s["type"] == "short"]
         assert sorted(s["version"] for s in shorts) == ["A", "B"] and all(s["points"] == 10 for s in shorts)
         # the labels are for Jarvis only: never in text the children read
         kids_text = [s["prompt"] for s in specs] + [o for s in specs for o in s.get("options", [])] + [
             guide.task_text(h, "A"), guide.task_text(h, "B")]
         assert not any("version a" in t.lower() or "version b" in t.lower() for t in kids_text), h["number"]
-    assert guide.get(1)["quiz"][1]["options"][guide.get(1)["quiz"][1]["answer"]] == "learns from lots of examples"
+        # the answer key is for the teacher only: it is in the private notes, never in a task or a question
+        notes = guide.marking_notes(h)
+        assert h["short_key"]["A"] in notes and "teacher only" in notes
+        assert not any(h["short_key"][v] in t for v in "AB" for t in kids_text if len(h["short_key"][v]) > 25)
+    one = guide.get(1)
+    assert one["quiz"]["A"][1]["options"][one["quiz"]["A"][1]["answer"]] == "learns from lots of examples"
+    assert guide.task_text(guide.get(1), "A").startswith("Choose 3 apps") and guide.task_text(guide.get(1), "B").startswith("Choose 5 apps")
     assert guide.get(9) is None and guide.lesson(5) is None
+
+
+def test_a_version_that_differs_gets_its_own_questions_and_identical_ones_are_added_once():
+    h = dict(guide.get(3))
+    h["quiz"] = {"A": h["quiz"]["A"], "B": [dict(q) for q in h["quiz"]["B"]]}
+    h["quiz"]["B"][0] = {**h["quiz"]["B"][0], "q": "A harder first question?"}
+    specs = guide.question_specs(h)
+    mcq = [s for s in specs if s["type"] == "mcq"]
+    assert len(mcq) == 12 and {s["version"] for s in mcq} == {"A", "B"}
+    assert sum(s["points"] for s in mcq if s["version"] == "B") == 30
 
 
 def test_guide_homework_is_found_from_the_app_title():
@@ -543,6 +560,10 @@ class GuideApi:
         if tool == "update_homework":
             self.hw.update({k: v for k, v in args.items() if k != "homework_id"})
             return self.hw
+        if tool == "update_question":
+            q = next(x for x in self.hw["questions"] if x["id"] == args["question_id"])
+            q.update({k: v for k, v in args.items() if k != "question_id" and v is not None})
+            return q
         if tool == "create_homework":
             self.hw.update(title=args["title"], week=args["week"])
             return self.hw
@@ -557,23 +578,47 @@ def test_add_guide_questions_adds_the_whole_homework_exactly_and_is_safe_to_repe
     assert len(qs) == 8 and "added 8 of 8" in out and "Ready" in out
     assert [q["type"] for q in qs].count("mcq") == 6 and sum(q["points"] for q in qs if q["type"] == "mcq") == 30
     assert sorted(q["version"] for q in qs if q["type"] == "short") == ["A", "B"]
-    assert api.hw["instructions_a"].startswith("Fill in this table for 3 apps") and "Version" not in api.hw["instructions_b"]
-    assert api.hw["marking_notes"].startswith("Marking guide")
+    assert api.hw["instructions_a"].startswith("Choose 3 apps") and api.hw["instructions_b"].startswith("Choose 5 apps")
+    assert "Version" not in api.hw["instructions_a"] + api.hw["instructions_b"]
+    assert api.hw["marking_notes"].startswith("Marking guide") and "teacher only" in api.hw["marking_notes"]
     n_calls = len(api.calls)
     again = asyncio.run(srv.add_guide_questions("h1"))
     assert len(api.hw["questions"]) == 8 and "added 0 of 0" in again       # nothing duplicated
     assert not [c for c in api.calls[n_calls:] if c[0] in ("add_question", "update_homework")]
 
 
+def _old_edition_question(q, qid):
+    """A question made from the older guide edition: same text, options in another order / worded differently."""
+    return {"id": qid, "prompt": q["q"], "version": "both", "type": "mcq", "points": 5,
+            "options": list(reversed(q["options"])), "correct_option": 2 - q["answer"]}
+
+
 def test_add_guide_questions_only_adds_what_is_missing_and_keeps_existing_task_text(monkeypatch):
-    first3 = [{"prompt": q["q"], "version": "both", "type": "mcq"} for q in guide.get(1)["quiz"][:3]]
+    first3 = [{"id": f"o{i}", "prompt": q["q"], "version": "both", "type": "mcq", "points": 5,
+               "options": q["options"], "correct_option": q["answer"]} for i, q in enumerate(guide.get(1)["quiz"]["A"][:3])]
     api = GuideApi(questions=first3, instructions_a="Version A: my own task")
     monkeypatch.setattr(homework_api, "call", api)
     out = asyncio.run(srv.add_guide_questions("h1", 1))
     assert len(api.hw["questions"]) == 8 and "added 5 of 5" in out and "3 were already there" in out
     assert api.hw["instructions_a"] == "Version A: my own task" and "Kept the existing instructions a" in out
     asyncio.run(srv.add_guide_questions("h1", 1, True))
-    assert api.hw["instructions_a"].startswith("Fill in this table")
+    assert api.hw["instructions_a"].startswith("Choose 3 apps")
+
+
+def test_questions_from_an_older_edition_are_corrected_in_place_never_deleted(monkeypatch):
+    old = [_old_edition_question(q, f"o{i}") for i, q in enumerate(guide.get(1)["quiz"]["A"][:3])]
+    api = GuideApi(questions=old)
+    monkeypatch.setattr(homework_api, "call", api)
+    out = asyncio.run(srv.add_guide_questions("h1", 1))
+    assert "3 existing question(s) differ" in out and "replace_existing=true" in out
+    assert not [c for c in api.calls if c[0] == "update_question"]
+    out = asyncio.run(srv.add_guide_questions("h1", 1, True))
+    assert "Corrected 3 existing question(s)" in out
+    fixed = {q["id"]: q for q in api.hw["questions"]}
+    for i, q in enumerate(guide.get(1)["quiz"]["A"][:3]):
+        assert fixed[f"o{i}"]["options"] == q["options"] and fixed[f"o{i}"]["correct_option"] == q["answer"]
+    assert len(api.hw["questions"]) == 8                      # nothing duplicated, nothing deleted
+    assert not [c for c in api.calls if c[0] == "delete_question"]
 
 
 def test_add_guide_questions_needs_a_known_homework_number(monkeypatch):
