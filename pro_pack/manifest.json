@@ -1,6 +1,6 @@
 {
   "name": "Jarvis4U Pro",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "packs": [
     "student",
     "developer",
@@ -20,6 +20,9 @@
     "ultraviolet",
     "emerald",
     "solar",
-    "mono"
+    "mono",
+    "naija",
+    "festive",
+    "ocean"
   ]
 }

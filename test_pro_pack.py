@@ -39,7 +39,8 @@ def test_student_pack_loads_through_the_normal_loader(monkeypatch):
     checkin = json.loads((PACK / "skills" / "study_checkin.json").read_text(encoding="utf-8"))
     assert checkin["schedule"] == {"daily_at": "20:00", "requires_fact": ["Exam:", "Homework:"]}
     assert "NO spoken reply" in checkin["instructions"]
-    assert [t["id"] for t in pro.themes()] == ["emerald", "mono", "solar", "stark", "ultraviolet"]
+    assert [t["id"] for t in pro.themes()] == ["emerald", "festive", "mono", "naija", "ocean", "solar", "stark",
+                                               "ultraviolet"]
     for t in pro.themes():
         css = pro.theme_css(t["id"])
         assert "--color-accent" in css and "--color-error" not in css
@@ -293,3 +294,26 @@ def test_gamer_pack_routine_is_allowlisted_and_drafts_are_never_posted():
     gamer = sorted(p.stem for p in (PACK / "skills").glob("gamer_*.json"))
     assert gamer == ["gamer_discord_post", "gamer_patch_notes", "gamer_roblox_dev", "gamer_session"]
     assert "never post it" in _skill("gamer_discord_post")["instructions"]
+
+
+def test_every_theme_keeps_text_readable_and_never_uses_a_red_accent():
+    import re
+
+    def lum(h):
+        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+    def ratio(a, b):
+        lo, hi = sorted((lum(a), lum(b)))
+        return (hi + 0.05) / (lo + 0.05)
+
+    for path in sorted((PACK / "themes").glob("*.css")):
+        tokens = dict(re.findall(r"(--[a-z-]+):\s*(#[0-9a-fA-F]{6})", path.read_text(encoding="utf-8")))
+        bg = tokens["--color-bg-secondary"]
+        for fg in ("--color-text-primary", "--color-text-secondary", "--color-text-muted"):
+            assert ratio(tokens[fg], bg) >= 4.5, (path.name, fg)
+        assert ratio("#ff5470", bg) >= 4.5, path.name          # the locked danger red stays readable
+        assert ratio(tokens["--color-on-accent"], tokens["--color-accent"]) >= 4.5, path.name
+        r, g, b = (int(tokens["--color-accent"][i:i + 2], 16) for i in (1, 3, 5))
+        assert not (r > 180 and g < 110 and b < 130), path.name  # a red accent would look like a danger warning
