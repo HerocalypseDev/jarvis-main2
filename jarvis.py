@@ -102,6 +102,7 @@ import jarvis_briefing as briefing
 import jarvis_chief as chief
 import jarvis_voice_usage as voice_usage
 import jarvis_netscan as netscan
+import jarvis_speedtest as speedtest
 import jarvis_settings as settings
 import jarvis_license as license_mod
 import jarvis_pro as pro
@@ -1813,6 +1814,18 @@ AGENT_TOOLS = [
                 "days": {"type": "integer", "minimum": 1, "maximum": 7},
             },
         },
+    },
+    {
+        "name": "speed_test",
+        "description": (
+            "Internet / network / Wi-Fi speed test (download, upload, ping), run in the background: no browser, "
+            "nothing to click. action run (default; takes about 15-20 s and uses up to ~60 MB of data), last (the "
+            "most recent result, no new test) or history (recent results). `unit` only when the user names one "
+            "(\"in megabytes\" = megabytes); otherwise leave it out and the user's default is used."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["run", "last", "history"]},
+            "unit": {"type": "string", "enum": ["megabits", "megabytes", "kilobits", "kilobytes", "gigabits"]}}},
     },
     {
         "name": "safe_mode",
@@ -11036,6 +11049,10 @@ def _execute_tool_impl(
             result = self_check_report()
         elif tool_name == "self_report":
             result = _self_report_tool(inp)
+        elif tool_name == "speed_test":
+            if str(inp.get("action") or "run").lower() == "run":
+                _await_ack(8.0)  # let the spoken lead-in finish first: speech downloading audio skews the result
+            result = speedtest.handle_tool(_memory_db_connect, _memory_db_lock, inp)
         elif tool_name == "weather":
             result = weather.weather_report(str(inp.get("place") or ""), inp.get("days") or 1)
         elif tool_name == "api_spend":
@@ -12056,6 +12073,8 @@ def _tool_announcement(name: str, inp: dict) -> str | None:
         return "Sure, I'll go through the code for that."
     if n == "briefing":
         return "Sure, I'll pull your briefing together."
+    if n == "speed_test" and str(inp.get("action") or "run").lower() == "run":
+        return SPEED_TEST_ANNOUNCEMENT
     if n in ("write_file", "write_docx", "make_document"):
         return "Sure, I'll write that up now."
     if n == "read_file":
@@ -12983,6 +13002,20 @@ def _volume_reply(transcript: str) -> str | None:
     return f"Volume {level} percent."
 
 
+# "What's my internet speed?" (2026-10-02): measured locally by jarvis_speedtest, no model call. It takes ~15-20 s,
+# so it runs after the dashboard session has started (_SLOW_INTENTS) and speaks a lead-in first; the test waits for
+# that line to finish, because speech streaming in would compete with the test for the connection.
+SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
+_SLOW_INTENTS = {"speedtest"}
+
+
+def _speed_test_reply(transcript: str = "") -> str:
+    if _current_command_source() != "phone":
+        _start_announcement(SPEED_TEST_ANNOUNCEMENT)
+        _await_ack(8.0)
+    return speedtest.measure_and_describe(_memory_db_connect, _memory_db_lock, unit=speedtest.parse_unit(transcript))
+
+
 def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None:
     """Zero-LLM-call answers for the handful of intents that are pure local computation — no
     network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
@@ -13009,6 +13042,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return set_safe_mode(not off, _current_command_source())
     if intent == "self_check":
         return self_check_report()
+    if intent == "speedtest":
+        return _speed_test_reply(transcript)
     if intent == "self_report":
         return _self_report_tool({})
     if intent == "repeat":
@@ -13151,15 +13186,19 @@ def _handle_text_command_impl(
         shortcut_reply, transcript = _app_shortcut_route(transcript)
     macro_reply = shortcut_reply if shortcut_reply is not None else (None if tagged else _macro_reply(transcript))
     intent = "macro" if macro_reply is not None else ("complex" if tagged else latency.classify_intent(transcript))
-    deterministic_reply = macro_reply if macro_reply is not None else _deterministic_intent_reply(intent, transcript)
+    slow_intent = macro_reply is None and intent in _SLOW_INTENTS  # answered locally, but only after the session starts
+    deterministic_reply = (macro_reply if macro_reply is not None
+                           else None if slow_intent else _deterministic_intent_reply(intent, transcript))
     if intent == "undo" and _newest_action_was_autonomy():
         try:  # an undo whose target is an autonomous action counts against that action type
             autonomy.note_user_undo()
         except Exception as e:
             log.debug("autonomy undo note failed: %s", e)
     loop_transcript = (_undo_instruction(transcript) if intent == "undo" else None) or transcript
-    reduced_tools = _reduced_tools_for_intent(intent, transcript) if deterministic_reply is None else None
-    intent_path = "deterministic" if deterministic_reply is not None else ("reduced_tools" if reduced_tools else "full")
+    reduced_tools = (_reduced_tools_for_intent(intent, transcript)
+                     if deterministic_reply is None and not slow_intent else None)
+    intent_path = ("deterministic" if deterministic_reply is not None or slow_intent
+                   else ("reduced_tools" if reduced_tools else "full"))
     log.info("Intent routing: intent=%s path=%s", intent, intent_path)
     fast_lat = latency.current()
     if fast_lat:
@@ -13176,6 +13215,13 @@ def _handle_text_command_impl(
     speaks_here = reply_sink is None or source == "dashboard"
     if deterministic_reply is not None:
         reply = deterministic_reply
+    elif slow_intent:
+        try:
+            reply = _deterministic_intent_reply(intent, transcript)
+        except Exception:
+            dashboard.end_session(session_id, "failed", None)
+            dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})
+            raise
     else:
         if speaks_here and intent_path == "full":
             _maybe_ack_before_task(loop_transcript)
