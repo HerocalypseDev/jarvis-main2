@@ -112,7 +112,7 @@ GITIGNORE_EXTRA = (
 # --- privacy scan ----------------------------------------------------------------------------
 DENY_WORDS = (
     "Hero", "Racheal", "Jacob", "Ayo", "Lagos", "Nigeria", "PPM", "ayojacobgo", "rachealpower",
-    "01_Projects", "Jarvis_Workspace\\Notes",
+    "01_Projects", "Jarvis_Workspace\\Notes", "LearnAi", "learn-ai", "delete_homework", "set_student_password",
 )
 DENY_ALLOWED_FILES = {"LICENSE"}  # the copyright line names the GitHub account on purpose
 PERSONAL_MAIL_DOMAINS = ("gmail.com", "googlemail.com", "yahoo.", "hotmail.", "outlook.", "live.com",

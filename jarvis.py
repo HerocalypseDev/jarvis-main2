@@ -434,31 +434,50 @@ def _is_confirmation_yes(transcript: str) -> bool:
     return bool(_CONFIRM_YES_RE.search(t))
 
 
-# A connected class homework app's MCP server: these two can't be undone, so they go through the same staged
-# confirmation as a catastrophic command (spoken yes / dashboard Approve). Matched on the server's REAL tool
-# name, so it holds whatever the server is called in mcp_servers.json ("homework", "learnai", "Homework"...).
-_HOMEWORK_CONFIRM = {"delete_homework", "set_student_password"}
+# --- Confirmation add-ons ---------------------------------------------------------------------------------------
+# A file named `*_gate.py` next to jarvis.py can put a connected MCP server's irreversible tools behind the same staged
+# confirmation as a catastrophic command (spoken yes / dashboard Approve, same skip_confirmation re-run). It is matched
+# on the server's REAL tool name, so it holds whatever the server is called in mcp_servers.json. A gate module has
+#   CONFIRM: set of real tool names, confirm_reason(real, inp) -> str | None,
+# and optionally, to let several calls of one tool wait for a single yes:
+#   BATCH_MAX: {real name: max calls}, batch_key(real, inp) (dedupe), label(real, inp), batch_reason(real, labels),
+#   staged_message(real, labels), duplicate_message(real, label, labels), full_message(real, n, max),
+#   summary(real, n, [(label, why), ...]).
+# With no gate files (the default) nothing changes.
+def _load_confirm_gates() -> list:
+    import importlib.util
+    gates = []
+    for path in sorted(Path(__file__).resolve().parent.glob("*_gate.py")):
+        try:
+            spec = importlib.util.spec_from_file_location(path.stem, path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if getattr(mod, "CONFIRM", None) and callable(getattr(mod, "confirm_reason", None)):
+                gates.append(mod)
+        except Exception as e:
+            log.warning("Confirmation add-on %s not loaded: %s", path.name, e)
+    return gates
 
 
-def _homework_real_name(tool_name: str) -> str | None:
-    """The homework server's own name for this tool if it is one of the confirm-tier tools, else None."""
-    if not tool_name.startswith("mcp_"):
-        return None
+_CONFIRM_GATES = _load_confirm_gates()
+
+
+def _gate_for(tool_name: str):
+    """(gate module, the server's real tool name) when an add-on guards this MCP tool, else (None, None)."""
+    if not tool_name.startswith("mcp_") or not _CONFIRM_GATES:
+        return None, None
     real = (globals().get("_mcp_tool_index", {}).get(tool_name) or (None, None))[1]
-    if real is None:  # not connected yet / unknown: fall back to the name Jarvis exposes
-        real = next((n for n in _HOMEWORK_CONFIRM if tool_name.lower().endswith("_" + n)), None)
-    return real if real in _HOMEWORK_CONFIRM else None
+    for gate in _CONFIRM_GATES:
+        name = real if real is not None else next(  # not connected yet: fall back to the name Jarvis exposes
+            (n for n in gate.CONFIRM if tool_name.lower().endswith("_" + n)), None)
+        if name in gate.CONFIRM:
+            return gate, name
+    return None, None
 
 
-def _homework_confirm_reason(tool_name: str, inp: dict) -> str | None:
-    real = _homework_real_name(tool_name)
-    if real is None:
-        return None
-    if real == "delete_homework":
-        title = str(inp.get("confirm_title") or inp.get("homework_id") or "that homework")[:80]
-        return f'permanently delete the homework "{title}" with every answer, file record and grade'
-    who = str(inp.get("student") or "a student")[:40]
-    return f"change {who}'s homework-app password and sign them out everywhere"
+def _addon_confirm_reason(tool_name: str, inp: dict) -> str | None:
+    gate, real = _gate_for(tool_name)
+    return gate.confirm_reason(real, inp) if gate else None
 
 
 def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -> bool:
@@ -477,31 +496,21 @@ def _queue_pending_confirmation(tool_name: str, tool_input: dict, reason: str) -
     return True
 
 
-# "Delete these 3 homeworks" makes 3 delete calls in one turn, but there is only one pending slot, so calls 2 and 3
-# used to be dropped. ONLY this tool may batch: further calls join the pending one (extra inputs in "batch") and one
-# yes runs them all. Every other tool still gets "Another confirmation is already pending".
-HOMEWORK_DELETE_BATCH_MAX = 10
-
-
+# Several calls of a tool an add-on marks as batchable (BATCH_MAX) can wait for one yes: "delete these 3" makes 3 calls
+# in one turn, but there is only one pending slot, so calls 2 and 3 used to be dropped. Further calls join the pending
+# one (extra inputs in "batch"). Every other tool still gets "Another confirmation is already pending".
 def _pending_calls(step: dict) -> list[dict]:
     """Every tool input a staged action will run, in order: the main one, then any batched ones."""
     return [step.get("tool_input") or {}] + list(step.get("batch") or [])
 
 
-def _homework_label(inp: dict) -> str:
-    title = str(inp.get("confirm_title") or "").strip()[:60]
-    return f'"{title}"' if title else f"id {str(inp.get('homework_id') or '?')[:12]}"
-
-
-def _join_labels(labels: list[str]) -> str:
-    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
-
-
-def _batch_homework_delete(tool_name: str, tool_input: dict) -> str | None:
-    """Adds a homework delete to a pending homework delete. Returns the message for the model, or None when this
-    call can't join (nothing pending, a different tool, a stale one, or one staged from another source)."""
+def _batch_pending_call(tool_name: str, tool_input: dict) -> str | None:
+    """Adds a call to a pending call of the same batchable tool. Returns the message for the model, or None when this
+    call can't join (not batchable, nothing pending, a different tool, a stale one, or one staged from another source)."""
     global _pending_action
-    if _homework_real_name(tool_name) != "delete_homework":
+    gate, real = _gate_for(tool_name)
+    limit = (getattr(gate, "BATCH_MAX", None) or {}).get(real) if gate else None
+    if not limit:
         return None
     with _pending_action_lock:
         p = _pending_action
@@ -511,29 +520,21 @@ def _batch_homework_delete(tool_name: str, tool_input: dict) -> str | None:
                 or p.get("source") != (_current_command_source() or "unattended")):
             return None
         calls = _pending_calls(p)
-        new_id = str(tool_input.get("homework_id") or "")
-        if any(str(c.get("homework_id") or "") == new_id for c in calls):
-            labels = [_homework_label(c) for c in calls]
-            return (f"{_homework_label(tool_input)} is already staged, not run. {len(calls)} homework deletion"
-                    f"{'s' if len(calls) != 1 else ''} waiting: {_join_labels(labels)}. "
-                    f"Say yes to delete {'all ' + str(len(calls)) if len(calls) > 1 else 'it'}.")
-        if len(calls) >= HOMEWORK_DELETE_BATCH_MAX:
-            return (f"Not added: at most {HOMEWORK_DELETE_BATCH_MAX} homework deletions can wait for one yes. "
-                    f"{len(calls)} are staged, not run; say yes to delete them, then ask again for the rest.")
+        if any(gate.batch_key(real, c) == gate.batch_key(real, tool_input) for c in calls):
+            return gate.duplicate_message(real, gate.label(real, tool_input), [gate.label(real, c) for c in calls])
+        if len(calls) >= limit:
+            return gate.full_message(real, len(calls), limit)
         calls.append(dict(tool_input))
-        labels = [_homework_label(c) for c in calls]
+        labels = [gate.label(real, c) for c in calls]
         _pending_action = {
-            **p, "batch": [dict(c) for c in calls[1:]],
-            "reason": (f"permanently delete {len(calls)} homeworks ({_join_labels(labels)}) "
-                       "with every answer, file record and grade"),
+            **p, "batch": [dict(c) for c in calls[1:]], "reason": gate.batch_reason(real, labels),
             # What would run changed, so an Approve of the version reviewed before must not run this one
             # (_pending_matches compares queued_at), and the TTL starts again.
             "queued_at": max(now, float(p.get("queued_at", 0)) + 1e-3),
         }
         snapshot = dict(_pending_action)
     dashboard.notify({"type": "pending_action", "data": snapshot})
-    return (f"{len(calls)} homework deletions staged, not run: {_join_labels(labels)}. "
-            f"Say yes to delete all {len(calls)}.")
+    return gate.staged_message(real, labels)
 
 
 def _pending_matches(step: dict | None, expect) -> bool:
@@ -574,21 +575,20 @@ def _execute_confirmed_action(step: dict, reply_sink=None) -> None:
 
 def _run_confirmed_batch(tool_name: str, calls: list[dict]) -> str:
     """Runs each confirmed call in order through the normal confirmed path; one failure never stops the rest.
-    Returns one short summary (only homework deletes batch, see _batch_homework_delete)."""
-    failed = []
+    Returns one short summary written by the tool's add-on (see _batch_pending_call)."""
+    gate, real = _gate_for(tool_name)
+    failures = []
     for inp in calls:
         try:
             result = _execute_tool(tool_name, inp, transcript="", skip_confirmation=True)
         except Exception as e:
             result = f"Tool failed: {e}"
         if _looks_failed(result):
-            why = re.sub(r"^(?:tool failed:\s*)?(?:homework app:\s*)?", "", str(result or "no answer").strip(),
-                         flags=re.I)
-            failed.append(f"{_homework_label(inp)} ({why[:80].rstrip('.')})")
-    n, ok = len(calls), len(calls) - len(failed)
-    if not failed:
-        return f"Deleted {n} homeworks."
-    return f"Deleted {ok} of {n} homeworks. Not deleted: " + "; ".join(failed) + "."
+            failures.append((gate.label(real, inp) if gate else "one call", str(result or "no answer")))
+    if gate:
+        return gate.summary(real, len(calls), failures)
+    return f"Ran {len(calls) - len(failures)} of {len(calls)}." + (
+        " Failed: " + "; ".join(w[:80] for _, w in failures) if failures else "")
 
 
 def _dashboard_get_pending() -> dict | None:
@@ -10479,7 +10479,7 @@ def _set_plan(transcript: str, steps: list) -> str:
 
 
 def _redact_audit_input(tool_input):
-    """The audit trail never stores a password value (e.g. set_student_password)."""
+    """The audit trail never stores a password value."""
     if not isinstance(tool_input, dict):
         return tool_input
     return {k: ("[hidden]" if "password" in str(k).lower() and v else v) for k, v in tool_input.items()}
@@ -10757,7 +10757,7 @@ def _ui_script_problem(code: str) -> str | None:
 
 # The file tools refuse credential files (jarvis_workspace.sensitive_reason), but a shell/python one-liner that
 # opens .env prints every key into the model's context (debug report 2026-10-01: "open('.env').read()" while
-# hunting a homework URL). Refuse code that names the file; reading one variable via os.environ is still fine.
+# hunting for an app's web address). Refuse code that names the file; reading one variable via os.environ is still fine.
 _SECRET_FILE_RE = re.compile(
     r"(?<![\w.])\.env(?![\w]|\.example\b|\.sample\b)|\bmcp_servers\.json\b|\bjarvis_memory\.db\b|\bface\.key\b",
     re.IGNORECASE)
@@ -10866,7 +10866,7 @@ def _execute_tool_impl(
             # browser), so their text goes through the same tripwire as run_shell/run_python.
             reason = None if skip_confirmation else (_catastrophic_reason(
                 " ".join(str(v) for v in inp.values() if isinstance(v, (str, int, float)))
-            ) or _homework_confirm_reason(tool_name, inp))
+            ) or _addon_confirm_reason(tool_name, inp))
             if reason:
                 if _queue_pending_confirmation(tool_name, dict(inp), reason):
                     result = (
@@ -10874,8 +10874,8 @@ def _execute_tool_impl(
                         'Say "yes" on your next turn to actually run it.'
                     )
                 else:
-                    # A homework delete may join a pending homework delete; anything else is still refused.
-                    result = (_batch_homework_delete(tool_name, dict(inp))
+                    # A batchable add-on tool may join a pending call of the same tool; anything else is refused.
+                    result = (_batch_pending_call(tool_name, dict(inp))
                               or "Another confirmation is already pending; ignoring this one.")
             elif tool_name.startswith("mcp_whatsapp_") and tool_name.endswith("_navigate"):
                 result = ("Don't navigate the WhatsApp app anywhere: it is the desktop app, already "
