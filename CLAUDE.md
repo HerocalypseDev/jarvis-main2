@@ -1792,7 +1792,8 @@ row there each phase rather than only stating the total in chat.
 | 135 (Pro themes Naija, Festive, Ocean (light theme dropped: the locked danger red is only ~3:1 on white); contrast test now covers every theme; pack 1.12.0; 1 new test) | Opus 5.5 | ~15 min | ~$1.00–$1.40 |
 | 136 (Pro Phase 14: Home widgets (fixed widget types/sources as pack data, computed read-only in the core, drawn with escaped fixed JS, key-gated route; headless check at 1440/390 px; 9 + 1 new tests)) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
 | 137 (internet speed test: no-browser Cloudflare test by voice or tool, data cap, units incl. "in megabytes", history comparison; 28 new tests) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~4054 min** | **~$265.35–$373.15** |
+| 138 (debug report: "in 10 mins run the internet test" was a spoken reminder: job-shaped reminders from a user request become jobs, user-scheduled jobs speak their result, more speed-test phrases, one retry on a DNS hiccup; 9 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~4079 min** | **~$267.15–$375.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2311,6 +2312,17 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   waits for that line (`_await_ack`) because streaming speech would compete for the connection. One test at a time.
   Results are kept in `speed_tests` (500 rows) so the answer can say faster/slower than last time. Tests: `test_speedtest.py`
   (28, fake connections). Verified live from the cloud container against the real server; not on the owner's PC.
+- **First live use (2026-10-02 debug report)**: worked by voice on the PC (11 Mbps down / 14 up / 49 ms, 27 MB). Fixed from the
+  same report: (1) "in 10mins time run the internet test again" became `create_reminder("Run the internet speed test")`, which at
+  21:34 was only read out. `jarvis_deferred.as_work_for_jarvis(text, request)`: a reminder whose text starts with a job verb
+  Jarvis can do (run/perform/check/test/measure/search/find/scan/summarise/research/download/refresh...), from a user request
+  that never said remind/reminder/alarm/"tell me to", becomes a deferred job (same safety net as "remind Jarvis to ...": attended
+  sources only, never autonomous/untrusted, never a repeating reminder); the job's instruction ends "if only the user can do this,
+  just remind them", so a misread "check the oven" still reminds. (2) A job the user scheduled (origin `user`) now SPEAKS its result
+  ("As you asked earlier: ...") even with `JARVIS_AUTONOMY_SPEECH=minimal`; before, a correctly scheduled job finished silently.
+  (3) "Hey, Jarvis. Perform a speed test." / "run the internet test again" take the no-model route (a bare "run a test" never
+  does). (4) One DNS/connection failure ("getaddrinfo failed") is retried once after 2 s. Tests at the end of `test_executive.py`
+  and `test_speedtest.py`.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

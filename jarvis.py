@@ -3295,7 +3295,7 @@ BATCH_TOOLS = [
             "Schedule WORK FOR JARVIS to do by itself later: at the time it runs the instruction through the "
             "normal pipeline (tools, coding agent, email, research...). Use this whenever the user asks Jarvis to "
             "do something later ('in 30 minutes change the code in X', 'tonight send Sam the report', 'at 5 run "
-            "the tests'). Never use create_reminder for that: reminders only speak to the user. instruction = the "
+            "the tests', 'in 10 minutes run a speed test'). Never use create_reminder for that: reminders only speak to the user. instruction = the "
             "exact command in imperative form with all details (paths, names), never 'remind Jarvis to ...'."
         ),
         "input_schema": {"type": "object", "properties": {
@@ -7360,9 +7360,11 @@ DEFERRED_SOURCE = "autonomy_deferred"  # command source while a job runs: allowe
 # (it is the user's own earlier request), but not "attended" (no forget/macro/agent/template changes).
 
 
-def _deferred_speech(text: str, failure: bool = False, urgent: bool = False) -> None:
-    """Minimal (default): speak only failures and "needs your yes"; the Activity log/dashboard have the rest."""
-    if failure or urgent or not autonomy.speech_minimal():
+def _deferred_speech(text: str, failure: bool = False, urgent: bool = False, asked: bool = False) -> None:
+    """Minimal (default): speak only failures and "needs your yes"; the Activity log/dashboard have the rest.
+    `asked`: the result of a job the user scheduled themselves ("in 10 minutes run a speed test") is always said:
+    they are waiting for it (it used to be silent under the minimal default)."""
+    if failure or urgent or asked or not autonomy.speech_minimal():
         queue_or_deliver_notification(text, urgent=urgent, bypass_busy_gate=failure or urgent)
 
 
@@ -7465,6 +7467,8 @@ def _finish_deferred_job(job: dict, ok: bool, reply: str, transient: bool, trans
     elif status == "failed":
         tries = f" after {job['attempts']} tries" if job["attempts"] > 1 else ""
         _deferred_speech(f"The scheduled job \"{job['instruction'][:80]}\" failed{tries}: {reply[:160]}", failure=True)
+    elif ok and job.get("origin") == "user":
+        _deferred_speech(f"As you asked earlier: {reply}", asked=True)
     elif ok:
         _deferred_speech(f"Done: {job['instruction'][:80]}. {reply[:200]}")
 
@@ -11361,14 +11365,22 @@ def _execute_tool_impl(
                 str(inp.get("instructions") or ""),
                 schedule if isinstance(schedule, dict) else None,
             )
-        elif tool_name == "create_reminder" and deferred.as_jarvis_instruction(str(inp.get("text") or "")) \
-                and _current_command_source() in ("voice", "text", "dashboard", "phone") \
-                and not getattr(_command_ctx, "autonomous", False):
-            # Safety net for the live bug: "remind Jarvis to change the code" was saved as a reminder and only
-            # read out. Work for Jarvis becomes a job that runs.
+        elif tool_name == "create_reminder" and _current_command_source() in ("voice", "text", "dashboard", "phone") \
+                and not getattr(_command_ctx, "autonomous", False) \
+                and not getattr(_command_ctx, "untrusted_origin", False) \
+                and (deferred.as_jarvis_instruction(str(inp.get("text") or ""))
+                     or deferred.as_work_for_jarvis(str(inp.get("text") or ""), transcript)) \
+                and not inp.get("repeat_every_minutes"):
+            # Safety net for the live bugs: "remind Jarvis to change the code" (2026-09-27) and "in 10 mins run the
+            # internet test again" (2026-10-02) were saved as reminders and only read out. Work for Jarvis becomes a
+            # job that runs (a repeating reminder stays a reminder: jobs run once).
             result = _schedule_jarvis_task_tool({
-                "instruction": deferred.as_jarvis_instruction(str(inp.get("text") or "")),
-                "due_at": str(inp.get("due_at") or ""), "due_in_minutes": inp.get("due_in_minutes")})
+                "instruction": (deferred.as_jarvis_instruction(str(inp.get("text") or ""))
+                                or deferred.as_work_for_jarvis(str(inp.get("text") or ""), transcript)),
+                "due_at": str(inp.get("due_at") or ""), "due_in_minutes": inp.get("due_in_minutes"),
+                "source_quote": transcript})
+            if not result.startswith(("Refused", "When should", "Nothing", "That time")):
+                result += " (This is a job I will DO at that time, not a reminder; tell the user that.)"
         elif tool_name == "create_reminder":
             result = create_reminder(
                 str(inp.get("text") or ""),

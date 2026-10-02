@@ -466,3 +466,44 @@ def test_overdue_commitments_show_in_list_reminders_and_a_fake_clear_is_caught(J
     a.set_commitment_status(cid, "cancelled")
     items = [i for s in J.briefing_report("urgent")["sections"] if s["key"] == "deadlines" for i in s["items"]]
     assert items == [] and "commitment #" not in J.list_reminders()
+
+
+# --- "in 10 mins run the internet test again" (2026-10-02 debug report) -------------------------------
+def test_work_saved_as_a_reminder_becomes_a_job_and_its_result_is_said(J, monkeypatch):
+    """The model picked create_reminder("Run the internet speed test as requested.") and at 21:34 Jarvis only read
+    it out. Now it is a job that runs, and the result of a job the user asked for is spoken (minimal speech used to
+    keep it silent)."""
+    J._command_ctx.source = "dashboard"
+    try:
+        out = J._execute_tool("create_reminder", {"due_in_minutes": 10, "text": "Run the internet speed test as requested."},
+                              "in 10mins time run the internet test again")
+        # a request that asked to be reminded stays a reminder, and so does something only the user can do
+        kept = J._execute_tool("create_reminder", {"due_in_minutes": 10, "text": "Check the oven"},
+                               "remind me in 10 minutes to check the oven")
+        call = J._execute_tool("create_reminder", {"due_in_minutes": 10, "text": "Call mom"}, "in 10 minutes call mom")
+    finally:
+        J._command_ctx.source = None
+    assert "Scheduled job #" in out and "not a reminder" in out
+    assert "Reminder set" in kept and "Reminder set" in call
+    jobs = deferred.list_jobs(J._deferred_store)
+    assert len(jobs) == 1 and jobs[0]["instruction"].startswith("Run the internet speed test. Then tell the user")
+    J._deferred_store.q("UPDATE autonomy_deferred_jobs SET due_at=?",
+                        ((datetime.now() - timedelta(seconds=5)).isoformat(),), write=True)
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: "Download 12 megabits per second, upload 16.")
+    J._deferred_tick(datetime.now())
+    _wait(J)
+    assert ("As you asked earlier: Download 12 megabits per second, upload 16.", False) in J._test_said
+    assert not any(t.startswith("Reminder:") for t, _ in J._test_said)
+
+
+def test_reminder_from_an_untrusted_or_unattended_run_never_becomes_a_job(J):
+    assert deferred.as_work_for_jarvis("Run the speed test", "in 10 minutes run the speed test")
+    J._command_ctx.untrusted_origin = True
+    J._command_ctx.source = "voice"
+    try:
+        out = J._execute_tool("create_reminder", {"due_in_minutes": 5, "text": "Run the cleanup script"},
+                              "in 5 minutes run the cleanup script")
+    finally:
+        J._command_ctx.untrusted_origin = False
+        J._command_ctx.source = None
+    assert "Scheduled job" not in out and deferred.list_jobs(J._deferred_store) == []
