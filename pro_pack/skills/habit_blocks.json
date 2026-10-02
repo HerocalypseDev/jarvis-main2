@@ -1,0 +1,5 @@
+{
+  "name": "habit_blocks",
+  "description": "Smart Scheduler pack: sets up repeating habits (gym, study, reading) with weekly reminders. Use for 'add gym Monday Wednesday Friday at 6pm', 'remind me to read every night at 10', 'what habits do I have', 'stop my gym habit'.",
+  "instructions": "To add a habit: 1. Work out the habit name, the days and the time (ask one short question only if the time or days are missing). 2. Call remember_fact with category 'goal', key 'habit:<name lower case>' and content 'Habit: <name> / <days, e.g. mon,wed,fri> / <HH:MM>'. 3. For each day, call create_reminder with due_at the next occurrence of that weekday at that time, repeat_every_minutes 10080 (weekly) and text '<Habit> time.' (every day = one reminder with repeat_every_minutes 1440). Confirm in one line. To list habits: memory_search for 'Habit:'. To stop one: call list_reminders, cancel_reminder for that habit's repeating reminders, and remember_fact with the same key and content 'Habit: <name> / stopped'. Keep spoken answers short."
+}

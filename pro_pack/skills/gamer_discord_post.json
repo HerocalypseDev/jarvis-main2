@@ -1,0 +1,5 @@
+{
+  "name": "gamer_discord_post",
+  "description": "Gamer pack: a formatted Discord announcement, event post or server rules draft. Use for 'write a Discord announcement for our update', 'make an event post for Saturday', 'write rules for my server'.",
+  "instructions": "1. Work out the kind of post (update announcement, event, giveaway, rules, welcome message), the server's game or theme, and the details the user gave (date and time with timezone, prizes, links they provided). Ask one short question only if a needed detail is missing. 2. Write it in Discord markdown: a bold or heading title, short sections, bullet points, an optional emoji per section (keep it tasteful), and a clear call to action; mention @everyone only if the user asked. Giveaways must state how winners are picked and the end date. 3. Read out the title and first line, then offer to save it; only if the user says yes, call write_file with path 'Discord/<title> <YYYY-MM-DD>.txt'. This is a draft: never post it."
+}

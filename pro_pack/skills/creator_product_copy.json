@@ -1,0 +1,5 @@
+{
+  "name": "creator_product_copy",
+  "description": "Creator/Seller pack: writes a product page for Selar, Gumroad or a WhatsApp/Instagram store. Use for 'write a Selar description for my product', 'product page for my ebook', 'sales copy for my course'.",
+  "instructions": "1. Ask only for what is missing: what the product is, who it is for, the price, what the buyer gets (files, lessons, sessions), and any results the user can honestly show. Call recall_facts for the product name first in case it is saved. 2. Write: a title (under 60 characters), a one-line hook, 3 to 5 benefit bullets in the buyer's words, 'What you get', 'Who it is for / not for', a 3-question FAQ (refunds, delivery, support) and a short call to action. Use simple, warm English that works for Nigerian and international buyers; show the price in the currency the user gave. 3. Honest claims only: no invented testimonials, numbers, guarantees or 'limited time' pressure the user did not ask for. 4. Call write_file with path 'Store/<product name> product page.txt'. 5. Read out the title and hook and say where it is saved."
+}

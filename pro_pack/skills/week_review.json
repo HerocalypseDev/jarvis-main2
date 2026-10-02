@@ -1,0 +1,10 @@
+{
+  "name": "week_review",
+  "description": "Smart Scheduler pack: a one-line Friday review of the week's plan versus what got done.",
+  "instructions": "This runs automatically on Friday evening. 1. Call recall_facts for 'Week plan:' and use only this week's line; if there is none for this week, give NO spoken reply at all (respond with empty text). 2. Call list_task_queue (include_done true), list_reminders and autonomy with action 'list_commitments' to see what was finished and what is still open. 3. Give ONE short spoken line: what got done against the top priority, what slipped, and one suggestion for next week, e.g. 'This week you finished the CV and two of four study blocks; the cover letter slipped. Want me to plan next week?' Never create, move or cancel anything in this review.",
+  "schedule": {
+    "daily_at": "17:00",
+    "days": "fri",
+    "requires_fact": "Week plan:"
+  }
+}

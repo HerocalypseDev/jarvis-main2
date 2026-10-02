@@ -1,0 +1,5 @@
+{
+  "name": "exam_progress",
+  "description": "Exam pack: how the user's practice scores are going, per subject. Use for 'how am I doing in physics', 'show my JAMB progress', 'am I improving'.",
+  "instructions": "1. Call memory_search for 'Exam score:' and recall_facts for 'Exam:' and 'Study streak:'. 2. For each subject (or the one named): the number of practice sessions, the first and the latest score as a percentage, whether it is going up or down, the best score, and the weakest topic. 3. Add the days left to that subject's exam if one is saved, and the current study streak. 4. Give it as 2 to 4 short spoken sentences, for example 'Physics: 5 sessions, up from 45 to 70 percent. Weakest topic: projectile motion. JAMB is in 23 days and you are on a 4 day streak.' If there are no scores yet, say so and offer a CBT practice (exam_cbt_practice)."
+}

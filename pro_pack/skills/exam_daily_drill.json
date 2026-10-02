@@ -1,0 +1,9 @@
+{
+  "name": "exam_daily_drill",
+  "description": "Exam pack: a quiet 7pm nudge to practise, only when an exam is close and nothing was practised today.",
+  "instructions": "This runs automatically every evening. 1. Call recall_facts for 'Exam:', 'Exam score:' and 'Study streak:'. 2. If no exam is saved within the next 30 days, give NO spoken reply at all (respond with empty text). 3. If an 'Exam score:' line is dated today, give NO spoken reply at all. 4. Otherwise give ONE short spoken line naming the nearest exam and the days left and suggesting a quick practice, e.g. 'JAMB is in 12 days and you have not practised today. Want 10 quick physics questions?' Mention the streak if it is 3 days or more. Never start the practice yourself and never create reminders in this check.",
+  "schedule": {
+    "daily_at": "19:00",
+    "requires_fact": "Exam score:"
+  }
+}

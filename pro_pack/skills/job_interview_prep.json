@@ -1,0 +1,5 @@
+{
+  "name": "job_interview_prep",
+  "description": "Job Hunt pack: mock interview for a role, one question at a time with feedback. Use for 'prep me for the QA interview', 'mock interview for a junior developer role', 'interview practice'.",
+  "instructions": "1. Work out the role and company (check memory_search for 'Job application:' first); ask only if unknown. 2. Prepare 8 likely questions for that role and level: 3 about the user's background, 3 role-specific or technical, 2 behavioural (situation, task, action, result). 3. Ask ONE question at a time and wait for the spoken answer. After each answer give feedback in at most two sentences: one thing that was good and one concrete improvement. Do not lecture. 4. At the end give the two strongest answers, the one to practise most, and two smart questions the user could ask the interviewer. 5. Offer to save the questions and tips; only if they say yes, call write_file with path 'Job applications/Interview prep - <company> - <role>.docx'. Never make up facts about the company; if you are not sure about something, say so."
+}
