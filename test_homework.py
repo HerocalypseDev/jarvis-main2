@@ -602,3 +602,94 @@ def test_guide_readers_answer_without_the_app():
     assert "Homework 8" in asyncio.run(srv.guide_overview())
     assert "[correct]" in asyncio.run(srv.guide_homework(5)) and asyncio.run(srv.guide_homework(99)).startswith("Tool failed")
     assert "next-token" in asyncio.run(srv.guide_lesson(2)) and asyncio.run(srv.guide_lesson(9)).startswith("Tool failed")
+
+
+# ------------------------------------------------------------------- marking on Gemini (2026-10-02 debug report)
+@pytest.fixture
+def brains(monkeypatch, tmp_path):
+    """No real key or provider file: each test sets what it needs."""
+    for k in ("HOMEWORK_MARKING_BACKEND", "HOMEWORK_GEMINI_MODEL", "HOMEWORK_GEMINI_AUTO_RELEASE", "ANTHROPIC_API_KEY",
+              "GEMINI_API_KEY", "GOOGLE_API_KEY", "JARVIS_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    import jarvis_gemini
+    monkeypatch.setattr(jarvis_gemini, "get_provider", lambda path: "claude")
+    return monkeypatch
+
+
+def test_marking_follows_the_brain_jarvis_is_using(brains):
+    import jarvis_gemini
+    brains.setenv("ANTHROPIC_API_KEY", "a")
+    brains.setenv("GEMINI_API_KEY", "g")
+    assert hm.marking_backend() == "claude"
+    brains.setattr(jarvis_gemini, "get_provider", lambda path: "gemini")
+    assert hm.marking_backend() == "gemini"
+    brains.setenv("HOMEWORK_MARKING_BACKEND", "claude")
+    assert hm.marking_backend() == "claude"
+    brains.setenv("HOMEWORK_MARKING_BACKEND", "auto")
+    brains.delenv("ANTHROPIC_API_KEY")
+    brains.setattr(jarvis_gemini, "get_provider", lambda path: "claude")
+    assert hm.marking_backend() == "gemini"          # no Anthropic key at all, but a Gemini key
+
+
+GEMINI_ANSWER = {"content": [{"type": "text", "text": "```json\n" + json.dumps(
+    {**GOOD, "task_points": 50.0, "short_answers": [{"question_id": "q2", "points": "8", "reason": "clear"}]}) + "\n```"}],
+    "stop_reason": "end_turn", "model": "gemini-test", "usage": {"input_tokens": 700, "output_tokens": 150}}
+
+
+def test_gemini_marking_parses_json_text_and_sends_files_inline(brains):
+    brains.setenv("GEMINI_API_KEY", "g")
+    seen = {}
+
+    def call(body):
+        seen.update(body)
+        return GEMINI_ANSWER
+
+    blocks = [hm.image_block(png()), {"type": "text", "text": "brief"}]
+    raw, problem, usage = hm.ask_gemini(blocks, call)
+    assert problem == "" and raw["task_points"] == 50 and raw["short_answers"][0]["points"] == 8
+    assert usage["_backend"] == "gemini" and usage["_model"] == "gemini-test"
+    assert "JSON schema" in seen["system"] and seen["messages"][0]["content"][0]["type"] == "image"
+    assert "tools" not in seen
+    assert hm.ask_gemini(blocks, lambda b: None)[0] is None
+    assert hm.ask_gemini(blocks, lambda b: {**GEMINI_ANSWER, "content": [{"type": "text", "text": "no json"}]})[1] \
+        == "the marking answer wasn't readable"
+    assert "cut off" in hm.ask_gemini(blocks, lambda b: {**GEMINI_ANSWER, "stop_reason": "max_tokens"})[1]
+
+
+def test_mark_submission_on_gemini_saves_but_never_auto_releases(brains):
+    brains.setenv("GEMINI_API_KEY", "g")
+    brains.setenv("HOMEWORK_MARKING_BACKEND", "gemini")
+    brains.setattr(hm, "ask_gemini", lambda blocks, call=None: (
+        hm._coerce_marks(dict(GOOD)), "", {"_backend": "gemini", "_model": "gemini-test"}))
+    api = FakeApi(submission())
+    out = hm.mark_submission("h1", "James", release=True, api=api)
+    assert api.saved and api.saved[0]["release"] == "keep"
+    assert out.startswith("⚠ Needs your review") and "Gemini" in out and "NOT released" in out
+    brains.setenv("HOMEWORK_GEMINI_AUTO_RELEASE", "1")
+    api2 = FakeApi(submission())
+    hm.mark_submission("h1", "James", release=True, api=api2)
+    assert api2.saved[0]["release"] == "release"
+
+
+def test_claude_with_no_credit_falls_back_to_gemini_and_a_real_claude_answer_does_not(brains):
+    brains.setenv("ANTHROPIC_API_KEY", "a")
+    brains.setenv("GEMINI_API_KEY", "g")
+    credit = "the marking request was rejected (Error code: 400 - Your credit balance is too low)"
+    brains.setattr(hm, "ask_claude", lambda blocks, client=None: (None, credit, {}))
+    brains.setattr(hm, "ask_gemini", lambda blocks, call=None: (dict(GOOD), "", {"_backend": "gemini"}))
+    raw, problem, usage = hm.ask_model([])
+    assert raw == GOOD and usage["_backend"] == "gemini"
+    brains.setenv("HOMEWORK_MARKING_BACKEND", "claude")           # forced Claude: no silent switch
+    assert hm.ask_model([])[0] is None
+    brains.setenv("HOMEWORK_MARKING_BACKEND", "auto")
+    brains.setattr(hm, "ask_claude", lambda blocks, client=None: (None, "Claude declined to mark this one", {}))
+    assert hm.ask_model([])[0] is None                            # a submission problem is not an account problem
+    brains.setattr(hm, "ask_claude", lambda blocks, client=None: (None, credit, {}))
+    brains.setattr(hm, "ask_gemini", lambda blocks, call=None: (None, "couldn't reach Gemini to mark it", {}))
+    out = hm.ask_model([])
+    assert out[0] is None and "credit balance" in out[1] and "Gemini didn't work either" in out[1]
+
+
+def test_marking_log_names_the_model_that_really_answered():
+    assert hm._used_model({"_model": "gemini-test"}) == "gemini-test"
+    assert hm._used_model({}) == hm.model_name()
