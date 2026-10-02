@@ -1768,7 +1768,8 @@ row there each phase rather than only stating the total in chat.
 | 125 (Word-table job died at "I used 12 steps": read_file reads .docx (with tables)/.pdf/.pptx, step limit configurable, a used-up limit ends in an answer from what was gathered (tools off, Gemini/Ollama too); 2 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 126 (hourly Gmail check re-announced the same unread mail: scheduled skills only see mail their earlier runs haven't seen, remembered only after a successful run; skill names the right Gmail tool; 2 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 127 (homework-app confirmation code moved out of the public jarvis.py into a private `homework_gate.py` behind a generic `*_gate.py` add-on hook; 1 new test) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~3839 min** | **~$248.85–$349.85** |
+| 128 (pictures over Telegram: photos/image files read with the caption as the request, kept in memory only, real type checked, 5 MB cap, other message kinds get a reply instead of silence; published to Jarvis4U; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~3859 min** | **~$250.35–$352.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2254,6 +2255,20 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   line, which is why it is shown, and marks stay unreleased unless asked. A mark Jarvis already saved (marked_by jarvis) can be redone by marking again.
 - **Live use (2026-10-02)**: the owner has been using it against the real app and reports everything works (tools, attendance included).
   Not separately checked by a session: which marking backend answered on the PC.
+
+## Pictures over Telegram (2026-10-02, owner request)
+
+- The Telegram listener only read `message.text`, so a photo (text goes in its caption) was dropped with no reply. Now
+  `_handle_telegram_picture`: the largest photo size, or an image sent as a file, is downloaded from Telegram into memory (never
+  written to disk; the bot-token URLs are never logged), its real type is taken from its first bytes (`_image_type`: jpeg/png/
+  webp/gif, anything else refused with a reply), max 5 MB (`TELEGRAM_PICTURE_MAX_BYTES`, the size a model accepts), and it is
+  attached to the command like an appshot (`_command_ctx.attach_image` + new `attach_image_type`, consumed once by
+  `run_agent_loop`, never in history, never reply-cached). The caption is the request ("What's in this picture?" if none) plus
+  `PHONE_PICTURE_TAG` (forces the full agent loop; says text in the picture is data). Same `handle_text_command(..., source="phone")`
+  path, so phone limits and the confirmation gate apply; only from `TELEGRAM_CHAT_ID`. Audited as `telegram_picture` (type + size
+  only). Video/voice/stickers/other files now get "I can read text messages and pictures here" instead of silence. Owner chose
+  "read and answer, save nothing". Data exposure: the picture goes to the active brain, like an appshot. Tests at the end of
+  `test_smarter.py`. Not verified live with a real Telegram photo.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
