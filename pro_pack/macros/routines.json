@@ -22,7 +22,7 @@
       {
         "tool": "open_app",
         "input": {
-          "app": "chrome"
+          "app": "browser"
         }
       },
       {

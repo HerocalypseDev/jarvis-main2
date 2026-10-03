@@ -97,6 +97,10 @@ DEFAULTS = (
      "    assert a.enabled() is False                                   # public default: off\n"
      "    a.set_enabled(True)\n    assert a.enabled() is True and a.dry_run() is False  # a stored choice beats the default\n"
      "    a.set_enabled(False)\n", 1),
+    # The owner's main browser is Opera GX; strangers get whatever Windows opens links with.
+    ("jarvis_browsers.py", 'DEFAULT_BROWSER = "operagx"', 'DEFAULT_BROWSER = "default"', 1),
+    ("jarvis_settings.py", '"label": "Main web browser", "kind": "choice", "default": "operagx"',
+     '"label": "Main web browser", "kind": "choice", "default": "default"', 1),
     ("test_cache.py", '(Path(__file__).parent / "skills" / "gmail_watch.json")',
      '(Path(__file__).parent / "examples" / "skills" / "gmail_watch.json")', 1),
 )

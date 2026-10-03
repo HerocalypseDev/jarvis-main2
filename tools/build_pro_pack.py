@@ -52,7 +52,7 @@ Developer pack - just ask Jarvis:
   Developer skills only ever run read-only git commands; they never commit, push or edit your code.
 
 Routines - just say the phrase (runs instantly, no AI call; see Toolbox -> Voice macros to switch any off):
-  "Start my work day"  - morning briefing, today's plan, opens Chrome, focus mode on
+  "Start my work day"  - morning briefing, today's plan, opens your browser, focus mode on
   "Deep focus"         - focus mode, minimise windows, lofi, a 50-minute break reminder
   "Leave desk"         - stops media and locks the PC
   "End of day"         - focus off, reviews today's plan, minimises windows

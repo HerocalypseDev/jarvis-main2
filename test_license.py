@@ -184,8 +184,8 @@ def test_pro_routines_only_load_low_risk_tools_and_the_users_macros_win():
         {"name": "shell", "phrases": ["clean up now"], "steps": [{"tool": "run_shell", "input": {"command": "x"}}]},
         {"name": "typer", "phrases": ["type my name"], "steps": [{"tool": "type_text", "input": {"text": "x"}}]},
         {"name": "unsafe", "phrases": ["relax safety"], "steps": [{"tool": "safe_mode", "input": {"action": "off"}}]},
-        {"name": "short", "phrases": ["go"], "steps": [{"tool": "open_app", "input": {"app": "chrome"}}]},
-        {"name": "reserved", "phrases": ["stop talking"], "steps": [{"tool": "open_app", "input": {"app": "chrome"}}]},
+        {"name": "short", "phrases": ["go"], "steps": [{"tool": "open_app", "input": {"app": "browser"}}]},
+        {"name": "reserved", "phrases": ["stop talking"], "steps": [{"tool": "open_app", "input": {"app": "browser"}}]},
     ]
     loaded = macros.pack_macros(specs, known, disabled=[])
     assert [m["name"] for m in loaded] == ["ok"] and loaded[0]["pack"] and loaded[0]["id"] is None

@@ -11,6 +11,13 @@ Push finished work directly to `main` (fast-forward/merge from the working branc
 otherwise — standing permission from the user (2026-09-28), so no need to ask each session. Never
 force-push `main`; if `main` has moved, merge it in first and re-run the relevant tests.
 
+## Ask before building (owner rule, 2026-10-03)
+
+For every new request, first ask the owner clarifying questions (AskUserQuestion) to confirm what they mean, with a
+recommended option and the trade-offs, and only start building once the answers are in. This applies to every future
+prompt, not just big features. Skip it only when the request is a plain question or the owner has already answered the
+same choice in this session.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
@@ -1796,7 +1803,8 @@ row there each phase rather than only stating the total in chat.
 | 139 (self-knowledge: dashboard_data reads every dashboard page + Toolbox feature + capabilities, secret masking, prompt rule; 8-exchange memory with old replies shortened; action log of recent tool calls in every command; 8 new tests) | Opus 5.5 | ~40 min | ~$2.80–$3.90 |
 | 140 (debug report: "send me a message on Telegram" -> new send_to_my_phone tool (own chat/topic only, rate-limited), placeholder/hand-made-API scripts refused, tool always offered when Telegram/phone is named; 5 new tests) | Opus 5.5 | ~20 min | ~$1.40–$2.00 |
 | 141 (debug report: finished restart job announced as still coming: job outcomes in conversation memory + journal, autonomy drops needs that repeat handled work, action log without autonomy reasoning, restart reason on start, past-tense questions backed by recent actions, audit search by tool name; 7 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~4164 min** | **~$273.35–$384.35** |
+| 142 (browser tabs: Jarvis Tabs extension for Opera GX/Firefox + paired localhost bridge, browser_tabs tool (list/read/summarize/switch/close/reopen/open), main-browser setting replacing Chrome, ask-first rule in CLAUDE.md; real extension script tested under Node; 13 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
+| **Running total (final)** | | **~4224 min** | **~$278.35–$391.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2388,6 +2396,37 @@ actions. Tests: `test_selfdata.py` (8). Rules to keep:
   autonomy/scheduled rows) also back a claim; an instruction still needs a real call. `dashboard_data(page="audit", query=<tool
   name>)` now filters by tool name (the free-text search missed the real send and found a commit message mentioning it).
 - Not verified live on the PC.
+
+## Browser tabs + main browser setting (2026-10-03, owner request)
+
+Owner's choices (asked first): a browser extension (not a debug port), one "Main browser" setting instead of Chrome
+hard-coded, **every** tab may be read (private windows too, once the extension is allowed there), closing happens straight
+away but more than 5 at once asks first. Tests: `test_browser_tabs.py` (13). Rules to keep:
+- **Main browser** (`jarvis_browsers.py`, `JARVIS_BROWSER` operagx|firefox|chrome|edge|default, Settings, default operagx; the
+  public export swaps it to `default`). `open_app` apps are now `browser` (main), `opera`, `firefox`; `APP_ALIASES` maps
+  chrome/edge/"web browser" to `browser`. Every http(s) link Jarvis opens (`_open_uri`) goes to the main browser
+  (`browsers.open_link`, falls back to the Windows default). Opera GX is found at `%LOCALAPPDATA%\Programs\Opera GX\launcher.exe`
+  (+ Program Files); Firefox/Chrome/Edge also via the App Paths registry. No code points at chrome.exe any more (pinned).
+  Switching to Firefox = change the setting + load the extension in Firefox.
+- **Jarvis Tabs extension** (`browser_extension/`: MV3 `manifest.json` + `background.js`, one copy for Opera GX/Chrome/Edge and
+  Firefox 121+; install steps in its `README.txt`: Load unpacked from that folder). It connects to `jarvis_browser_bridge`
+  (FastAPI WebSocket `/tabs` on **127.0.0.1** `JARVIS_BROWSER_BRIDGE_PORT` 8767, own daemon thread, started in `main()`, off with
+  `JARVIS_BROWSER_TABS=0`). Commands only flow Jarvis -> extension (list/read/close/activate/open/closed/reopen).
+  Guards: non-extension Origin or non-loopback Host refused; mutual HMAC over each side's nonce with the key in
+  `browser_extension/pairing.json` (written by Jarvis on first start, gitignored, never exported); the extension answers
+  nothing until the server proved the key (a port squatter gets no tab data; tested by running the real `background.js`
+  under Node against an impostor). Pings every 20 s keep the MV3 worker awake; an alarm reconnects every 30 s.
+- **`browser_tabs` tool** (actions list/read/switch/close/closed/reopen/open; `_browser_tabs_tool`, dispatched with the
+  confirmation flag): tab references are resolved in `jarvis_browser_tabs.resolve` ("this" = the tab in front, `#id`, "tab 3",
+  "last tab", "previous", "all", "others", or words from the title/site; a tie returns the candidates, never a guess). Page
+  text is neutralised and framed as `UNTRUSTED_INBOUND source=webpage`; titles in lists are neutralised too. Closing > 5
+  (`BROWSER_CLOSE_ASK_OVER`) stages through `_queue_pending_confirmation` with the resolved ids (spoken yes / dashboard Approve).
+  Blocked in untrusted-origin runs (`_UNTRUSTED_BLOCKED_TOOLS`): an email must never get Jarvis to read out or close tabs.
+  Tool narrowing always offers it for tab/browser/page words or "summarize this", and when the window in front is a browser
+  (`_browser_in_front`, only while the extension is connected). Services dropdown shows "browser tabs".
+- Can't read: the browser's own pages, add-on stores, tabs the browser put to sleep (`discarded`). Firefox needs the add-on
+  signed (or Developer Edition) to stay installed, and its site access granted in about:addons.
+- Not verified live: the extension in a real Opera GX (only under Node with a faked browser API) and in Firefox.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

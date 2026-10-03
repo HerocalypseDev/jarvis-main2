@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Jarvis Tabs",
+  "version": "1.0.0",
+  "description": "Lets Jarvis on this PC list, read, switch to, close and reopen your browser tabs. Talks only to Jarvis on 127.0.0.1.",
+  "permissions": ["tabs", "scripting", "sessions", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
+  "incognito": "spanning",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "jarvis-tabs@jarvis.local",
+      "strict_min_version": "121.0"
+    }
+  }
+}

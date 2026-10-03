@@ -97,7 +97,7 @@ Named tools (more reliable — Claude prefers these when one fits):
 | --- | --- |
 | "open github.com" | Opens the URL in your browser (`open_url`) |
 | "play some lofi on youtube" | Opens a song/search on Spotify or YouTube (`play_media`) |
-| "open cursor" / "open notepad" / "open calculator" / "open explorer" / "open chrome" / "open spotify" | Launches or focuses that app (`open_app`, allowlist in `ALLOWED_APPS`) |
+| "open cursor" / "open notepad" / "open calculator" / "open explorer" / "open browser" (your main browser, Opera GX) / "open spotify" | Launches or focuses that app (`open_app`, allowlist in `ALLOWED_APPS`) |
 | "lock my computer" / "minimize everything" / "minimize this window" / "turn the volume up/down" / "mute" / "skip this track" / "pause the music" | System-level actions and media keys (`system_action`) |
 | "turn on sleep mode" / "turn off sleep mode" / "is sleep mode on?" | Quiets non-urgent notifications, dims to dark mode, lowers volume, and speaks more softly (`sleep_mode`) |
 | "play some rain sounds" | Ambient/sleep sounds (`play_ambient_sound`) |
