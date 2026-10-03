@@ -1795,7 +1795,8 @@ row there each phase rather than only stating the total in chat.
 | 138 (debug report: "in 10 mins run the internet test" was a spoken reminder: job-shaped reminders from a user request become jobs, user-scheduled jobs speak their result, more speed-test phrases, one retry on a DNS hiccup; 9 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
 | 139 (self-knowledge: dashboard_data reads every dashboard page + Toolbox feature + capabilities, secret masking, prompt rule; 8-exchange memory with old replies shortened; action log of recent tool calls in every command; 8 new tests) | Opus 5.5 | ~40 min | ~$2.80–$3.90 |
 | 140 (debug report: "send me a message on Telegram" -> new send_to_my_phone tool (own chat/topic only, rate-limited), placeholder/hand-made-API scripts refused, tool always offered when Telegram/phone is named; 5 new tests) | Opus 5.5 | ~20 min | ~$1.40–$2.00 |
-| **Running total (final)** | | **~4139 min** | **~$271.35–$381.55** |
+| 141 (debug report: finished restart job announced as still coming: job outcomes in conversation memory + journal, autonomy drops needs that repeat handled work, action log without autonomy reasoning, restart reason on start, past-tense questions backed by recent actions, audit search by tool name; 7 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~4164 min** | **~$273.35–$384.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2364,6 +2365,29 @@ actions. Tests: `test_selfdata.py` (8). Rules to keep:
 - `_placeholder_code_problem` (run_shell/run_python): refuses code with template placeholders (`<YOUR_...>`, `YOUR_API_KEY`,
   `<TOKEN>`...) and hand-made `api.telegram.org/bot` / `ntfy.sh/` calls (pointed at `send_to_my_phone`); a plain
   `grep sendMessage` is fine. Tests: `test_phone_message.py` (5). Not verified live with the real bot.
+
+## Knowing what already happened in its own space (2026-10-03, debug report)
+
+- "in 5 mins run a git pull then restart yourself" became job #6, which ran at 10:05 (git pull, then `restart_jarvis`). After the
+  restart the autonomy classifier (first pass of a new process) saw that request in "Recent turns", didn't know the job had run,
+  and queued it again ("User requested a git pull and system restart at 10:12"); its `autonomy_decision` row then sat in the
+  action log, so Jarvis told the user "my scheduled restart will happen in about a minute". Fixes (tests: `test_self_events.py`, 7):
+  - A finished job (done/failed) is written into the conversation memory as a marked record turn (`_remember_deferred_job`:
+    "[Record, not words the user said: your scheduled job #6 ran at 10:05] ..." + "(Done at 10:05) <reply>") and journalled
+    under `tasks` in selfaware. Jobs run with `record_history=False`, so before this the conversation only held the promise.
+  - Autonomy classifier: context lists "Jarvis's own scheduled jobs" (pending + finished in 24 h), the prompt says not to redo
+    them or requests from Recent turns, and `_repeats_handled_work` drops (in code) a need that shares most content words with one
+    of those jobs, or (except a spoken notification) with a user request of the last 3 h. Logged as "already handled".
+  - The action log leaves out `autonomy_decision` rows (autonomy's reasoning, not something that happened) and labels rows as
+    "autonomy, on its own" / "a scheduled job: ..." instead of quoting "(autonomy deferred) ...".
+  - `restart_jarvis` journals what asked for it; `selfaware.startup` notes a start that followed a requested restart, and the prompt
+    line says "You (re)started at HH:MM after a restart (...): that restart is DONE, not still to come" for that day.
+- Same report: "What message did you send me on Telegram?" got the true "I sent you ...", but the send was in the previous command,
+  so the claim checker nudged, the model sent it again and apologised for a claim that was true. When the command is a question
+  (`_ASKS_ABOUT_PAST_RE`), tools that succeeded in the user's own commands of the last 30 min (`_recent_succeeded_tools`, never
+  autonomy/scheduled rows) also back a claim; an instruction still needs a real call. `dashboard_data(page="audit", query=<tool
+  name>)` now filters by tool name (the free-text search missed the real send and found a commit message mentioning it).
+- Not verified live on the PC.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
