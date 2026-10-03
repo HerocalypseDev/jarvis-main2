@@ -97,6 +97,10 @@ DEFAULTS = (
      "    assert a.enabled() is False                                   # public default: off\n"
      "    a.set_enabled(True)\n    assert a.enabled() is True and a.dry_run() is False  # a stored choice beats the default\n"
      "    a.set_enabled(False)\n", 1),
+    # Answering email automatically: the owner chose it; strangers switch it on themselves.
+    ("jarvis_mail_reply.py", 'os.environ.get("JARVIS_MAIL_AUTOREPLY", "1")', 'os.environ.get("JARVIS_MAIL_AUTOREPLY", "0")', 1),
+    ("jarvis_settings.py", '"label": "Answer emails automatically", "kind": "bool", "default": "1"',
+     '"label": "Answer emails automatically", "kind": "bool", "default": "0"', 1),
     # The owner's main browser is Opera GX; strangers get whatever Windows opens links with.
     ("jarvis_browsers.py", 'DEFAULT_BROWSER = "operagx"', 'DEFAULT_BROWSER = "default"', 1),
     ("jarvis_settings.py", '"label": "Main web browser", "kind": "choice", "default": "operagx"',
