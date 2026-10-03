@@ -183,3 +183,63 @@ def test_autonomy_does_not_answer_mail_the_auto_reply_answers(monkeypatch, tmp_p
                  {"to": "ada@family.test", "body": "Yes"}, 0.95, "email", None)
     assert d == "silent" and ran == []
     a._cb.clear()
+
+
+def test_a_task_from_someone_elses_email_cannot_read_private_stores(J, monkeypatch):
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    J._command_ctx.untrusted_origin = True
+    try:
+        for tool, inp in (("dashboard_data", {"page": "memory"}), ("memory_search", {"query": "password"}),
+                          ("recall_facts", {"query": ""}), ("clipboard_history", {"action": "list"})):
+            assert J._execute_tool(tool, inp, "(autonomy)").startswith("Refused"), tool
+    finally:
+        J._command_ctx.untrusted_origin = False
+    assert not J._execute_tool("recall_facts", {"query": ""}, "what do you know").startswith("Refused")
+
+
+def test_a_phone_yes_never_confirms_a_staged_shutdown(J, monkeypatch):
+    ran = []
+    monkeypatch.setattr(J, "_execute_confirmed_action", lambda step, sink=None: ran.append(step))
+    with J._pending_action_lock:
+        J._pending_action = {"tool_name": "run_shell", "tool_input": {"command": "shutdown /s /t 0"},
+                             "queued_at": time.monotonic()}
+    out = []
+    J.handle_text_command("yes", source="phone", reply_sink=out.append)
+    assert ran == [] and J._pending_action is not None
+    J._take_pending_action()
+
+
+def test_open_uri_refuses_a_non_web_target(J, monkeypatch):
+    opened = []
+    monkeypatch.setattr(J.browsers, "open_link", lambda u: opened.append(u) or True)
+    J._open_uri(r"C:\Windows\System32\calc.exe")
+    J._open_uri("shell:startup")
+    J._open_uri("https://example.com")
+    assert opened == ["https://example.com"]
+
+
+def test_prompt_lines_built_from_stored_data_never_carry_a_key(J, monkeypatch):
+    for i in range(10):
+        J._append_history(f"filler {i}", "ok")
+    J._append_history("my deployment token for vercel is sk-ant-api03-ZZZZZZZZZZZZZZZZZZZZ", "Noted.")
+    for i in range(10):
+        J._append_history(f"more filler {i}", "ok")
+    line = J._related_context_line("what was my vercel deployment token")
+    assert "sk-ant" not in line
+    J._log_action_audit("http_request", {"url": "https://x"}, "check vercel",
+                        "header Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456")
+    assert "abcdefghijklmnopqrstuvwxyz123456" not in J._recent_actions_line()
+
+
+def test_the_wake_up_recap_points_at_updates_kept_in_the_inbox(J):
+    started = (datetime.now() - timedelta(hours=7)).isoformat(timespec="seconds")
+    missed.add(J._memory_db_connect, J._memory_db_lock, "Sam's phone left the network.", now=time.time() - 3600)
+    missed.add(J._memory_db_connect, J._memory_db_lock, "Old thing", now=time.time() - 10 * 3600)
+    assert J._missed_since_line(started) == " 1 other update is waiting: ask me what you missed."
+
+
+def test_a_note_to_self_gets_no_auto_reply_even_with_no_address_saved(store):
+    gmail, model = FakeGmail([_mail(1, "owner@mail.test", subject="Shopping list", body="Milk, eggs, bread.")],
+                             mailbox="owner@mail.test"), FakeModel()
+    stats, _, _ = _run(store, gmail, model, own=set())
+    assert gmail.sent == [] and model.calls == [] and stats["skipped"] == 1

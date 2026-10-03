@@ -507,3 +507,16 @@ def test_reminder_from_an_untrusted_or_unattended_run_never_becomes_a_job(J):
         J._command_ctx.untrusted_origin = False
         J._command_ctx.source = None
     assert "Scheduled job" not in out and deferred.list_jobs(J._deferred_store) == []
+
+
+def test_a_job_picked_up_from_the_users_own_words_says_its_result(J, monkeypatch):
+    """Audit 2026-10-03: origin 'conversation' jobs ("Jarvis, at 5 check X", extracted from the user's own words)
+    finished in silence under the default minimal speech: not said, not even kept for "what did I miss"."""
+    J._schedule_deferred_cb("Check the exchange rate", (datetime.now() + timedelta(minutes=1)).isoformat(),
+                            "Jarvis, in a minute check the exchange rate")
+    J._deferred_store.q("UPDATE autonomy_deferred_jobs SET due_at=?",
+                        ((datetime.now() - timedelta(seconds=5)).isoformat(),), write=True)
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: "It's 1,520 naira to the dollar.")
+    J._deferred_tick(datetime.now())
+    _wait(J)
+    assert ("As you asked earlier: It's 1,520 naira to the dollar.", False) in J._test_said

@@ -12,14 +12,16 @@ import jarvis_mail_reply as mr
 
 
 class FakeGmail:
-    def __init__(self, inbox, sent_to=(), replied_after=()):
-        self.inbox, self.sent_to, self.replied_after = inbox, set(sent_to), set(replied_after)
+    def __init__(self, inbox, sent_to=(), replied_after=(), mailbox="me@home.test"):
+        self.inbox, self.sent_to, self.replied_after, self.mailbox = inbox, set(sent_to), set(replied_after), mailbox
         self.sent, self.queries = [], []
 
     def __call__(self, tool, args):
         if tool == "search_emails":
             q = args["query"]
             self.queries.append(q)
+            if q == "in:sent":
+                return f"ID: s0\nSubject: Notes\nFrom: Me <{self.mailbox}>\nDate: Fri, 3 Oct 2026 08:00:00 +0100"
             if q.startswith("in:sent to:"):
                 addr = q.split("to:")[1].split()[0]
                 hit = addr in (self.replied_after if " after:" in q else self.sent_to)
