@@ -317,12 +317,14 @@ def test_main_browser_setting_replaces_chrome(J, monkeypatch):
     launched = []
     monkeypatch.setattr(browsers, "launch", lambda key=None: launched.append(key) or "Opera GX")
     assert "chrome" not in J.ALLOWED_APPS and {"browser", "opera", "firefox"} <= set(J.ALLOWED_APPS)
-    assert J._execute_tool("open_app", {"app": "browser"}, "open my browser") == "Opened Opera GX."
+    monkeypatch.delenv("JARVIS_BROWSER", raising=False)
+    assert J._execute_tool("open_app", {"app": "browser"}, "open my browser") == f"Opened {browsers.label()}."
     J._execute_tool("open_app", {"app": "firefox"}, "open firefox")
     assert launched == [None, "firefox"]
     assert J.APP_ALIASES["chrome"] == "browser"
-    monkeypatch.delenv("JARVIS_BROWSER", raising=False)
-    assert browsers.main_browser() == browsers.DEFAULT_BROWSER == "operagx" and browsers.label() == "Opera GX"
+    assert browsers.main_browser() == browsers.DEFAULT_BROWSER  # operagx here; the public copy uses "default"
+    monkeypatch.setenv("JARVIS_BROWSER", "operagx")
+    assert browsers.label() == "Opera GX"
     monkeypatch.setenv("JARVIS_BROWSER", "Firefox")
     assert browsers.main_browser() == "firefox"
     opened = []
