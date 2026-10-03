@@ -1809,8 +1809,9 @@ row there each phase rather than only stating the total in chat.
 | 145 (assistant overhaul phase B: quiet gate, "what did I miss" inbox + intent + Home card, scheduled skills silent unless announce/URGENT, no-old-topic wording; 13 new tests, 7 old tests pinned to the old mode, headless card check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 146 (assistant overhaul phase C: related reminders/jobs/tasks/old conversations every request, calendar for time/plans/people with a 3.5 s cap + cache, mail hint, instant fact learning from the owner's words; 31 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 147 (assistant overhaul phase D: email auto-replies from memory + calendar, known vs stranger split, automated/loop/limit guards, code check on what a reply may contain, public default off; 18 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
-| 148 (full audit: phone can't confirm catastrophic actions, email-started tasks can't read private stores, sender spoof fix, auto-reply dry-run/own-address/fact scope/double-reply, secret masking in inbox and prompt lines, learner limits, calendar back-off, conversation jobs speak, inbox fixes; 36 new tests) | Opus 5.5 | ~95 min | ~$7.50–$10.50 |
-| **Running total (final)** | | **~4539 min** | **~$303.35–$426.35** |
+| 148 (full audit (its phone-confirm block was later undone at the owner's request): email-started tasks can't read private stores, sender spoof fix, auto-reply dry-run/own-address/fact scope/double-reply, secret masking in inbox and prompt lines, learner limits, calendar back-off, conversation jobs speak, inbox fixes; 36 new tests) | Opus 5.5 | ~95 min | ~$7.50–$10.50 |
+| 149 (phone confirmation of staged actions restored at the owner's request) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
+| **Running total (final)** | | **~4544 min** | **~$303.65–$426.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2555,9 +2556,9 @@ anyone the owner has emailed), strangers get a polite reply with nothing persona
 
 Owner's choices for this audit: tighten risky-by-design items when cheap, publish as usual. Tests:
 `test_audit_assistant.py` (34), plus additions to `test_executive.py` and `test_guest_reminders.py`. Rules to keep:
-- **The phone never confirms a catastrophic action** (owner's invariant): a Telegram/ntfy "yes" leaves it staged and says
-  to confirm at the PC (push-to-talk yes) or the dashboard's Review -> Approve. This replaces the old phone-confirms
-  behaviour that `test_the_gate_still_works_normally_when_no_question_is_open` used to pin.
+- **The phone CAN confirm a staged catastrophic action** (a Telegram/ntfy "yes"): the audit blocked it and the owner
+  asked for it back the same day ("I need it"). Don't block it again without asking. Accepted risk: anyone who can write
+  to the Telegram chat or the ntfy `-cmd` topic can approve a staged shutdown/format, so keep those secret.
 - **Untrusted-origin runs** (autonomy agent runs, `[untrusted-origin]` tasks) also may not call `dashboard_data`,
   `memory_search`, `recall_facts`, `quick_recall`, `semantic_recall`, `knowledge_graph`, the clipboard tools,
   `self_report` or `lessons`: an email-started task could read private stores and mail them out (sending must stay

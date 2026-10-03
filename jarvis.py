@@ -14480,13 +14480,6 @@ def _handle_text_command_impl(
             msg = "To confirm that, hold the push-to-talk key and say yes."
             (reply_sink or speak_text)(msg)
             return
-        if _is_confirmation_yes(transcript) and source == "phone":
-            # Owner's invariant (audit 2026-10-03): the phone never confirms a catastrophic action. Anyone who can
-            # write to the Telegram chat or the ntfy topic could otherwise shut the PC down or wipe a drive.
-            msg = ("For safety I can't confirm that from the phone. It's still waiting: say yes at the PC with "
-                   "push-to-talk, or Review and Approve it on the dashboard.")
-            (reply_sink or speak_text)(msg)
-            return
         if _is_confirmation_yes(transcript):
             step = _take_pending_action()
             if step:

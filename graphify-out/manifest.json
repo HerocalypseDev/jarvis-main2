@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1791061708.8088048,
-    "seen": 1791061883.4709404,
-    "ast_hash": "410d9da97c0006aa4f234845a5997b3b",
+    "mtime": 1791062681.9086518,
+    "seen": 1791062943.1420577,
+    "ast_hash": "927193fabfbd658702cbe9f2548e05f2",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1791061775.352917,
-    "seen": 1791061883.4712217,
-    "ast_hash": "e3b6e00709468af6c0ad67d0ee220942",
+    "mtime": 1791062917.6166465,
+    "seen": 1791062943.142561,
+    "ast_hash": "e8433017f148befb48919b05080530b3",
     "semantic_hash": ""
   },
   "README.md": {
@@ -528,9 +528,9 @@
     "semantic_hash": ""
   },
   "test_guest_reminders.py": {
-    "mtime": 1791061360.0563428,
-    "seen": 1791061625.4043443,
-    "ast_hash": "eaaf04469bb0cc960e31d3a3a6c2d3c4",
+    "mtime": 1791062798.8446493,
+    "seen": 1791062943.1424844,
+    "ast_hash": "4ff272aae44ece128211ef3fe450e32f",
     "semantic_hash": ""
   },
   "dashboard_static/autonomy.js": {
@@ -1686,9 +1686,9 @@
     "semantic_hash": ""
   },
   "test_audit_assistant.py": {
-    "mtime": 1791061727.2776604,
-    "seen": 1791061883.471157,
-    "ast_hash": "c30389407ba996381146fa64d7d7a527",
+    "mtime": 1791062800.9406493,
+    "seen": 1791062943.1424413,
+    "ast_hash": "33f676132c068ea47d2a7784efecdb18",
     "semantic_hash": ""
   }
 }
