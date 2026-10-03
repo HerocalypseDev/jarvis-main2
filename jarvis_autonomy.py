@@ -1484,6 +1484,12 @@ def _route(category: str, sender: str, title: str, evidence: str, action_type: s
         _log_decision(title, {"category": category}, "silent", "", "tracking only, no action implied",
                       outcome="skipped", **info)
         return "silent"
+    if action_type == "email" and source_type in INBOUND_SOURCES and _call("mail_autoreply_on", default=False):
+        # Audit 2026-10-03: with the email auto-reply on, an email that asked something got two answers (this one,
+        # through the agent loop, and the auto-reply). Answering incoming mail is the auto-reply's job.
+        _log_decision(title, {"category": category}, "silent", "", "the email auto-reply answers incoming mail",
+                      outcome="skipped", **info)
+        return "silent"
     verdict, reason = evaluate_policy(category, sender, text, confidence, action_type, source_type, details, suspicious)
     if verdict == "ignore":
         _log_decision(title, {"category": category}, "silent", "", reason, outcome="skipped", **info)

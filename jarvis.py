@@ -4721,8 +4721,13 @@ def _add_missed(text: str, source: str = "") -> None:
 def _missed_reply() -> str:
     items = missed.unseen(_memory_db_connect, _memory_db_lock, limit=200)
     out = missed.spoken_summary(items)
-    missed.mark_seen(_memory_db_connect, _memory_db_lock, [i["id"] for i in items])
+    missed.mark_seen(_memory_db_connect, _memory_db_lock, missed.spoken_ids(items))  # unread older ones stay for next time
     return out
+
+
+def _missed_clear_reply() -> str:
+    n = missed.mark_seen(_memory_db_connect, _memory_db_lock)
+    return f"Cleared {n} item{'s' if n != 1 else ''} from what you missed." if n else "There was nothing to clear."
 
 
 # --- Main memory (2026-10-03, owner: "Jarvis should be the main memory: when something happens, double check every
@@ -4731,8 +4736,9 @@ def _missed_reply() -> str:
 # about time, plans or a person Jarvis knows (owner's "smart mix"); mail is left to the tools (slow), with a hint.
 RELATED_LINE_MAX_CHARS = 1400
 CALENDAR_CACHE_S = 300
-CALENDAR_WAIT_S = 3.5
-_calendar_cache: dict = {"at": 0.0, "lines": None, "busy": False}
+CALENDAR_WAIT_S = 2.0
+CALENDAR_RETRY_S = 300  # after a failed fetch, don't make every request wait on a broken calendar again
+_calendar_cache: dict = {"at": 0.0, "lines": None, "busy": False, "failed_at": 0.0}
 _people_cache: dict = {"at": 0.0, "names": frozenset()}
 _NOT_NAMES = frozenset((
     "The User User's He She His Her They Their Jarvis Mum Mom Dad Mother Father Brother Sister Friend Uncle Aunt Monday "
@@ -4768,17 +4774,23 @@ def _calendar_week_lines() -> list[str] | None:
         return _calendar_cache["lines"]
     if not any(n.startswith("mcp_calendar") for n in _mcp_tool_index):
         return None
+    if time.time() - _calendar_cache.get("failed_at", 0.0) < CALENDAR_RETRY_S:
+        return None
 
     def fetch():
+        ok = False
         try:
             now = datetime.now()
             raw = _calendar_events_raw(now, now + timedelta(days=7))
             lines = reqctx.calendar_lines(raw, now, now + timedelta(days=7)) if raw else None
             if lines is not None:
                 _calendar_cache.update(at=time.time(), lines=lines)
+                ok = True
         except Exception as e:
             log.debug("calendar for related context failed: %s", e)
         finally:
+            if not ok:
+                _calendar_cache["failed_at"] = time.time()
             _calendar_cache["busy"] = False
 
     if not _calendar_cache["busy"]:
@@ -4889,12 +4901,15 @@ def _learn_from_user_words(transcript: str, source: str) -> list[str]:
         return []  # never the real memory from a test
     if not _env_on("JARVIS_LEARN_FROM_SPEECH", True):
         return []
+    if getattr(_command_ctx, "hands_free", False) and not getattr(_command_ctx, "wake", False):
+        return []  # a follow-up-window capture can be a TV or someone else talking: don't learn "facts" from it
     saved = []
     for f in quickfacts.extract(transcript):
         content, hits = jarvis_untrusted.neutralize_injection(f["content"])
-        if hits or _fact_already_known(content, f.get("key")):
+        if hits or jarvis_untrusted.mask_secrets(content)[1] or _fact_already_known(content, f.get("key")):
             continue
         remember_fact(f["category"], content, f.get("key"))
+        _log_action_audit("learned_fact", {"category": f["category"], "key": f.get("key")}, transcript[:300], content)
         saved.append(content)
     if saved:
         log.info("Learned from what the user said: %s", " | ".join(saved))
@@ -6236,7 +6251,9 @@ def _memory_email_addresses() -> set[str]:
 
 
 def _mail_reply_facts(query: str) -> str:
-    return (get_user_profile_context() + get_active_facts_context() + _relevant_memory_line(query)).strip()
+    """Only what the email is about (audit 2026-10-03: the newest 40 facts went into every known-person reply): the
+    profile basics plus the facts that match the message."""
+    return (get_user_profile_context() + memory_enhance.relevant_memory_line(query, skip_newest=0)).strip()
 
 
 def _mail_reply_calendar() -> str | None:
@@ -6250,8 +6267,9 @@ def _mail_reply_calendar() -> str | None:
 
 def _mail_reply_record(text: str) -> None:
     _add_missed(text, "mail")
-    if text.startswith("I replied to"):
-        _log_action_audit("mail_autoreply", {"kind": "reply"}, "(mail auto-reply)", text)
+    kind = ("reply" if text.startswith("I replied to") else "dry_run" if text.startswith("Dry run")
+            else "not_sent")
+    _log_action_audit("mail_autoreply", {"kind": kind}, "(mail auto-reply)", text)
 
 
 def _mail_autoreply_cycle(now: datetime) -> dict:
@@ -6262,7 +6280,8 @@ def _mail_autoreply_cycle(now: datetime) -> dict:
         store=_mail_reply_db(), mcp=_sleep_mail_mcp, claude=_sleep_mail_claude,
         notify=lambda text: queue_or_deliver_notification(text, important=True), record=_mail_reply_record,
         now=now, own=own, memory_addresses=_memory_email_addresses() - own, skip_senders=skip_senders,
-        facts_text=_mail_reply_facts, calendar_text=_mail_reply_calendar, skip_ids=skip_ids)
+        facts_text=_mail_reply_facts, calendar_text=_mail_reply_calendar, skip_ids=skip_ids,
+        dry_run=autonomy.dry_run())
 
 
 def _run_single_flight(name: str, fn, *args) -> bool:
@@ -6296,7 +6315,9 @@ def _scheduler_steps(now: datetime) -> list:
             "task-queue", task_scheduler.tick, n, _run_queued_task, queue_or_deliver_notification), (now,)),
         ("sleep mail", _sleep_mail_tick, (now,)),
         ("mail auto-reply", _mail_autoreply_tick, (now,)),
-        ("focus", lambda: focus_mode.tick(_launch_focus_app, queue_or_deliver_notification), ()),
+        # Focus Mode switching itself on changes what Jarvis holds back: the owner must hear it (quiet assistant).
+        ("focus", lambda: focus_mode.tick(_launch_focus_app,
+                                          lambda text: queue_or_deliver_notification(text, important=True)), ()),
         ("roblox", lambda: roblox.tick(queue_or_deliver_notification), ()),
         ("battery", _battery_tick, ()),
         ("autonomy", _autonomy_tick_battery_aware, (now,)),
@@ -8719,6 +8740,7 @@ def _autonomy_callbacks() -> dict:
         "consolidate": lambda now: consolidation.consolidate(now, _sleep_mail_claude),
         "publish": dashboard.notify,
         "speak": lambda text: _speak_shaped(text),  # spoken log summary: shortened/path-collapsed like every reply
+        "mail_autoreply_on": mail_reply.enabled,
         "file_events": lambda: filewatcher.watcher.recent_events(200),   # the watcher keeps 200; all of them are scanned
         "create_calendar_event": _autonomy_create_event,
         "poll_mail": _autonomy_poll_mail,
@@ -14301,6 +14323,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return set_safe_mode(not off, _current_command_source())
     if intent == "missed":
         return _missed_reply()
+    if intent == "missed_clear":
+        return _missed_clear_reply()
     if intent == "self_check":
         return self_check_report()
     if intent == "update":
@@ -14636,10 +14660,12 @@ def _handle_voice_command_impl(
                           "window picture attached to the command (never stored)")
     started = time.monotonic()
     _command_ctx.hands_free = hands_free  # read by the confirmation gate
+    _command_ctx.wake = wake
     try:
         handle_text_command(transcript, tone=tone, source="voice")
     finally:
         _command_ctx.hands_free = False
+        _command_ctx.wake = False
         _command_ctx.attach_image = None
         latency.end()
     if not _speech_cancelled_since(started) and not safe_mode_on():  # not after a barge-in / in safe mode

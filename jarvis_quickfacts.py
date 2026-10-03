@@ -21,7 +21,7 @@ _DURABLE = (
     "major|class|level|job|work|occupation|profession|company|boss|teacher|best friend|friend|brother|sister|mum|mom|"
     "mother|dad|father|wife|husband|girlfriend|boyfriend|son|daughter|uncle|aunt|cousin|grandma|grandpa|pastor|church|"
     "city|town|state|country|hometown|address|area|street|team|club|religion|blood group|genotype|height|weight|"
-    "phone number|number|username|gamertag|laptop|phone|car|pc|bank|exam number|registration number|reg number|"
+    "phone number|username|gamertag|laptop|phone|car|pc|exam number|registration number|reg number|"
     "cgpa|gpa|result|results|score|mark|marks|grade|grades"
 )
 _MY_RE = re.compile(
@@ -39,6 +39,10 @@ _SCORED_RE = re.compile(r"\bi (?:scored|got|had) (?P<num>\d[\d./%]*(?: (?:points
                         r"(?P<subj>[^.!?;,]{2,40})", re.I)
 _BORN_RE = re.compile(r"\bi was born (?P<val>(?:on|in) [^.!?;]{2,40})", re.I)
 
+# Never learned, whatever the wording: secrets and money details (they would sit in every prompt and could reach an
+# auto-reply to someone the owner knows).
+_SENSITIVE_RE = re.compile(r"\b(?:password|passcode|pass ?word|pin|cvv|card|account|bank|bvn|nin|ssn|otp|code|secret|"
+                           r"token|key|api|login|sort code|iban|routing)\b", re.I)
 _QUESTION_RE = re.compile(r"^\s*(?:what|when|where|who|whom|whose|why|how|which|is|are|was|were|do|does|did|can|could|"
                           r"would|will|should|shall|have|has|am)\b", re.I)
 _SKIP_RE = re.compile(r"\b(?:if|suppose|imagine|pretend|what if|wish|hope|maybe|probably|might|tell (?:him|her|them)|"
@@ -82,6 +86,8 @@ def extract(text: str) -> list[dict]:
             continue  # an explicit "remember that..." goes through remember_fact; don't store it twice
         for m in _MY_RE.finditer(s):
             subj, val = _clean(m.group("subj")).lower(), _clean(m.group("val"))
+            if _SENSITIVE_RE.search(m.group(0)):
+                continue
             verb = "is" if m.group(0).lower().split(subj, 1)[-1].strip().startswith(("is", "'s")) else \
                 m.group(0).lower().split(subj, 1)[-1].split()[0]
             if not _ok_value(val) or _TRANSIENT_VAL_RE.search(val):

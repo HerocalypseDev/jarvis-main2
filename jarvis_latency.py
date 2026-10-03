@@ -99,9 +99,12 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
                           r"|what do i need to (?:know|do)(?: today| now)?)(?:,?\s*jarvis)?\W*\Z", re.I)),
     # Quiet assistant (2026-10-03): what Jarvis noticed but didn't say out loud.
     ("missed", re.compile(r"\A\s*(?:hey,?\s*)?(?:jarvis,?\s*)?(?:what did i miss|what have i missed|did i miss anything"
-                          r"|anything (?:i missed|new)|what'?s new|any (?:news|updates)(?: for me)?|catch me up"
+                          r"|anything (?:i missed|new)|what'?s new|any updates(?: for me)?|catch me up"
                           r"|what(?:'s| has)? happened (?:while i was (?:away|gone|out|busy)|today))"
                           r"(?: (?:today|lately|while i was (?:away|gone|out|busy)))?(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
+    ("missed_clear", re.compile(r"\A\s*(?:hey,?\s*)?(?:jarvis,?\s*)?(?:clear|dismiss|mark(?: as)? read|mark)\s+(?:all\s+)?"
+                                r"(?:what i (?:missed|have missed)|(?:the |my )?missed (?:list|items|updates|things)"
+                                r"|everything i missed)(?: as read)?(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
     # Media playback (2026-09-23): whole short utterances only; "play despacito" still reaches the agent.
     ("media", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:please\s+)?(?:"
                          r"(?:play|resume|unpause|pause)(?:\s+(?:the\s+)?(?:music|song|track|playback|media|it))?"

@@ -105,10 +105,13 @@ def relevant_skills(skills: list[dict], query: str, limit: int = 2) -> list[dict
 
 # --- Phase C (2026-10-03): the "main memory" line. Every request checks reminders, jobs, tasks and older conversations
 # for things related to it; the calendar only when the request is about time, plans or people (owner's "smart mix").
+# Audit 2026-10-03: "when", "what time", "date", "week" and "morning" sent "when was the Eiffel Tower built" and
+# "what time does the shop close" to the calendar (up to a few seconds' wait on a cache miss); only words that are
+# about the owner's own plans count now.
 TIME_PLANS_RE = re.compile(
-    r"\b(?:free|busy|available|availability|schedule|calendar|meeting|meet|appointment|plans?|planned|event|party|"
-    r"today|tonight|tomorrow|weekend|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|"
-    r"evening|when|what time|date|deadline|exam|class|lecture|trip|visit|birthday|church|service)\b", re.I)
+    r"\b(?:free|busy|available|availability|schedule|calendar|meeting|meetings|appointment|plans?|planned|event|"
+    r"tonight|tomorrow|weekend|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"am i doing|do i have|deadline|exam|lecture|trip|birthday)\b", re.I)
 MESSAGES_RE = re.compile(r"\b(?:e-?mails?|mail|inbox|messages?|texts?|texted|replied|reply|wrote|sent|whatsapp|telegram|"
                          r"dm|asked me|told me)\b", re.I)
 
