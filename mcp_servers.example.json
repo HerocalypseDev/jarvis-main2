@@ -50,5 +50,9 @@
       "--cdp-endpoint",
       "http://127.0.0.1:9333"
     ]
-  }
+  },
+  "homework": {
+  "command": "python",
+  "args": ["homework_mcp_server.py"]
+}
 }
