@@ -325,8 +325,13 @@ def test_the_gate_still_works_normally_when_no_question_is_open(j, monkeypatch):
     monkeypatch.setattr(j, "_execute_confirmed_action", lambda step, sink=None: executed.append(step))
     with j._pending_action_lock:
         j._pending_action = {"tool_name": "run_shell", "tool_input": {"command": "x"}}
-    j.handle_text_command("yes", source="phone", reply_sink=lambda r: None)
-    assert len(executed) == 1  # unchanged behaviour: no open reminders question, so the gate gets it
+    out = []
+    j.handle_text_command("yes", source="phone", reply_sink=out.append)
+    # The gate gets it (no open reminders question), and since the 2026-10-03 audit a phone yes never confirms:
+    # it stays staged for a yes at the PC or the dashboard's Approve.
+    assert executed == [] and j._pending_action is not None and "can't confirm that from the phone" in out[0]
+    j.handle_text_command("yes", source="text")
+    assert len(executed) == 1
 
 
 def test_reminders_mode_tool_from_any_source(j, monkeypatch):

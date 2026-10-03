@@ -147,6 +147,26 @@ def automated(sender: str, subject: str, body: str) -> bool:
                                                      re.I))
 
 
+def mailbox_addresses(store: Store, mcp) -> set[str]:
+    """The owner's own address, read from their Sent folder (cached a day). Audit 2026-10-03: with no address saved in
+    memory or JARVIS_OWN_EMAILS, a note the owner mailed to themselves got an automatic reply."""
+    rows = store.q("SELECT v FROM mail_autoreply_state WHERE k='mailbox'")
+    if rows:
+        try:
+            data = json.loads(rows[0][0])
+            if time.time() - float(data.get("at", 0)) < 86400:
+                return set(data.get("addresses") or [])
+        except (ValueError, TypeError, AttributeError):
+            pass
+    found = mcp("search_emails", {"query": "in:sent", "maxResults": 3})
+    if sleep_mail.looks_like_error(found):
+        return set()
+    addrs = {m["sender"] for m in sleep_mail.parse_search(found) if m.get("sender")}
+    store.q("INSERT OR REPLACE INTO mail_autoreply_state VALUES ('mailbox', ?)",
+            (json.dumps({"at": time.time(), "addresses": sorted(addrs)}),), write=True)
+    return addrs
+
+
 def known_sender(sender: str, store: Store, mcp, memory_addresses: set[str]) -> bool:
     """Known = an address in memory (a relationship or any other fact), or someone the owner has emailed before."""
     if sender in memory_addresses:
@@ -261,6 +281,7 @@ def run_cycle(*, store: Store, mcp, claude, notify, record, now: datetime, own: 
             log.warning("Mail auto-reply: Gmail search failed: %s", str(found)[:200])
             return stats
         dates = message_dates(found)
+        own = set(own) | mailbox_addresses(store, mcp)
         for msg in reversed(sleep_mail.parse_search(found)):  # oldest first
             if store.handled(msg["id"]) or (dry_run and msg["id"] in _dry_seen):
                 continue
