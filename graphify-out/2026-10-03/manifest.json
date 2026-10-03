@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1791058390.665534,
-    "seen": 1791058503.084365,
-    "ast_hash": "9a40eed70571b1c83a2c596c10c80d7c",
+    "mtime": 1791059199.4327316,
+    "seen": 1791059511.3729322,
+    "ast_hash": "527528f805d5a07e611e332def21b201",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -90,15 +90,15 @@
     "semantic_hash": ""
   },
   "skills/morning_briefing.json": {
-    "mtime": 1790608572.4907503,
-    "seen": 1790970353.779306,
-    "ast_hash": "1c4578a6f4442a412c7dc1d5779f0991",
+    "mtime": 1791059170.6129808,
+    "seen": 1791059511.3732836,
+    "ast_hash": "43577e6aa5310d550eb966b94db74061",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1791058487.678299,
-    "seen": 1791058503.0850418,
-    "ast_hash": "141d462921a2190853e05fe88180644c",
+    "mtime": 1791059490.708725,
+    "seen": 1791059511.373421,
+    "ast_hash": "7f02b184bbce484715d6366d154e16f7",
     "semantic_hash": ""
   },
   "README.md": {
@@ -126,9 +126,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/index.html": {
-    "mtime": 1790970329.9944715,
-    "seen": 1790970353.779371,
-    "ast_hash": "5842aac39d8cfdef249d81c4524784da",
+    "mtime": 1791059411.2852852,
+    "seen": 1791059511.3734646,
+    "ast_hash": "f24f8e16c185789f1f87b847eb8dbe66",
     "semantic_hash": ""
   },
   "test_dashboard.py": {
@@ -144,9 +144,9 @@
     "semantic_hash": ""
   },
   "test_cache.py": {
-    "mtime": 1790760465.1002123,
-    "seen": 1790970353.779313,
-    "ast_hash": "cd6889f948285a7ee2902bab5205bbde",
+    "mtime": 1791059357.7903583,
+    "seen": 1791059511.373303,
+    "ast_hash": "8e38190a58abc31ebcc327900bf43fa5",
     "semantic_hash": ""
   },
   "jarvis_billing.py": {
@@ -186,9 +186,9 @@
     "semantic_hash": ""
   },
   "test_sleep.py": {
-    "mtime": 1790608572.494717,
-    "seen": 1790970353.7793403,
-    "ast_hash": "8f256d965e05b20b23b56a4586f44386",
+    "mtime": 1791059357.7897122,
+    "seen": 1791059511.3733878,
+    "ast_hash": "01fde27dacbb987ce1e8c9669fe6784b",
     "semantic_hash": ""
   },
   "brag-output-2026-09-19-001152/brag-plan.md": {
@@ -516,9 +516,9 @@
     "semantic_hash": ""
   },
   "test_face.py": {
-    "mtime": 1791011581.3024855,
-    "seen": 1791011692.9769208,
-    "ast_hash": "9924ce0e36940931acceebf9906097f1",
+    "mtime": 1791059357.7877128,
+    "seen": 1791059511.373318,
+    "ast_hash": "4a92dc4a0fa82291646f59609c36d64e",
     "semantic_hash": ""
   },
   "jarvis_guest_reminders.py": {
@@ -594,9 +594,9 @@
     "semantic_hash": ""
   },
   "jarvis_latency.py": {
-    "mtime": 1791021918.857946,
-    "seen": 1791022148.1705883,
-    "ast_hash": "8c8606d77ee8962ddf62e030550ee3f8",
+    "mtime": 1791059243.879428,
+    "seen": 1791059511.3730416,
+    "ast_hash": "d2d1c2431352c5077fdcdf503221015a",
     "semantic_hash": ""
   },
   "jarvis_stt_deepgram.py": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/qol.js": {
-    "mtime": 1790764664.8136284,
-    "seen": 1790970353.7791274,
-    "ast_hash": "7964c2e69d6f95825024aa5045c96ae3",
+    "mtime": 1791059411.2898972,
+    "seen": 1791059511.3728986,
+    "ast_hash": "2c3d2c8eef2803cb86c82a5744556010",
     "semantic_hash": ""
   },
   "jarvis_followup.py": {
@@ -642,9 +642,9 @@
     "semantic_hash": ""
   },
   "jarvis_settings.py": {
-    "mtime": 1791020830.485442,
-    "seen": 1791021106.8745453,
-    "ast_hash": "ab967dab44478fb61ebd08f69731016b",
+    "mtime": 1791059158.6224775,
+    "seen": 1791059511.373091,
+    "ast_hash": "0b5e5f4768d24fd319bd4b40db057043",
     "semantic_hash": ""
   },
   "jarvis_weather.py": {
@@ -690,9 +690,9 @@
     "semantic_hash": ""
   },
   "test_safe_mode.py": {
-    "mtime": 1790608572.494717,
-    "seen": 1790970353.7793381,
-    "ast_hash": "d25274030abacf2c09b33a2c7aa06c9d",
+    "mtime": 1791059357.7890916,
+    "seen": 1791059511.3733766,
+    "ast_hash": "efdeb9bcf6dddc9d0d52ab89bd991cd6",
     "semantic_hash": ""
   },
   "test_timers.py": {
@@ -708,9 +708,9 @@
     "semantic_hash": ""
   },
   "test_chief.py": {
-    "mtime": 1790709541.2028842,
-    "seen": 1790970353.7793138,
-    "ast_hash": "f1fb92deac0ac8aa6f661c746b1963a9",
+    "mtime": 1791059357.785786,
+    "seen": 1791059511.3733053,
+    "ast_hash": "0f0191e77482c45a1592bb51b8ce92dc",
     "semantic_hash": ""
   },
   "dashboard_static/voice.js": {
@@ -876,9 +876,9 @@
     "semantic_hash": ""
   },
   "test_feature_batch_c.py": {
-    "mtime": 1790709007.9276025,
-    "seen": 1790970353.7793233,
-    "ast_hash": "d5eb531c0a3152c21ed0a467b406b81a",
+    "mtime": 1791059357.7884936,
+    "seen": 1791059511.373328,
+    "ast_hash": "cbeaa4967e721bcaf5151b99a23219a9",
     "semantic_hash": ""
   },
   "test_feature_batch_d.py": {
@@ -996,9 +996,9 @@
     "semantic_hash": ""
   },
   "jarvis_selfaware.py": {
-    "mtime": 1791018924.2030344,
-    "seen": 1791019125.9087613,
-    "ast_hash": "dcc2efa48e0587a04aabd2ecb019495e",
+    "mtime": 1791059158.6215947,
+    "seen": 1791059511.3730886,
+    "ast_hash": "2532f83a48992537c65131e8361900cf",
     "semantic_hash": ""
   },
   "jarvis_tool_router.py": {
@@ -1200,9 +1200,9 @@
     "semantic_hash": ""
   },
   "public/examples/skills/morning_briefing.json": {
-    "mtime": 1790669022.1696463,
-    "seen": 1790970353.7792995,
-    "ast_hash": "a20185dc413a7082893ae634c3532035",
+    "mtime": 1791059178.0407321,
+    "seen": 1791059511.3732715,
+    "ast_hash": "33009cedde32e3d947c2ad0a59cfa5f1",
     "semantic_hash": ""
   },
   "skills/homework_admin.json": {
@@ -1212,9 +1212,9 @@
     "semantic_hash": ""
   },
   "skills/homework_watch.json": {
-    "mtime": 1790881670.158967,
-    "seen": 1790970353.7793047,
-    "ast_hash": "d1eacd81443ccf1489919aca20132935",
+    "mtime": 1791059170.6135733,
+    "seen": 1791059511.3732815,
+    "ast_hash": "3480e7876febcd5c738972ea0eb37f31",
     "semantic_hash": ""
   },
   "test_audit_batch.py": {
@@ -1338,9 +1338,9 @@
     "semantic_hash": ""
   },
   "public/examples/skills/README.md": {
-    "mtime": 1790669022.1695967,
-    "seen": 1790970353.7793744,
-    "ast_hash": "a084852c8ccad676fb2c8e73a9498909",
+    "mtime": 1791059186.5778232,
+    "seen": 1791059511.3734732,
+    "ast_hash": "30f524768d4bfd06ecf7f4915d96ab04",
     "semantic_hash": ""
   },
   "public/skills/README.md": {
@@ -1560,9 +1560,9 @@
     "semantic_hash": ""
   },
   "jarvis_dashdata.py": {
-    "mtime": 1791011581.3074634,
-    "seen": 1791011692.9767487,
-    "ast_hash": "137a7fc0d1f6ae3abdd77f0263b32fb4",
+    "mtime": 1791059203.7193043,
+    "seen": 1791059511.3729856,
+    "ast_hash": "4e5f2f0f201908abf26b7817f54f74b3",
     "semantic_hash": ""
   },
   "test_selfdata.py": {
@@ -1647,6 +1647,18 @@
     "mtime": 1791058258.610103,
     "seen": 1791058503.085008,
     "ast_hash": "48158adcba5898aed4f62dbef3df32b7",
+    "semantic_hash": ""
+  },
+  "jarvis_missed.py": {
+    "mtime": 1791059411.278621,
+    "seen": 1791059511.373062,
+    "ast_hash": "ab5af15c090a40760b043115b31b19e7",
+    "semantic_hash": ""
+  },
+  "test_quiet.py": {
+    "mtime": 1791059243.9327307,
+    "seen": 1791059511.3733668,
+    "ast_hash": "4db1359625c5a57a9764e925c4f75bf4",
     "semantic_hash": ""
   }
 }

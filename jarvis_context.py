@@ -101,3 +101,64 @@ def relevant_skills(skills: list[dict], query: str, limit: int = 2) -> list[dict
         return []
     best = scored[0][0]
     return [s for sc, s in scored[:limit] if sc == best]  # a weaker second match is more noise than help
+
+
+# --- Phase C (2026-10-03): the "main memory" line. Every request checks reminders, jobs, tasks and older conversations
+# for things related to it; the calendar only when the request is about time, plans or people (owner's "smart mix").
+TIME_PLANS_RE = re.compile(
+    r"\b(?:free|busy|available|availability|schedule|calendar|meeting|meet|appointment|plans?|planned|event|party|"
+    r"today|tonight|tomorrow|weekend|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|"
+    r"evening|when|what time|date|deadline|exam|class|lecture|trip|visit|birthday|church|service)\b", re.I)
+MESSAGES_RE = re.compile(r"\b(?:e-?mails?|mail|inbox|messages?|texts?|texted|replied|reply|wrote|sent|whatsapp|telegram|"
+                         r"dm|asked me|told me)\b", re.I)
+
+
+def wants_calendar(query: str, people: set[str] | frozenset = frozenset()) -> bool:
+    q = query or ""
+    return bool(TIME_PLANS_RE.search(q)) or any(re.search(rf"\b{re.escape(p)}\b", q, re.I) for p in people)
+
+
+def mentions_messages(query: str) -> bool:
+    return bool(MESSAGES_RE.search(query or ""))
+
+
+def related(text: str, query_words: set[str], need: int = 1) -> bool:
+    return len(query_words & content_words(text)) >= need
+
+
+def calendar_lines(raw: str, now, until, limit: int = 8) -> list[str] | None:
+    """Calendar MCP list-events JSON -> "Sun 5 Oct 3:00 PM Title" lines (day included: this covers a week)."""
+    import json
+    from jarvis_briefing import _when
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    events = data.get("events") if isinstance(data, dict) else data
+    if not isinstance(events, list):
+        return None
+    out = []
+    for e in events:
+        if not isinstance(e, dict) or e.get("status") == "cancelled":
+            continue
+        title = " ".join(str(e.get("summary") or "(untitled)").split())[:70]
+        start = e.get("start") or {}
+        if start.get("dateTime"):
+            s = _when(start["dateTime"])
+            if s is None or s >= until:
+                continue
+            end = _when((e.get("end") or {}).get("dateTime") or start["dateTime"])
+            if end is not None and end <= now:
+                continue
+            out.append((s, s.strftime("%a %d %b ") + s.strftime("%I:%M %p").lstrip("0") + f" {title}"))
+        elif start.get("date"):
+            try:
+                from datetime import datetime as _dt
+                d = _dt.fromisoformat(start["date"])
+            except ValueError:
+                continue
+            if d.date() >= until.date():
+                continue
+            out.append((d, d.strftime("%a %d %b") + f" all day: {title}"))
+    out.sort(key=lambda x: x[0])
+    return [line for _, line in out[:limit]]
