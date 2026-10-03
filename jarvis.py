@@ -14436,7 +14436,7 @@ def _handle_text_command_impl(
     dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done", "reply": shown}})
     autonomy.after_turn(transcript, reply, source)  # no-op unless autonomy is on; runs on a worker thread
     try:
-        _learn_from_user_words(transcript, source)  # "my post UTME score was 280" is remembered at once
+        _learn_from_user_words(transcript, source)  # "my exam score was 280" is remembered at once
     except Exception as e:
         log.warning("Learning from the user's words failed: %s", e)
     if autonomy.enabled():

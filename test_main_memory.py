@@ -13,11 +13,11 @@ import jarvis_quickfacts as qf
 
 
 @pytest.mark.parametrize("said, content", [
-    ("my post UTME score was 280", "The user's post utme score was 280."),
+    ("my entrance exam score was 280", "The user's entrance exam score was 280."),
     ("I live in Paris", "The user lives in Paris."),
     ("call me Sam", "The user wants to be called Sam."),
     ("My favourite anime is One Piece", "The user's favourite anime is One Piece."),
-    ("I scored 280 in my post UTME", "The user scored 280 in their post UTME."),
+    ("I scored 280 in my entrance exam", "The user scored 280 in their entrance exam."),
     ("I love jollof rice", "The user loves jollof rice."),
     ("I am 17 years old", "The user is 17 years old."),
     ("my brother's name is Peter", "The user's brother's name is Peter."),
@@ -29,7 +29,7 @@ def test_clear_statements_about_the_owner_are_learned(said, content):
 
 @pytest.mark.parametrize("said", [
     "my phone is dead", "my head is hurting", "my laptop is at 20%", "my exam is tomorrow",
-    "what is my post utme score?", "is my score good", "remember that my birthday is May 5",
+    "what is my entrance exam score?", "is my score good", "remember that my birthday is May 5",
     "if my score is 200 what can I study", "I like that", "I hate when you do that", "I am a bit tired",
     "reply to Sam that my birthday is Friday", "open spotify", "my email is me@example.com",
 ])
@@ -61,10 +61,10 @@ def _facts(J):
 
 
 def test_learned_at_once_and_updated_not_duplicated(J):
-    J._learn_from_user_words("my post UTME score was 280", "voice")
-    J._learn_from_user_words("my post UTME score was 280", "voice")  # said again: stored once
-    J._learn_from_user_words("Actually my post UTME score was 285", "text")  # a correction replaces it
-    assert _facts(J) == [("The user's post utme score was 285.", "auto:my_post_utme_score")]
+    J._learn_from_user_words("my entrance exam score was 280", "voice")
+    J._learn_from_user_words("my entrance exam score was 280", "voice")  # said again: stored once
+    J._learn_from_user_words("Actually my entrance exam score was 285", "text")  # a correction replaces it
+    assert _facts(J) == [("The user's entrance exam score was 285.", "auto:my_entrance_exam_score")]
     J._learn_from_user_words("I live in Paris", "autonomy")  # not the owner talking
     J._learn_from_user_words("my favourite colour is blue" + J.SELECTION_TAG + " selected text", "voice")
     assert len(_facts(J)) == 1
@@ -88,13 +88,13 @@ def _add_turns(J, pairs):
 
 
 def test_related_reminders_jobs_and_old_conversations_come_with_the_request(J):
-    _add_turns(J, [("my post utme exam result comes out on friday", "Okay, I'll keep that in mind.")]
+    _add_turns(J, [("my entrance exam exam result comes out on friday", "Okay, I'll keep that in mind.")]
                + [(f"filler topic {i}", f"filler answer {i}") for i in range(10)])
-    J.create_reminder("Check the post UTME result portal", (datetime.now() + timedelta(days=2)).isoformat())
+    J.create_reminder("Check the entrance exam result portal", (datetime.now() + timedelta(days=2)).isoformat())
     J.create_reminder("Buy bread", (datetime.now() + timedelta(hours=2)).isoformat())
-    line = J._related_context_line("did my post utme result come out")
-    assert "Check the post UTME result portal" in line and "Buy bread" not in line
-    assert "post utme exam result comes out on friday" in line
+    line = J._related_context_line("did my entrance exam result come out")
+    assert "Check the entrance exam result portal" in line and "Buy bread" not in line
+    assert "entrance exam exam result comes out on friday" in line
     assert "filler" not in line
     assert J._related_context_line("open notepad") == ""
 

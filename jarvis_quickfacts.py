@@ -22,7 +22,7 @@ _DURABLE = (
     "mother|dad|father|wife|husband|girlfriend|boyfriend|son|daughter|uncle|aunt|cousin|grandma|grandpa|pastor|church|"
     "city|town|state|country|hometown|address|area|street|team|club|religion|blood group|genotype|height|weight|"
     "phone number|number|username|gamertag|laptop|phone|car|pc|bank|exam number|registration number|reg number|"
-    "jamb score|post utme score|utme score|waec result|neco result|cgpa|gpa|result|results|score|mark|marks|grade|grades"
+    "cgpa|gpa|result|results|score|mark|marks|grade|grades"
 )
 _MY_RE = re.compile(
     r"\bmy (?P<subj>(?:favou?rite [a-z' ]{2,30}?|(?:[a-z]+'s )?(?:[a-z]+ ){0,3}?(?:" + _DURABLE + r")))"
