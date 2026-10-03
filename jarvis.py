@@ -11841,9 +11841,25 @@ def _recent_succeeded_tools(transcript: str, minutes: int = RECENT_BACKING_MINUT
                 conn.close()
     except Exception:
         return []
-    return [tool for tool, result, said in rows
-            if not str(said or "").startswith("(") and not _looks_failed(str(result or ""))
-            and "staged, not run" not in str(result or "")]
+    out = [tool for tool, result, said in rows
+           if not str(said or "").startswith("(") and not _looks_failed(str(result or ""))
+           and "staged, not run" not in str(result or "")]
+    # Audit 2026-10-03: "did you reply to Ada?" after an automatic email reply got its true "yes, I replied" corrected
+    # (and the nudge invites a second send). A real auto-reply of the last day backs a question about it.
+    try:
+        day = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                sent = conn.execute("SELECT 1 FROM action_audit WHERE timestamp >= ? AND tool_name='mail_autoreply' "
+                                    "AND result LIKE 'I replied to%' LIMIT 1", (day,)).fetchone()
+            finally:
+                conn.close()
+        if sent:
+            out.append("mail_autoreply_send")
+    except Exception as e:
+        log.debug("auto-reply backing lookup failed: %s", e)
+    return out
 
 
 def _claim_nudge(what: list[str]) -> str:

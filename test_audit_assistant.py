@@ -16,6 +16,8 @@ import jarvis_quickfacts as qf
 import jarvis_sleep_mail as sleep_mail
 from test_mail_reply import FakeGmail, FakeModel, _mail, _run
 
+FAKE_KEY = "sk-" + "ant-api03-" + "Z" * 20  # built at runtime: the export privacy scan looks for key shapes
+
 
 @pytest.fixture
 def J(monkeypatch, tmp_path):
@@ -34,7 +36,7 @@ def J(monkeypatch, tmp_path):
 def test_inbox_never_keeps_a_key_or_a_secret_setting(J, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:abcdefghijklmnopqrstuvwxyzABCDEF0123")
     monkeypatch.setenv("SOME_SERVICE_API_KEY", "plain-secret-value-42")
-    J._add_missed("Build failed: key sk-ant-api03-ABCDEFGHIJKLMNOP leaked, and plain-secret-value-42 too.")
+    J._add_missed("Build failed: key " + FAKE_KEY + " leaked, and plain-secret-value-42 too.")
     text = missed.unseen(J._memory_db_connect, J._memory_db_lock)[0]["text"]
     assert "sk-ant" not in text and "plain-secret-value-42" not in text and text.count("[hidden]") == 2
 
@@ -78,7 +80,7 @@ def test_a_follow_up_window_capture_teaches_nothing_but_a_wake_word_one_does(J):
 
 
 @pytest.mark.parametrize("said", ["my bank account number is 0123456789", "my card pin is 4455",
-                                  "my api key is sk-ant-api03-ABCDEFGHIJKL", "my login code is 991122",
+                                  "my api key is " + FAKE_KEY, "my login code is 991122",
                                   "my wifi password is hunter2"])
 def test_secrets_and_money_details_are_never_learned(J, said):
     assert qf.extract(said) == [] or J._learn_from_user_words(said, "voice") == []
@@ -221,7 +223,7 @@ def test_open_uri_refuses_a_non_web_target(J, monkeypatch):
 def test_prompt_lines_built_from_stored_data_never_carry_a_key(J, monkeypatch):
     for i in range(10):
         J._append_history(f"filler {i}", "ok")
-    J._append_history("my deployment token for vercel is sk-ant-api03-ZZZZZZZZZZZZZZZZZZZZ", "Noted.")
+    J._append_history("my deployment token for vercel is " + FAKE_KEY, "Noted.")
     for i in range(10):
         J._append_history(f"more filler {i}", "ok")
     line = J._related_context_line("what was my vercel deployment token")
@@ -243,3 +245,10 @@ def test_a_note_to_self_gets_no_auto_reply_even_with_no_address_saved(store):
                              mailbox="owner@mail.test"), FakeModel()
     stats, _, _ = _run(store, gmail, model, own=set())
     assert gmail.sent == [] and model.calls == [] and stats["skipped"] == 1
+
+
+def test_asking_about_an_auto_reply_is_not_corrected_as_a_fake_claim(J):
+    J._log_action_audit("mail_autoreply", {"kind": "reply"}, "(mail auto-reply)", "I replied to Ada about \"Sunday\": Hi")
+    backing = J._recent_succeeded_tools("did you reply to Ada's email?")
+    assert J._unbacked_claims("Yes, I replied to Ada this morning.", backing) == []
+    assert J._unbacked_claims("I replied to Ada.", J._recent_succeeded_tools("reply to Ada")) == ["send that"]
