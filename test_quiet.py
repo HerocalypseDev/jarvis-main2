@@ -80,7 +80,7 @@ def test_long_lists_are_cut_for_speech():
     items = [{"id": i, "ts": now - 60 * (10 - i), "text": f"Update number {i}"} for i in range(10)]
     out = missed.spoken_summary(items, now)
     assert out.startswith("10 things came in") and "Update number 9" in out and "Update number 3" not in out
-    assert out.endswith("4 older ones are on the dashboard.")
+    assert out.endswith("Ask again for the 4 older ones.")
 
 
 def test_scheduled_skill_is_quiet_unless_urgent_or_announced(J, monkeypatch):

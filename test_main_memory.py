@@ -47,7 +47,7 @@ def J(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "m.db"))
     import jarvis as j
     j._people_cache.update(at=0.0, names=frozenset())
-    j._calendar_cache.update(at=0.0, lines=None, busy=False)
+    j._calendar_cache.update(at=0.0, lines=None, busy=False, failed_at=0.0)
     yield j
 
 

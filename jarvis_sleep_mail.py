@@ -167,9 +167,25 @@ def parse_search(text: str) -> list[dict]:
                 "id": m["ID"].group(1).strip(),
                 "subject": (m["Subject"].group(1).strip() if m["Subject"] else "") or "(no subject)",
                 "from": m["From"].group(1).strip(),
-                "sender": (_emails(m["From"].group(1)) or [""])[0],
+                "sender": sender_address(m["From"].group(1)),
             })
     return out
+
+
+def sender_address(from_line: str) -> str:
+    """The real address of a From line. Audit 2026-10-03: the first address in the line was used, so a display name
+    holding someone else's address ('"mum@family.test" <evil@x.test>') was taken for that person. The address in
+    angle brackets is the one the mail came from."""
+    m = re.search(r"<\s*([^<>\s]+@[^<>\s]+)\s*>\s*$", from_line or "")
+    if m:
+        return m.group(1).strip().lower()
+    return (_emails(from_line) or [""])[0]
+
+
+def display_name_spoofs(from_line: str) -> bool:
+    """True when the display name carries an address that isn't the real sender's (a classic look-alike trick)."""
+    real = sender_address(from_line)
+    return any(a != real for a in _emails(re.sub(r"<[^<>]*>\s*$", "", from_line or "")))
 
 
 def parse_attachments(read_text: str) -> list[dict]:

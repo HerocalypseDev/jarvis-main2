@@ -244,11 +244,11 @@ def signature() -> str:
 
 def run_cycle(*, store: Store, mcp, claude, notify, record, now: datetime, own: set[str], memory_addresses: set[str],
               skip_senders: set[str], facts_text, calendar_text, skip_ids: set[str] = frozenset(),
-              sleep=time.sleep) -> dict:
+              dry_run: bool = False, sleep=time.sleep) -> dict:
     """mcp(tool, args) -> text (un-prefixed Gmail tool names); claude(system, user, max_tokens) -> text | None;
     notify(text) speaks an email that needs the owner today; record(text) files a line for "what did I miss";
     facts_text(query) / calendar_text() -> context for KNOWN senders only."""
-    stats = {"seen": 0, "replied": 0, "skipped": 0, "failed": 0, "retry": 0}
+    stats = {"seen": 0, "replied": 0, "skipped": 0, "failed": 0, "retry": 0, "dry_run": 0}
     if not _cycle_lock.acquire(blocking=False):
         return stats
     try:
@@ -262,16 +262,18 @@ def run_cycle(*, store: Store, mcp, claude, notify, record, now: datetime, own: 
             return stats
         dates = message_dates(found)
         for msg in reversed(sleep_mail.parse_search(found)):  # oldest first
-            if store.handled(msg["id"]):
+            if store.handled(msg["id"]) or (dry_run and msg["id"] in _dry_seen):
                 continue
             stats["seen"] += 1
             if msg["id"] in skip_ids:  # answered by Sleep Mode's family replies already
                 outcome = "skipped"
             else:
                 outcome = _handle(msg, store, mcp, claude, notify, record, max(after, dates.get(msg["id"], after)), own,
-                                  memory_addresses, skip_senders, facts_text, calendar_text, sleep)
+                                  memory_addresses, skip_senders, facts_text, calendar_text, sleep, dry_run)
             stats[outcome if outcome in stats else "skipped"] += 1
-            if outcome != "retry":  # a read that failed is tried again next cycle
+            if outcome == "dry_run":
+                _dry_seen.add(msg["id"])  # not marked handled: leaving dry-run answers it for real
+            elif outcome != "retry":  # a read that failed is tried again next cycle
                 store.mark(msg["id"], msg.get("sender") or "", outcome)
     finally:
         _cycle_lock.release()
@@ -280,9 +282,14 @@ def run_cycle(*, store: Store, mcp, claude, notify, record, now: datetime, own: 
     return stats
 
 
+_dry_seen: set[str] = set()
+
+
 def _handle(msg, store, mcp, claude, notify, record, after, own, memory_addresses, skip_senders, facts_text,
-            calendar_text, sleep) -> str:
+            calendar_text, sleep, dry_run=False) -> str:
     sender, subject = (msg.get("sender") or "").lower(), msg.get("subject") or ""
+    shown_from = neutralize_injection(msg.get("from") or sender)[0][:120]
+    shown_subject = neutralize_injection(subject)[0][:120]
     if not sender or sender in own or sender in skip_senders:
         return "skipped"
     if automated(sender, subject, ""):
@@ -296,11 +303,13 @@ def _handle(msg, store, mcp, claude, notify, record, after, own, memory_addresse
     if owner_already_replied(sender, after, mcp):
         return "skipped"
     if store.sent_today(sender) >= MAX_PER_SENDER_PER_DAY or store.sent_today() >= MAX_PER_DAY:
-        record(f"{msg['from']} emailed \"{subject}\", but I've reached today's auto-reply limit, so I didn't answer.")
+        record(f"{shown_from} emailed \"{shown_subject}\", but I've reached today's auto-reply limit, so I didn't answer.")
         return "skipped"
     clean_body, hits = neutralize_injection(body)
-    known = (not hits) and known_sender(sender, store, mcp, memory_addresses)
-    label = msg.get("from") or sender
+    # Injection-like text, or a display name carrying someone else's address: answered like a stranger.
+    known = (not hits) and not sleep_mail.display_name_spoofs(msg.get("from") or "") and \
+        known_sender(sender, store, mcp, memory_addresses)
+    label = shown_from
     context = ""
     if known:
         context = ("\n\nWhat you know about " + user_name() + " (memory):\n" + (facts_text(f"{subject}\n{clean_body}") or "(nothing)")
@@ -308,17 +317,21 @@ def _handle(msg, store, mcp, claude, notify, record, after, own, memory_addresse
                                                                             "availability, say they will confirm)"))
     prompt = (f"Email from {neutralize_injection(label)[0]}, subject \"{neutralize_injection(subject)[0]}\":\n"
               + frame_untrusted("email", sender, clean_body[:3000]) + context)
-    answer = parse_answer(claude(system_prompt(known, neutralize_injection(label)[0]), prompt, 700) or "")
+    answer = parse_answer(claude(system_prompt(known, label), prompt, 700) or "")
     if answer is None:
-        record(f"{label} emailed \"{subject}\". I couldn't work out a reply, so it's waiting for you.")
+        record(f"{label} emailed \"{shown_subject}\". I couldn't work out a reply, so it's waiting for you.")
         return "failed"
     if not answer["reply_needed"]:
         return "skipped"
+    answer["summary"] = neutralize_injection(answer["summary"])[0][:140]  # it may be spoken: the sender wrote its source
     reply = safe_reply(answer["reply"], known, sender)
     if reply is None:
-        record(f"{label} emailed \"{subject}\". I didn't send my reply because it looked like it shared something it "
+        record(f"{label} emailed \"{shown_subject}\". I didn't send my reply because it looked like it shared something it "
                "shouldn't, so it's waiting for you.")
         return "failed"
+    if dry_run:
+        record(f"Dry run: I would have replied to {label} about \"{shown_subject}\": {reply[:200]}")
+        return "dry_run"
 
     def send():
         args = {"to": [sender], "subject": subject if subject.lower().startswith("re:") else f"Re: {subject}",
@@ -330,14 +343,14 @@ def _handle(msg, store, mcp, claude, notify, record, after, own, memory_addresse
 
     ok, detail, _ = sleep_mail.send_with_retry(send, retries=SEND_RETRIES, delay_s=SEND_RETRY_DELAY_S, sleep=sleep)
     store.log_reply(msg["id"], sender, known, subject, reply, ok)
-    what = answer["summary"] or subject
+    what = answer["summary"] or shown_subject
     if ok:
         record(f"I replied to {label} ({'someone you know' if known else 'not a contact, nothing personal shared'}) "
-               f"about \"{subject}\": {reply[:220]}")
+               f"about \"{shown_subject}\": {reply[:220]}")
         if answer["needs_owner_today"]:
             notify(f"{label} emailed and needs you today: {what}. I replied that you'll get back to them.")
         return "replied"
-    record(f"{label} emailed \"{subject}\" ({what}). My reply didn't send ({detail}), so it's waiting for you.")
+    record(f"{label} emailed \"{shown_subject}\" ({what}). My reply didn't send ({detail}), so it's waiting for you.")
     if answer["needs_owner_today"]:
         notify(f"{label} emailed and needs you today: {what}. My reply didn't send.")
     return "failed"

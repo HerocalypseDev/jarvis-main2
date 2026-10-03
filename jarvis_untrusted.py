@@ -80,3 +80,39 @@ def frame_untrusted(source: str, sender: str, text: str) -> str:
     who = re.sub(r"[^\w@.+\-]", "", str(sender or ""))[:80] or "unknown"
     src = re.sub(r"[^\w\-]", "", str(source or "message"))[:20] or "message"
     return f"<<<UNTRUSTED_INBOUND source={src} sender={who}>>>\n{text}\n<<<END_UNTRUSTED_INBOUND>>>"
+
+
+# --- Secret masking (audit 2026-10-03): for text Jarvis keeps or says on its own (the "what did I miss" inbox, learned
+# facts). Key/token shapes, plus the current value of any secret-named environment variable.
+_KEY_SHAPES = (
+    re.compile(r"sk-ant-[A-Za-z0-9_\-]{10,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"),
+    re.compile(r"\bJ4U1\.[A-Za-z0-9_\-.]{20,}"),
+    re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\b\d{6,}:[A-Za-z0-9_\-]{30,}\b"),          # Telegram bot token
+    re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{16,}", re.I),
+    re.compile(r"\bxox[abpr]-[A-Za-z0-9\-]{10,}"),
+    re.compile(r"\b[A-Fa-f0-9]{32,}\b"),
+)
+_SECRET_ENV_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|_PIN\b|COOKIE|CREDENTIAL", re.I)
+SECRET_MASK = "[hidden]"
+
+
+def _env_secret_values() -> list[str]:
+    import os
+    vals = {v.strip() for k, v in os.environ.items() if _SECRET_ENV_RE.search(k) and v and len(v.strip()) >= 8}
+    return sorted(vals, key=len, reverse=True)
+
+
+def mask_secrets(text: str) -> tuple[str, int]:
+    """(text with key/token shapes and secret env values replaced, number replaced)."""
+    s, n = str(text or ""), 0
+    for v in _env_secret_values():
+        if v in s:
+            n += s.count(v)
+            s = s.replace(v, SECRET_MASK)
+    for rx in _KEY_SHAPES:
+        s, k = rx.subn(SECRET_MASK, s)
+        n += k
+    return s, n

@@ -14,6 +14,8 @@ import re
 import time
 from datetime import datetime
 
+from jarvis_untrusted import mask_secrets
+
 MAX_ROWS = 300
 KEEP_DAYS = 7
 SPEAK_MAX_ITEMS = 6
@@ -45,7 +47,7 @@ def _norm(text: str) -> str:
 
 def add(connect, lock, text: str, source: str = "", now: float | None = None) -> int | None:
     """Store one message. The same unseen message again (a repeating check) only moves to the top."""
-    text = " ".join(str(text or "").split())[:1200]
+    text = mask_secrets(" ".join(str(text or "").split()))[0][:1200]  # never keep a key/token, even in a notice
     if not text:
         return None
     now = time.time() if now is None else now
@@ -130,7 +132,7 @@ def spoken_summary(items: list[dict], now: float | None = None) -> str:
     head = "One thing came in" if len(items) == 1 else f"{len(items)} things came in"
     lines = [f"At {_when(i['ts'], now)}: {_short(i['text'])}" for i in shown]
     more = len(items) - len(shown)
-    tail = f" {more} older one{'s are' if more != 1 else ' is'} on the dashboard." if more > 0 else ""
+    tail = f" Ask again for the {more} older one{'s' if more != 1 else ''}." if more > 0 else ""
     return f"{head} while you weren't asking. " + " ".join(lines) + tail
 
 
@@ -141,6 +143,11 @@ def _short(text: str, limit: int = 220) -> str:
     cut = t[:limit]
     end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
     return (cut[: end + 1] if end > 60 else cut.rsplit(" ", 1)[0] + "...")
+
+
+def spoken_ids(items: list[dict]) -> list[int]:
+    """The ids spoken_summary actually reads out (the newest SPEAK_MAX_ITEMS): only those are marked read."""
+    return [i["id"] for i in items[-SPEAK_MAX_ITEMS:]]
 
 
 def count_line(n: int) -> str:
