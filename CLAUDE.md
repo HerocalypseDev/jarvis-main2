@@ -1793,7 +1793,8 @@ row there each phase rather than only stating the total in chat.
 | 136 (Pro Phase 14: Home widgets (fixed widget types/sources as pack data, computed read-only in the core, drawn with escaped fixed JS, key-gated route; headless check at 1440/390 px; 9 + 1 new tests)) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
 | 137 (internet speed test: no-browser Cloudflare test by voice or tool, data cap, units incl. "in megabytes", history comparison; 28 new tests) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
 | 138 (debug report: "in 10 mins run the internet test" was a spoken reminder: job-shaped reminders from a user request become jobs, user-scheduled jobs speak their result, more speed-test phrases, one retry on a DNS hiccup; 9 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~4079 min** | **~$267.15–$375.65** |
+| 139 (self-knowledge: dashboard_data reads every dashboard page + Toolbox feature + capabilities, secret masking, prompt rule; 8-exchange memory with old replies shortened; action log of recent tool calls in every command; 8 new tests) | Opus 5.5 | ~40 min | ~$2.80–$3.90 |
+| **Running total (final)** | | **~4119 min** | **~$269.95–$379.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2323,6 +2324,33 @@ Tests: `test_homework.py` (19, no network). Rules to keep:
   (3) "Hey, Jarvis. Perform a speed test." / "run the internet test again" take the no-model route (a bare "run a test" never
   does). (4) One DNS/connection failure ("getaddrinfo failed") is retried once after 2 s. Tests at the end of `test_executive.py`
   and `test_speedtest.py`.
+
+## Knows its own records + remembers what it said and did (2026-10-03, owner request)
+
+Asked how many characters it had sent to Deepgram that the cache saved, Jarvis said it keeps no record, while the dashboard's
+Voice page showed it. Owner: "every single thing Jarvis can do, it should be aware of it", and remember earlier answers and
+actions. Tests: `test_selfdata.py` (8). Rules to keep:
+- **`dashboard_data(page, query?)`** (read-only, batch tool, `READONLY_TOOL_TTLS` 10 s): reads every dashboard page through
+  the SAME functions the dashboard uses (`_dashboard_pages()`: voice, usage, sleep, health, system, network, speed_tests,
+  latency, daily, services, brain, sessions, audit, autonomy, identity, memory, settings) **plus every `feature:*` provider**
+  (`@_feature` get), so a new Toolbox feature is readable with no extra code. `page=capabilities` (every tool with what it is
+  for, connected tool servers, skills, pages; `query` filters), `page=pages`. Common words map to pages (tts/deepgram ->
+  voice, spend -> usage...). The voice page leads with `speech_cache_summary` (chars spoken / sent to engines / saved by cache /
+  phrases from cache per period) so the model needs no arithmetic.
+- `jarvis_dashdata.py` (pure) renders a page: header framed as data, a plain-language meaning of the fields (`NOTES`), compact
+  JSON <= 5000 chars (lists keep both ends, strings shortened and passed through `neutralize_injection`, since pages hold
+  mail subjects/clipboard/transcripts). **Secrets never leave**: secret-named fields and secret settings rows read "(set)"
+  (a test caught the generic "key" field of a settings row hiding the name and showing the value). Settings are built
+  without the network-backed model list. Identity is `face.dashboard_state()` minus pictures, via `_dashboard_page_identity`
+  (added to the face gate-isolation allowlist as read-only).
+- **Prompt rule** (stable block): check `dashboard_data` before ever saying "I keep no record"/"I can't". Tool narrowing adds
+  `dashboard_data` + `memory_search` for questions about its own records (`_SELF_RECORD_RE`: how much/many, stats, history,
+  cache, did you, earlier, what can you...).
+- **Conversation memory**: `CONVERSATION_HISTORY_MAX_TURNS` is now 8 exchanges (`JARVIS_HISTORY_EXCHANGES`, 1-30; was 3);
+  messages older than the last two exchanges are cut to 600 chars ("memory_search has the rest").
+- **Action log** (`_recent_actions_line`, volatile block): the last 10 tool calls of the last 12 h from `action_audit`, newest
+  first, each with done/FAILED/staged and the command it was for, framed as data, <= 1400 chars. Gives "did you set it?" a
+  ground truth. Not verified live on the PC.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
