@@ -86,11 +86,12 @@ async function refreshMacros() {
     <li class="list-item">
       <div><span class="tool">${esc(m.name)}</span> ${m.enabled ? "" : '<span class="pill">off</span>'}
         <span class="muted">say ${m.phrases.map((p) => "&ldquo;" + esc(p) + "&rdquo;").join(" or ")}</span></div>
-      <div class="muted">${m.steps.map((s) => esc(s.tool)).join(" &rarr; ")} · ran ${m.runs} time(s)${m.last_run ? ", last " + fmtWhen(m.last_run) : ""}</div>
+      <div class="muted">${m.mode === "ai" ? "with the AI: " + esc(String(m.instructions || "").slice(0, 120))
+        : m.steps.map((s) => esc(s.tool)).join(" &rarr; ") + " · instant, no AI"} · ran ${m.runs} time(s)${m.last_run ? ", last " + fmtWhen(m.last_run) : ""}</div>
       <div class="memory-actions">
         <button class="btn btn-ghost" type="button" data-macro="${escAttr(m.name)}" data-verb="run">Run</button>
         <button class="btn btn-ghost" type="button" data-macro="${escAttr(m.name)}" data-verb="${m.enabled ? "disable" : "enable"}">${m.enabled ? "Turn off" : "Turn on"}</button>
-        <button class="btn btn-ghost" type="button" data-macro="${escAttr(m.name)}" data-verb="edit">Edit</button>
+        ${m.mode === "ai" ? "" : `<button class="btn btn-ghost" type="button" data-macro="${escAttr(m.name)}" data-verb="edit">Edit</button>`}
         <button class="btn btn-ghost" type="button" data-macro="${escAttr(m.name)}" data-verb="delete">Delete</button>
       </div></li>`).join("") : `<li class="empty-state">No macros yet. Make one below, or say "when I say start work mode, open VS Code and turn on focus mode".</li>`;
   list._macros = data.macros || [];

@@ -207,7 +207,8 @@ def test_user_macro_beats_a_pro_routine_with_the_same_phrase(tmp_path):
     assert macros.match(connect, lock, "deep focus", extra=pack)["name"] == "pro"
     assert macros.match(connect, lock, "deep focus", extra=[dict(pack[0], enabled=False)]) is None
     said = macros.run(connect, lock, pack[0], lambda tool, inp: "Focus mode is on.")
-    assert said == "Done: pro."                     # acting tools just confirm
+    assert said == "Focus mode is on."              # a short result per step (owner's choice, 2026-10-03)
+    assert macros.run(connect, lock, pack[0], lambda tool, inp: "Done.") == "Done."  # nothing to tell: just Done
     info = dict(pack[0], steps=[{"tool": "weather", "input": {}}])
     assert macros.run(connect, lock, info, lambda tool, inp: "Sunny, 30 degrees.") == "Sunny, 30 degrees."
 

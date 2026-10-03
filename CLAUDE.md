@@ -1804,7 +1804,8 @@ row there each phase rather than only stating the total in chat.
 | 140 (debug report: "send me a message on Telegram" -> new send_to_my_phone tool (own chat/topic only, rate-limited), placeholder/hand-made-API scripts refused, tool always offered when Telegram/phone is named; 5 new tests) | Opus 5.5 | ~20 min | ~$1.40–$2.00 |
 | 141 (debug report: finished restart job announced as still coming: job outcomes in conversation memory + journal, autonomy drops needs that repeat handled work, action log without autonomy reasoning, restart reason on start, past-tense questions backed by recent actions, audit search by tool name; 7 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 142 (browser tabs: Jarvis Tabs extension for Opera GX/Firefox + paired localhost bridge, browser_tabs tool (list/read/summarize/switch/close/reopen/open), main-browser setting replacing Chrome, ask-first rule in CLAUDE.md; real extension script tested under Node; 13 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
-| **Running total (final)** | | **~4224 min** | **~$278.35–$391.35** |
+| 143 (debug report: "update time" macro did nothing and said Done: built-in update time (pull, restart only if it worked, says what changed), routines decide instant vs AI by themselves, steps checked at creation, argument errors count as failures, short results per step; Toolbox shows the mode; 27 new tests, headless Toolbox check) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
+| **Running total (final)** | | **~4269 min** | **~$281.85–$396.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2427,6 +2428,38 @@ away but more than 5 at once asks first. Tests: `test_browser_tabs.py` (13). Rul
 - Can't read: the browser's own pages, add-on stores, tabs the browser put to sleep (`discarded`). Firefox needs the add-on
   signed (or Developer Edition) to stay installed, and its site access granted in about:addons.
 - Not verified live: the extension in a real Opera GX (only under Node with a faked browser API) and in Firefox.
+
+## Phrase routines: instant unless they need the AI + "update time" (2026-10-03, debug report + owner rules)
+
+- **Found**: "make a skill/macro: when I say Update time, git pull and restart" produced a free-text skill
+  (`run_shell restart_jarvis`, which isn't a shell command) and a macro whose only step was `autonomy_skill {"name": ...}`
+  (wrong tool, missing its required `action`). Saying "Update time" failed at once and Jarvis said "Done:
+  update_and_restart_macro." Two causes: macro steps weren't checked against the tool's parameters, and macro failure
+  detection only knew "tool failed"-prefixed results, while argument errors read "<tool> needs 'x'...".
+- **Fixes, rules to keep** (tests: `test_routines.py`, 27):
+  - Argument errors from `_execute_tool_impl` now start with "Tool failed: " (claim checker, escalation and macros all
+    count them as failures). A shell step with a non-zero `exit_code` also stops a macro.
+  - Every macro step is checked with `toolargs.check` against the real schema when it is saved (`_macro_step_problem`).
+  - **Instant vs AI (owner's rule: everything they make runs with no AI call unless it needs it; Jarvis decides, never
+    asks)**: `macros create` takes `instructions` (+ optional description) and `steps`. `jarvis_macros.classify` decides
+    by itself: fixed, valid steps with no thinking words -> mode `instant` (no model call); thinking words (summarise,
+    decide, "tell me if", write/reply, review...), placeholders, no steps or a step that can't run as written -> mode `ai`
+    (new columns `mode`/`instructions` on `macros`, auto-migrated). Saying an AI routine's phrase sends `_routine_instruction`
+    through the normal agent loop (gate intact). The macros tool description and the prompt send any phrase-triggered
+    "skill/macro" here, not to `save_skill`. Not on a schedule (owner's choice; scheduled things stay skills/reminders).
+  - Instant macros now say a short result per step that told something (`short_result`), "Done." when none did, and
+    "<name> stopped at step N (tool) failed: ..." on a failure. Pro routines too (was "Done: <name>").
+  - Toolbox shows "instant, no AI" or "with the AI: <instructions>"; AI routines have no Edit button (change them by voice).
+- **"Update time" is built in** (intent `update`: "update time", "it's update time", "update yourself", "git pull and
+  restart"...; slow intent, no model call; its phrases are in `macros.RESERVED` and `macros.match` ignores a RESERVED
+  phrase, so the old broken macro on the PC no longer answers). `_update_and_restart_reply`: spoken lead-in, `git pull
+  --ff-only` in Jarvis's folder (90 s cap); on failure says why in plain words (no internet / local files would be
+  overwritten / local commits / sign-in) and does NOT restart; on success saves `update_note.json` (gitignored: before/after
+  commit + commit subjects) and calls `restart_jarvis` through `_execute_tool`; a refused restart deletes the note. After the
+  restart `_announce_update_note` says once "Updated and restarted. New: <up to 3 commit titles>; and N more." (or "Nothing
+  new came in"), notes older than 15 min are dropped. Restarts Jarvis, never the PC (owner's choice).
+- Not verified live on the PC: a real git pull + restart from "update time", and an AI routine through a real model.
+  The broken `skills/update_and_restart.json` the model wrote on the PC is untracked there; it's harmless now but can be deleted.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

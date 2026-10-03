@@ -38,3 +38,5 @@ browser_extension/pairing.json
 browser_extension/pairing.tmp
 evals/drafts.json
 doctor_state.tmp
+update_note.json
+update_note.tmp

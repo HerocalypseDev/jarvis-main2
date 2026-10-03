@@ -1,17 +1,17 @@
 # Graph Report - jarvis-main2  (2026-10-03)
 
 ## Corpus Check
-- 234 files · ~416,740 words
+- 235 files · ~420,270 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 14 file(s) not represented in the graph (top: .css 9, (none) 3, .vbs 1)
 
 ## Summary
-- 5663 nodes · 12063 edges · 268 communities (242 shown, 21 thin omitted)
-- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 729 edges (avg confidence: 0.85)
+- 5703 nodes · 12143 edges · 261 communities (232 shown, 24 thin omitted)
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 737 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `3e91bcc0`
+- Built from commit: `23cf6025`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -27,7 +27,7 @@
 - jarvis_memory_enhance.py
 - test_gemini.py
 - homework_guide.py
-- queue_or_deliver_notification
+- _deterministic_intent_reply
 - jarvis_workflow.py
 - Full Autonomy Stack
 - jarvis_dynamic_tools.py
@@ -43,11 +43,11 @@
 - _build_app
 - _tools
 - jarvis_meeting_capture.py
-- RuntimeError
+- test_dashboard.py
 - Tween
 - download_image
 - jarvis_autonomy_organise.py
-- _claude_stream_first_round
+- notify
 - _on
 - _narrating_claude
 - test_voice_usage.py
@@ -59,7 +59,7 @@
 - ce
 - test_homework.py
 - ce
-- enabled
+- timedelta
 - test_restart.py
 - jarvis_notify_priority.py
 - na
@@ -68,7 +68,7 @@
 - poll_once
 - la
 - la
-- _call
+- enabled
 - _iso
 - fb
 - he
@@ -85,12 +85,12 @@
 - test_selfdata.py
 - test_browser_tabs.py
 - jarvis_macros.py
-- enabled
+- test_face.py
 - Google Maps location sharing -> "where is <person>?" (2026-09-19)
 - test_deepgram_voice.py
 - jarvis_face.py
 - jarvis_autonomy_skills.py
-- test_face.py
+- enroll
 - jarvis_file_index.py
 - qol.js
 - Fake
@@ -98,7 +98,7 @@
 - Bridge
 - jarvis_audio_duck.py
 - enable
-- _collapse_paths_for_speech
+- _handle_text_command_impl
 - _fake_mcp_run_coro
 - compute
 - autonomy.js
@@ -110,12 +110,12 @@
 - test_dev_features.py
 - state
 - _Latex
-- main
+- run_agent_loop
 - StreamingSession
 - Dashboard UI/UX overhaul (2026-09-22)
 - start_polling
 - test_followup.py
-- _log_action_audit
+- _memory_db_connect
 - test_dashboard_llm_endpoints
 - _ConnectionManager
 - test_run_agent_loop_multi_round_streams_narration_then_speaks_final_reply_once
@@ -126,11 +126,11 @@
 - Speed Upgrade: Deepgram-native voice pipeline + cloud-latency pass
 - homework_marker.py
 - dashboard_state
-- download_models
+- RuntimeError
 - test_self_events.py
 - jarvis_task_scheduler.py
 - stream_round
-- run_agent_loop
+- speak_text
 - CircuitBreaker
 - jarvis_app_shortcuts.py
 - jarvis_pro.py
@@ -139,21 +139,21 @@
 - test_speed_gemini.py
 - jarvis_guest_reminders.py
 - test_hold_modes.py
-- jarvis_gemini.py
+- http_post
 - homework_gate.py
 - Path
 - test_feature_batch_a.py
 - _foreground_window
 - jarvis_browser_tabs.py
 - call
-- _claude_text
-- _volume_reply
-- _deadline_context
+- _claude_request
+- _dashboard_pages
+- execute_mcp_tool
 - jarvis_email_templates.py
-- datetime
+- queue_or_deliver_notification
 - _FakeOutputStream
-- test_http_post_uses_plain_urllib_for_non_https_and_when_switched_off
-- _handle_voice_command_impl
+- test_routines.py
+- main
 - start
 - features.js
 - test_qol.py
@@ -162,17 +162,17 @@
 - jarvis_code_tools.py
 - test_reliability.py
 - jarvis_kg.py
-- calibrate
-- TTLCache
-- timedelta
+- create_reminder
+- jarvis_cache.py
+- _rows
 - _call_model
 - test_feature_batch_audit.py
-- _due_now
-- jarvis
+- classify_intent
+- boom
 - test_timers.py
 - test_executive.py
 - jarvis_memory_search.py
-- jarvis_briefing.py
+- set_setting
 - test_feature_batch_c.py
 - jarvis_speedtest.py
 - jarvis_voice_tone.py
@@ -199,7 +199,7 @@
 - test_smarter.py
 - jarvis_sleep_mode.py
 - env_int
-- attempt_timeout_s
+- jarvis_gemini.py
 - browser_extension/manifest.json
 - homework_api.py
 - _FakeProc
@@ -219,11 +219,11 @@
 - _text
 - collect_debug.py
 - jarvis_ollama.py
-- record
+- fixture
 - jarvis_tool_router.py
 - test_media_control_reuses_one_worker
-- fixture
-- make_license.py
+- O
+- sign
 - Jarvis4U
 - Making Jarvis more efficient, more agentic and more professional (research, 2026-09-30)
 - _set_dark_mode
@@ -231,7 +231,7 @@
 - _Meter
 - jarvis_wakeword.py
 - Second wave (planned 2026-10-02): seven packs + Pro dashboard widgets
-- disable
+- _Handler
 - jarvis_eval.py
 - Smarter + more autonomous batch (2026-09-28)
 - build_pro_pack.py
@@ -257,44 +257,35 @@
 - test_scheduled_skill_never_speaks_tool_ack_or_bare_ok
 - test_short_notification_is_spoken_unchanged_without_a_claude_call
 - test_shutdown_via_run_shell_is_staged_not_run
-- _grab_selection
+- build_calendar_args
 - holding_reminders
-- open_cursor_window
+- user_is_actively_working
 - schedule
 - jarvis_battery.py
-- run
-- _memory_db_connect
+- FakeBrowser
+- test_d03_memory_hog_is_stopped_quickly
 - test_phone_message.py
-- test_diagnose_names_the_limit_that_was_hit
-- _gemini_stream_round
-- sign
-- _scheduler_tick
-- FakeRecorder
+- diagnose
+- test_record_usage_never_raises
+- test_state_audit_rows_include_transcript_for_session_linking
+- test_command_endpoint_invokes_run_command
+- test_cleared_overdue_reminder_leaves_briefing_and_urgent
 - _mail_answer
-- cap_text
 - ensure_pairing
-- validate_widget
-- test_meeting_keeps_a_short_remark_in_a_quiet_chunk
-- _session_locked
-- test_every_theme_keeps_text_readable_and_never_uses_a_red_accent
-- test_f_defaults_are_on_with_no_flags_needed
-- test_g02_worker_threads_are_bounded_and_extras_dropped
 
 ## God Nodes (most connected - your core abstractions)
 1. `_execute_tool_impl()` - 148 edges
 2. `Fake` - 103 edges
 3. `_memory_db_connect()` - 88 edges
 4. `_build_app()` - 68 edges
-5. `main()` - 65 edges
+5. `main()` - 66 edges
 6. `run_agent_loop()` - 62 edges
 7. `_on()` - 60 edges
 8. `_future()` - 55 edges
 9. `_iso()` - 53 edges
-10. `queue_or_deliver_notification()` - 49 edges
+10. `queue_or_deliver_notification()` - 50 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `test_switching_to_ollama_checks_it_is_ready_and_never_fails_over()` --indirect_call--> `O()`  [INFERRED]
-  test_smarter.py → test_autonomy.py
 - `test_critical_battery_never_holds_reminders()` --indirect_call--> `j()`  [INFERRED]
   test_feature_batch_audit.py → test_guest_reminders.py
 - `test_queue_gate_batches_and_digest_flushes()` --indirect_call--> `j()`  [INFERRED]
@@ -303,15 +294,17 @@
   discord_selfbot_server.py → jarvis_dynamic_tools.py
 - `_load_confirm_gates()` --indirect_call--> `confirm_reason()`  [INFERRED]
   jarvis.py → homework_gate.py
+- `test_csv_preview_is_framed_as_child_data()` --calls--> `fmt_csv_preview()`  [EXTRACTED]
+  test_homework.py → homework_mcp_server.py
 
 ## Import Cycles
 - None detected.
 
-## Communities (268 total, 21 thin omitted)
+## Communities (261 total, 24 thin omitted)
 
 ### Community 0 - "test_autonomy.py"
 Cohesion: 0.02
-Nodes (31): skipif, _file(), parametrize, Tests for jarvis_autonomy.py, jarvis_dynamic_tools.py,…, The gate is untouched: an autonomous agent run that reaches a catastrophic…, jarvis.py wires run_tool to _execute_tool, so a skill step naming run_shell…, Like face: the new modules may never touch the catastrophic gate or import…, test_a01_known_bypass_routes_are_rejected() (+23 more)
+Nodes (32): _file(), parametrize, Tests for jarvis_autonomy.py, jarvis_dynamic_tools.py,…, The gate is untouched: an autonomous agent run that reaches a catastrophic…, jarvis.py wires run_tool to _execute_tool, so a skill step naming run_shell…, Autonomy on => injection hardening, the third-party bar and file organising are…, Like face: the new modules may never touch the catastrophic gate or import…, test_a01_known_bypass_routes_are_rejected() (+24 more)
 
 ### Community 1 - "jarvis_window_control.py"
 Cohesion: 0.14
@@ -323,7 +316,7 @@ Nodes (15): Gc(), Hc(), ia(), ja(), Lc(), Nc(), oa(), pa() (+7 more)
 
 ### Community 3 - "test_sleep.py"
 Cohesion: 0.10
-Nodes (13): db(), jarvis(), _log(), fixture, Tests for sleep trend stats and the wake-up digest. Run with: python -m pytest…, A .env setting read at import time (sleep goal) must reach the modules…, test_digest_important_first_then_lighter_note(), test_disable_logs_duration_to_memory_only_when_long_enough() (+5 more)
+Nodes (16): db(), _fake_env(), jarvis(), fixture, Tests for sleep trend stats and the wake-up digest. Run with: python -m pytest…, A .env setting read at import time (sleep goal) must reach the modules…, test_digest_important_first_then_lighter_note(), test_disable_logs_duration_to_memory_only_when_long_enough() (+8 more)
 
 ### Community 4 - "brag-output/composition/assets/gsap.min.js"
 Cohesion: 0.07
@@ -335,7 +328,7 @@ Nodes (15): add_watched_folder(), _connect(), _db_path(), _default_watch_paths()
 
 ### Community 6 - "boom"
 Cohesion: 0.06
-Nodes (21): The exact reported bug: saying "Hi" must produce a clean full reply, never the…, Voice-bug pass (2026-09-22): the filler phrase ("One moment.") and short…, test_claude_stream_first_round_gemini_provider_no_ops(), test_claude_stream_first_round_network_failure_returns_none(), boom(), test_deepgram_tts_circuit_breaker_trips_after_repeated_failures(), boom(), test_deterministic_reply_skips_run_agent_loop_entirely() (+13 more)
+Nodes (23): The exact reported bug: saying "Hi" must produce a clean full reply, never the…, Voice-bug pass (2026-09-22): the filler phrase ("One moment.") and short…, test_claude_stream_first_round_gemini_provider_no_ops(), test_claude_stream_first_round_network_failure_returns_none(), boom(), test_deepgram_tts_circuit_breaker_trips_after_repeated_failures(), boom(), test_deterministic_reply_skips_run_agent_loop_entirely() (+15 more)
 
 ### Community 7 - "jarvis_clipboard_history.py"
 Cohesion: 0.13
@@ -346,16 +339,16 @@ Cohesion: 0.13
 Nodes (24): _connect(), _cosine(), _db_path(), link_facts(), list_code_patterns(), list_decisions(), Connection, Path (+16 more)
 
 ### Community 9 - "test_gemini.py"
-Cohesion: 0.07
-Nodes (40): convert_messages(), convert_tools(), from_response(), Anthropic messages -> Gemini contents. tool_use becomes a functionCall part and…, Anthropic tools -> one Gemini tool with functionDeclarations. Uses…, Keep Gemini's hidden 'thinking' minimal: those tokens bill (and count against…, Gemini response -> Anthropic-shaped {content, stop_reason, usage, model}., _result_text() (+32 more)
+Cohesion: 0.10
+Nodes (22): get_provider(), set_provider(), gem_env(), _http_error(), jarvis(), _ok(), fixture, Tests for the Gemini backend (jarvis_gemini.py) and the Claude<->Gemini switch… (+14 more)
 
 ### Community 10 - "homework_guide.py"
-Cohesion: 0.07
-Nodes (50): app_title(), differences(), find_for_title(), format_homework(), format_lesson(), format_overview(), get(), homeworks() (+42 more)
+Cohesion: 0.11
+Nodes (37): app_title(), differences(), find_for_title(), format_homework(), format_overview(), get(), homeworks(), lesson() (+29 more)
 
-### Community 11 - "queue_or_deliver_notification"
-Cohesion: 0.04
-Nodes (74): _agents_tick(), _autonomy_tick_battery_aware(), current(), _battery_tick(), _budget_check(), _cascade_release(), _cascade_tick(), _check_due_reminders() (+66 more)
+### Community 11 - "_deterministic_intent_reply"
+Cohesion: 0.10
+Nodes (22): briefing_report(), _deterministic_intent_reply(), _face_release_held_notifications(), _feature_self(), flush_pending_notifications(), _interrupt_speech(), _media_reply(), Play/pause/next/previous: Opera's sidebar player (or the current Windows media… (+14 more)
 
 ### Community 12 - "jarvis_workflow.py"
 Cohesion: 0.16
@@ -387,7 +380,7 @@ Nodes (12): check_project_health(), _connect(), _db_path(), _fmt_findings(), _it
 
 ### Community 19 - "jarvis_selfaware.py"
 Cohesion: 0.06
-Nodes (67): _ago(), _clean(), _code_files(), code_on_disk_changes(), code_report(), configure(), diff(), _ensure() (+59 more)
+Nodes (69): Every ~60 s: copy what autonomy and sleep did into the journal, and notice if…, _self_report_tool(), _ago(), _clean(), _code_files(), code_on_disk_changes(), code_report(), configure() (+61 more)
 
 ### Community 20 - "test_chief.py"
 Cohesion: 0.11
@@ -395,11 +388,11 @@ Nodes (16): budget_alert(), headsup_text(), _local(), meetings_starting(), parse
 
 ### Community 21 - "test_sleep_mail.py"
 Cohesion: 0.05
-Nodes (76): _autonomy_poll_mail(), New inbox messages (not the user's own, not yet seen by autonomy) with their…, _body_of(), _classify_critical(), _connect(), _db_path(), _emails(), _env_set() (+68 more)
+Nodes (72): _body_of(), _classify_critical(), _connect(), _db_path(), _emails(), _env_set(), _handle_family(), _send() (+64 more)
 
 ### Community 22 - "CLAUDE.md"
 Cohesion: 0.03
-Nodes (58): API spend lookup (2026-09-18), Ask before building (owner rule, 2026-10-03), Audit hardening (2026-09-21), Browser tabs + main browser setting (2026-10-03, owner request), Chief-of-staff batch (2026-09-23), Cloud-latency pass (2026-09-22), Confirmation gate follow-up (2026-09-18), Context7 + Windows-MCP (2026-09-23) (+50 more)
+Nodes (59): API spend lookup (2026-09-18), Ask before building (owner rule, 2026-10-03), Audit hardening (2026-09-21), Browser tabs + main browser setting (2026-10-03, owner request), Chief-of-staff batch (2026-09-23), Cloud-latency pass (2026-09-22), Confirmation gate follow-up (2026-09-18), Context7 + Windows-MCP (2026-09-23) (+51 more)
 
 ### Community 23 - "app.js"
 Cohesion: 0.08
@@ -417,10 +410,6 @@ Nodes (14): test_c_skill_failure_stops_logs_the_step_and_notifies_exactly_once()
 Cohesion: 0.12
 Nodes (29): _cascade_stop_meeting(), _feature_meetings(), active(), delete_meeting(), ensure(), _env_num(), _finish(), list_meetings() (+21 more)
 
-### Community 27 - "RuntimeError"
-Cohesion: 0.04
-Nodes (31): RuntimeError, test_one_bad_item_does_not_lose_the_rest_of_the_batch(), test_tick_hands_slow_steps_to_bounded_workers_and_survives_a_failing_step(), test_record_usage_never_raises(), broken(), client(), dashboard(), db_path() (+23 more)
-
 ### Community 28 - "Tween"
 Cohesion: 0.19
 Nodes (21): _a(), Ao(), _assertThisInitialized(), cb(), cc(), ga(), gb(), hb() (+13 more)
@@ -430,16 +419,16 @@ Cohesion: 0.11
 Nodes (27): _check_host(), _CheckedRedirects, _clean_stem(), download_image(), _fetch(), Path, download_image: fetch one image URL and save it to a single fixed folder.…, i.pinimg.com/236x/.. or /736x/.. (a thumbnail) -> /originals/.. (full size). (+19 more)
 
 ### Community 30 - "jarvis_autonomy_organise.py"
-Cohesion: 0.12
-Nodes (39): _exec_rc(), add_root(), add_rule(), _copy_no_clobber(), handle_new_file(), handle_tool(), home(), _init() (+31 more)
+Cohesion: 0.13
+Nodes (36): add_root(), add_rule(), _copy_no_clobber(), handle_new_file(), handle_tool(), home(), _init(), _inside() (+28 more)
 
-### Community 31 - "_claude_stream_first_round"
-Cohesion: 0.08
-Nodes (24): system(), _claude_failure_reason(), _claude_in_cooldown(), _claude_live_problem(), _claude_stream_first_round(), _failover_to_gemini(), _fish_audio_synthesize(), _for_claude() (+16 more)
+### Community 31 - "notify"
+Cohesion: 0.05
+Nodes (42): _append_history(), pending(), system(), _claude_in_cooldown(), _claude_stream_first_round(), _speak_ready(), _dashboard_get_pending(), notify() (+34 more)
 
 ### Community 32 - "_on"
 Cohesion: 0.05
-Nodes (62): _future(), _on(), FULL-PERMISSION MODEL: a confident, non-catastrophic item is acted on…, test_a_classifier_actions_influenced_by_inbound_mail_face_the_third_party_bar(), test_a_email_recipient_allowlist_is_optional_and_empty_means_unrestricted(), test_a_injected_email_at_medium_confidence_does_not_auto_act_and_says_why(), test_a_third_party_bar_matrix(), test_a_user_after_turn_still_auto_acts_at_the_normal_floor() (+54 more)
+Nodes (64): _future(), _on(), FULL-PERMISSION MODEL: a confident, non-catastrophic item is acted on…, test_a_classifier_actions_influenced_by_inbound_mail_face_the_third_party_bar(), test_a_email_recipient_allowlist_is_optional_and_empty_means_unrestricted(), test_a_injected_email_at_medium_confidence_does_not_auto_act_and_says_why(), test_a_third_party_bar_matrix(), test_a_user_after_turn_still_auto_acts_at_the_normal_floor() (+56 more)
 
 ### Community 33 - "_narrating_claude"
 Cohesion: 0.15
@@ -462,28 +451,28 @@ Cohesion: 0.36
 Nodes (4): Connection, key -> text value with a created_at timestamp; max_age_s is checked on read,…, SqliteKV, test_sqlite_kv_max_age_and_prune()
 
 ### Community 38 - "jarvis_netscan.py"
-Cohesion: 0.14
-Nodes (26): IPv4Network, _feature_devices(), apply_names(), describe(), _ensure_names(), handle_tool(), _hostnames(), is_private_mac() (+18 more)
+Cohesion: 0.06
+Nodes (59): IPv4Network, calendar_items(), compose(), deadline_items(), _hm(), mail_items(), datetime, Morning briefing v2 and "what's urgent?" (2026-09-23). One composition used by… (+51 more)
 
 ### Community 39 - "homework_mcp_server.py"
-Cohesion: 0.05
-Nodes (89): add_question(), add_questions(), _add_specs(), cap(), clean_label(), clean_options(), create_homework(), delete_homework() (+81 more)
+Cohesion: 0.04
+Nodes (101): format_lesson(), cap_text(), add_question(), add_questions(), _add_specs(), cap(), clean_label(), clean_options() (+93 more)
 
 ### Community 40 - "ce"
 Cohesion: 0.24
 Nodes (14): Ae(), ce(), $d(), ee(), ha(), ka(), le(), me() (+6 more)
 
 ### Community 41 - "test_homework.py"
-Cohesion: 0.07
-Nodes (26): brains(), _del(), env(), FakeResp, jarvis(), fixture, Homework app integration (homework_api.py, homework_marker.py,…, No real key or provider file: each test sets what it needs. (+18 more)
+Cohesion: 0.09
+Nodes (26): brains(), _del(), env(), GuideApi, jarvis(), _old_edition_question(), fixture, Homework app integration (homework_api.py, homework_marker.py,… (+18 more)
 
 ### Community 42 - "ce"
 Cohesion: 0.24
 Nodes (14): Ae(), ce(), $d(), ee(), ha(), ka(), le(), me() (+6 more)
 
-### Community 43 - "enabled"
+### Community 43 - "timedelta"
 Cohesion: 0.08
-Nodes (36): after_turn(), _brief(), dry_run(), enabled(), _file_scan(), get_setting(), _halt_pending_work(), hard_disabled() (+28 more)
+Nodes (53): _action_for_commitment(), _announce_pending(), _call(), _campaign_step(), _context_summary(), _deadline_scan(), dry_run(), _env_int() (+45 more)
 
 ### Community 44 - "test_restart.py"
 Cohesion: 0.15
@@ -507,7 +496,7 @@ Nodes (7): Audio, Creative Direction, Hyperframes Composition Brief: Jarvis, Obj
 
 ### Community 49 - "poll_once"
 Cohesion: 0.12
-Nodes (43): describe_presence(), _fresh(), group_safe(), group_safe_suppress(), list_snapshots(), poll_once(), _Presence, One recognition cycle. Returns a short status word (used by tests and… (+35 more)
+Nodes (44): describe_presence(), enabled(), _fresh(), group_safe(), group_safe_suppress(), list_snapshots(), poll_once(), _Presence (+36 more)
 
 ### Community 50 - "la"
 Cohesion: 0.53
@@ -517,13 +506,13 @@ Nodes (6): Animation(), Da(), la(), ma(), Ua(), Va()
 Cohesion: 0.53
 Nodes (6): Animation(), Da(), la(), ma(), Ua(), Va()
 
-### Community 52 - "_call"
-Cohesion: 0.09
-Nodes (44): Any, _work(), _ask_model(), _audit(), _call(), _clean(), create_suggestion(), _deadline_scan() (+36 more)
+### Community 52 - "enabled"
+Cohesion: 0.10
+Nodes (26): after_turn(), _work(), _direct_calendar(), _email_recipient_blocked(), _email_recipients(), _email_send_capped(), enabled(), hard_disabled() (+18 more)
 
 ### Community 53 - "_iso"
-Cohesion: 0.08
-Nodes (57): accept_commitment(), add_project_action(), _announce_pending(), approve_campaign(), approve_suggestion(), _campaign_step(), _commitment(), _context_summary() (+49 more)
+Cohesion: 0.09
+Nodes (45): accept_commitment(), add_project_action(), approve_campaign(), approve_suggestion(), _commitment(), delete_policy(), dismiss_suggestion(), _exec() (+37 more)
 
 ### Community 54 - "fb"
 Cohesion: 0.40
@@ -574,20 +563,20 @@ Cohesion: 0.18
 Nodes (16): build_query(), _candidate_urls(), _es(), _find_es_exe(), format_results(), _http(), _is_loopback(), Instant file search through voidtools Everything (2026-09-27, feature batch… (+8 more)
 
 ### Community 67 - "test_selfdata.py"
-Cohesion: 0.09
-Nodes (20): _capabilities(), _dashboard_data_tool(), compact(), page_list(), Jarvis reading its own dashboard (2026-10-03, owner request: "every single…, The text a tool result carries: a header, what the fields mean, then compact…, name: what it holds' for every readable page., The Voice page plus the sums people actually ask about, so the model never has… (+12 more)
+Cohesion: 0.12
+Nodes (15): compact(), Jarvis reading its own dashboard (2026-10-03, owner request: "every single…, The text a tool result carries: a header, what the fields mean, then compact…, The Voice page plus the sums people actually ask about, so the model never has…, A JSON-able copy with long lists cut to their ends and long strings shortened., render(), _short(), voice_view() (+7 more)
 
 ### Community 68 - "test_browser_tabs.py"
-Cohesion: 0.11
-Nodes (15): bridge(), _fake_extension(), FakeBrowser, _free_port(), J(), _port_open(), fixture, Browser tabs (2026-10-03, owner request): Jarvis sees and manages the tabs in… (+7 more)
+Cohesion: 0.13
+Nodes (13): bridge(), _fake_extension(), _free_port(), J(), _port_open(), fixture, Browser tabs (2026-10-03, owner request): Jarvis sees and manages the tabs in…, A program squatting on the port (no key) gets no tab data: the extension checks… (+5 more)
 
 ### Community 69 - "jarvis_macros.py"
-Cohesion: 0.18
-Nodes (23): delete(), ensure(), handle_tool(), list_macros(), match(), normalize(), pack_macros(), _pack_step_problem() (+15 more)
+Cohesion: 0.16
+Nodes (26): delete(), ensure(), handle_tool(), list_macros(), match(), normalize(), pack_macros(), _pack_step_problem() (+18 more)
 
-### Community 72 - "enabled"
-Cohesion: 0.07
-Nodes (35): _dashboard_page_identity(), away_enabled(), away_status(), enabled(), get_setting(), _greeting_text(), invalidate_profile_cache(), is_paused() (+27 more)
+### Community 72 - "test_face.py"
+Cohesion: 0.04
+Nodes (56): away_enabled(), away_status(), invalidate_profile_cache(), is_paused(), Camera privacy switch. Pausing is always allowed (it can only make things more…, Why enroll/delete must not run for this command source, or None if it may., True while the Windows lock screen (secure desktop) is up: the camera is off-…, refuse_reason() (+48 more)
 
 ### Community 73 - "Google Maps location sharing -> "where is <person>?" (2026-09-19)"
 Cohesion: 0.22
@@ -595,19 +584,19 @@ Nodes (8): 1. Unofficial library (closest to the goal), 2. Telegram live locatio
 
 ### Community 74 - "test_deepgram_voice.py"
 Cohesion: 0.05
-Nodes (29): _dg_response(), _FakeSSEResponse, Tests for the Deepgram Speed Upgrade: jarvis_stt_deepgram.py,…, A background pre-synthesis that outlives PIPELINE_JOIN_TIMEOUT_S must not hang…, Voice-bug follow-up (2026-09-22): "Hi" and "thanks" answer with no Claude call…, Duck-types jarvis_stt_deepgram.StreamingSession's finish() surface for…, Voice-bug follow-up (2026-09-22): TTSDiskCache.get() has no integrity check on…, _sse_lines() (+21 more)
+Nodes (26): _FakeSSEResponse, Tests for the Deepgram Speed Upgrade: jarvis_stt_deepgram.py,…, A background pre-synthesis that outlives PIPELINE_JOIN_TIMEOUT_S must not hang…, Voice-bug follow-up (2026-09-22): "Hi" and "thanks" answer with no Claude call…, Duck-types jarvis_stt_deepgram.StreamingSession's finish() surface for…, Voice-bug follow-up (2026-09-22): TTSDiskCache.get() has no integrity check on…, _sse_lines(), _sse_text_reply() (+18 more)
 
 ### Community 75 - "jarvis_face.py"
-Cohesion: 0.07
-Nodes (67): _already_seen_recently(), away_grace_s(), _away_reset(), _away_step(), away_warn_s(), _camera_failed(), _camera_ok(), _connect() (+59 more)
+Cohesion: 0.06
+Nodes (78): _already_enrolled(), _already_seen_recently(), away_grace_s(), _away_reset(), _away_step(), away_warn_s(), _camera_failed(), _camera_ok() (+70 more)
 
 ### Community 76 - "jarvis_autonomy_skills.py"
 Cohesion: 0.25
 Nodes (18): create_skill(), handle_tool(), _init(), _known(), list_skills(), note_turn(), _q(), Composable, side-effect-safe skills for the autonomy layer. A skill is a NAMED,… (+10 more)
 
-### Community 77 - "test_face.py"
-Cohesion: 0.06
-Nodes (51): _already_enrolled(), _clean_name(), delete(), delete_by_id(), describe_profiles(), enroll(), list_profiles(), (role, None) to enroll with, or (None, reason). The first person is always the… (+43 more)
+### Community 77 - "enroll"
+Cohesion: 0.10
+Nodes (36): _clean_name(), delete(), delete_by_id(), describe_profiles(), enroll(), list_profiles(), (role, None) to enroll with, or (None, reason). The first person is always the…, Enroll a person. The first one becomes the Admin; later ones are `user`… (+28 more)
 
 ### Community 78 - "jarvis_file_index.py"
 Cohesion: 0.12
@@ -619,7 +608,7 @@ Nodes (16): buildPalette(), closePalette(), filterSettings(), fuzzyScore(), load
 
 ### Community 80 - "Fake"
 Cohesion: 0.09
-Nodes (36): _capture(), _cb(), Fake, O(), Records callback traffic; `answers` maps a marker in the prompt to the JSON the…, test_a_classifier_context_is_framed(), test_a_conversation_extraction_of_tool_derived_text_is_framed(), test_a_inbound_prompt_is_framed_sanitised_and_length_capped() (+28 more)
+Nodes (35): _capture(), _cb(), Fake, Records callback traffic; `answers` maps a marker in the prompt to the JSON the…, test_a_classifier_context_is_framed(), test_a_conversation_extraction_of_tool_derived_text_is_framed(), test_a_inbound_prompt_is_framed_sanitised_and_length_capped(), test_agent_replies_that_admit_failure_are_failures() (+27 more)
 
 ### Community 81 - "voice.js"
 Cohesion: 0.32
@@ -634,20 +623,20 @@ Cohesion: 0.09
 Nodes (33): _ctl_read(), _ctl_start(), duck(), enabled(), media_control(), _mute_others(), _pause_music(), _pause_pattern() (+25 more)
 
 ### Community 84 - "enable"
-Cohesion: 0.27
-Nodes (12): _dark_mode_is_on(), enable(), _get_state(), kind='nap' runs the exact same mode (quiet notifications, mail take-over, dark…, toggle(), _fake_env(), test_disable_puts_the_volume_back(), test_enable_reports_what_really_happened() (+4 more)
+Cohesion: 0.26
+Nodes (12): _dark_mode_is_on(), disable(), enable(), _get_state(), kind='nap' runs the exact same mode (quiet notifications, mail take-over, dark…, _set_state(), set_system_action_handler(), toggle() (+4 more)
 
-### Community 85 - "_collapse_paths_for_speech"
-Cohesion: 0.08
-Nodes (17): HTMLParser, _catastrophic_reason(), _collapse_paths_for_speech(), _duckduckgo_search(), _DuckDuckGoResultParser, _humanize_path_for_speech(), _LiveSpeaker, _normalize_for_gate() (+9 more)
+### Community 85 - "_handle_text_command_impl"
+Cohesion: 0.04
+Nodes (41): HTMLParser, _ack_kind(), _collapse_paths_for_speech(), _dashboard_approve_pending(), _sink(), _dashboard_reject_pending(), _DuckDuckGoResultParser, _execute_confirmed_action() (+33 more)
 
 ### Community 86 - "_fake_mcp_run_coro"
 Cohesion: 0.32
 Nodes (6): _fake_mcp_run_coro(), _FakeMcpResult, execute_mcp_tool always builds the real coroutine before calling _mcp_run_coro;…, test_calendar_invalid_grant_embedded_in_json_still_gets_the_hint(), test_gmail_invalid_grant_becomes_a_reauth_instruction(), test_other_mcp_errors_are_unaffected_by_the_auth_hint()
 
 ### Community 87 - "compute"
-Cohesion: 0.19
-Nodes (18): date, _board(), _clip(), compute(), _countdown(), Jarvis4U Pro dashboard widgets: pure computations (no I/O, no Jarvis import). A…, One widget's data. `rows` depends on the source: facts -> list of fact lines…, _score_trend() (+10 more)
+Cohesion: 0.16
+Nodes (21): date, _board(), _clip(), compute(), _countdown(), Jarvis4U Pro dashboard widgets: pure computations (no I/O, no Jarvis import). A…, One widget's data. `rows` depends on the source: facts -> list of fact lines…, _score_trend() (+13 more)
 
 ### Community 88 - "autonomy.js"
 Cohesion: 0.51
@@ -670,8 +659,8 @@ Cohesion: 0.15
 Nodes (24): api_audit(), api_clear_finished_sessions(), api_recent_commands(), api_state(), _build_state(), clear_finished_sessions(), _connect(), _db_path() (+16 more)
 
 ### Community 93 - "jarvis_autonomy.py"
-Cohesion: 0.07
-Nodes (47): _action_for_commitment(), add_commitment(), _work(), _env_float(), _evaluate_base(), evaluate_policy(), _executor_for(), _file_scan_locked() (+39 more)
+Cohesion: 0.09
+Nodes (36): add_commitment(), _work(), _env_float(), _evaluate_base(), evaluate_policy(), _executor_for(), _find_duplicate(), _handled_words() (+28 more)
 
 ### Community 94 - "test_dev_features.py"
 Cohesion: 0.06
@@ -685,9 +674,9 @@ Nodes (19): answer(), has_open_question(), on_stranger_arrived(), on_stranger_le
 Cohesion: 0.22
 Nodes (13): _add_inline(), _add_table(), _base_styles(), _cells(), _Latex, _m(), _mr(), _omath() (+5 more)
 
-### Community 97 - "main"
-Cohesion: 0.03
-Nodes (72): _acquire_single_instance_lock(), _agents_on_file_event(), block_samples(), pending(), _bytes_to_gb(), _bytes_to_mb(), _can_stream_round(), check_system_health() (+64 more)
+### Community 97 - "run_agent_loop"
+Cohesion: 0.04
+Nodes (80): _agent_required_inputs(), _autonomy_run_agent(), build_system_blocks(), build_system_prompt(), enabled(), JARVIS_<LAYER>_CACHE env flag, default on. Read on every call so it can be…, record(), _cached_tools() (+72 more)
 
 ### Community 98 - "StreamingSession"
 Cohesion: 0.11
@@ -698,16 +687,16 @@ Cohesion: 0.11
 Nodes (18): Components, Confirmation / approval path — unchanged, Dashboard UI/UX overhaul (2026-09-22), Do not regress, Global rules, Home (mission control), How to preview without running full Jarvis, Keyboard (+10 more)
 
 ### Community 100 - "start_polling"
-Cohesion: 0.15
-Nodes (14): _lower_thread_priority(), poll_interval(), Run the poll below normal priority so an inference burst yields to the voice…, Start the low-duty background poll (no-op unless JARVIS_FACE_ENABLED=1). The…, Once the owner has been steadily in view with nobody else, look less often…, settled_poll_interval(), start_polling(), loop() (+6 more)
+Cohesion: 0.16
+Nodes (13): _lower_thread_priority(), poll_interval(), Run the poll below normal priority so an inference burst yields to the voice…, Start the low-duty background poll (no-op unless JARVIS_FACE_ENABLED=1). The…, Once the owner has been steadily in view with nobody else, look less often…, settled_poll_interval(), start_polling(), loop() (+5 more)
 
 ### Community 101 - "test_followup.py"
 Cohesion: 0.25
 Nodes (12): _blocks(), Follow-up window VAD (jarvis_followup) and barge-in cutoff., The mic loop calls _interrupt_speech on every block while the key is held; the…, _run(), test_barge_in_before_the_first_streamed_chunk_is_not_replayed_over_rest(), test_barge_in_repeats_do_one_db_write_and_abort_the_streaming_device(), test_cough_keeps_the_window_and_chain_limit_closes_it(), test_disabled_with_zero_window() (+4 more)
 
-### Community 102 - "_log_action_audit"
-Cohesion: 0.07
-Nodes (40): _agent_known_tools(), _agent_required_inputs(), _already_fast_path(), _as_dashboard(), _attended(), _background_agents_tool(), _clipboard_copy(), _clipboard_tool() (+32 more)
+### Community 102 - "_memory_db_connect"
+Cohesion: 0.04
+Nodes (87): _agent_known_tools(), work(), _already_fast_path(), _app_shortcut_route(), _apply_memory_db_pragmas(), _as_dashboard(), _attended(), _autonomy_callbacks() (+79 more)
 
 ### Community 103 - "test_dashboard_llm_endpoints"
 Cohesion: 0.50
@@ -742,12 +731,12 @@ Cohesion: 0.07
 Nodes (47): add_file(), ask_claude(), ask_gemini(), ask_model(), _b64(), build_brief(), _claude_unusable(), collect_files() (+39 more)
 
 ### Community 112 - "dashboard_state"
-Cohesion: 0.15
-Nodes (20): dashboard_state(), _data_dir(), _DataBlob, _db_path(), _dpapi(), blob(), _has_encrypted_data(), health_problem() (+12 more)
+Cohesion: 0.16
+Nodes (19): dashboard_state(), _data_dir(), _db_path(), _encrypt(), event_kinds(), _has_encrypted_data(), health_problem(), _key() (+11 more)
 
-### Community 113 - "download_models"
-Cohesion: 0.10
-Nodes (17): download_models(), _InsightEngine, _model_root(), models_ready(), Observation, fn(event_dict) is called after every audit row (kind/name/confidence/ts only)…, One-time fetch of the buffalo_l pack from insightface's GitHub release.…, set_event_hook() (+9 more)
+### Community 113 - "RuntimeError"
+Cohesion: 0.05
+Nodes (37): calibrate(), camera_index(), CameraUnavailable, _capture_and_analyze(), _DataBlob, download_models(), _dpapi(), blob() (+29 more)
 
 ### Community 114 - "test_self_events.py"
 Cohesion: 0.18
@@ -758,12 +747,12 @@ Cohesion: 0.19
 Nodes (19): cancel_task(), _connect(), _db_path(), _free_slots(), _inflate_estimate(), list_task_queue(), _normalize(), _parse_busy_intervals() (+11 more)
 
 ### Community 116 - "stream_round"
-Cohesion: 0.10
-Nodes (28): _merge_chunks(), stream_round(), Streamed GenerateContentResponse chunks -> one response that from_response()…, One Gemini round trip over streamGenerateContent (SSE). on_text(delta) is…, stream_enabled(), _finish_leading_text(), _partial_or_none(), _chunk() (+20 more)
+Cohesion: 0.12
+Nodes (20): backup_on_rate_limit(), from_response(), last_error_reason(), _merge_chunks(), stream_round(), Gemini response -> Anthropic-shaped {content, stop_reason, usage, model}., The most recent failure's plain-language reason, or "" if the last call worked…, JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT (default off): when the model answers 429… (+12 more)
 
-### Community 117 - "run_agent_loop"
-Cohesion: 0.03
-Nodes (122): _ack_enabled(), _ack_kind(), work(), _announce_enabled(), _app_shortcut_route(), _autonomy_callbacks(), _autonomy_run_agent(), _away_warn() (+114 more)
+### Community 117 - "speak_text"
+Cohesion: 0.05
+Nodes (59): _ack_enabled(), _announce_enabled(), _await_ack(), _away_warn(), stable_hash(), _cascade_release(), _current_command_source(), _face_greet() (+51 more)
 
 ### Community 118 - "CircuitBreaker"
 Cohesion: 0.17
@@ -774,8 +763,8 @@ Cohesion: 0.22
 Nodes (17): all_shortcuts(), app_matches(), _db(), delete(), ensure(), for_app(), match(), _norm() (+9 more)
 
 ### Community 120 - "jarvis_pro.py"
-Cohesion: 0.19
-Nodes (21): active(), _luminance(), macro_specs(), manifest(), pro_dir(), Path, Jarvis4U Pro pack loader. A Pro pack is a folder (default: `pro/` next to…, Body text (which is also the approval bar's text) must stay readable on the… (+13 more)
+Cohesion: 0.15
+Nodes (25): active(), _luminance(), macro_specs(), manifest(), pro_dir(), Path, Jarvis4U Pro pack loader. A Pro pack is a folder (default: `pro/` next to…, Body text (which is also the approval bar's text) must stay readable on the… (+17 more)
 
 ### Community 121 - "test_guest_reminders.py"
 Cohesion: 0.18
@@ -786,8 +775,8 @@ Cohesion: 0.11
 Nodes (13): Attempts Deepgram's streaming speak WebSocket for `text`, playing audio as it's…, _speak_streamed(), One request to Deepgram's streaming speak WebSocket. Usage: session =…, Generator yielding raw int16 PCM bytes as Aura 2 generates them. Text…, StreamingSynthesis, _FakeSpeakWebsocketLib, _FakeSpeakWS, create_connection() (+5 more)
 
 ### Community 123 - "test_speed_gemini.py"
-Cohesion: 0.07
-Nodes (17): BaseHTTPRequestHandler, _drive(), _gemini_env(), _Handler, jarvis(), local_server(), fixture, Speed pass (2026-09-29): Gemini streaming into speech, stall protection +… (+9 more)
+Cohesion: 0.06
+Nodes (32): reset_stats(), _chunk(), _drive(), _gemini_env(), jarvis(), local_server(), fixture, Speed pass (2026-09-29): Gemini streaming into speech, stall protection +… (+24 more)
 
 ### Community 124 - "jarvis_guest_reminders.py"
 Cohesion: 0.18
@@ -797,9 +786,9 @@ Nodes (13): forward_reminder(), _norm(), parse_yes_no(), Reminders while an unre
 Cohesion: 0.29
 Nodes (6): _fake_keyboard(), Appshot (ask about the window in front) and dictation hold modes. No real…, test_a_mouse_click_during_the_hold_is_a_shortcut_not_a_hold(), test_appshot_attaches_window_picture_and_is_never_reply_cached(), test_dictation_copies_instead_when_the_window_changed(), test_dictation_types_into_the_same_window_and_audits_without_the_words()
 
-### Community 126 - "jarvis_gemini.py"
-Cohesion: 0.08
-Nodes (37): api_key(), diagnose(), _env_file_values(), fallback_model_name(), _finish(), get_provider(), http_post(), _HttpFail (+29 more)
+### Community 126 - "http_post"
+Cohesion: 0.11
+Nodes (21): _finish(), http_post(), _HttpFail, keepalive_enabled(), _open(), _Pool, _proxied(), Exception (+13 more)
 
 ### Community 127 - "homework_gate.py"
 Cohesion: 0.24
@@ -807,47 +796,51 @@ Nodes (6): batch_reason(), confirm_reason(), duplicate_message(), _join(), Confi
 
 ### Community 128 - "Path"
 Cohesion: 0.07
-Nodes (35): _cleanup_old_logs(), _fmt_gb(), get_large_files_report(), get_skills_context(), _human_size(), _load_confirm_gates(), _load_skills(), _memory_db_path() (+27 more)
+Nodes (35): CompletedProcess, _background_tasks_dir(), _catastrophic_reason(), _check_background_tasks(), _cleanup_old_logs(), _dashboard_kill_background_task(), _delegate_child_env(), _delegate_research() (+27 more)
 
 ### Community 129 - "test_feature_batch_a.py"
 Cohesion: 0.11
 Nodes (11): db(), jarvis(), fixture, Feature batch 2026-09-27, Phase A (FEATURES.md): clipboard history, Everything…, _Resp, test_battery_tick_slows_autonomy_and_holds_speech(), test_deadline_nudge_includes_context(), test_everything_refuses_non_loopback() (+3 more)
 
 ### Community 130 - "_foreground_window"
-Cohesion: 0.08
-Nodes (25): _browser_in_front(), _dictate(), _foreground_window(), _get_active_window_title(), _grab_appshot(), _grab_dictation(), _keyboard_is_pressed(), _mouse_button_down() (+17 more)
+Cohesion: 0.09
+Nodes (26): _browser_in_front(), _dictate(), _foreground_window(), _get_active_window_title(), _grab_appshot(), _grab_dictation(), _guess_project_from_window_title(), _keyboard_is_pressed() (+18 more)
 
 ### Community 131 - "jarvis_browser_tabs.py"
 Cohesion: 0.20
 Nodes (19): _clean_ref(), describe(), format_closed(), format_list(), format_read(), front(), match_by_words(), pick_closed() (+11 more)
 
 ### Community 132 - "call"
-Cohesion: 0.09
-Nodes (33): backup_on_rate_limit(), call(), _clear_error(), last_error_reason(), _note_error(), The most recent failure's plain-language reason, or "" if the last call worked…, Runs one Anthropic-shaped body against Gemini; returns an Anthropic-shaped…, JARVIS_GEMINI_BACKUP_ON_RATE_LIMIT (default off): when the model answers 429… (+25 more)
-
-### Community 133 - "_claude_text"
 Cohesion: 0.11
-Nodes (17): _build_sleep_digest(), _claude_text(), _learn_lesson(), Returns (spoken_explanation, refactored_code_or_empty)., Two-part recap: what mattered first (urgent things that came through live while…, One small model call that turns a failed command (or a correction) into a…, Returns (spoken_reply, code_to_type_or_empty). The fix-typing half only fires…, _read_clipboard() (+9 more)
+Nodes (29): call(), Runs one Anthropic-shaped body against Gemini; returns an Anthropic-shaped…, test_call_does_not_wait_for_a_long_quota_reset(), test_call_retries_once_without_thinking_config_on_400(), test_call_success_sends_key_in_header_and_returns_anthropic_shape(), http(), test_call_waits_out_a_short_429_then_succeeds(), _ok() (+21 more)
 
-### Community 134 - "_volume_reply"
-Cohesion: 0.38
-Nodes (7): Short, unambiguous volume commands ("volume up", "turn it down", "mute",…, _endpoint_volume_call(), _get_volume(), Runs fn(endpoint_volume) with COM initialised on this thread. None on any…, Master volume as 0.0-1.0, or None if it can't be read., _set_volume(), _volume_reply()
+### Community 133 - "_claude_request"
+Cohesion: 0.06
+Nodes (39): _build_sleep_digest(), _claude_failure_reason(), _claude_live_problem(), _claude_request(), _claude_text(), _duckduckgo_search(), _fish_audio_synthesize(), _gemini_http() (+31 more)
 
-### Community 135 - "_deadline_context"
-Cohesion: 0.04
-Nodes (50): AbstractEventLoop, _autonomy_create_event(), _autonomy_inbound(), _autonomy_mail_hook(), read(), mail(), _content_words(), _deadline_context() (+42 more)
+### Community 134 - "_dashboard_pages"
+Cohesion: 0.08
+Nodes (29): _capabilities(), _dashboard_data_tool(), _dashboard_get_daily_items(), _dashboard_get_services_status(), _dashboard_get_sleep(), _dashboard_get_usage(), _dashboard_page_audit(), _dashboard_page_autonomy() (+21 more)
+
+### Community 135 - "execute_mcp_tool"
+Cohesion: 0.10
+Nodes (19): AbstractEventLoop, _autonomy_create_event(), _ensure_mcp_loop(), execute_mcp_tool(), _mcp_auth_error_hint(), _mcp_call_tool_async(), _mcp_connect_all_async(), _mcp_connect_one() (+11 more)
 
 ### Community 136 - "jarvis_email_templates.py"
 Cohesion: 0.26
 Nodes (14): _email_reply_tool(), _db(), delete(), ensure(), fill(), format_drafts(), list_templates(), parse_drafts() (+6 more)
 
-### Community 137 - "datetime"
-Cohesion: 0.05
-Nodes (50): _agent_mail_check(), _agent_run_async(), _autonomy_calendar_events(), _autonomy_create_reminder(), _briefing_fetchers(), calendar(), deadlines(), failed() (+42 more)
+### Community 137 - "queue_or_deliver_notification"
+Cohesion: 0.03
+Nodes (97): _agent_mail_check(), _agent_run_async(), _agents_tick(), _autonomy_calendar_events(), _autonomy_inbound(), _autonomy_mail_hook(), _autonomy_poll_mail(), _autonomy_tick_battery_aware() (+89 more)
 
-### Community 140 - "_handle_voice_command_impl"
-Cohesion: 0.08
-Nodes (32): _handle_telegram_picture(), handle_text_command(), handle_voice_command(), _handle_voice_command_impl(), _image_type(), _inflight_enter(), _inflight_exit(), _notify_phone() (+24 more)
+### Community 139 - "test_routines.py"
+Cohesion: 0.12
+Nodes (20): classify(), ('instant', why) when fixed tool calls can do the whole job with no thinking,…, _create(), _fake_git(), J(), fixture, parametrize, Phrase routines and "update time" (2026-10-03 debug report): a self-made… (+12 more)
+
+### Community 140 - "main"
+Cohesion: 0.04
+Nodes (65): _acquire_single_instance_lock(), _agents_on_file_event(), _announce_update_note(), _later(), block_samples(), _commands_in_flight(), _get_whisper_model(), _handle_telegram_picture() (+57 more)
 
 ### Community 141 - "start"
 Cohesion: 0.67
@@ -858,16 +851,16 @@ Cohesion: 0.14
 Nodes (25): AGENT_CONFIG_HINTS, agentStepRow(), agentTools, applyProTheme(), clipRows(), featureGet(), featurePost(), fileRows() (+17 more)
 
 ### Community 143 - "test_qol.py"
-Cohesion: 0.09
-Nodes (23): Shift/Alt/Win can't be a hold key (the injected Ctrl+C would become…, _selection_key_usable(), _http_error(), fixture, parametrize, QOL pass (2026-09-23): Claude->Gemini failover, self-check, timers/stopwatch,…, _reset(), test_cleanup_old_logs() (+15 more)
+Cohesion: 0.07
+Nodes (29): _clipboard_has_non_text(), _grab_selection(), Shift/Alt/Win can't be a hold key (the injected Ctrl+C would become…, True when the clipboard holds an image/files and no text: Jarvis can't put that…, Copies the focused app's selection into holder["text"], then puts the user's…, _selection_key_usable(), _fake_selection_env(), _http_error() (+21 more)
 
 ### Community 144 - "test_memory_edit.py"
 Cohesion: 0.25
 Nodes (3): jarvis(), fixture, Editable memory (P3): list/edit/forget facts, profile fields, forget_fact tool,…
 
 ### Community 145 - "Store"
-Cohesion: 0.12
-Nodes (24): budget_left(), create(), due(), ensure(), file_event_matches(), fill(), Connection, datetime (+16 more)
+Cohesion: 0.11
+Nodes (26): budget_left(), create(), due(), ensure(), file_event_matches(), fill(), Connection, datetime (+18 more)
 
 ### Community 146 - "jarvis_code_tools.py"
 Cohesion: 0.16
@@ -881,29 +874,33 @@ Nodes (19): jarvis(), _macro_db(), _plan(), fixture, Reliability layer (2026-09-
 Cohesion: 0.28
 Nodes (14): add_edge(), ensure(), _exists(), format_query(), _person_name(), Connection, query(), Lite knowledge graph (2026-09-27, feature batch C5): people, projects, tasks,… (+6 more)
 
-### Community 149 - "calibrate"
-Cohesion: 0.09
-Nodes (18): calibrate(), camera_index(), CameraUnavailable, _capture_and_analyze(), _get_engine(), _open_camera(), Open the camera, grab one frame, release it. Returns (observations, mean, std,…, Dry run of the enrollment liveness check that stores NOTHING (no profile, no… (+10 more)
+### Community 149 - "create_reminder"
+Cohesion: 0.15
+Nodes (13): _autonomy_create_reminder(), create_reminder(), _parse_due_at(), _parse_when(), Accepts the ISO-ish formats a model is likely to produce ("2026-09-16 15:00",…, What the reminder should SAY: "Reminder every 20 minutes starting noon…, Schedules a reminder for an absolute time (due_at) or a delay from now…, The user asks Jarvis to DO something later. Only from a real user request… (+5 more)
 
-### Community 151 - "timedelta"
-Cohesion: 0.10
-Nodes (25): agent_context_line(), budgets(), build_calendar_args(), _env_int(), explain(), _learned_ignore_expired(), log_entries(), log_summary() (+17 more)
+### Community 150 - "jarvis_cache.py"
+Cohesion: 0.16
+Nodes (7): is_self_contained(), normalize_text(), Small, local-only cache helpers shared by jarvis.py: an env-flag reader,…, Lowercase, punctuation-stripped, whitespace-collapsed — so 'System status?' and…, TTLCache, test_normalize_and_self_contained(), test_ttl_cache_expiry_and_lru()
+
+### Community 151 - "_rows"
+Cohesion: 0.13
+Nodes (23): _brief(), budgets(), explain(), handle_tool(), list_policies(), list_suggestions(), log_entries(), log_summary() (+15 more)
 
 ### Community 152 - "_call_model"
-Cohesion: 0.18
-Nodes (17): BaseException, _call_model(), _try(), _hedged(), _run(), _is_timeout(), quota_kind(), quota_violations() (+9 more)
+Cohesion: 0.13
+Nodes (22): BaseException, key(), _call_model(), _clear_error(), _try(), _hedged(), _run(), _is_timeout() (+14 more)
 
 ### Community 153 - "test_feature_batch_audit.py"
-Cohesion: 0.14
-Nodes (7): db(), jarvis(), fixture, Regression tests for the 2026-09-27 audit of the feature batch (CLAUDE.md…, test_agent_step_missing_a_required_input_is_refused(), test_critical_battery_never_holds_reminders(), test_disabling_an_agent_stops_queued_events()
-
-### Community 154 - "_due_now"
-Cohesion: 0.24
-Nodes (10): _due_now(), The model picked create_reminder("Run the internet speed test as requested.")…, Extraction -> execute_jarvis job (not a reminder) -> at due time the agent loop…, test_catastrophic_step_in_a_job_still_stages(), test_change_the_code_in_30_minutes_becomes_a_job_that_runs(), test_dry_run_safe_mode_and_kill_switch_do_not_execute(), test_due_jobs_run_one_at_a_time(), test_transient_failures_retry_real_failures_do_not() (+2 more)
-
-### Community 155 - "jarvis"
 Cohesion: 0.12
-Nodes (15): jarvis(), parametrize, Goes through handle_text_command -> _execute_tool (not _execute_impl): also…, DNS-rebinding defence: a hostile page re-pointing its domain at 127.0.0.1 sends…, test_away_mode_tool_respects_the_source(), turn(), test_delete_via_the_real_tool_path_needs_two_user_messages(), agent_turn() (+7 more)
+Nodes (7): db(), jarvis(), fixture, Regression tests for the 2026-09-27 audit of the feature batch (CLAUDE.md…, test_critical_battery_never_holds_reminders(), test_meeting_keeps_a_short_remark_in_a_quiet_chunk(), test_no_join_announcements_after_a_scanning_gap()
+
+### Community 154 - "classify_intent"
+Cohesion: 0.23
+Nodes (12): classify_intent(), parametrize, test_classify_intent(), parametrize, test_media_voice_commands(), test_new_intents(), test_self_report_tool_intent_prompt_line_and_dashboard(), parametrize (+4 more)
+
+### Community 155 - "boom"
+Cohesion: 0.17
+Nodes (12): test_daily_endpoint_exception_does_not_break(), boom(), test_get_pending_exception_does_not_break_state(), boom(), test_metrics_callback_exception_does_not_break_state(), boom(), test_services_endpoint_exception_does_not_break(), boom() (+4 more)
 
 ### Community 156 - "test_timers.py"
 Cohesion: 0.20
@@ -911,15 +908,15 @@ Nodes (7): jarvis(), fixture, parametrize, Persistent named timers (P5). Temp DB
 
 ### Community 157 - "test_executive.py"
 Cohesion: 0.09
-Nodes (14): J(), fixture, parametrize, Executive autonomy (2026-09-27, AUTONOMY.md "Deferred execution"): work the…, Live bug (2026-09-29): clearing an overdue reminder left "overdue: X" in the…, Audit 2026-09-29: the plan only skipped `covered_by`; a commitment a scheduling…, Found live 2026-10-02: "remove all overdue reminders about my entrance exam"…, test_cleared_overdue_reminder_leaves_briefing_and_urgent() (+6 more)
+Nodes (20): _due_now(), parametrize, Executive autonomy (2026-09-27, AUTONOMY.md "Deferred execution"): work the…, Audit 2026-09-29: the plan only skipped `covered_by`; a commitment a scheduling…, Found live 2026-10-02: "remove all overdue reminders about my entrance exam"…, The model picked create_reminder("Run the internet speed test as requested.")…, Extraction -> execute_jarvis job (not a reminder) -> at due time the agent loop…, test_catastrophic_step_in_a_job_still_stages() (+12 more)
 
 ### Community 158 - "jarvis_memory_search.py"
 Cohesion: 0.29
 Nodes (11): ensure(), format_results(), fts_query(), _ids(), Connection, Full-text memory search (2026-09-27, feature batch C4). Offline, SQLite FTS5…, User words -> a safe FTS5 query: each word quoted, OR-ed (BM25 still favours…, search() (+3 more)
 
-### Community 159 - "jarvis_briefing.py"
-Cohesion: 0.17
-Nodes (19): calendar_items(), compose(), deadline_items(), _hm(), mail_items(), datetime, Morning briefing v2 and "what's urgent?" (2026-09-23). One composition used by…, Calendar MCP (@cocal/google-calendar-mcp) list-events JSON -> "9:30 AM Standup"… (+11 more)
+### Community 159 - "set_setting"
+Cohesion: 0.22
+Nodes (9): _halt_pending_work(), process_inbound_async(), Run fn on a daemon thread, but never more than 3 at once (audit G-02: every…, Bounded, non-blocking entry point for the mail/Telegram/Discord hooks in…, Kill-switch follow-through (audit E-01): cancel the task-queue items autonomy…, set_dry_run(), set_enabled(), set_setting() (+1 more)
 
 ### Community 160 - "test_feature_batch_c.py"
 Cohesion: 0.29
@@ -942,12 +939,12 @@ Cohesion: 0.25
 Nodes (3): jarvis(), fixture, Safe mode + health card (P4). Temp DB and temp .env only.
 
 ### Community 165 - "test_pro_pack.py"
-Cohesion: 0.13
-Nodes (17): _builder(), _edit_json(), The paid Pro pack (pro_pack/, private repo only): content is valid and it can…, Activating Pro used to start 3 daily model runs (study check-in, health watch,…, _refused(), _skill(), test_builder_refuses_an_unreadable_theme(), test_builder_refuses_code_files_in_a_pack() (+9 more)
+Cohesion: 0.11
+Nodes (20): _builder(), _edit_json(), The paid Pro pack (pro_pack/, private repo only): content is valid and it can…, Activating Pro used to start 3 daily model runs (study check-in, health watch,…, _refused(), _skill(), test_builder_refuses_an_unreadable_theme(), test_builder_refuses_code_files_in_a_pack() (+12 more)
 
 ### Community 166 - "neutralize_injection"
-Cohesion: 0.09
-Nodes (27): child(), _classifier_step(), extract_commitments_and_projects(), _fill(), _maybe_summarize(), memory_context(), _memory_query(), Manual hook: runs the extraction prompt and returns the parsed, validated items… (+19 more)
+Cohesion: 0.07
+Nodes (44): Any, child(), agent_context_line(), _ask_model(), _audit(), _classifier_step(), _clean(), create_suggestion() (+36 more)
 
 ### Community 167 - "jarvis_daily_plan.py"
 Cohesion: 0.15
@@ -958,8 +955,8 @@ Cohesion: 0.25
 Nodes (11): configure(), _connect(), _db_path(), init_autonomy_tables(), Connection, Path, Wire callbacks and arm the tick. jarvis.py's scheduler loop then calls…, Idempotent. Creates every table this module owns and seeds the single built-in… (+3 more)
 
 ### Community 169 - "test_feature_batch_b.py"
-Cohesion: 0.25
-Nodes (4): db(), jarvis(), fixture, Feature batch 2026-09-27, Phase B (FEATURES.md): meeting notes, file index, app…
+Cohesion: 0.14
+Nodes (6): db(), FakeRecorder, jarvis(), fixture, Feature batch 2026-09-27, Phase B (FEATURES.md): meeting notes, file index, app…, Plays `pieces` (each a loud or quiet block) then silence forever.
 
 ### Community 170 - "jarvis_memory_consolidation.py"
 Cohesion: 0.28
@@ -970,8 +967,8 @@ Cohesion: 0.22
 Nodes (8): Audit (2026-09-27), Feature batch 2026-09-27, Phase A, Phase B, Phase C, Phase D (optional items), Toolbox trimmed (2026-09-28), Verification (all phases)
 
 ### Community 172 - "jarvis_deferred.py"
-Cohesion: 0.15
-Nodes (17): cancel(), claim_due(), ensure(), next_pending(), _norm(), prune(), Connection, datetime (+9 more)
+Cohesion: 0.12
+Nodes (21): cancel(), claim_due(), ensure(), finish(), next_pending(), _norm(), prune(), Connection (+13 more)
 
 ### Community 173 - "test_audit_batch.py"
 Cohesion: 0.07
@@ -986,8 +983,8 @@ Cohesion: 0.47
 Nodes (5): build(), _exists(), format_report(), Weekly "how could Jarvis work better for you" report (2026-09-27, feature batch…, suggestions()
 
 ### Community 177 - "jarvis_browsers.py"
-Cohesion: 0.21
-Nodes (16): _app_paths(), executable(), is_browser_process(), label(), launch(), main_browser(), open_link(), _popen() (+8 more)
+Cohesion: 0.23
+Nodes (15): _app_paths(), executable(), is_browser_process(), label(), launch(), main_browser(), open_link(), _popen() (+7 more)
 
 ### Community 178 - "background.js"
 Cohesion: 0.29
@@ -999,7 +996,7 @@ Nodes (9): _docx_text(), _pdf_text(), _pptx_text(), Path, Text out of Word, PDF 
 
 ### Community 180 - "jarvis.py"
 Cohesion: 0.03
-Nodes (125): _addon_confirm_reason(), _await_ack(), _batch_pending_call(), briefing_report(), cancel_reminder(), _choose_input_device(), click_at(), _close_commitments_for_reminder() (+117 more)
+Nodes (127): _addon_confirm_reason(), _batch_pending_call(), _bytes_to_gb(), _bytes_to_mb(), check_system_health(), _choose_input_device(), click_at(), _contains_secret() (+119 more)
 
 ### Community 181 - "check"
 Cohesion: 0.10
@@ -1011,27 +1008,27 @@ Nodes (11): configure(), reset(), j(), Phone, fixture, Stands in for Telegram: r
 
 ### Community 183 - "test_smarter.py"
 Cohesion: 0.06
-Nodes (13): _fake_telegram(), parametrize, Smarter/autonomous batch (2026-09-28): tool narrowing, claim checker,…, test_audit_new_fact_never_blocks_a_command_on_embedding(), test_audit_read_only_tools_never_back_an_action_claim(), test_audit_real_action_tools_still_back_claims(), test_audit_reminder_request_without_a_reminder_still_gets_made(), test_daily_plan_build_fallback_review_and_carry_over() (+5 more)
+Nodes (14): _fake_telegram(), parametrize, Smarter/autonomous batch (2026-09-28): tool narrowing, claim checker,…, test_a_failed_scheduled_run_does_not_mark_mail_as_checked(), test_audit_daily_plan_failure_is_not_retried_every_minute(), test_audit_new_fact_never_blocks_a_command_on_embedding(), test_audit_read_only_tools_never_back_an_action_claim(), test_audit_real_action_tools_still_back_claims() (+6 more)
 
 ### Community 184 - "jarvis_sleep_mode.py"
-Cohesion: 0.15
-Nodes (12): _cancel_media_autopause(), _db_path(), guided_breathing_steps(), is_whitelisted_sender(), _log_duration_to_memory(), play_ambient(), datetime, Path (+4 more)
+Cohesion: 0.11
+Nodes (20): Short, unambiguous volume commands ("volume up", "turn it down", "mute",…, _cancel_media_autopause(), _db_path(), _endpoint_volume_call(), _get_volume(), guided_breathing_steps(), _hhmm(), is_whitelisted_sender() (+12 more)
 
 ### Community 185 - "env_int"
 Cohesion: 0.09
 Nodes (24): env_float(), env_int(), Tolerant numeric settings from the environment (audit 2026-09-29). Module-level…, _raw(), Deepgram Nova-3 STT (Speed Upgrade Phase 1.1, streaming added in the cloud-…, Request, Deepgram Aura 2 TTS (Speed Upgrade Phase 1.2; WebSocket streaming added in the…, Same hard-timeout watchdog idiom as jarvis_stt_deepgram._urlopen_bounded —… (+16 more)
 
-### Community 186 - "attempt_timeout_s"
-Cohesion: 0.25
-Nodes (8): attempt_timeout_s(), _env_float(), first_token_timeout_s(), hedge_after_s(), Longest one Gemini attempt may take (JARVIS_GEMINI_ATTEMPT_TIMEOUT_S, default…, After this many seconds without an answer, the same request is also sent to the…, Streaming: give up (and fall back to a normal call) if nothing arrives within…, test_a_timing_out_model_is_tried_twice_not_four_times()
+### Community 186 - "jarvis_gemini.py"
+Cohesion: 0.11
+Nodes (25): api_key(), attempt_timeout_s(), convert_messages(), convert_tools(), _env_float(), first_token_timeout_s(), hedge_after_s(), list_models() (+17 more)
 
 ### Community 187 - "browser_extension/manifest.json"
 Cohesion: 0.13
 Nodes (14): background, scripts, service_worker, browser_specific_settings, gecko, description, id, strict_min_version (+6 more)
 
 ### Community 188 - "homework_api.py"
-Cohesion: 0.16
-Nodes (18): _base_url(), call(), download(), _endpoint(), HomeworkApiError, is_configured(), list_tools(), _NoRedirect (+10 more)
+Cohesion: 0.09
+Nodes (24): _base_url(), call(), download(), _endpoint(), HomeworkApiError, is_configured(), list_tools(), _NoRedirect (+16 more)
 
 ### Community 189 - "_FakeProc"
 Cohesion: 0.33
@@ -1050,20 +1047,20 @@ Cohesion: 0.17
 Nodes (20): _check(), google_login_checks(), _google_token_paths(), _has(), _last_eval(), _load_state(), main(), problems() (+12 more)
 
 ### Community 193 - "_timer_reply"
-Cohesion: 0.17
-Nodes (15): _cancel_timers(), _parse_duration_s(), pasta" from "set a pasta timer for 10 minutes" / "a timer called pasta" / "10…, Timers persist in jarvis_memory.db so a restart doesn't lose them., Startup: re-arm timers that were running when Jarvis stopped; one that went off…, Local handling for timers and the stopwatch; None = let the agent loop handle…, _restore_timers(), _say_duration() (+7 more)
+Cohesion: 0.19
+Nodes (14): _cancel_timers(), _parse_duration_s(), pasta" from "set a pasta timer for 10 minutes" / "a timer called pasta" / "10…, Timers persist in jarvis_memory.db so a restart doesn't lose them., Startup: re-arm timers that were running when Jarvis stopped; one that went off…, Local handling for timers and the stopwatch; None = let the agent loop handle…, _restore_timers(), _say_duration() (+6 more)
 
 ### Community 194 - ".__init__"
 Cohesion: 0.15
 Nodes (11): Voice-bug audit pass (2026-09-22): a WebSocket frame boundary has no reason to…, Voice-bug pass (2026-09-22): an unbuffered OutputStream starves on uneven…, Voice-bug follow-up (2026-09-22): the first few chunks off a live WebSocket are…, test_play_pcm_stream_asks_portaudio_for_high_latency_buffering(), __init__(), test_play_pcm_stream_jitter_buffer_disabled_writes_each_chunk_immediately(), __init__(), test_play_pcm_stream_jitter_buffer_merges_leading_small_chunks_then_streams() (+3 more)
 
 ### Community 195 - "transcribe"
-Cohesion: 0.11
-Nodes (15): ndarray, Request, Connection warm-up (Phase 2.2): a near-silent clip so the TLS handshake happens…, Hard-timeout watchdog: urlopen's own timeout doesn't reliably fire on a wedged…, transcribe(), _urlopen_bounded(), warm(), test_stt_empty_audio_short_circuits_without_a_request() (+7 more)
+Cohesion: 0.10
+Nodes (18): ndarray, Request, Connection warm-up (Phase 2.2): a near-silent clip so the TLS handshake happens…, Hard-timeout watchdog: urlopen's own timeout doesn't reliably fire on a wedged…, transcribe(), _urlopen_bounded(), warm(), _dg_response() (+10 more)
 
 ### Community 196 - "test_license.py"
-Cohesion: 0.10
-Nodes (24): reset_stats(), _b64d(), _b64e(), _clean(), is_pro(), Jarvis4U Pro license keys: offline, signed, no server. A key is…, {"valid": bool, "reason": str, "email", "tier", "issued", "id"} for a pasted…, The license currently saved in settings (the env var), verified. Never returns… (+16 more)
+Cohesion: 0.11
+Nodes (23): _b64d(), _b64e(), _clean(), is_pro(), Jarvis4U Pro license keys: offline, signed, no server. A key is…, {"valid": bool, "reason": str, "email", "tier", "issued", "id"} for a pasted…, The license currently saved in settings (the env var), verified. Never returns…, status() (+15 more)
 
 ### Community 197 - "test_wakeword.py"
 Cohesion: 0.20
@@ -1078,8 +1075,8 @@ Cohesion: 0.16
 Nodes (19): add(), all_lessons(), clean(), failure_digest(), forget(), init(), _lessons_line(), mark_used() (+11 more)
 
 ### Community 200 - "test_speedtest.py"
-Cohesion: 0.15
-Nodes (15): classify_intent(), parametrize, test_briefing_intents(), parametrize, test_classify_intent(), _factory(), parametrize, Internet speed test (jarvis_speedtest): measuring, data cap, wording, history,… (+7 more)
+Cohesion: 0.14
+Nodes (13): max_mb(), _ping(), One full test. Never raises: {"ok": False, "error": ...} when something failed., (median ms, jitter ms, server location code). Raises when the server can't be…, run(), _factory(), Internet speed test (jarvis_speedtest): measuring, data cap, wording, history,…, test_answer_in_the_unit_asked_for_and_the_default_setting() (+5 more)
 
 ### Community 201 - "jarvis_weather.py"
 Cohesion: 0.50
@@ -1090,8 +1087,8 @@ Cohesion: 0.16
 Nodes (9): ndarray, False once loading the model has failed (missing package/model): the feature…, Forget buffered audio and the model's rolling state (call while Jarvis is…, The last ~RECENT_S of mic blocks (oldest first), for seeding the capture., One chunk of mono float audio at `sample_rate` -> `n_out` int16 samples at 16…, feed() every mic block (mono float32) while nothing else is using the mic; True…, async_load: load the model on a background thread and ignore blocks until it is…, resample_block() (+1 more)
 
 ### Community 203 - "_text"
-Cohesion: 0.19
-Nodes (22): _call(), Fake model: returns the scripted Anthropic-shaped responses in order; records…, Audit 2026-09-29: every CALLED tool backed a claim, even one that failed ("MCP…, Found live 2026-10-02: hourly gmail_watch searched is:unread and re-announced…, _script(), test_a_failed_scheduled_run_does_not_mark_mail_as_checked(), test_an_attached_picture_keeps_its_real_type(), test_audit2_a_failed_send_never_backs_an_i_sent_it_claim() (+14 more)
+Cohesion: 0.20
+Nodes (21): _call(), Fake model: returns the scripted Anthropic-shaped responses in order; records…, Audit 2026-09-29: every CALLED tool backed a claim, even one that failed ("MCP…, Found live 2026-10-02: hourly gmail_watch searched is:unread and re-announced…, _script(), test_an_attached_picture_keeps_its_real_type(), test_audit2_a_failed_send_never_backs_an_i_sent_it_claim(), test_audit_find_tools_is_capped_per_command() (+13 more)
 
 ### Community 204 - "collect_debug.py"
 Cohesion: 0.28
@@ -1101,21 +1098,21 @@ Nodes (15): build_eval_drafts(), build_report(), _db_path(), _env_secret_values(
 Cohesion: 0.23
 Nodes (13): available(), base_url(), call(), _default_http(), from_response(), host_problem(), Request, Local brain through Ollama (smarter batch, 2026-09-28): the private option.… (+5 more)
 
-### Community 206 - "record"
-Cohesion: 0.22
-Nodes (12): _ensure(), Connection, Store a scan; returns the devices never seen before on this network (empty on…, record(), test_no_join_announcements_after_a_scanning_gap(), Network devices card (jarvis_netscan): parsing, new-device detection, route.…, _result(), _scan_with() (+4 more)
+### Community 206 - "fixture"
+Cohesion: 0.40
+Nodes (5): client(), dashboard(), db_path(), _private_environ(), fixture
 
 ### Community 207 - "jarvis_tool_router.py"
 Cohesion: 0.19
 Nodes (12): find_more(), index_for(), Tool narrowing (2026-09-28): send the model only the tools a command is likely…, The core tools, then the best BM25 matches for the command (plus a little…, For a find_tools call: the new tools to add, and the text returned to the model., BM25 over tool text. Built once per distinct tool list (cheap: ~200 tools, <10…, select(), _tokens() (+4 more)
 
-### Community 209 - "fixture"
-Cohesion: 0.29
-Nodes (7): A(), client(), D(), fixture, S(), test_b_tool_and_dashboard_routes(), dash()
+### Community 209 - "O"
+Cohesion: 0.22
+Nodes (9): A(), client(), D(), O(), fixture, S(), test_b_tool_and_dashboard_routes(), dash() (+1 more)
 
-### Community 210 - "make_license.py"
-Cohesion: 0.67
-Nodes (6): init(), _load_private(), main(), make(), _public_b64(), Make Jarvis4U Pro license keys (seller only; this file is never published).…
+### Community 210 - "sign"
+Cohesion: 0.38
+Nodes (9): Used by tools/make_license.py only (needs the private key object)., sign(), test_student_pack_loads_through_the_normal_loader(), init(), _load_private(), main(), make(), _public_b64() (+1 more)
 
 ### Community 211 - "Jarvis4U"
 Cohesion: 0.15
@@ -1145,10 +1142,6 @@ Nodes (10): _default_model_factory(), enabled(), _env_float(), Optional "Hey Jar
 Cohesion: 0.09
 Nodes (21): Jarvis4U Pro roadmap (private), Later (not planned yet), Phase 10 - Creator / Seller pack, pack 1.9.0, Phase 11 - Smart Scheduler pack, pack 1.10.0, Phase 12 - Gamer pack, pack 1.11.0, Phase 13 - More themes, pack 1.12.0, Phase 14 - Pro dashboard widgets (engine change, free code path + pack data), pack 2.0.0, Phase 1 - Developer pack (skills only) (+13 more)
 
-### Community 218 - "disable"
-Cohesion: 0.27
-Nodes (12): _connect(), disable(), Connection, save_digest(), _set_state(), set_system_action_handler(), set_wake_digest_handler(), A mode started by the previous version (volume_steps only) must still end… (+4 more)
-
 ### Community 219 - "jarvis_eval.py"
 Cohesion: 0.29
 Nodes (8): main(), _matches(), pick_rotating(), Eval runner (smarter batch, 2026-09-28): replays commands that went wrong in…, `limit` cases starting at a point that moves with the calendar day, so a…, The reasons this case failed (empty = passed). Pure, so it is unit-tested…, run(), score()
@@ -1166,8 +1159,8 @@ Cohesion: 0.40
 Nodes (3): ForegroundTracker, loop(), Remembers the last real app window the user was in (skips Jarvis's own…
 
 ### Community 223 - "stats_summary"
-Cohesion: 0.21
-Nodes (12): _hhmm(), _period_stats(), Stats over the `days` calendar days ending at end_day (inclusive): tracked…, Read-only sleep trends for the dashboard, from sleep_log alone (no new tables).…, stats_summary(), status(), _log_kind(), test_nap_is_chosen_by_the_user_not_the_clock() (+4 more)
+Cohesion: 0.18
+Nodes (18): _connect(), Connection, Read-only sleep trends for the dashboard, from sleep_log alone (no new tables).…, save_digest(), set_wake_digest_handler(), stats_summary(), status(), _log() (+10 more)
 
 ### Community 224 - "jarvis_cascades.py"
 Cohesion: 0.29
@@ -1205,17 +1198,13 @@ Nodes (3): Conventions, Rules that must never be weakened, Working on Jarvis4U
 Cohesion: 0.50
 Nodes (4): auto(), jarvis(), fixture, test_audit_eval_keeps_prompt_cache_but_never_runs_tools()
 
-### Community 244 - "_grab_selection"
-Cohesion: 0.22
-Nodes (10): _clipboard_has_non_text(), _grab_selection(), True when the clipboard holds an image/files and no text: Jarvis can't put that…, Copies the focused app's selection into holder["text"], then puts the user's…, _with_selection(), _fake_selection_env(), test_selected_text_never_picks_a_fast_path(), test_selection_is_grabbed_attached_and_clipboard_restored() (+2 more)
-
 ### Community 245 - "holding_reminders"
 Cohesion: 0.33
 Nodes (6): holding_reminders(), True while due reminders must be held (not spoken, no toast)., True after the owner said "no": reminders speak even with a stranger in view., reminders_allowed(), Should a due reminder be held (no speech, no toast) right now? The owner's…, _reminders_held_now()
 
-### Community 246 - "open_cursor_window"
-Cohesion: 0.24
-Nodes (9): _cursor_executable(), _cursor_foreground_hwnd_win32(), _cursor_largest_main_hwnd_win32(), _cursor_send_f11_fullscreen_win32(), _focus_existing_cursor_window_win32(), open_cursor_window(), Largest top-level Cursor.exe window (visible or minimized)., F11 toggles Zen/fullscreen in Cursor (Electron). (+1 more)
+### Community 246 - "user_is_actively_working"
+Cohesion: 0.50
+Nodes (4): _get_idle_seconds(), Seconds since the last system-wide keyboard/mouse input, via GetLastInputInfo.…, True if the user touched the keyboard/mouse within ACTIVE_IDLE_THRESHOLD_S…, user_is_actively_working()
 
 ### Community 247 - "schedule"
 Cohesion: 0.50
@@ -1225,72 +1214,36 @@ Nodes (4): -> (job id or None, message). A near-identical pending job due within
 Cohesion: 0.28
 Nodes (8): classify(), enabled(), _pct(), Battery-aware background work (2026-09-27, feature batch A5). On battery (not…, Updates the stored level; returns a line to announce, or None., transition(), test_battery_levels_and_once_per_crossing(), test_battery_hysteresis()
 
-### Community 251 - "run"
-Cohesion: 0.22
-Nodes (8): max_mb(), _ping(), One full test. Never raises: {"ok": False, "error": ...} when something failed., (median ms, jitter ms, server location code). Raises when the server can't be…, run(), test_one_network_hiccup_is_retried(), flaky(), test_unreachable_server_is_a_plain_answer_not_a_crash()
-
-### Community 252 - "_memory_db_connect"
-Cohesion: 0.04
-Nodes (60): _append_history(), _apply_memory_db_pragmas(), _background_tasks_dir(), build_system_prompt(), _check_background_tasks(), _count_running_background_tasks(), _create_memory_tables(), _dashboard_kill_background_task() (+52 more)
-
 ### Community 253 - "test_phone_message.py"
 Cohesion: 0.25
 Nodes (3): J(), fixture, Messages to the owner's own phone (2026-10-03, debug report): "send a random…
 
-### Community 254 - "test_diagnose_names_the_limit_that_was_hit"
-Cohesion: 0.25
-Nodes (4): test_diagnose_names_the_limit_that_was_hit(), fake_urlopen(), test_diagnose_reports_a_key_that_differs_between_windows_and_env_file(), boom()
-
-### Community 255 - "_gemini_stream_round"
-Cohesion: 0.32
-Nodes (8): _speak_ready(), _extract_ready_sentences(), _on_done(), _on_text(), _say(), _gemini_stream_round(), Splits `buf` on sentence boundaries the same way _split_sentences does (same…, One Gemini round over streamGenerateContent: leading text (before any tool…
-
-### Community 256 - "sign"
-Cohesion: 0.33
-Nodes (6): Used by tools/make_license.py only (needs the private key object)., sign(), test_student_pack_loads_through_the_normal_loader(), jarvis(), pro_on(), fixture
-
-### Community 257 - "_scheduler_tick"
-Cohesion: 0.33
-Nodes (6): Called once at startup, before the scheduler starts. A row still 'running' from…, One scheduler pass. Each step is isolated (audit 2026-09-29): a step that…, _recover_interrupted_background_tasks(), _scheduler_loop(), _scheduler_tick(), _start_scheduler()
+### Community 254 - "diagnose"
+Cohesion: 0.12
+Nodes (13): diagnose(), _env_file_values(), fallback_model_name(), _mask(), Path, JARVIS_GEMINI_FALLBACK_MODEL: tried once when the main model is overloaded (and…, KEY=value lines of a .env file (no quotes handling beyond stripping); never…, Checks, step by step, everything between Jarvis and Gemini and prints what it… (+5 more)
 
 ### Community 259 - "_mail_answer"
 Cohesion: 0.67
 Nodes (3): _mail_answer(), test_a_clean_meeting_still_acts_at_high_confidence_and_structured_meeting_at_normal_floor(), test_wp1_subject_only_is_extracted_at_lower_confidence_and_logged()
 
-### Community 260 - "cap_text"
-Cohesion: 0.40
-Nodes (5): cap_text(), mark_all_waiting(), mark_submission(), Homework app: AI-mark one handed-in homework (short answer out of 10 and task…, Homework app: AI-mark every handed-in homework that has no marks yet (at most…
-
 ### Community 261 - "ensure_pairing"
 Cohesion: 0.50
 Nodes (4): ensure_pairing(), Path, Returns the pairing key, creating browser_extension/pairing.json if it is…, test_pairing_file_is_made_once_and_kept()
 
-### Community 262 - "validate_widget"
-Cohesion: 0.50
-Nodes (4): (clean spec, "") or (None, reason). Only these keys are kept; everything else…, validate_widget(), test_home_widgets_are_valid_specs_with_unique_ids(), test_specs_keep_only_known_types_sources_and_plain_text()
-
-### Community 264 - "_session_locked"
-Cohesion: 0.67
-Nodes (3): True while the Windows lock screen (secure desktop) is up: the camera is off-…, _session_locked(), test_real_session_lock_probe_returns_a_bool_and_never_raises()
-
-### Community 265 - "test_every_theme_keeps_text_readable_and_never_uses_a_red_accent"
-Cohesion: 1.00
-Nodes (3): test_every_theme_keeps_text_readable_and_never_uses_a_red_accent(), lum(), ratio()
-
 ## Knowledge Gaps
-- **247 isolated node(s):** `session-start.sh script`, `enc`, `manifest_version`, `name`, `version` (+242 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2034 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **21 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **248 isolated node(s):** `session-start.sh script`, `enc`, `manifest_version`, `name`, `version` (+243 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2045 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **24 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `_execute_tool_impl()` connect `jarvis.py` to `Path`, `jarvis_window_control.py`, `jarvis_browser_tabs.py`, `FileWatcher`, `_claude_text`, `_deadline_context`, `jarvis_memory_enhance.py`, `datetime`, `queue_or_deliver_notification`, `jarvis_workflow.py`, `jarvis_dynamic_tools.py`, `jarvis_proactive.py`, `jarvis_selfaware.py`, `download_image`, `jarvis_autonomy_organise.py`, `jarvis_speedtest.py`, `jarvis_tech_understanding.py`, `test_restart.py`, `jarvis_browsers.py`, `poll_once`, `_iso`, `check`, `jarvis_sleep_mode.py`, `jarvis_billing.py`, `enabled`, `jarvis_weather.py`, `jarvis_autonomy_skills.py`, `test_face.py`, `enable`, `_collapse_paths_for_speech`, `disable`, `test_dev_features.py`, `stats_summary`, `main`, `list_jobs`, `_log_action_audit`, `jarvis_guest_reminders.py`, `jarvis_task_scheduler.py`, `run_agent_loop`, `test_guest_reminders.py`, `_memory_db_connect`?**
-  _High betweenness centrality (0.035) - this node is a cross-community bridge._
-- **Why does `j()` connect `j` to `sign`, `test_feature_batch_a.py`, `test_sleep.py`, `test_gemini.py`, `test_memory_edit.py`, `test_reliability.py`, `test_chief.py`, `jarvis_selfaware.py`, `test_sleep_mail.py`, `test_feature_batch_audit.py`, `jarvis`, `test_timers.py`, `test_executive.py`, `test_feature_batch_c.py`, `test_voice_usage.py`, `test_safe_mode.py`, `test_feature_batch_b.py`, `test_homework.py`, `test_audit_batch.py`, `env_int`, `_FakeProc`, `test_hardening.py`, `test_selfdata.py`, `test_browser_tabs.py`, `test_license.py`, `jarvis`, `test_self_events.py`, `CircuitBreaker`, `test_guest_reminders.py`, `test_speed_gemini.py`, `test_phone_message.py`?**
-  _High betweenness centrality (0.031) - this node is a cross-community bridge._
-- **Why does `call()` connect `call` to `test_gemini.py`, `run_agent_loop`, `_call_model`, `attempt_timeout_s`, `jarvis_gemini.py`, `_claude_stream_first_round`?**
-  _High betweenness centrality (0.018) - this node is a cross-community bridge._
+- **Why does `_execute_tool_impl()` connect `jarvis.py` to `Path`, `jarvis_window_control.py`, `jarvis_browser_tabs.py`, `FileWatcher`, `_claude_request`, `execute_mcp_tool`, `jarvis_memory_enhance.py`, `_deterministic_intent_reply`, `jarvis_workflow.py`, `jarvis_dynamic_tools.py`, `jarvis_proactive.py`, `jarvis_selfaware.py`, `create_reminder`, `_rows`, `download_image`, `jarvis_autonomy_organise.py`, `notify`, `jarvis_speedtest.py`, `jarvis_tech_understanding.py`, `test_restart.py`, `jarvis_browsers.py`, `poll_once`, `check`, `jarvis_sleep_mode.py`, `jarvis_billing.py`, `test_face.py`, `jarvis_weather.py`, `jarvis_face.py`, `jarvis_autonomy_skills.py`, `enroll`, `enable`, `_handle_text_command_impl`, `test_dev_features.py`, `stats_summary`, `run_agent_loop`, `list_jobs`, `_memory_db_connect`, `jarvis_task_scheduler.py`, `speak_text`, `test_guest_reminders.py`, `jarvis_guest_reminders.py`?**
+  _High betweenness centrality (0.041) - this node is a cross-community bridge._
+- **Why does `j()` connect `j` to `test_feature_batch_a.py`, `test_sleep.py`, `test_gemini.py`, `test_routines.py`, `test_memory_edit.py`, `test_reliability.py`, `test_chief.py`, `jarvis_selfaware.py`, `test_sleep_mail.py`, `test_feature_batch_audit.py`, `test_timers.py`, `test_feature_batch_c.py`, `test_voice_usage.py`, `test_safe_mode.py`, `test_feature_batch_b.py`, `test_homework.py`, `jarvis_deferred.py`, `test_audit_batch.py`, `env_int`, `_FakeProc`, `test_hardening.py`, `test_selfdata.py`, `test_browser_tabs.py`, `test_license.py`, `test_face.py`, `compute`, `jarvis`, `test_self_events.py`, `CircuitBreaker`, `test_guest_reminders.py`, `test_speed_gemini.py`, `test_phone_message.py`?**
+  _High betweenness centrality (0.025) - this node is a cross-community bridge._
+- **Why does `neutralize_injection()` connect `neutralize_injection` to `jarvis_browser_tabs.py`, `test_selfdata.py`, `_memory_db_connect`, `homework_mcp_server.py`, `jarvis_daily_plan.py`, `queue_or_deliver_notification`, `jarvis_lessons.py`, `timedelta`, `main`, `homework_marker.py`, `jarvis_selfaware.py`, `jarvis.py`, `_iso`, `test_sleep_mail.py`, `jarvis_autonomy.py`, `mark_submission`?**
+  _High betweenness centrality (0.014) - this node is a cross-community bridge._
 - **Are the 3 inferred relationships involving `_execute_tool_impl()` (e.g. with `_launch_focus_app()` and `_memory_db_connect()`) actually correct?**
   _`_execute_tool_impl()` has 3 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 121 inferred relationships involving `timedelta` (e.g. with `due()` and `_agents_tick()`) actually correct?**
@@ -1298,4 +1251,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Are the 35 inferred relationships involving `_memory_db_connect()` (e.g. with `_app_shortcut_route()` and `_app_shortcuts_tool()`) actually correct?**
   _`_memory_db_connect()` has 35 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `session-start.sh script`, `enc`, `manifest_version` to the rest of the system?**
-  _247 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _248 weakly-connected nodes found - possible documentation gaps or missing edges._
