@@ -90,6 +90,14 @@ SETTINGS: list[dict] = [
     {"key": "JARVIS_SAFE_MODE", "label": "Safe mode", "kind": "bool", "default": "0",
      "help": "Pauses autonomy, turns off the follow-up window and holds non-urgent announcements. "
              "Commands and the confirmation step work as normal.", "live": "env"},
+    {"key": "JARVIS_MAIL_AUTOREPLY", "label": "Answer emails automatically", "kind": "bool", "default": "1",
+     "help": "Replies to new emails from your calendar and memory, and SENDS them. People you know (an address in "
+             "memory, or anyone you've emailed) may get anything from memory and the calendar; strangers get a polite "
+             "reply with nothing personal. Never newsletters/no-reply mail or threads you already answered; 3 replies per "
+             "sender and 20 in all per day; never accepts or promises anything. Replies show under \"what did I miss\".",
+     "live": "env"},
+    {"key": "JARVIS_MAIL_AUTOREPLY_MIN", "label": "Check mail to answer every (minutes)", "kind": "number", "default": "5",
+     "help": "How often new mail is checked for an automatic reply (minimum 2).", "live": "env"},
     {"key": "JARVIS_LEARN_FROM_SPEECH", "label": "Learn facts from what you say", "kind": "bool", "default": "1",
      "help": "\"My exam score was 280\", \"I live in Paris\", \"call me Sam\": remembered at once, no AI call. "
              "Questions, commands and passing states (\"my phone is dead\") are ignored. See and edit them on the Memory page.",

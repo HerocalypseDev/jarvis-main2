@@ -1808,7 +1808,8 @@ row there each phase rather than only stating the total in chat.
 | 144 (assistant overhaul phase A: skills index instead of full skill text, only related history + stay on the newest message, live speech-to-text for hands-free commands; skills tool (list/show/off/on/delete) after "cancel my billing monitoring" found nothing, billing skill removed; 9 new tests) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
 | 145 (assistant overhaul phase B: quiet gate, "what did I miss" inbox + intent + Home card, scheduled skills silent unless announce/URGENT, no-old-topic wording; 13 new tests, 7 old tests pinned to the old mode, headless card check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 146 (assistant overhaul phase C: related reminders/jobs/tasks/old conversations every request, calendar for time/plans/people with a 3.5 s cap + cache, mail hint, instant fact learning from the owner's words; 31 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
-| **Running total (final)** | | **~4399 min** | **~$292.25–$410.85** |
+| 147 (assistant overhaul phase D: email auto-replies from memory + calendar, known vs stranger split, automated/loop/limit guards, code check on what a reply may contain, public default off; 18 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
+| **Running total (final)** | | **~4444 min** | **~$295.85–$415.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2526,6 +2527,28 @@ anyone the owner has emailed), strangers get a polite reply with nothing persona
   words, or what the model saved in the last 3 minutes, is skipped (a different number is never "the same").
   `JARVIS_LEARN_FROM_SPEECH` (default on, Settings). The idle-session extraction (autonomy) still runs for subtler facts.
   Not verified live on the PC.
+- **Phase D: email auto-replies** (`jarvis_mail_reply.py`, tests `test_mail_reply.py`, 18). **Owner's decisions
+  (2026-10-03): replies are SENT automatically, to anyone; personal facts only to people Jarvis knows (an address anywhere
+  in memory, or anyone the owner has emailed: Gmail `in:sent to:<addr>`, cached a day in `mail_contacts`); strangers get a
+  polite reply with nothing personal.** Scheduler step "mail auto-reply" -> single-flight `_mail_autoreply_cycle` every
+  `JARVIS_MAIL_AUTOREPLY_MIN` (5, min 2) when `JARVIS_MAIL_AUTOREPLY` is on (private default on; the public export swaps
+  it to off via DEFAULTS) and the Gmail search/read/send tools are connected; paused in safe mode and with
+  `autonomy.hard_disabled()`. One model call per message (`_sleep_mail_claude`, the active brain) returning JSON
+  reply_needed/reply/needs_owner_today/summary. Known senders' prompt carries the profile + newest facts + relevant facts
+  and 14 days of calendar; a stranger's prompt (and any message with injection-like text, even from a known address)
+  carries none. Rules to keep: only mail after the feature's first run (`mail_autoreply_state.since`); never own
+  addresses, no-reply/automated senders (`_AUTOMATED_SENDER_RE`: noreply, notifications, newsletter, info, support,
+  billing, security...), auto-reply subjects, "unsubscribe" mail or our own signature (`SIG_MARK`: no auto-responder
+  loops); never when the owner already sent the sender something after that message; skip Gmail promotions/social/
+  updates/forums; never a message Sleep Mode's family replies handled, and family senders are left to Sleep Mode while it
+  is on; 3 replies per sender and 20 in all per day; code check `safe_reply`: nothing secret-shaped (password/PIN/OTP +
+  digits) to anyone, no phone numbers or other addresses to a stranger; the reply says it is Jarvis replying
+  automatically and never accepts/books/promises (prompt). A failed read is retried next cycle, everything else is handled
+  once (`mail_autoreply_handled`). Every send goes to the "what did I miss" inbox ("I replied to X about ...") and the
+  audit trail (`mail_autoreply`); `needs_owner_today` is spoken (`important`). Toolbox/dashboard_data page
+  `mail_autoreply` lists the replies. Data exposure: message bodies (and, for known senders, memory + calendar) go to the
+  active brain. Residual: the prompt-level "nothing personal"/"don't promise" rules; a forged From address of a known
+  person gets the known-person reply (injection text alone downgrades it). Not verified live on the PC (no real send).
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

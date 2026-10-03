@@ -132,6 +132,7 @@ import jarvis_browser_tabs as browser_tabs
 import jarvis_context as reqctx
 import jarvis_missed as missed
 import jarvis_quickfacts as quickfacts
+import jarvis_mail_reply as mail_reply
 
 settings.JARVIS_MODULE = sys.modules[__name__]
 
@@ -6202,6 +6203,68 @@ _single_flight_running: set[str] = set()
 _single_flight_lock = threading.Lock()
 
 
+# --- Email auto-replies (2026-10-03, jarvis_mail_reply): answers mail from the calendar and memory, sent automatically.
+# Known people (an address in memory, or anyone the owner has emailed) may get anything from memory and the calendar;
+# strangers get a polite reply with nothing personal. Paused in safe mode / when autonomy is hard-disabled.
+_mail_reply_state: dict = {"last": 0.0}
+_mail_reply_store: mail_reply.Store | None = None
+
+
+def _mail_reply_db() -> mail_reply.Store:
+    global _mail_reply_store
+    if _mail_reply_store is None:
+        _mail_reply_store = mail_reply.Store(_memory_db_connect, _memory_db_lock)
+    return _mail_reply_store
+
+
+def _mail_autoreply_tick(now: datetime) -> None:
+    if not mail_reply.enabled() or safe_mode_on() or autonomy.hard_disabled():
+        return
+    if not {"mcp_gmail_search_emails", "mcp_gmail_read_email", "mcp_gmail_send_email"} <= set(_mcp_tool_index):
+        return
+    if time.monotonic() - _mail_reply_state["last"] < mail_reply.interval_min() * 60:
+        return
+    _mail_reply_state["last"] = time.monotonic()
+    _run_single_flight("mail-autoreply", _mail_autoreply_cycle, now)
+
+
+def _memory_email_addresses() -> set[str]:
+    out: set[str] = set()
+    for (content,) in _related_rows("SELECT content FROM memory_facts WHERE superseded_at IS NULL"):
+        out.update(a.lower() for a in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", str(content)))
+    return out
+
+
+def _mail_reply_facts(query: str) -> str:
+    return (get_user_profile_context() + get_active_facts_context() + _relevant_memory_line(query)).strip()
+
+
+def _mail_reply_calendar() -> str | None:
+    now = datetime.now()
+    raw = _calendar_events_raw(now, now + timedelta(days=14))
+    lines = reqctx.calendar_lines(raw, now, now + timedelta(days=14), limit=25) if raw else None
+    if lines is None:
+        return None
+    return "\n".join(lines) or "nothing booked"
+
+
+def _mail_reply_record(text: str) -> None:
+    _add_missed(text, "mail")
+    if text.startswith("I replied to"):
+        _log_action_audit("mail_autoreply", {"kind": "reply"}, "(mail auto-reply)", text)
+
+
+def _mail_autoreply_cycle(now: datetime) -> dict:
+    own = sleep_mail.own_addresses()
+    skip_senders = set(sleep_mail.load_family()) if sleep_mode.is_active() else set()  # Sleep Mode answers family
+    skip_ids = {r[0] for r in _related_rows("SELECT message_id FROM sleep_mail_handled WHERE kind='family'")}
+    return mail_reply.run_cycle(
+        store=_mail_reply_db(), mcp=_sleep_mail_mcp, claude=_sleep_mail_claude,
+        notify=lambda text: queue_or_deliver_notification(text, important=True), record=_mail_reply_record,
+        now=now, own=own, memory_addresses=_memory_email_addresses() - own, skip_senders=skip_senders,
+        facts_text=_mail_reply_facts, calendar_text=_mail_reply_calendar, skip_ids=skip_ids)
+
+
 def _run_single_flight(name: str, fn, *args) -> bool:
     """Runs fn(*args) on a daemon thread unless a job with this name is still running. False = skipped."""
     with _single_flight_lock:
@@ -6232,6 +6295,7 @@ def _scheduler_steps(now: datetime) -> list:
         ("task queue", lambda n: _run_single_flight(
             "task-queue", task_scheduler.tick, n, _run_queued_task, queue_or_deliver_notification), (now,)),
         ("sleep mail", _sleep_mail_tick, (now,)),
+        ("mail auto-reply", _mail_autoreply_tick, (now,)),
         ("focus", lambda: focus_mode.tick(_launch_focus_app, queue_or_deliver_notification), ()),
         ("roblox", lambda: roblox.tick(queue_or_deliver_notification), ()),
         ("battery", _battery_tick, ()),
@@ -7372,6 +7436,15 @@ def _feature_missed(action: str, payload: dict):
         n = missed.mark_seen(_memory_db_connect, _memory_db_lock)
         return {"result": f"Marked {n} as read."}
     return None
+
+
+@_feature("mail_autoreply")
+def _feature_mail_autoreply(action: str, payload: dict):
+    """Email auto-replies: on/off and the replies Jarvis sent (read-only)."""
+    if action != "get":
+        return None
+    return {"enabled": mail_reply.enabled(), "interval_min": mail_reply.interval_min(),
+            "replies": _mail_reply_db().recent(20)}
 
 
 @_feature("macros")
