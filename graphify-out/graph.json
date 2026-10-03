@@ -62230,7 +62230,7 @@
       "node_kind": "heading",
       "norm_label": "hand-off guard (2026-09-25)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2621"
+      "source_location": "L2625"
     },
     {
       "id": "claude_homework_app_jarvis_as_teacher_of_learnai_2026_10_01_private",
@@ -62254,7 +62254,7 @@
       "node_kind": "heading",
       "norm_label": "hourly mail check repeating itself (2026-10-02, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2597"
+      "source_location": "L2601"
     },
     {
       "id": "claude_image_download_2026_09_19",
@@ -62590,7 +62590,7 @@
       "node_kind": "heading",
       "norm_label": "step limit + reading documents (2026-10-02, found live)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2607"
+      "source_location": "L2611"
     },
     {
       "id": "claude_text_to_speech_fish_audio_primary_piper_fallback_2026_09_18",
@@ -152915,7 +152915,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2597",
+      "source_location": "L2601",
       "weight": 1.0
     },
     {
@@ -152926,7 +152926,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2607",
+      "source_location": "L2611",
       "weight": 1.0
     },
     {
@@ -152937,7 +152937,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2621",
+      "source_location": "L2625",
       "weight": 1.0
     },
     {
@@ -217496,5 +217496,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "4549608b0f2b9f5b556625fe46143438973d49be"
+  "built_at_commit": "b245956de89be192c4f74c985b867172b1055806"
 }
