@@ -1809,7 +1809,8 @@ row there each phase rather than only stating the total in chat.
 | 145 (assistant overhaul phase B: quiet gate, "what did I miss" inbox + intent + Home card, scheduled skills silent unless announce/URGENT, no-old-topic wording; 13 new tests, 7 old tests pinned to the old mode, headless card check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 146 (assistant overhaul phase C: related reminders/jobs/tasks/old conversations every request, calendar for time/plans/people with a 3.5 s cap + cache, mail hint, instant fact learning from the owner's words; 31 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 147 (assistant overhaul phase D: email auto-replies from memory + calendar, known vs stranger split, automated/loop/limit guards, code check on what a reply may contain, public default off; 18 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
-| **Running total (final)** | | **~4444 min** | **~$295.85–$415.85** |
+| 148 (full audit: phone can't confirm catastrophic actions, email-started tasks can't read private stores, sender spoof fix, auto-reply dry-run/own-address/fact scope/double-reply, secret masking in inbox and prompt lines, learner limits, calendar back-off, conversation jobs speak, inbox fixes; 36 new tests) | Opus 5.5 | ~95 min | ~$7.50–$10.50 |
+| **Running total (final)** | | **~4539 min** | **~$303.35–$426.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2549,6 +2550,48 @@ anyone the owner has emailed), strangers get a polite reply with nothing persona
   `mail_autoreply` lists the replies. Data exposure: message bodies (and, for known senders, memory + calendar) go to the
   active brain. Residual: the prompt-level "nothing personal"/"don't promise" rules; a forged From address of a known
   person gets the known-person reply (injection text alone downgrades it). Not verified live on the PC (no real send).
+
+## Audit of the assistant overhaul + whole codebase (2026-10-03)
+
+Owner's choices for this audit: tighten risky-by-design items when cheap, publish as usual. Tests:
+`test_audit_assistant.py` (34), plus additions to `test_executive.py` and `test_guest_reminders.py`. Rules to keep:
+- **The phone never confirms a catastrophic action** (owner's invariant): a Telegram/ntfy "yes" leaves it staged and says
+  to confirm at the PC (push-to-talk yes) or the dashboard's Review -> Approve. This replaces the old phone-confirms
+  behaviour that `test_the_gate_still_works_normally_when_no_question_is_open` used to pin.
+- **Untrusted-origin runs** (autonomy agent runs, `[untrusted-origin]` tasks) also may not call `dashboard_data`,
+  `memory_search`, `recall_facts`, `quick_recall`, `semantic_recall`, `knowledge_graph`, the clipboard tools,
+  `self_report` or `lessons`: an email-started task could read private stores and mail them out (sending must stay
+  allowed for autonomy's email actions).
+- **Secrets**: `jarvis_untrusted.mask_secrets` (key/token shapes + values of secret-named env vars) is applied to
+  everything kept in the "what did I miss" inbox and to the related-context and action-log prompt lines. Tests build
+  fake keys at runtime (`"sk-" + "ant-..."`), or the export privacy scan fails.
+- **Email sender** = the address in angle brackets (`sleep_mail.sender_address`); a display name holding another
+  address (`display_name_spoofs`) is treated as a stranger. The parser change also fixes Sleep Mode's family replies.
+- **Auto-reply**: honours autonomy dry-run (records "Dry run: I would have replied", never marks the message handled, so
+  leaving dry-run answers it); learns the owner's own address from Sent (`mailbox_addresses`, a note-to-self got a reply
+  when no address was saved); known-person prompts carry only facts matching the email (`relevant_memory_line(...,
+  skip_newest=0)`), not the newest 40; every outcome is audited (`mail_autoreply` kind reply/dry_run/not_sent); the
+  spoken "needs you today" summary is sanitised. With the auto-reply on, autonomy no longer turns incoming mail into its own
+  email action (`_route`: "the email auto-reply answers incoming mail"; two answers to one email before).
+  A real auto-reply of the last 24 h backs "yes, I replied" when the user asks about it (was "corrected" as fake).
+- **Inbox**: "what did I miss" marks only the items it read out (older ones are read next time); "clear what I missed"
+  (intent `missed_clear`); "any news" is no longer the inbox (headline requests); the wake-up recap says how many updates
+  waited in the inbox; Focus Mode switching itself on is said (`important`).
+- **Fact learner**: never secrets or money details (`_SENSITIVE_RE`: password, pin, card, account, bank, otp, code,
+  key...) or values with key shapes; never from a follow-up-window capture (TV; a wake-word capture is fine,
+  `_command_ctx.wake`); every learned fact is audited (`learned_fact`).
+- **Main-memory calendar**: only words about the owner's plans (no more "when", "what time", "date", "week"); wait
+  capped at 2 s; after a failed fetch no retry for 5 min (a broken calendar used to add the wait to every such request).
+  Related-context lookup measured at ~70 ms with 30k stored turns.
+- **Jobs**: a job from the user's own words (origin `conversation`) says its result like a user-scheduled one (it finished
+  in silence). `_open_uri` itself refuses non-web targets (defence in depth).
+- Checked and fine: hands-free/wake "yes" never confirms; skip_confirmation only on the confirmed re-run and batch;
+  browser bridge handshake (timeouts, compare_digest, direction prefixes); no secret in Telegram/Gemini error logs; every
+  subprocess has a timeout (export tool aside); swallowed exceptions are all status helpers; quiet gate covers every
+  notification path (direct speech left: confirmed-action result, away-mode warning, face greeting, wake recap, spoken
+  autonomy log on request, guided breathing).
+- Residual: Gmail's own spam filtering is the only check on a forged From of a known address (only the inbox is read);
+  autonomy deadline "Heads up" nudges now wait in the inbox (owner: only very important things spoken); not verified live.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
