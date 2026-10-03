@@ -666,6 +666,7 @@ def quiet_jarvis(jarvis, monkeypatch):
 
 
 def test_stranger_in_view_holds_proactive_speech_but_not_urgent(quiet_jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_PROACTIVE_SPEECH", "all")  # the holds are tested with every update spoken
     j, spoken = quiet_jarvis
     monkeypatch.setattr(face, "group_safe", lambda now=None: True)
     j.queue_or_deliver_notification("You have new mail from the bank.")
@@ -677,6 +678,7 @@ def test_stranger_in_view_holds_proactive_speech_but_not_urgent(quiet_jarvis, mo
 
 
 def test_held_messages_wait_for_the_stranger_then_release(quiet_jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_PROACTIVE_SPEECH", "all")  # the holds are tested with every update spoken
     j, spoken = quiet_jarvis
     state = {"safe": True}
     monkeypatch.setattr(face, "group_safe", lambda now=None: state["safe"])

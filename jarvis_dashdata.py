@@ -23,6 +23,8 @@ _SECRET_KEY_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PIN|CHAT_ID|TOPI
 
 # What the numbers mean, so the model reads them right (the field names were made for the dashboard's code).
 NOTES = {
+    "missed": ("Things Jarvis noticed but did not say out loud (quiet assistant): items[].text, ts (unix time), kind, "
+               "seen_at (null = the user hasn't heard it yet). unseen = how many are still unread."),
     "voice": ("periods.<today|week|month|all_time>.tts = what Jarvis SPOKE: chars = every character spoken, billed_chars = "
               "characters actually sent to a speech engine (Deepgram/Fish/Piper), chars - billed_chars = characters served "
               "from the speech cache (saved), cached_events = phrases replayed from the cache. .stt = what the user SAID: "

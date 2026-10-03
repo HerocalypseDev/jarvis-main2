@@ -106,6 +106,7 @@ def jarvis(monkeypatch, tmp_path, db):
 
 
 def test_notifications_queued_in_sleep_are_flagged_and_skipped_by_flush(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_PROACTIVE_SPEECH", "all")  # the holds are tested with every update spoken
     spoken = []
     monkeypatch.setattr(jarvis, "_speak_shaped", spoken.append)
     monkeypatch.setattr(jarvis.sleep_mode, "should_suppress", lambda urgent, sender=None: True)

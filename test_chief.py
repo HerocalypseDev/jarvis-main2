@@ -81,6 +81,7 @@ def test_stop_talking_interrupts_and_says_nothing(jarvis, monkeypatch):
 
 
 def test_quiet_hours_were_removed_a_leftover_setting_holds_nothing(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_PROACTIVE_SPEECH", "all")  # the holds are tested with every update spoken
     # Removed 2026-09-28 at the user's request: a JARVIS_QUIET_HOURS left in .env must not queue anything.
     spoken = []
     monkeypatch.setenv("JARVIS_QUIET_HOURS", "00:00-23:59")

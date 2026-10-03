@@ -223,6 +223,7 @@ def test_notification_priority_learns_and_batches(db):
 
 
 def test_queue_gate_batches_and_digest_flushes(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_PROACTIVE_SPEECH", "all")  # the holds are tested with every update spoken
     monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "g.db"))
     import jarvis as j
     spoken = []

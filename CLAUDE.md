@@ -1806,7 +1806,8 @@ row there each phase rather than only stating the total in chat.
 | 142 (browser tabs: Jarvis Tabs extension for Opera GX/Firefox + paired localhost bridge, browser_tabs tool (list/read/summarize/switch/close/reopen/open), main-browser setting replacing Chrome, ask-first rule in CLAUDE.md; real extension script tested under Node; 13 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
 | 143 (debug report: "update time" macro did nothing and said Done: built-in update time (pull, restart only if it worked, says what changed), routines decide instant vs AI by themselves, steps checked at creation, argument errors count as failures, short results per step; Toolbox shows the mode; 27 new tests, headless Toolbox check) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
 | 144 (assistant overhaul phase A: skills index instead of full skill text, only related history + stay on the newest message, live speech-to-text for hands-free commands; skills tool (list/show/off/on/delete) after "cancel my billing monitoring" found nothing, billing skill removed; 9 new tests) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
-| **Running total (final)** | | **~4319 min** | **~$285.85–$401.85** |
+| 145 (assistant overhaul phase B: quiet gate, "what did I miss" inbox + intent + Home card, scheduled skills silent unless announce/URGENT, no-old-topic wording; 13 new tests, 7 old tests pinned to the old mode, headless card check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
+| **Running total (final)** | | **~4359 min** | **~$289.05–$406.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2490,6 +2491,23 @@ anyone the owner has emailed), strangers get a polite reply with nothing persona
   `skills/billing_watch.json` was deleted from the repo at the owner's request (it needed an Anthropic admin key personal
   accounts can't have, so it said "not set up" every night). Tests: `test_skills_tool.py` (4).
 - Not verified live on the PC: the hands-free stream with a real mic, and how much faster answers feel.
+- **Phase B: quiet** (tests: `test_quiet.py`, 13). `queue_or_deliver_notification` now speaks only when `urgent`,
+  `is_reminder`, `bypass_busy_gate` (things the user asked for) or the new `important=True`; everything else goes to the
+  **"what did I miss?" inbox** (`jarvis_missed.py`, table `missed_items`, 7 days / 300 rows, a repeat unseen message is
+  stored once). Setting `JARVIS_PROACTIVE_SPEECH` important (default) | all (old behaviour). Sleep's urgent recording, Focus/
+  Sleep/safe-mode/meeting/visitor holds are unchanged for what still speaks. Marked `important`: meeting heads-up, "I started
+  meeting notes" (recording: must be said), interrupted-plans notice, a task the user queued (not untrusted-origin), a
+  user-scheduled job's result or failure. Now silent (inbox): scheduled skills unless the skill JSON has `"announce": true`
+  (morning_briefing, homework_watch) or the reply starts with `URGENT:` (quiet runs are told so via `SKILL_QUIET_NOTE`;
+  the prefix is stripped and the line is spoken as urgent), health tips, doctor findings, Google re-sign-in, budget alert,
+  low battery (critical still urgent), network new/joined/left (the toast still shows; the owner asked for join/leave
+  announcements on 2026-09-30, set `all` to hear them again), autonomy notes, background agents, daily review, file watcher.
+  "What did I miss?" (intent `missed`: "did I miss anything", "anything new", "what's new", "catch me up", "any updates",
+  "what happened while I was away"; a bare "what happened?" still goes to the model) reads the unread ones (oldest first,
+  max 6, the rest counted) with no model call, not re-summarised, and marks them read. Home card "What you missed" + Mark
+  read (`@_feature("missed")`, also a `dashboard_data` page). The volatile prompt says how many are unread ("mention only if
+  asked"). No old topics: the action log and self-awareness lines now say "don't bring this up unless asked".
+  Headless check of the card at 1440/390 px. Not verified live on the PC.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

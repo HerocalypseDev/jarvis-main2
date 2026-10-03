@@ -22,6 +22,7 @@ def jarvis(monkeypatch, tmp_path):
 
 
 def test_safe_mode_pauses_autonomy_followup_and_proactive_speech(jarvis, tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_PROACTIVE_SPEECH", "all")  # the holds are tested with every update spoken
     spoken = []
     monkeypatch.setattr(jarvis, "_speak_shaped", lambda t: spoken.append(t))
     monkeypatch.setattr(jarvis.focus_mode, "should_suppress", lambda urgent: False)
