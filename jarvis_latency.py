@@ -128,6 +128,11 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     # light" don't match: the words must be about the internet/network/Wi-Fi connection.
     # "Hey, Jarvis. Perform a speed test." took the slow model route (2026-10-02 debug report): the greeting and
     # "perform" weren't covered.
+    # "Update time" (2026-10-03 debug report): git pull, then restart Jarvis, no model call. Whole utterance only.
+    ("update", re.compile(r"\A\s*(?:(?:hey|hi|ok|okay)[,.!]?\s+)?(?:jarvis[,.!]?\s*)?(?:it'?s\s+|its\s+)?(?:"
+                          r"update time|time (?:to|for an?) update|update yourself|update jarvis|update and restart"
+                          r"|(?:do a |run a )?(?:git )?pull and restart(?: yourself)?|pull the (?:latest|new) code and restart"
+                          r")(?:\s+now)?(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
     ("speedtest", re.compile(r"\A\s*(?:(?:hey|hi|ok|okay)[,.!]?\s+)?(?:jarvis[,.!]?\s*)?(?:please\s+|can you\s+|could you\s+)?(?:"
                              r"(?:run|do|start|perform|redo)\s+(?:a\s+|an\s+|the\s+|my\s+)?(?:quick\s+)?"
                              r"(?:(?:internet|network|wi-?fi|connection)\s+(?:speed\s*)?test|speed\s*test)"

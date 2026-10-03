@@ -1651,7 +1651,9 @@ need something not already shown there (e.g. older or superseded facts).
 Any skills below (under "User-defined skills") are pre-written procedures — follow them when they \
 match the request instead of improvising from scratch. When the user asks you to turn something \
 you just did into a routine, remember how to do something, or learn a new skill, call save_skill \
-so it's available in every future session too. Pass save_skill a "schedule" when the user wants \
+so it's available in every future session too. Anything the user wants started by SAYING a phrase ("when I say \
+X, do Y", "make a skill/macro for X") is made with the macros tool instead (create, with instructions and the exact \
+steps); it decides by itself whether it runs instantly or needs you. "Update time" is built in (pull + restart). Pass save_skill a "schedule" when the user wants \
 something to happen on its own — a daily briefing, a periodic check — instead of only when asked; \
 a scheduled skill runs automatically and speaks its result unprompted.
 
@@ -3186,17 +3188,23 @@ BATCH_TOOLS = [
     {
         "name": "macros",
         "description": (
-            "Voice macros: a trigger phrase that runs fixed tool calls instantly. action=list, run (name), "
-            "create (name, phrases: list of 2+ word phrases, steps: [{tool, input}] using existing tool "
-            "names and their exact inputs), delete/enable/disable (name), suggest (commands you keep repeating that "
-            "always do the same thing, worth a macro), accept (phrase: turn one suggestion into a macro). "
-            "Changing macros only works from the PC."
+            "The user's own routines triggered by a spoken phrase ('when I say X, do Y', 'make a skill/macro/"
+            "shortcut that...'). Use this, not save_skill, for anything started by a phrase. action=create: name, "
+            "phrases (2+ words each), instructions (what it should do, in plain words, always), and steps "
+            "[{tool, input}] with exact tool names and their real inputs whenever fixed tool calls can do it. Jarvis "
+            "decides by itself: fixed steps run instantly with no AI call; anything that needs thinking (summarise, "
+            "decide, write, 'tell me if') runs its instructions through the AI each time. Don't ask the user which. "
+            "Also: list, run (name), delete/enable/disable (name), suggest (commands repeated with the same result), "
+            "accept (phrase). 'update time' / 'update yourself' is built in (git pull + restart): don't make one. "
+            "Changing routines only works from the PC."
         ),
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "run", "create", "delete", "enable", "disable", "suggest",
                                                   "accept"]},
             "phrase": {"type": "string"},
             "name": {"type": "string"}, "phrases": {"type": "array", "items": {"type": "string"}},
+            "instructions": {"type": "string", "description": "What the routine does, in plain words."},
+            "description": {"type": "string"},
             "steps": {"type": "array", "items": {"type": "object"}}}, "required": ["action"]},
     },
     {
@@ -6631,7 +6639,17 @@ def _macros_tool(inp: dict) -> str:
     transcript = f"(macro tool) {inp.get('name') or ''}"
     return macros.handle_tool(_memory_db_connect, _memory_db_lock, inp, _macro_known_tools(), _attended(),
                               execute=lambda tool, i: _execute_tool(tool, i, transcript), staged=_looks_staged,
-                              safe_tools=_macro_suggest_tools(), already_fast=_already_fast_path)
+                              safe_tools=_macro_suggest_tools(), already_fast=_already_fast_path,
+                              check_step=_macro_step_problem, failed=_looks_failed)
+
+
+def _macro_step_problem(tool: str, inp: dict) -> str | None:
+    """Would this step run as written? Checked against the tool's real parameters when a routine is made."""
+    schema = _tool_schema(tool)
+    if not schema:
+        return None
+    _args, _notes, err = toolargs.check(tool, schema, dict(inp or {}))
+    return err
 
 
 def _macro_suggest_tools() -> set[str]:
@@ -6649,19 +6667,31 @@ def _already_fast_path(phrase: str) -> bool:
         return False
 
 
-def _macro_reply(transcript: str) -> str | None:
-    """A command that is exactly a macro's trigger phrase runs its steps with no LLM call.
-    None = no macro matched (normal routing continues)."""
+def _macro_route(transcript: str) -> tuple[str | None, dict | None]:
+    """(reply, routine) for a command that is exactly a macro's trigger phrase. An instant macro runs its steps with
+    no LLM call and returns its reply; an AI routine returns itself, so its instructions go through the agent loop."""
     try:
         m = macros.match(_memory_db_connect, _memory_db_lock, transcript, extra=_pack_macros())
     except Exception as e:
         log.warning("Macro lookup failed: %s", e)
-        return None
+        return None, None
     if m is None:
-        return None
-    log.info("Macro %r matched %r", m["name"], transcript)
+        return None, None
+    log.info("Macro %r (%s) matched %r", m["name"], m.get("mode") or "instant", transcript)
+    if m.get("mode") == "ai":
+        return None, m
     return macros.run(_memory_db_connect, _memory_db_lock, m,
-                      lambda tool, i: _execute_tool(tool, i, f"(macro {m['name']}) {transcript}"), _looks_staged)
+                      lambda tool, i: _execute_tool(tool, i, f"(macro {m['name']}) {transcript}"), _looks_staged,
+                      _looks_failed), None
+
+
+def _macro_reply(transcript: str) -> str | None:
+    return _macro_route(transcript)[0]
+
+
+def _routine_instruction(routine: dict, transcript: str) -> str:
+    return (f"{transcript}\n(That is the trigger phrase of the user's own routine {routine['name']!r}. Do what it says "
+            f"now, without asking: {routine.get('instructions') or routine['name']})")
 
 
 # A5: battery-aware background work. Read once per scheduler tick (psutil, ~free).
@@ -11548,7 +11578,8 @@ def _execute_tool_impl(
                 log.info("Tool arguments for %s repaired: %s", tool_name, "; ".join(arg_notes))
         blocked = None if arg_error else _untrusted_block(tool_name)
         if arg_error:
-            result = arg_error
+            # "Tool failed:" so every failure check sees it (a macro step with a missing parameter said "Done").
+            result = arg_error if arg_error.lower().startswith("tool failed") else f"Tool failed: {arg_error}"
         elif blocked:
             result = blocked
         elif tool_name.startswith("mcp_"):
@@ -13618,7 +13649,108 @@ def _volume_reply(transcript: str) -> str | None:
 # so it runs after the dashboard session has started (_SLOW_INTENTS) and speaks a lead-in first; the test waits for
 # that line to finish, because speech streaming in would compete with the test for the connection.
 SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
-_SLOW_INTENTS = {"speedtest"}
+_SLOW_INTENTS = {"speedtest", "update"}
+
+
+# "Update time" (2026-10-03 debug report: a self-made macro for it called a tool wrongly and said "Done" without doing
+# anything). Built in, no model call (owner's choices): git pull; only if it worked, restart Jarvis (not the PC); after
+# the restart, say what the update brought. The note survives the restart in update_note.json (gitignored).
+UPDATE_NOTE_FILE = Path(__file__).resolve().parent / "update_note.json"
+UPDATE_ANNOUNCEMENT = "Updating. I'll pull the latest code, then restart."
+UPDATE_NOTE_MAX_AGE_S = 15 * 60
+
+
+def _git(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
+    kw: dict = {"capture_output": True, "text": True, "timeout": timeout, "stdin": subprocess.DEVNULL}
+    if sys.platform == "win32":
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), *args], **kw)
+
+
+def _git_pull_problem(output: str) -> str:
+    low = (output or "").lower()
+    if "could not resolve host" in low or "unable to access" in low or "connection" in low or "timed out" in low:
+        return "I couldn't reach GitHub (is the internet on?)"
+    if "would be overwritten" in low or "untracked working tree files" in low:
+        files = [ln.strip() for ln in (output or "").splitlines() if ln.startswith(("\t", "        ")) and ln.strip()][:3]
+        return "some files on this PC were changed and the update would overwrite them" + (
+            f" ({', '.join(files)})" if files else "")
+    if "not possible to fast-forward" in low or "diverg" in low or "non-fast-forward" in low:
+        return "this PC has its own changes that aren't on GitHub, so the update can't simply be applied"
+    if "authentication" in low or "permission denied" in low or "could not read username" in low:
+        return "GitHub refused the sign-in"
+    first = next((ln.strip() for ln in (output or "").splitlines() if ln.strip()), "git pull failed")
+    return first[:160]
+
+
+def _update_and_restart_reply(transcript: str = "") -> str:
+    if _current_command_source() != "phone":
+        _start_announcement(UPDATE_ANNOUNCEMENT)
+        _await_ack(8.0)
+    keep = "I didn't restart, so I'm still running as before."
+    try:
+        before = _git("rev-parse", "HEAD").stdout.strip()
+        pull = _git("pull", "--ff-only", timeout=90)
+    except FileNotFoundError:
+        return f"Update failed: git isn't installed (or isn't on the PATH). {keep}"
+    except subprocess.TimeoutExpired:
+        return f"Update failed: git pull took longer than 90 seconds. {keep}"
+    if pull.returncode != 0:
+        why = _git_pull_problem(f"{pull.stderr}\n{pull.stdout}")
+        log.warning("Update: git pull failed: %s", (pull.stderr or pull.stdout or "").strip()[:400])
+        return f"Update failed: {why}. {keep}"
+    after = _git("rev-parse", "HEAD").stdout.strip()
+    subjects = []
+    if before and after and before != after:
+        subjects = [s for s in _git("log", "--format=%s", f"{before}..{after}").stdout.splitlines() if s.strip()]
+    try:
+        tmp = UPDATE_NOTE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"at": time.time(), "before": before, "after": after, "subjects": subjects[:20],
+                                   "count": len(subjects)}), encoding="utf-8")
+        os.replace(tmp, UPDATE_NOTE_FILE)
+    except OSError as e:
+        log.warning("Update: couldn't save the update note: %s", e)
+    result = _execute_tool("restart_jarvis", {}, transcript or "update time")
+    if not str(result).startswith("Restart scheduled"):
+        try:
+            UPDATE_NOTE_FILE.unlink()
+        except OSError:
+            pass
+        got = f"I pulled {len(subjects)} new change{'s' if len(subjects) != 1 else ''}" if subjects else "Already up to date"
+        return f"{got}, but I didn't restart: {result}"
+    if not subjects:
+        return "Already up to date, nothing new came in. Restarting anyway, back in about half a minute."
+    return (f"Pulled {len(subjects)} new change{'s' if len(subjects) != 1 else ''}. "
+            "Restarting now, back in about half a minute.")
+
+
+def _update_note_line() -> str | None:
+    """What to say once Jarvis is back from an "update time" restart (None if this start wasn't one)."""
+    try:
+        note = json.loads(UPDATE_NOTE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    try:
+        UPDATE_NOTE_FILE.unlink()
+    except OSError:
+        pass
+    if time.time() - float(note.get("at") or 0) > UPDATE_NOTE_MAX_AGE_S:
+        return None  # an old note (Jarvis was stopped instead): not news any more
+    subjects = [" ".join(str(s).split())[:90] for s in note.get("subjects") or [] if str(s).strip()]
+    if not subjects:
+        return "Restarted. Nothing new came in with that update."
+    more = int(note.get("count") or len(subjects)) - 3
+    return ("Updated and restarted. New: " + "; ".join(subjects[:3])
+            + (f"; and {more} more change{'s' if more != 1 else ''}." if more > 0 else "."))
+
+
+def _announce_update_note() -> None:
+    line = _update_note_line()
+    if line:
+        def _later():
+            time.sleep(6)  # let the voice and the rest of start-up get going first
+            queue_or_deliver_notification(line, bypass_busy_gate=True)
+        threading.Thread(target=_later, daemon=True, name="update-note").start()
 
 
 def _speed_test_reply(transcript: str = "") -> str:
@@ -13654,6 +13786,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return set_safe_mode(not off, _current_command_source())
     if intent == "self_check":
         return self_check_report()
+    if intent == "update":
+        return _update_and_restart_reply(transcript)
     if intent == "speedtest":
         return _speed_test_reply(transcript)
     if intent == "self_report":
@@ -13796,8 +13930,12 @@ def _handle_text_command_impl(
     shortcut_reply = None
     if not tagged and source in ("voice", "text"):  # at the PC only: never press keys from the phone
         shortcut_reply, transcript = _app_shortcut_route(transcript)
-    macro_reply = shortcut_reply if shortcut_reply is not None else (None if tagged else _macro_reply(transcript))
-    intent = "macro" if macro_reply is not None else ("complex" if tagged else latency.classify_intent(transcript))
+    routine = None
+    if shortcut_reply is not None or tagged:
+        macro_reply = shortcut_reply
+    else:
+        macro_reply, routine = _macro_route(transcript)
+    intent = "macro" if macro_reply is not None else ("complex" if tagged or routine else latency.classify_intent(transcript))
     slow_intent = macro_reply is None and intent in _SLOW_INTENTS  # answered locally, but only after the session starts
     deterministic_reply = (macro_reply if macro_reply is not None
                            else None if slow_intent else _deterministic_intent_reply(intent, transcript))
@@ -13806,7 +13944,8 @@ def _handle_text_command_impl(
             autonomy.note_user_undo()
         except Exception as e:
             log.debug("autonomy undo note failed: %s", e)
-    loop_transcript = (_undo_instruction(transcript) if intent == "undo" else None) or transcript
+    loop_transcript = ((_undo_instruction(transcript) if intent == "undo" else None)
+                       or (_routine_instruction(routine, transcript) if routine else None) or transcript)
     reduced_tools = (_reduced_tools_for_intent(intent, transcript)
                      if deterministic_reply is None and not slow_intent else None)
     intent_path = ("deterministic" if deterministic_reply is not None or slow_intent
@@ -14273,6 +14412,10 @@ def main() -> int:
         _start_browser_bridge()
     except Exception as e:
         log.warning("Browser tabs bridge not started: %s", e)
+    try:
+        _announce_update_note()
+    except Exception as e:
+        log.warning("Update note skipped: %s", e)
     threading.Thread(target=_restore_timers, daemon=True, name="restore-timers").start()
     _preload_piper_async()
     if stt_deepgram.DEEPGRAM_API_KEY:

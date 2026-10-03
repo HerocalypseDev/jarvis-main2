@@ -84,7 +84,7 @@ def test_dispatcher_repairs_quick_search_arguments_and_reports_bad_calls(jarvis,
     out = jarvis._execute_tool_impl("quick_search", {"name_query": "weird"}, "find weird")
     assert "weird.txt" in out and seen == ["weird"]
     out = jarvis._execute_tool_impl("quick_search", {}, "find something")
-    assert out.startswith("quick_search needs 'query'")
+    assert out.startswith("Tool failed: quick_search needs 'query'")
 
 
 # --- verify after acting -----------------------------------------------------------------------

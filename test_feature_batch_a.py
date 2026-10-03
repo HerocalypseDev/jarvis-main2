@@ -197,7 +197,7 @@ def test_macro_runs_through_execute_tool_without_llm(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "run_agent_loop", lambda *a, **k: pytest.fail("macro must not call the LLM"))
     macros.save(jarvis._memory_db_connect, jarvis._memory_db_lock, "work", ["start work mode"],
                 [{"tool": "open_app", "input": {"app": "vscode"}}], {"open_app"})
-    assert jarvis._macro_reply("start work mode") == "Done: work."
+    assert jarvis._macro_reply("start work mode") == "Done."  # "Opened." says nothing new
     assert calls == [("open_app", {"app": "vscode"})]
     assert jarvis._macro_reply("what's the weather") is None
 
