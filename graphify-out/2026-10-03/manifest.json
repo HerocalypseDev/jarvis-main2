@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1791021918.8757102,
-    "seen": 1791022148.1705205,
-    "ast_hash": "c0653afd985930f470718e857cc06b03",
+    "mtime": 1791058390.665534,
+    "seen": 1791058503.084365,
+    "ast_hash": "9a40eed70571b1c83a2c596c10c80d7c",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -83,12 +83,6 @@
     "ast_hash": "bd169873a9d3091f2b64558a0892af02",
     "semantic_hash": ""
   },
-  "skills/billing_watch.json": {
-    "mtime": 1790608572.4907503,
-    "seen": 1790970353.779302,
-    "ast_hash": "d7f3d56f3b7a2f2684bff8f436c67a0d",
-    "semantic_hash": ""
-  },
   "skills/gmail_watch.json": {
     "mtime": 1790942899.8772595,
     "seen": 1790970353.7793028,
@@ -102,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1791022134.7032623,
-    "seen": 1791022148.1707742,
-    "ast_hash": "121c240226bcbadc7b35670be1457852",
+    "mtime": 1791058487.678299,
+    "seen": 1791058503.0850418,
+    "ast_hash": "141d462921a2190853e05fe88180644c",
     "semantic_hash": ""
   },
   "README.md": {
@@ -642,9 +636,9 @@
     "semantic_hash": ""
   },
   "jarvis_followup.py": {
-    "mtime": 1790748927.401864,
-    "seen": 1790970353.7791905,
-    "ast_hash": "42c66aba2690579e59652f5ee1b5456a",
+    "mtime": 1791058118.5962229,
+    "seen": 1791058503.0844836,
+    "ast_hash": "00b5954eed32d19273859ec8b62031f4",
     "semantic_hash": ""
   },
   "jarvis_settings.py": {
@@ -1635,6 +1629,24 @@
     "mtime": 1791021974.0333104,
     "seen": 1791022148.1707518,
     "ast_hash": "098eff7ab3a3b8753da77e6e10e96b66",
+    "semantic_hash": ""
+  },
+  "jarvis_context.py": {
+    "mtime": 1791058273.7302015,
+    "seen": 1791058503.0844285,
+    "ast_hash": "8d3a189dec1057fcf5020f701ff450fd",
+    "semantic_hash": ""
+  },
+  "test_skills_tool.py": {
+    "mtime": 1791058047.1056066,
+    "seen": 1791058503.084997,
+    "ast_hash": "10cef29accea9e71b79f0e58a4d48fa8",
+    "semantic_hash": ""
+  },
+  "test_speed_assistant.py": {
+    "mtime": 1791058258.610103,
+    "seen": 1791058503.085008,
+    "ast_hash": "48158adcba5898aed4f62dbef3df32b7",
     "semantic_hash": ""
   }
 }

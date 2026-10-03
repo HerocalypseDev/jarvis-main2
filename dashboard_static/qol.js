@@ -418,6 +418,40 @@ window.addEventListener("hashchange", () => { if (currentRoute() === "home") ref
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshSelfAware();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshSelfAware(); }, 30000);
 
+// --- Home "What you missed" (quiet assistant): GET /api/feature/missed --------------------------------
+// Things Jarvis noticed but didn't say out loud; "what did I miss?" reads the unread ones and marks them read.
+async function refreshMissed() {
+  const list = document.getElementById("home-missed");
+  if (!list) return;
+  const count = document.getElementById("home-missed-count");
+  const btn = document.getElementById("home-missed-seen");
+  try {
+    const res = await fetch("/api/feature/missed", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
+    const items = d.items || [];
+    count.textContent = d.unseen ? `(${d.unseen} new)` : "";
+    btn.style.display = d.unseen ? "" : "none";
+    list.innerHTML = items.length
+      ? items.slice(0, 8).map((i) => {
+          const when = new Date(i.ts * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+          return `<li class="list-item compact${i.seen_at ? " muted" : ""}"><span class="tool">${esc(i.kind || "update")}</span> ${esc(i.text)} <span class="muted">${esc(when)}</span></li>`;
+        }).join("")
+      : '<li class="muted">Nothing yet. Updates Jarvis doesn\'t say out loud land here.</li>';
+  } catch (e) {
+    list.innerHTML = `<li class="muted">Couldn't load: ${esc(String(e))}</li>`;
+  }
+}
+document.getElementById("home-missed-seen")?.addEventListener("click", async () => {
+  try {
+    await fetch("/api/feature/missed/seen", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  } catch (e) { /* the next refresh shows the state */ }
+  refreshMissed();
+});
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshMissed(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshMissed();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshMissed(); }, 30000);
+
 // --- Home voice speed (second wave): last 20 voice commands from jarvis_latency.recent ------------
 async function refreshLatency() {
   const el = document.getElementById("home-latency");

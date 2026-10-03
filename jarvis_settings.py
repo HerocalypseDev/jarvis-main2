@@ -90,6 +90,11 @@ SETTINGS: list[dict] = [
     {"key": "JARVIS_SAFE_MODE", "label": "Safe mode", "kind": "bool", "default": "0",
      "help": "Pauses autonomy, turns off the follow-up window and holds non-urgent announcements. "
              "Commands and the confirmation step work as normal.", "live": "env"},
+    {"key": "JARVIS_PROACTIVE_SPEECH", "label": "Unprompted speech", "kind": "choice", "default": "important",
+     "choices": ["important", "all"],
+     "help": "important: Jarvis only speaks on its own for your reminders, urgent things and jobs you asked for; the "
+             "rest waits for \"what did I miss?\" and the Home card. all: the old behaviour (every update is said).",
+     "live": "env"},
     {"key": "JARVIS_REPLY_STYLE", "label": "Reply length", "kind": "choice", "default": "normal",
      "choices": ["normal", "brief", "detailed"], "help": "Also by voice: \"be brief from now on\".", "live": "env"},
     {"key": "JARVIS_DAILY_BUDGET_USD", "label": "Daily API budget alert ($)", "kind": "number", "default": "5",

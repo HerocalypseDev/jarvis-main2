@@ -789,7 +789,7 @@ def test_scheduled_skill_never_speaks_tool_ack_or_bare_ok(jarvis, monkeypatch):
         return next(replies)
 
     monkeypatch.setattr(jarvis, "run_agent_loop", fake_loop)
-    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", delivered.append)
+    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda t, **k: delivered.append(t))
     for _ in range(5):
         jarvis._run_scheduled_skill({"name": "s", "instructions": "i"})
     assert seen["tool_result_fallback"] is False
