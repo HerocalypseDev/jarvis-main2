@@ -54,6 +54,7 @@ class FollowUpListener:
         self._seeded = False
         self._await_voice = False
         self.last_seeded = False  # the utterance feed() last returned came from the wake word
+        self._sent = 0  # capture blocks already handed to a live transcription stream (take_new_blocks)
 
     def arm(self, now: float | None = None, chained: bool = False) -> None:
         """chained: this reply answered a hands-free follow-up. After MAX_CHAIN of those in a row
@@ -82,6 +83,7 @@ class FollowUpListener:
         paused. Its result is flagged (`last_seeded`) so the caller can tell it apart from a follow-up."""
         now = now if now is not None else time.monotonic()
         self._capture = [b.copy() for b in blocks if len(b)]
+        self._sent = 0
         self._captured_s = sum(len(b) for b in self._capture) / self.sample_rate
         self._voiced_s = max(MIN_SPEECH_S, self._captured_s)  # the name itself was speech
         self._silence_s = 0.0
@@ -94,6 +96,16 @@ class FollowUpListener:
     @property
     def capturing(self) -> bool:
         return self._capture is not None
+
+    def take_new_blocks(self) -> list[np.ndarray]:
+        """Blocks of the running capture not handed out yet (oldest first), for a live transcription stream that
+        starts the moment speech does: a hands-free command then transcribes in ~0.4 s instead of a ~2.5 s upload
+        after it ends (2026-10-03, measured in the owner's debug reports)."""
+        if self._capture is None:
+            return []
+        new = self._capture[self._sent:]
+        self._sent = len(self._capture)
+        return new
 
     def _threshold(self) -> float:
         if not self._ambient:
@@ -118,6 +130,7 @@ class FollowUpListener:
                 self._preroll_s -= len(self._preroll.popleft()) / self.sample_rate
             if loud and now < self._deadline:
                 self._capture = list(self._preroll)
+                self._sent = 0
                 self._captured_s = self._preroll_s
                 self._voiced_s, self._silence_s = dur, 0.0
                 self._preroll.clear()

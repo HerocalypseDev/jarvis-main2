@@ -1805,7 +1805,8 @@ row there each phase rather than only stating the total in chat.
 | 141 (debug report: finished restart job announced as still coming: job outcomes in conversation memory + journal, autonomy drops needs that repeat handled work, action log without autonomy reasoning, restart reason on start, past-tense questions backed by recent actions, audit search by tool name; 7 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 142 (browser tabs: Jarvis Tabs extension for Opera GX/Firefox + paired localhost bridge, browser_tabs tool (list/read/summarize/switch/close/reopen/open), main-browser setting replacing Chrome, ask-first rule in CLAUDE.md; real extension script tested under Node; 13 new tests) | Opus 5.5 | ~60 min | ~$5.00–$7.00 |
 | 143 (debug report: "update time" macro did nothing and said Done: built-in update time (pull, restart only if it worked, says what changed), routines decide instant vs AI by themselves, steps checked at creation, argument errors count as failures, short results per step; Toolbox shows the mode; 27 new tests, headless Toolbox check) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
-| **Running total (final)** | | **~4269 min** | **~$281.85–$396.25** |
+| 144 (assistant overhaul phase A: skills index instead of full skill text, only related history + stay on the newest message, live speech-to-text for hands-free commands; skills tool (list/show/off/on/delete) after "cancel my billing monitoring" found nothing, billing skill removed; 9 new tests) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
+| **Running total (final)** | | **~4319 min** | **~$285.85–$401.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2460,6 +2461,35 @@ away but more than 5 at once asks first. Tests: `test_browser_tabs.py` (13). Rul
   new came in"), notes older than 15 min are dropped. Restarts Jarvis, never the PC (owner's choice).
 - Not verified live on the PC: a real git pull + restart from "update time", and an AI routine through a real model.
   The broken `skills/update_and_restart.json` the model wrote on the PC is untracked there; it's harmless now but can be deleted.
+
+## Personal-assistant overhaul (2026-10-03, owner: "not smart enough, slow, talks about the last topic")
+
+Owner's answers (asked first): speed first; then quiet (only their own reminders + truly urgent things spoken unprompted) and
+no old topics; then a "main memory" that checks related sources (memory, past conversations, reminders, tasks, recent actions
+every time; calendar/mail only when the request involves time/plans/people/messages); facts from what the owner says saved
+right away; email auto-replies sent to ANYONE, but personal facts only to people Jarvis knows (memory with an address +
+anyone the owner has emailed), strangers get a polite reply with nothing personal. Phases B-D are still to do.
+
+- **Phase A: speed** (tests: `test_speed_assistant.py`, 5). Measured in the owner's reports: ~15,700 tokens per model call
+  (max 27,800) and ~2.5 s speech-to-text for every wake-word/follow-up command.
+  - Skills: the stable prompt carries only an index (`jarvis_context.skills_index`, <= 2,600 chars; it was the full text of
+    every skill up to 16,000 chars: 57 skills / 61k chars with the Pro pack). The steps of the skill a request is about go in
+    the volatile block (`_relevant_skills_line`: the skill's own name, or 3+ description words; only the best match or a tie);
+    any other skill's steps via `skills` action `show`. Scheduled runs already carry their own instructions.
+  - Conversation: `reqctx.pick_history` keeps the last 2 exchanges, plus older ones that share a content word with the request,
+    or all of them when the request refers back ("it", "that", "again", "what about"...). Applied in `run_agent_loop` AFTER
+    `_history_snapshot()` (tests stub that with a no-arg lambda). Prompt: "answer the NEWEST message only; don't bring up an
+    earlier topic unless it refers to it".
+  - Hands-free speech-to-text streams: `_feed_hands_free_stream` opens a Deepgram live session the moment a wake-word/follow-up
+    capture starts and feeds it each block (`FollowUpListener.take_new_blocks`); the finished utterance is transcribed from that
+    stream (like push-to-talk, ~0.4 s) with REST/Whisper still as the fallback; a capture that ends without a command closes it.
+- **Skills by voice** (same debug report: "cancel my billing monitoring 9 PM task" searched reminders/queue/macros/Windows
+  Task Scheduler for 65 s and said there was no record): new `skills` tool (`list`/`show`/`off`/`on`/`delete`, name matched by
+  words; changes attended-only). Off = `JARVIS_SKILLS_OFF` (comma list): no scheduled runs, not in the prompt; delete = the
+  owner's own file (a Pro skill is turned off instead). Narrowing offers it for cancel/stop/remove + skill/monitor/check words.
+  `skills/billing_watch.json` was deleted from the repo at the owner's request (it needed an Anthropic admin key personal
+  accounts can't have, so it said "not set up" every night). Tests: `test_skills_tool.py` (4).
+- Not verified live on the PC: the hands-free stream with a real mic, and how much faster answers feel.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

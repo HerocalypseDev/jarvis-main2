@@ -129,6 +129,7 @@ import jarvis_cascades as cascades
 import jarvis_browsers as browsers
 import jarvis_browser_bridge as browser_bridge
 import jarvis_browser_tabs as browser_tabs
+import jarvis_context as reqctx
 
 settings.JARVIS_MODULE = sys.modules[__name__]
 
@@ -1647,6 +1648,9 @@ proactively whenever the user states a preference, decision, standing instructio
 about themselves worth recalling later, without waiting to be asked to "remember" it. Facts you've \
 already remembered are listed below in this same prompt every turn; use recall_facts only when you \
 need something not already shown there (e.g. older or superseded facts).
+
+The earlier conversation is background: answer the user's NEWEST message only. Don't bring up, continue or \
+mix in an earlier topic unless the newest message refers to it.
 
 Any skills below (under "User-defined skills") are pre-written procedures — follow them when they \
 match the request instead of improvising from scratch. When the user asks you to turn something \
@@ -3186,6 +3190,20 @@ BATCH_TOOLS = [
             "notes": {"type": "string"}}, "required": ["action"]},
     },
     {
+        "name": "skills",
+        "description": (
+            "The user's saved skills (procedures Jarvis follows, many running on a schedule, e.g. a daily billing "
+            "check or the hourly Gmail check). Use this for 'cancel/stop/remove/delete my <X> check/monitor/routine', "
+            "'what skills do I have', 'turn the <X> back on'. action=list; show (a skill's full steps, to follow them); "
+            "off (stops it running on its own and stops "
+            "using it; easy to undo); on; delete (removes one of the user's own skills for good; Pro pack skills can only "
+            "be turned off). name = the skill's name or words from it ('billing', 'gmail check'). Scheduled skills are "
+            "NOT Windows scheduled tasks, reminders, queued tasks or macros: don't look for them there."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "show", "off", "on", "delete"]},
+            "name": {"type": "string"}}, "required": ["action"]},
+    },
+    {
         "name": "macros",
         "description": (
             "The user's own routines triggered by a spoken phrase ('when I say X, do Y', 'make a skill/macro/"
@@ -4023,8 +4041,10 @@ def _apply_memory_db_pragmas(conn: sqlite3.Connection) -> None:
         log.debug("Could not set WAL/busy_timeout pragmas: %s", e)
 
 
-def _history_snapshot() -> list[dict]:
-    """Last CONVERSATION_HISTORY_MAX_TURNS messages from memory_turns, oldest first."""
+def _history_snapshot(query: str = "") -> list[dict]:
+    """Last CONVERSATION_HISTORY_MAX_TURNS messages from memory_turns, oldest first. With a query, older exchanges
+    that have nothing to do with it are left out (reqctx.pick_history): they slowed every call down and pulled
+    answers back to the previous topic (owner report 2026-10-03); memory_search still finds them."""
     with _memory_db_lock:
         conn = _memory_db_connect()
         try:
@@ -4036,9 +4056,10 @@ def _history_snapshot() -> list[dict]:
             conn.close()
     rows.reverse()
     keep_full = len(rows) - 4  # the last two exchanges stay whole
-    return [{"role": role, "content": content if i >= keep_full or len(content) <= HISTORY_OLD_MESSAGE_CHARS
+    msgs = [{"role": role, "content": content if i >= keep_full or len(content) <= HISTORY_OLD_MESSAGE_CHARS
              else content[:HISTORY_OLD_MESSAGE_CHARS] + " ...(shortened; memory_search has the rest)"}
             for i, (role, content) in enumerate(rows)]
+    return reqctx.pick_history(msgs, query) if query else msgs
 
 
 # What Jarvis DID lately, from its own audit trail (2026-10-03, owner: "remember ... something he did before"). The
@@ -5561,25 +5582,35 @@ def _read_skills_from_disk() -> list[dict]:
     return skills
 
 
+def _active_skills() -> list[dict]:
+    off = _skills_off()
+    return [s for s in _load_skills() if s["name"].lower() not in off]
+
+
 def get_skills_context() -> str:
-    skills = _load_skills()
-    if not skills:
+    """Only a short index of the saved skills (2026-10-03 speed pass: the full text of every skill, up to 16,000
+    characters, went with every request). The steps of the skills a request is about are added per request
+    (_relevant_skills_line); any other skill's steps come from the skills tool (action show)."""
+    index = reqctx.skills_index(_active_skills())
+    if not index:
         return ""
-    parts: list[str] = []
-    total = 0
-    for s in skills:
-        block = f"### Skill: {s['name']}\n{s['description']}\n{s['instructions']}".strip()
-        if total + len(block) > MAX_SKILLS_CONTEXT_CHARS:
-            log.warning("Skill context budget (%d chars) exceeded; dropping remaining skills.", MAX_SKILLS_CONTEXT_CHARS)
-            break
-        parts.append(block)
-        total += len(block)
-    if not parts:
+    return ("\n\nUser-defined skills (pre-written procedures; when one matches the request, follow its steps, which "
+            "are given below the clock line when it matches, or read them with the skills tool, action show):\n" + index)
+
+
+def _relevant_skills_line(query: str) -> str:
+    if not query:
         return ""
-    return (
-        "\n\nUser-defined skills — pre-written procedures to follow when they match what's "
-        "being asked, carrying out the steps with your normal tools:\n\n" + "\n\n".join(parts)
-    )
+    try:
+        picked = reqctx.relevant_skills(_active_skills(), query)
+    except Exception as e:
+        log.debug("relevant skills skipped: %s", e)
+        return ""
+    if not picked:
+        return ""
+    parts = [f"### Skill: {s['name']}\n{s['description']}\n{s['instructions'][:MAX_SKILLS_CONTEXT_CHARS // 4]}"
+             for s in picked]
+    return "\nSkills that match this request (follow them if they fit):\n" + "\n\n".join(parts)
 
 
 def save_skill(
@@ -5954,7 +5985,10 @@ def _scheduler_steps(now: datetime) -> list:
 
 
 def _start_due_skills(now: datetime) -> None:
+    off = _skills_off()
     for skill in _load_skills():
+        if skill["name"].lower() in off:
+            continue  # turned off by the user ("cancel my billing monitoring")
         if _skill_is_due(skill, now):
             # A scheduled skill is a full agent loop (often 30-120 s): run it on its own thread, one run per
             # skill at a time, so reminders/timers/deferred jobs on this thread aren't held up behind it.
@@ -6633,6 +6667,119 @@ def _spawn_lesson(*args) -> None:
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return  # never a background model call from a test (tests call _learn_lesson directly)
     threading.Thread(target=lambda: _learn_lesson(*args), name="jarvis-lesson", daemon=True).start()
+
+
+# --- Managing skills by voice (2026-10-03 debug report: "cancel my billing monitoring 9 PM task" found nothing) ---
+# Scheduled skills are JSON files; the model had no tool for them, so it searched reminders, the task queue, macros
+# and Windows Task Scheduler for 65 seconds and said there was no record. Off = a setting (survives restarts and
+# updates, also for Pro skills); delete = the user's own file only.
+SKILLS_OFF_KEY = "JARVIS_SKILLS_OFF"
+
+
+def _skills_off() -> set[str]:
+    return {n.strip().lower() for n in (os.environ.get(SKILLS_OFF_KEY) or "").split(",") if n.strip()}
+
+
+def _skill_schedule_text(schedule) -> str:
+    if not isinstance(schedule, dict):
+        return "only when asked"
+    if schedule.get("daily_at"):
+        return f"daily at {schedule['daily_at']}"
+    if schedule.get("every_minutes"):
+        return f"every {schedule['every_minutes']} minutes"
+    return "on a schedule"
+
+
+def _find_skill(name: str, skills: list[dict]) -> tuple[dict | None, str]:
+    want = re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+    if not want:
+        return None, "Say which skill."
+    exact = [s for s in skills if re.sub(r"[^a-z0-9]+", " ", s["name"].lower()).strip() == want]
+    if exact:
+        return exact[0], ""
+    stop = {"my", "the", "a", "skill", "task", "routine", "job", "check", "monitor", "monitoring", "watch", "daily",
+            "hourly", "am", "pm", "at", "every", "day", "night", "morning"}
+    words = {w for w in want.split() if w not in stop and not w.isdigit() and not re.fullmatch(r"\d+(am|pm)", w)}
+    scored = []
+    for s in skills:
+        have = set(re.sub(r"[^a-z0-9]+", " ", f"{s['name']} {s.get('description', '')}".lower()).split())
+        hit = sum(1 for w in words if w in have or (len(w) >= 4 and any(w in h for h in have)))
+        if hit:
+            scored.append((hit, s))
+    if not scored:
+        return None, "No skill matches that. " + _skills_list_text(skills)
+    best = max(h for h, _ in scored)
+    top = [s for h, s in scored if h == best]
+    if len(top) > 1:
+        return None, "More than one skill matches: " + ", ".join(s["name"] for s in top) + ". Say which one."
+    return top[0], ""
+
+
+def _skills_list_text(skills: list[dict]) -> str:
+    off = _skills_off()
+    pro_names = {p.stem.lower() for p in _skill_file_paths() if not _is_own_skill_path(p)}
+    if not skills:
+        return "No skills saved."
+    return "Skills: " + "; ".join(
+        f"{s['name']} ({_skill_schedule_text(s.get('schedule'))}"
+        + (", off" if s["name"].lower() in off else "") + (", Pro" if s["name"].lower() in pro_names else "") + ")"
+        for s in skills) + "."
+
+
+def _is_own_skill_path(path: Path) -> bool:
+    try:
+        return path.resolve().parent == _skills_dir().resolve()
+    except OSError:
+        return False
+
+
+def _skills_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "list").strip().lower()
+    skills = _load_skills()
+    if action == "list":
+        return _skills_list_text(skills)
+    if action == "show":
+        skill, why = _find_skill(str(inp.get("name") or ""), skills)
+        return (f"Skill {skill['name']} ({_skill_schedule_text(skill.get('schedule'))}): {skill['description']}\n"
+                f"Steps: {skill['instructions']}") if skill else f"Tool failed: {why}"
+    if not _attended():
+        return "Skills can only be changed from the PC (voice, typed or dashboard), not from here."
+    skill, why = _find_skill(str(inp.get("name") or ""), skills)
+    if not skill:
+        return f"Tool failed: {why}"
+    name = skill["name"]
+    off = _skills_off()
+    if action in ("off", "on"):
+        off.discard(name.lower())
+        if action == "off":
+            off.add(name.lower())
+        settings.set_setting(SKILLS_OFF_KEY, ",".join(sorted(off)))
+        _invalidate_read_caches()
+        return (f"Turned off the {name} skill: it won't run on its own any more (say 'turn {name} back on' to undo)."
+                if action == "off" else f"Turned the {name} skill back on ({_skill_schedule_text(skill.get('schedule'))}).")
+    if action == "delete":
+        path = next((p for p in _skill_file_paths() if _is_own_skill_path(p) and
+                     (p.stem.lower() == name.lower() or _skill_name_in_file(p) == name.lower())), None)
+        if path is None:  # a Pro pack skill: can't delete the pack's file, so switch it off instead
+            off.add(name.lower())
+            settings.set_setting(SKILLS_OFF_KEY, ",".join(sorted(off)))
+            return f"{name} comes with the Pro pack, so I turned it off instead of deleting it."
+        try:
+            path.unlink()
+        except OSError as e:
+            return f"Tool failed: couldn't delete {path.name}: {e}"
+        off.discard(name.lower())
+        settings.set_setting(SKILLS_OFF_KEY, ",".join(sorted(off)))
+        _invalidate_read_caches()
+        return f"Deleted the {name} skill ({_skill_schedule_text(skill.get('schedule'))}); it won't run again."
+    return f"Tool failed: unknown action {action!r}."
+
+
+def _skill_name_in_file(path: Path) -> str:
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("name") or "").strip().lower()
+    except (OSError, ValueError):
+        return ""
 
 
 def _macros_tool(inp: dict) -> str:
@@ -7879,7 +8026,7 @@ def _send_to_my_phone_tool(inp: dict) -> str:
     return f"Sent to your {' and '.join(sent)}: {text[:120]}{'...' if len(text) > 120 else ''}{note}"
 
 
-_BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool})
+_BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool})
 
 
 # --- The user's real browser tabs (2026-10-03, owner request) -----------------------------------------------------
@@ -8796,6 +8943,7 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
         + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
         + _relevant_memory_line(query)
         + _lessons_line(query)
+        + _relevant_skills_line(query)
     )
     stable_block: dict = {"type": "text", "text": stable}
     if cache.enabled("prompt"):
@@ -11402,7 +11550,16 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core.add("send_to_my_phone")
     if _BROWSER_TAB_RE.search(transcript or "") or _browser_in_front():
         core.add("browser_tabs")
+    if _SKILL_MANAGE_RE.search(transcript or ""):
+        core.add("skills")
     return core
+
+
+# "cancel my billing monitoring", "turn off the gmail check", "what skills do I have" (2026-10-03 debug report)
+_SKILL_MANAGE_RE = re.compile(
+    r"\b(?:skills?|routines?|monitor(?:ing)?|watch(?:er)?|checks?|briefing)\b.*\b(?:cancel|stop|remove|delete|turn (?:it )?(?:off|on)|"
+    r"disable|enable|pause|resume)\b|\b(?:cancel|stop|remove|delete|turn off|disable|pause|turn on|enable|resume)\b.*"
+    r"\b(?:skills?|routines?|monitor(?:ing)?|watch(?:er)?|checks?|briefing)\b|\bwhat skills\b", re.I)
 
 
 _BROWSER_TAB_RE = re.compile(
@@ -12852,7 +13009,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     first: str | list = transcript if not image else [
         {"type": "image", "source": {"type": "base64", "media_type": image_type, "data": image}},
         {"type": "text", "text": transcript}]
-    messages: list[dict] = _history_snapshot() + [{"role": "user", "content": first}]
+    messages: list[dict] = reqctx.pick_history(_history_snapshot(), transcript) + [{"role": "user", "content": first}]
     reply_parts: list[str] = []
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
     narrated = 0
@@ -14018,6 +14175,25 @@ def _handle_text_command_impl(
                 speak_text(_collapse_paths_for_speech(spoken))
 
 
+def _feed_hands_free_stream(session):
+    """Keeps a live Deepgram stream in step with a hands-free capture (2026-10-03: those commands used the ~2.5 s
+    upload-after-the-end path while push-to-talk streamed in ~0.4 s). Opens one when a capture starts, hands it the
+    new audio, and closes it (result unused) when the capture ends without a command. Returns the live session."""
+    if followup.capturing:
+        if session is None:
+            if not _stt_stream_enabled():
+                followup.take_new_blocks()  # keep the cursor moving; nothing to stream to
+                return None
+            session = stt_deepgram.StreamingSession(SAMPLE_RATE)
+            threading.Thread(target=session.start, daemon=True, name="hf-stt").start()
+        for block in followup.take_new_blocks():
+            session.feed(block)
+        return session
+    if session is not None:  # a cough / cancelled capture: tear the socket down off the audio loop
+        threading.Thread(target=session.finish, daemon=True, name="hf-stt-close").start()
+    return None
+
+
 def handle_voice_command(
     audio: np.ndarray, sample_rate: int, stream_session: "stt_deepgram.StreamingSession | None" = None,
     hold: dict | None = None, hands_free: bool = False, wake: bool = False,
@@ -14570,6 +14746,7 @@ def main() -> int:
 
     input_idx = _choose_input_device(blocksize)
     wake_listener = None  # created lazily when JARVIS_WAKE_WORD is switched on
+    hf_stream = None  # live transcription for a hands-free (wake word / follow-up) capture
     wake_gate_ts, wake_gate_ok = 0.0, False
 
     try:
@@ -14635,12 +14812,16 @@ def main() -> int:
                             threading.Thread(
                                 target=handle_voice_command,
                                 args=(utterance.reshape(-1, 1), SAMPLE_RATE),
-                                kwargs={"hands_free": True, "wake": woke},
+                                kwargs={"hands_free": True, "wake": woke, "stream_session": hf_stream},
                                 daemon=True,
                             ).start()
+                            hf_stream = None
+                        else:
+                            hf_stream = _feed_hands_free_stream(hf_stream)
                         continue
                     if followup.capturing:
                         followup.cancel()  # push-to-talk wins over a half-captured follow-up
+                    hf_stream = _feed_hands_free_stream(hf_stream)  # (capture cancelled: closes its stream)
                     if pressed and not ptt_active:
                         ptt_active = True
                         ptt_buffer = []
