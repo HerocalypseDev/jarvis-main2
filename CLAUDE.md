@@ -1807,7 +1807,8 @@ row there each phase rather than only stating the total in chat.
 | 143 (debug report: "update time" macro did nothing and said Done: built-in update time (pull, restart only if it worked, says what changed), routines decide instant vs AI by themselves, steps checked at creation, argument errors count as failures, short results per step; Toolbox shows the mode; 27 new tests, headless Toolbox check) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
 | 144 (assistant overhaul phase A: skills index instead of full skill text, only related history + stay on the newest message, live speech-to-text for hands-free commands; skills tool (list/show/off/on/delete) after "cancel my billing monitoring" found nothing, billing skill removed; 9 new tests) | Opus 5.5 | ~50 min | ~$4.00–$5.60 |
 | 145 (assistant overhaul phase B: quiet gate, "what did I miss" inbox + intent + Home card, scheduled skills silent unless announce/URGENT, no-old-topic wording; 13 new tests, 7 old tests pinned to the old mode, headless card check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
-| **Running total (final)** | | **~4359 min** | **~$289.05–$406.35** |
+| 146 (assistant overhaul phase C: related reminders/jobs/tasks/old conversations every request, calendar for time/plans/people with a 3.5 s cap + cache, mail hint, instant fact learning from the owner's words; 31 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
+| **Running total (final)** | | **~4399 min** | **~$292.25–$410.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2508,6 +2509,23 @@ anyone the owner has emailed), strangers get a polite reply with nothing persona
   read (`@_feature("missed")`, also a `dashboard_data` page). The volatile prompt says how many are unread ("mention only if
   asked"). No old topics: the action log and self-awareness lines now say "don't bring this up unless asked".
   Headless check of the card at 1440/390 px. Not verified live on the PC.
+- **Phase C: main memory** (tests: `test_main_memory.py`, 31). (1) `_related_context_line(query)` in the **volatile**
+  block, every request: active reminders, pending/running or last-day Jarvis jobs and background tasks that share a content
+  word with the request, plus up to 3 OLDER conversation turns/summaries (FTS `memory_search`, turns inside the history
+  window skipped, >= 2 shared words) ; the **calendar** (next 7 days, `reqctx.calendar_lines` with the day) only when the request
+  is about time/plans (`TIME_PLANS_RE`) or names a person from a relationship fact (`_known_people`, 5 min cache); fetched on a
+  thread, waited on at most 3.5 s, cached 5 min (a slow calendar never holds a command up). Mail is not prefetched (slow): a
+  request about an email/message gets a "look it up with the mail tools" hint. All framed as data, <= 1400 chars, sanitised.
+  Stable prompt: "you are the user's main memory ... never say you don't know before checking". (2) **Learning at once**
+  (`jarvis_quickfacts.py`, pure, no model call): after every voice/typed/dashboard/phone command, clear first-person
+  statements ("my post UTME score was 280", "I live in X", "call me X", "my favourite X is Y", "I scored N in X", "I like X",
+  "I'm a student at X", "I am 17 years old", family "my sister is X" -> relationship) are saved with `remember_fact` under
+  `auto:` keys. Never: questions, commands, hypotheticals, quoted/reply text, "remember that..." (the model's remember_fact does
+  it), passing states ("my phone is dead", "%", today/tomorrow), values with @/links (a relationship fact with an address would
+  join the Sleep Mode family list), selected text/appshots/phone pictures. Same key + new value replaces the old fact; same
+  words, or what the model saved in the last 3 minutes, is skipped (a different number is never "the same").
+  `JARVIS_LEARN_FROM_SPEECH` (default on, Settings). The idle-session extraction (autonomy) still runs for subtler facts.
+  Not verified live on the PC.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

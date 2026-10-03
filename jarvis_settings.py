@@ -90,6 +90,10 @@ SETTINGS: list[dict] = [
     {"key": "JARVIS_SAFE_MODE", "label": "Safe mode", "kind": "bool", "default": "0",
      "help": "Pauses autonomy, turns off the follow-up window and holds non-urgent announcements. "
              "Commands and the confirmation step work as normal.", "live": "env"},
+    {"key": "JARVIS_LEARN_FROM_SPEECH", "label": "Learn facts from what you say", "kind": "bool", "default": "1",
+     "help": "\"My exam score was 280\", \"I live in Paris\", \"call me Sam\": remembered at once, no AI call. "
+             "Questions, commands and passing states (\"my phone is dead\") are ignored. See and edit them on the Memory page.",
+     "live": "env"},
     {"key": "JARVIS_PROACTIVE_SPEECH", "label": "Unprompted speech", "kind": "choice", "default": "important",
      "choices": ["important", "all"],
      "help": "important: Jarvis only speaks on its own for your reminders, urgent things and jobs you asked for; the "
