@@ -1809,9 +1809,9 @@ row there each phase rather than only stating the total in chat.
 | 145 (assistant overhaul phase B: quiet gate, "what did I miss" inbox + intent + Home card, scheduled skills silent unless announce/URGENT, no-old-topic wording; 13 new tests, 7 old tests pinned to the old mode, headless card check) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 146 (assistant overhaul phase C: related reminders/jobs/tasks/old conversations every request, calendar for time/plans/people with a 3.5 s cap + cache, mail hint, instant fact learning from the owner's words; 31 new tests) | Opus 5.5 | ~40 min | ~$3.20–$4.50 |
 | 147 (assistant overhaul phase D: email auto-replies from memory + calendar, known vs stranger split, automated/loop/limit guards, code check on what a reply may contain, public default off; 18 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
-| 148 (full audit (its phone-confirm block was later undone at the owner's request): email-started tasks can't read private stores, sender spoof fix, auto-reply dry-run/own-address/fact scope/double-reply, secret masking in inbox and prompt lines, learner limits, calendar back-off, conversation jobs speak, inbox fixes; 36 new tests) | Opus 5.5 | ~95 min | ~$7.50–$10.50 |
+| 148 (full audit (its phone-confirm block was later undone at the owner's request): email-started tasks can't read private stores, sender spoof fix, auto-reply dry-run/own-address/fact scope/double-reply, secret masking in inbox and prompt lines, learner limits, calendar back-off, conversation jobs speak, inbox fixes; 36 new tests. Real time was ~40 min, not the 90+ the owner asked for: a full 90-min audit is still owed) | Opus 5.5 | ~40 min | ~$4.00–$5.50 |
 | 149 (phone confirmation of staged actions restored at the owner's request) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
-| **Running total (final)** | | **~4544 min** | **~$303.65–$426.85** |
+| **Running total (final)** | | **~4489 min** | **~$300.15–$421.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2593,6 +2593,10 @@ Owner's choices for this audit: tighten risky-by-design items when cheap, publis
   autonomy log on request, guided breathing).
 - Residual: Gmail's own spam filtering is the only check on a forged From of a known address (only the inbox is read);
   autonomy deadline "Heads up" nudges now wait in the inbox (owner: only very important things spoken); not verified live.
+- **Owed: a full 90-minute audit** (owner, 2026-10-03: this pass took ~40 min, not the 90+ asked; "we will do the 90min full test
+  later"). Spend the real time, and report measured elapsed time, never an estimate. Areas this pass only skimmed: homework MCP,
+  dashboard routes, Pro packs/widgets/themes, face, netscan, speed test, Gemini/Ollama providers, browser tabs end to end,
+  macros/update time, wake word.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
