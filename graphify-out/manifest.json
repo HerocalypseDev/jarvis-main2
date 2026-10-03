@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1791017892.1901608,
-    "seen": 1791017981.2189593,
-    "ast_hash": "95da57caf701fb14f7653fb916a53289",
+    "mtime": 1791018924.200994,
+    "seen": 1791019125.9086094,
+    "ast_hash": "38330f2b35e5b9146743bd2e54701d40",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1791017967.6279123,
-    "seen": 1791017981.2191885,
-    "ast_hash": "f5a1bc439f1103f4544ee8fc72b46395",
+    "mtime": 1791019109.7076302,
+    "seen": 1791019125.909261,
+    "ast_hash": "3738e0f45d826ab9e598a1627f9d5b40",
     "semantic_hash": ""
   },
   "README.md": {
@@ -546,9 +546,9 @@
     "semantic_hash": ""
   },
   "jarvis_autonomy.py": {
-    "mtime": 1790669022.163102,
-    "seen": 1790970353.7791545,
-    "ast_hash": "797555e33d1b0293085e794947be0866",
+    "mtime": 1791018924.1593113,
+    "seen": 1791019125.9086232,
+    "ast_hash": "4c5d492926ae7f35015c3e7c0e886c00",
     "semantic_hash": ""
   },
   "jarvis_dynamic_tools.py": {
@@ -1002,9 +1002,9 @@
     "semantic_hash": ""
   },
   "jarvis_selfaware.py": {
-    "mtime": 1790766274.17086,
-    "seen": 1790970353.7792172,
-    "ast_hash": "d7a810c7c3c5ca455f620defb70b6c90",
+    "mtime": 1791018924.2030344,
+    "seen": 1791019125.9087613,
+    "ast_hash": "dcc2efa48e0587a04aabd2ecb019495e",
     "semantic_hash": ""
   },
   "jarvis_tool_router.py": {
@@ -1581,6 +1581,12 @@
     "mtime": 1791017892.195165,
     "seen": 1791017981.2191634,
     "ast_hash": "24430cd6c5d58b9fe094d43cca19469a",
+    "semantic_hash": ""
+  },
+  "test_self_events.py": {
+    "mtime": 1791018978.4286122,
+    "seen": 1791019125.9091735,
+    "ast_hash": "11210da7a0334086b8824074b526392f",
     "semantic_hash": ""
   }
 }

@@ -365,7 +365,14 @@ def startup() -> dict:
                    + (" | recent commits: " + " / ".join(subjects) if subjects else ""))
     _set_state("code_fingerprint", _loaded)
     _set_state("last_start", _now())
-    record("system", "started", "Jarvis started" + (" (first run)" if prev is None else ""))
+    # Was this start a restart Jarvis was asked for (debug report 2026-10-03: it didn't know it had just restarted)?
+    asked = recent(1, "system", hours=0.25)
+    reason = ""
+    if asked and asked[0]["kind"] == "restart":
+        reason = str(asked[0]["summary"]).split(" for: ", 1)[-1] if " for: " in asked[0]["summary"] else "on request"
+    _set_state("start_reason", f"after a restart ({reason}) requested at {asked[0]['ts'][11:16]}" if reason else "")
+    record("system", "started", "Jarvis started" + (" (first run)" if prev is None else "")
+           + (f" after the restart requested for: {reason}" if reason else ""))
     return result
 
 
@@ -443,6 +450,9 @@ def prompt_line(extra_flags: list[str] | None = None) -> str:
            "instruction: " + ("; ".join(parts) if parts else "nothing notable")
     if flags:
         line += ". Modes: " + ", ".join(flags)
+    start, why = _get_state("last_start"), _get_state("start_reason")
+    if start and why and _ago(start) and not _ago(start).endswith("d ago"):
+        line += f". You (re)started at {start[11:16]} {_clean(why, 140)}: that restart is DONE, not still to come"
     if pending:
         line += f". Your code on disk changed after you started ({_names(pending, 3)}): you are running the old " \
                 "version until restarted"
