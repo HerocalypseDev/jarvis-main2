@@ -1794,7 +1794,8 @@ row there each phase rather than only stating the total in chat.
 | 137 (internet speed test: no-browser Cloudflare test by voice or tool, data cap, units incl. "in megabytes", history comparison; 28 new tests) | Opus 5.5 | ~30 min | ~$2.00–$2.80 |
 | 138 (debug report: "in 10 mins run the internet test" was a spoken reminder: job-shaped reminders from a user request become jobs, user-scheduled jobs speak their result, more speed-test phrases, one retry on a DNS hiccup; 9 new tests) | Opus 5.5 | ~25 min | ~$1.80–$2.50 |
 | 139 (self-knowledge: dashboard_data reads every dashboard page + Toolbox feature + capabilities, secret masking, prompt rule; 8-exchange memory with old replies shortened; action log of recent tool calls in every command; 8 new tests) | Opus 5.5 | ~40 min | ~$2.80–$3.90 |
-| **Running total (final)** | | **~4119 min** | **~$269.95–$379.55** |
+| 140 (debug report: "send me a message on Telegram" -> new send_to_my_phone tool (own chat/topic only, rate-limited), placeholder/hand-made-API scripts refused, tool always offered when Telegram/phone is named; 5 new tests) | Opus 5.5 | ~20 min | ~$1.40–$2.00 |
+| **Running total (final)** | | **~4139 min** | **~$271.35–$381.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2351,6 +2352,18 @@ actions. Tests: `test_selfdata.py` (8). Rules to keep:
 - **Action log** (`_recent_actions_line`, volatile block): the last 10 tool calls of the last 12 h from `action_audit`, newest
   first, each with done/FAILED/staged and the command it was for, framed as data, <= 1400 chars. Gives "did you set it?" a
   ground truth. Not verified live on the PC.
+
+## Messages to the owner's own phone (2026-10-03, debug report)
+
+- "Send a random message to me on Telegram" got "I can't": there was no tool for it, so the model ran
+  `python -c "requests.post('https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage' ... '<YOUR_CHAT_ID>')"`, got exit 0 and
+  claimed it was sent (the claim checker caught that). New `send_to_my_phone(text, channel?)` (batch tool): the owner's own
+  Telegram chat (`TELEGRAM_CHAT_ID`) and/or ntfy topic only - **no recipient parameter, so it can't reach anyone else** -,
+  `PHONE_MESSAGES_PER_HOUR` (20) cap, clear "not set up" answer, "Tool failed" on a send error (claim checker counts it).
+  Always offered under tool narrowing when the command names Telegram/ntfy/"my phone"/"text me" (`_MY_PHONE_RE`).
+- `_placeholder_code_problem` (run_shell/run_python): refuses code with template placeholders (`<YOUR_...>`, `YOUR_API_KEY`,
+  `<TOKEN>`...) and hand-made `api.telegram.org/bot` / `ntfy.sh/` calls (pointed at `send_to_my_phone`); a plain
+  `grep sendMessage` is fine. Tests: `test_phone_message.py` (5). Not verified live with the real bot.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

@@ -3331,6 +3331,18 @@ BATCH_TOOLS = [
             "action": {"type": "string", "enum": ["get", "refresh", "review"]}}, "required": ["action"]},
     },
     {
+        "name": "send_to_my_phone",
+        "description": (
+            "Send a message to the USER'S OWN phone: their Telegram chat with Jarvis and/or their ntfy push topic. Use "
+            "for 'send me X on Telegram', 'text me the list', 'message my phone', 'ping me'. Only ever goes to the user "
+            "themselves (the configured chat/topic), never to anyone else. channel: telegram (default when set up), "
+            "ntfy, or both."),
+        "input_schema": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "The message to send."},
+            "channel": {"type": "string", "enum": ["telegram", "ntfy", "both"]}},
+            "required": ["text"]},
+    },
+    {
         "name": "dashboard_data",
         "description": (
             "Read any page of your own dashboard, the same records the user sees: page=voice (characters spoken and "
@@ -7729,6 +7741,51 @@ def _dashboard_data_tool(inp: dict) -> str:
 
 
 _BATCH_TOOL_HANDLERS.update({"dashboard_data": _dashboard_data_tool})
+
+
+# --- Messages to the owner's own phone (2026-10-03, debug report: "send a random message to me on Telegram" -> "I can't") --
+# Jarvis already talks to the owner's Telegram chat/ntfy topic (replies, reminders), but the model had no tool for it, so
+# it ran a placeholder script and claimed success. This tool only reaches the configured chat/topic, never another
+# recipient, and is rate-limited so a loop (or a prompt-injected email driving an autonomous run) can't flood the phone.
+PHONE_MESSAGES_PER_HOUR = 20
+_phone_sent: list[float] = []
+_phone_sent_lock = threading.Lock()
+
+
+def _send_to_my_phone_tool(inp: dict) -> str:
+    text = str(inp.get("text") or inp.get("message") or "").strip()
+    if not text:
+        return "Tool failed: say what the message should say (text)."
+    telegram_ok = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+    ntfy_ok = bool(NTFY_TOPIC)
+    channel = str(inp.get("channel") or "").strip().lower() or ("telegram" if telegram_ok else "ntfy")
+    if channel not in ("telegram", "ntfy", "both"):
+        channel = "telegram" if telegram_ok else "ntfy"
+    want = ["telegram", "ntfy"] if channel == "both" else [channel]
+    missing = [c for c in want if not (telegram_ok if c == "telegram" else ntfy_ok)]
+    if missing and len(missing) == len(want):
+        how = {"telegram": "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID", "ntfy": "NTFY_TOPIC"}
+        return ("Tool failed: " + " and ".join(missing) + " isn't set up on this PC (add "
+                + " / ".join(how[c] for c in missing) + " in Settings).")
+    now = time.time()
+    with _phone_sent_lock:
+        _phone_sent[:] = [t for t in _phone_sent if now - t < 3600]
+        if len(_phone_sent) >= PHONE_MESSAGES_PER_HOUR:
+            return f"Tool failed: already sent {PHONE_MESSAGES_PER_HOUR} phone messages in the last hour; not sending more."
+        _phone_sent.append(now)
+    sent, failed = [], []
+    for c in want:
+        if c in missing:
+            continue
+        ok = _telegram_send(text) if c == "telegram" else _ntfy_publish(text, title="Jarvis")
+        (sent if ok else failed).append(c)
+    if not sent:
+        return f"Tool failed: {' and '.join(failed)} didn't accept the message (network or bot problem)."
+    note = f" ({' and '.join(failed + missing)} didn't work)" if failed or missing else ""
+    return f"Sent to your {' and '.join(sent)}: {text[:120]}{'...' if len(text) > 120 else ''}{note}"
+
+
+_BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool})
 _BATCH_TOOL_HANDLERS["lessons"] = _lessons_tool
 _BATCH_TOOL_HANDLERS["daily_plan"] = _daily_plan_tool
 
@@ -11080,12 +11137,17 @@ _SELF_RECORD_RE = re.compile(
     r"last time|previous(?:ly)?|can you|are you able|what can you)\b", re.I)
 
 
+_MY_PHONE_RE = re.compile(r"\b(?:telegram|ntfy|my phone|text me|message me|ping me|notify me)\b", re.I)
+
+
 def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
     core = set(tool_router.CORE_TOOLS)
     if on_screen or _ON_SCREEN_RE.search(transcript or "") or re.search(r"\bscreen\b", transcript or "", re.I):
         core |= SCREEN_KIT_TOOLS
     if _SELF_RECORD_RE.search(transcript or ""):
         core |= {"dashboard_data", "memory_search"}
+    if _MY_PHONE_RE.search(transcript or ""):
+        core.add("send_to_my_phone")
     return core
 
 
@@ -11137,6 +11199,27 @@ _SECRET_FILE_REFUSAL = (
 
 def _secret_file_problem(code: str) -> str | None:
     return _SECRET_FILE_REFUSAL if _SECRET_FILE_RE.search(code or "") else None
+
+
+# Found live 2026-10-03 (debug report): asked to "send me a message on Telegram", the model ran
+# python -c "requests.post('https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage', ... '<YOUR_CHAT_ID>' ...)", which can
+# never work (placeholders), got exit_code=0 and said it was sent. Code with template placeholders is refused, and a
+# hand-made Telegram/ntfy call is pointed at send_to_my_phone (which holds the real chat id and token).
+_PLACEHOLDER_CODE_RE = re.compile(
+    r"<\s*(?:your|insert|enter|put)[ _-]?[a-z_ -]{0,30}>|\byour_(?:api_)?(?:key|token|bot_token|chat_id|password|secret)\b"
+    r"|<(?:bot_)?token>|<chat_id>", re.I)
+_PHONE_API_RE = re.compile(r"api\.telegram\.org/bot|\bntfy\.sh/", re.I)
+
+
+def _placeholder_code_problem(code: str) -> str | None:
+    code = code or ""
+    if _PHONE_API_RE.search(code):
+        return ("Not run: to message the user's phone use the send_to_my_phone tool (it already has their Telegram chat "
+                "and ntfy topic); never build a Telegram/ntfy request by hand.")
+    if _PLACEHOLDER_CODE_RE.search(code):
+        return ("Not run: this code still has placeholder values (like <YOUR_TOKEN>) so it cannot work. Use the tool made "
+                "for the job instead, or ask the user for the real value; never run a template and report success.")
+    return None
 
 
 # A recursive name search through the shell (Get-ChildItem -Recurse -Filter/-Include, dir /s, where /r) is what the
@@ -11506,6 +11589,8 @@ def _execute_tool_impl(
                 result = _ui_script_problem(command)
             elif _secret_file_problem(command):
                 result = _secret_file_problem(command)
+            elif _placeholder_code_problem(command):
+                result = _placeholder_code_problem(command)
             elif _file_search_via_shell_problem(command):
                 result = _file_search_via_shell_problem(command)
             else:
@@ -11530,6 +11615,8 @@ def _execute_tool_impl(
                 result = _ui_script_problem(code)
             elif _secret_file_problem(code):
                 result = _secret_file_problem(code)
+            elif _placeholder_code_problem(code):
+                result = _placeholder_code_problem(code)
             else:
                 reason = None if skip_confirmation else _catastrophic_reason(code)
                 if reason:
