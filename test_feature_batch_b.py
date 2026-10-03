@@ -195,7 +195,7 @@ def test_app_shortcut_keys_only_go_to_that_app(jarvis, monkeypatch):
     s = sc.all_shortcuts(jarvis._memory_db_connect, jarvis._memory_db_lock)[0]
     monkeypatch.setattr(jarvis, "_foreground_window", lambda: {"app": "code.exe", "title": "a.py"})
     assert jarvis._shortcut_fire(s) == "Pressed shift+alt+f." and sent == ["shift+alt+f"]
-    monkeypatch.setattr(jarvis, "_foreground_window", lambda: {"app": "chrome.exe", "title": "news"})
+    monkeypatch.setattr(jarvis, "_foreground_window", lambda: {"app": "opera.exe", "title": "news"})
     assert "isn't in front" in jarvis._shortcut_fire(s) and sent == ["shift+alt+f"]
 
 

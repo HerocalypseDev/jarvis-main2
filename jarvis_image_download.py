@@ -20,9 +20,11 @@ from pathlib import Path
 
 MAX_BYTES = 25 * 1024 * 1024
 TIMEOUT_S = 25
+# How the download introduces itself to websites: as Opera GX (the owner's browser). Opera's own browser string still
+# contains "Chrome/..." because Opera is built on Chromium; the OPR/ part is what marks it as Opera.
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0 Safari/537.36"
+    "Chrome/124.0 Safari/537.36 OPR/110.0"
 )
 _EXT_BY_TYPE = {
     "image/jpeg": ".jpg",

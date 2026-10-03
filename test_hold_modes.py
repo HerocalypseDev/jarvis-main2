@@ -93,7 +93,7 @@ def test_dictation_copies_instead_when_the_window_changed(jarvis, monkeypatch):
     _fake_keyboard(monkeypatch, written)
     monkeypatch.setitem(sys.modules, "pyperclip", types.SimpleNamespace(copy=lambda v: clip.__setitem__("v", v)))
     monkeypatch.setattr(jarvis, "speak_text", lambda t: said.append(t))
-    monkeypatch.setattr(jarvis, "_foreground_window", lambda: {"hwnd": 9, "app": "chrome.exe", "title": "x"})
+    monkeypatch.setattr(jarvis, "_foreground_window", lambda: {"hwnd": 9, "app": "opera.exe", "title": "x"})
     jarvis._dictate("hello there", {"window": {"hwnd": 5}})
     assert written == [] and clip["v"] == "hello there" and "clipboard" in said[0]
 

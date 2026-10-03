@@ -34,5 +34,7 @@ pro/
 dist/
 debug_report.txt
 doctor_state.json
+browser_extension/pairing.json
+browser_extension/pairing.tmp
 evals/drafts.json
 doctor_state.tmp

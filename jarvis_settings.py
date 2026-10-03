@@ -169,6 +169,17 @@ SETTINGS: list[dict] = [
      "help": "How a speed test answers when you don't name a unit. Internet plans are sold in megabits per second; "
      "megabytes per second (8 times smaller) is what a download window shows. Saying \"in megabytes\" always wins.",
      "live": "env"},
+    {"key": "JARVIS_BROWSER", "label": "Main web browser", "kind": "choice", "default": "operagx",
+     "choices": ["operagx", "firefox", "chrome", "edge", "default"],
+     "help": "\"Open browser\" and every link Jarvis opens use this one. default = whatever Windows opens links with. "
+     "For tabs (read, summarize, close, reopen), also install the Jarvis Tabs extension from the browser_extension "
+     "folder in that browser.", "live": "env"},
+    {"key": "JARVIS_BROWSER_TABS", "label": "See and manage browser tabs", "kind": "bool", "default": "1",
+     "help": "Lets the Jarvis Tabs extension connect (127.0.0.1 only, paired with a secret key). Restart Jarvis after "
+     "changing it.", "live": None},
+    {"key": "JARVIS_BROWSER_BRIDGE_PORT", "label": "Browser tabs port", "kind": "number", "default": "8767",
+     "help": "The local port the extension connects to. After changing it restart Jarvis, then reload the extension.",
+     "live": None},
     {"key": "JARVIS_BATTERY_SAVER", "label": "Battery saver", "kind": "bool", "default": "1",
      "help": "On battery: less background work when low, scanning paused and quiet announcements when very low.",
      "live": "env"},
