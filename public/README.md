@@ -18,15 +18,19 @@ Nothing is shared with anyone except the AI/voice services you choose to configu
   Switch any time from the dashboard's top bar.
 - **Voice:** local Whisper speech-to-text and local Piper voice work with no account at all.
   Deepgram and Fish Audio are optional cloud upgrades (faster / nicer voice).
-- **Memory:** remembers facts you tell it, learns from its mistakes, and you can view, edit or
-  delete everything it knows on the dashboard's Memory page.
+- **Memory:** remembers facts you tell it (and picks up clear ones like "my favourite team is X" as you
+  talk), checks related reminders, jobs, past conversations and your calendar for each request, learns
+  from its mistakes, and you can view, edit or delete everything it knows on the dashboard's Memory page.
+- **Quiet by default:** on its own it only speaks for your reminders, urgent things and jobs you asked
+  for; everything else waits for "what did I miss?" and the dashboard Home card.
 - **Daily life:** reminders, named timers, morning briefing, weather, "what's urgent?", sleep mode
   with a wake-up recap, media and volume control, window control.
 - **Work:** delegate coding tasks to Claude Code, background research, code search and review,
   Word/PowerPoint output, clipboard history, file search.
 - **Dashboard** (`http://127.0.0.1:8765`, this PC only): live sessions, tasks, a full audit trail
   of every action, usage and cost, settings, and the approval screen for dangerous actions.
-- **Optional:** autonomy (acts on your mail/messages by itself), face recognition (local only),
+- **Optional:** autonomy (acts on your mail/messages by itself), automatic email replies from your
+  calendar and memory (strangers get nothing personal), face recognition (local only),
   MCP servers (Gmail, Google Calendar, browser automation, GitHub, ...).
 
 ## Support Jarvis4U ❤
@@ -104,6 +108,9 @@ Jarvis is powerful on purpose. Please understand this before using it:
   This is a text tripwire, not a sandbox.
 - **Autonomy is off by default** in this repo. When on, it acts on your mail and messages without
   asking. Read [AUTONOMY.md](AUTONOMY.md) and try dry-run first.
+- **Automatic email replies are off by default.** When on (Settings), Jarvis SENDS replies to new mail:
+  people you've emailed or saved in memory may get anything from your memory and calendar, strangers get
+  a polite reply with nothing personal. A forged sender address can pose as someone you know.
 - The dashboard only listens on `127.0.0.1` and has no login. Never expose it to the network.
 - With a cloud brain or cloud voice turned on, what you say and what Jarvis reads (emails, screen
   text, files) is sent to that provider. Gemini's free tier may use it to improve Google products.
