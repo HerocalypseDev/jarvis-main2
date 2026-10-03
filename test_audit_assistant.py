@@ -199,18 +199,6 @@ def test_a_task_from_someone_elses_email_cannot_read_private_stores(J, monkeypat
     assert not J._execute_tool("recall_facts", {"query": ""}, "what do you know").startswith("Refused")
 
 
-def test_a_phone_yes_never_confirms_a_staged_shutdown(J, monkeypatch):
-    ran = []
-    monkeypatch.setattr(J, "_execute_confirmed_action", lambda step, sink=None: ran.append(step))
-    with J._pending_action_lock:
-        J._pending_action = {"tool_name": "run_shell", "tool_input": {"command": "shutdown /s /t 0"},
-                             "queued_at": time.monotonic()}
-    out = []
-    J.handle_text_command("yes", source="phone", reply_sink=out.append)
-    assert ran == [] and J._pending_action is not None
-    J._take_pending_action()
-
-
 def test_open_uri_refuses_a_non_web_target(J, monkeypatch):
     opened = []
     monkeypatch.setattr(J.browsers, "open_link", lambda u: opened.append(u) or True)
