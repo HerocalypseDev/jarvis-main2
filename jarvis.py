@@ -12951,6 +12951,9 @@ def _execute_tool_impl(
             result = quick_recall()
         elif tool_name == "set_llm_provider":
             result = set_llm_provider(str(inp.get("provider") or ""))
+        elif tool_name == "restart_jarvis" and getattr(_command_ctx, "hands_free", False) \
+                and not getattr(_command_ctx, "wake", False):
+            result = "Tool failed: a restart heard in the hands-free window isn't taken; ask with push-to-talk or 'Hey Jarvis'."
         elif tool_name == "restart_jarvis":
             selfaware.record("system", "restart", "restart requested" + (" (forced)" if inp.get("force") else "")
                              + f" for: {(transcript or '').strip()[:120]}")

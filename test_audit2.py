@@ -676,3 +676,15 @@ def test_update_time_is_not_taken_from_the_hands_free_follow_up_window(J, monkey
     finally:
         J._command_ctx.hands_free = False
     assert "push-to-talk" in out and ran == []
+
+
+def test_restart_tool_is_not_taken_from_the_hands_free_follow_up_window(J, monkeypatch):
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(J.restart_mod, "restart", lambda *a, **k: "Restart scheduled")
+    J._command_ctx.hands_free, J._command_ctx.wake = True, False
+    try:
+        assert J._execute_tool("restart_jarvis", {}, "restart yourself").startswith("Tool failed")
+        J._command_ctx.wake = True
+        assert J._execute_tool("restart_jarvis", {}, "restart yourself") == "Restart scheduled"
+    finally:
+        J._command_ctx.hands_free = J._command_ctx.wake = False
