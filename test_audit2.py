@@ -441,3 +441,11 @@ def test_a_lock_windows_refused_is_reported(J, monkeypatch):
     assert J._execute_tool("system_action", {"system_action": "lock"}, "lock it").startswith("Tool failed")
     monkeypatch.setattr(J, "_system_action_lock", lambda: True)
     assert J._execute_tool("system_action", {"system_action": "lock"}, "lock it") == "Ran system action lock."
+
+
+def test_secret_values_never_reach_the_audit_or_the_log(J):
+    red = J._redact_audit_input({"student_id": 3, "new_password": "Banana42", "auth": {"api_key": "k-123"},
+                                 "items": [{"pin": "1234"}], "token_count": 5, "force": True, "query": "pin code"})
+    assert red["new_password"] == red["auth"]["api_key"] == red["items"][0]["pin"] == "[hidden]"
+    assert red["student_id"] == 3 and red["query"] == "pin code" and red["force"] is True and red["token_count"] == 5
+    assert J._redact_audit_input({"pin": 4321, "max_tokens": 900}) == {"pin": "[hidden]", "max_tokens": 900}
