@@ -1332,6 +1332,8 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
         blocked = _email_recipient_blocked(details) or _email_send_capped(details)
         if blocked:
             return False, blocked
+        if not _email_recipients(details):
+            return False, "email not sent: no recipient address to check the limits against"
     cal_note = ""
     if action_type == "calendar":
         direct, cal_note = _direct_calendar(details)
@@ -1354,7 +1356,14 @@ def _run_action(action_type: str | None, details: dict, commitment_id: int | Non
         else:
             instr = (f"Do exactly this file task and nothing more, using this data: {data}. "
                      "Reply in one short sentence." + guard)
-        res = _call("run_agent", instr, default=None)
+        # Audit 2026-10-04: the caps above checked `to`, but the agent run could send to any address in the data
+        # (body, description), send twice, or send mail during a calendar/file task. The run may now only send ONE
+        # email, to the checked recipients (none for calendar/file tasks); jarvis.py enforces it at the tool call.
+        _call("email_scope", _email_recipients(details) if action_type == "email" else [])
+        try:
+            res = _call("run_agent", instr, default=None)
+        finally:
+            _call("email_scope", None)
         text = str(res or "").strip()
         if res is None:
             return False, "no agent available"

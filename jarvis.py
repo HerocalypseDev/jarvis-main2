@@ -6390,12 +6390,23 @@ def _scheduler_loop() -> None:
 
 
 # --- Full autonomy wiring (jarvis_autonomy.py / jarvis_dynamic_tools.py) ---------------------------
-def _autonomy_run_agent(instruction: str) -> str:
+def _autonomy_set_email_scope(addresses) -> None:
+    """Autonomy says, just before run_agent, which addresses that run may email (None afterwards). Same thread."""
+    _command_ctx.next_email_scope = None if addresses is None else [str(a) for a in addresses]
+
+
+def _autonomy_run_agent(instruction: str, email_to: list[str] | None = None) -> str:
     """Runs one approved autonomous action through the normal agent loop (so its tools, audit trail and
-    the catastrophic confirmation gate all apply) and returns the reply."""
+    the catastrophic confirmation gate all apply) and returns the reply. The run may email only the addresses
+    autonomy checked against its limits, once (`email_to`, or what autonomy set with email_scope; none = no email)."""
+    if email_to is None:
+        email_to = getattr(_command_ctx, "next_email_scope", None)
     _set_scheduled_task_running(True)
     prev = getattr(_command_ctx, "autonomous", False)
     prev_untrusted = getattr(_command_ctx, "untrusted_origin", False)
+    prev_scope = (getattr(_command_ctx, "email_scope", None), getattr(_command_ctx, "email_sends", 0))
+    _command_ctx.email_scope = {a.lower() for a in (email_to or [])}
+    _command_ctx.email_sends = 0
     _command_ctx.autonomous = True
     # These actions are built from extracted data (often an email): never shell/python/typing (2026-09-27).
     _command_ctx.untrusted_origin = True
@@ -6409,6 +6420,7 @@ def _autonomy_run_agent(instruction: str) -> str:
     finally:
         _command_ctx.autonomous = prev
         _command_ctx.untrusted_origin = prev_untrusted
+        _command_ctx.email_scope, _command_ctx.email_sends = prev_scope
         _set_scheduled_task_running(False)
 
 
@@ -8760,6 +8772,7 @@ def _autonomy_callbacks() -> dict:
         "audit": _log_action_audit,
         "create_reminder": _autonomy_create_reminder,
         "run_agent": _autonomy_run_agent,
+        "email_scope": _autonomy_set_email_scope,
         "queue_task": lambda description, instructions, priority="normal", deadline=None: task_scheduler.queue_task(
             description, priority=priority if priority in task_scheduler.PRIORITY_LEVELS else "normal",
             instructions=instructions, deadline=deadline,
@@ -12171,6 +12184,28 @@ def _mcp_scalars(value, depth: int = 0) -> list[str]:
     return [str(value)] if isinstance(value, (str, int, float)) and not isinstance(value, bool) else []
 
 
+_MAIL_SEND_TOOL_RE = re.compile(r"^mcp_\w*?(?:gmail|mail|email|outlook)\w*?_(?:send|reply|forward)|send_?e?mail", re.I)
+_ADDR_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _email_scope_problem(tool_name: str, inp: dict) -> str | None:
+    """In an autonomous email/calendar/file action (_autonomy_run_agent): a mail-send call may only go to the
+    recipients autonomy checked against its limits, and only once (audit 2026-10-04)."""
+    scope = getattr(_command_ctx, "email_scope", None)
+    if scope is None or not _MAIL_SEND_TOOL_RE.search(tool_name):
+        return None
+    if not scope:
+        return "Refused: this autonomous task may not send email."
+    addrs = {a.lower().rstrip(".") for a in _ADDR_RE.findall(" ".join(_mcp_scalars(inp)))}
+    extra = sorted(a for a in addrs if a not in scope)
+    if extra:
+        return f"Refused: this autonomous email may only go to {', '.join(sorted(scope))}, not {', '.join(extra)}."
+    if getattr(_command_ctx, "email_sends", 0) >= 1:
+        return "Refused: this autonomous task already sent its one email."
+    _command_ctx.email_sends = getattr(_command_ctx, "email_sends", 0) + 1
+    return None
+
+
 _MCP_FILE_KEY_RE = re.compile(r"attach|path|file", re.I)
 
 
@@ -12226,7 +12261,7 @@ def _execute_tool_impl(
             reason = None if skip_confirmation else (_catastrophic_reason(
                 " ".join(_mcp_scalars(inp))
             ) or _addon_confirm_reason(tool_name, inp))
-            file_problem = _mcp_file_problem(inp)
+            file_problem = _mcp_file_problem(inp) or _email_scope_problem(tool_name, inp)
             if file_problem:
                 result = file_problem
             elif reason:
