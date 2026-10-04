@@ -688,3 +688,12 @@ def test_restart_tool_is_not_taken_from_the_hands_free_follow_up_window(J, monke
         assert J._execute_tool("restart_jarvis", {}, "restart yourself") == "Restart scheduled"
     finally:
         J._command_ctx.hands_free = J._command_ctx.wake = False
+
+
+def test_dev_tools_cannot_write_into_jarvis_own_code_folder(tmp_path):
+    from pathlib import Path
+    import jarvis_devtools as dt
+    here = str(Path(dt.__file__).resolve().parent)
+    assert dt.scaffold_module(here, "new_thing").startswith("Refused")
+    assert dt.generate_tests(here).startswith("Refused")
+    assert dt.scaffold_module(str(tmp_path), "new_thing").startswith("Created")
