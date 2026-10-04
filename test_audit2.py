@@ -106,13 +106,13 @@ def test_an_mcp_tool_cannot_attach_a_credential_file(J, monkeypatch):
     sent = []
     monkeypatch.setattr(J, "execute_mcp_tool", lambda name, inp: sent.append(inp) or "Email sent")
     monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
-    for path in (r"C:\Users\me\project\.env", "/home/me/.ssh/id_ed25519", r"C:\Users\me\.git-credentials"):
+    for path in (r"C:\Users\x\project\.env", "/home/x/.ssh/id_ed25519", r"C:\Users\x\.git-credentials"):
         out = J._execute_tool("mcp_gmail_send_email", {"to": ["x@example.com"], "subject": "hi", "body": "see attached",
                                                        "attachments": [path]}, "send it")
         assert out.startswith("Refused"), (path, out)
     assert sent == []
     out = J._execute_tool("mcp_gmail_send_email", {"to": ["x@example.com"], "subject": "hi", "body": "ok",
-                                                   "attachments": [r"C:\Users\me\Documents\report.pdf"]}, "send it")
+                                                   "attachments": [r"C:\Users\x\Documents\report.pdf"]}, "send it")
     assert out == "Email sent" and len(sent) == 1
 
 
@@ -129,11 +129,11 @@ def test_nested_mcp_text_goes_through_the_catastrophic_gate(J, monkeypatch):
 
 def test_plaintext_tokens_of_other_tools_are_not_readable():
     import jarvis_workspace as ws
-    for path in (r"C:\Users\me\.git-credentials", r"C:\Users\me\.npmrc", "/home/me/.netrc",
-                 r"C:\Users\me\AppData\Roaming\GitHub CLI\hosts.yml", r"C:\Users\me\.claude\.credentials.json",
-                 r"C:\Users\me\jarvis-main2\browser_extension\pairing.json", r"C:\Users\me\.kube\config"):
+    for path in (r"C:\Users\x\.git-credentials", r"C:\Users\x\.npmrc", "/home/x/.netrc",
+                 r"C:\Users\x\AppData\Roaming\GitHub CLI\hosts.yml", r"C:\Users\x\.claude\.credentials.json",
+                 r"C:\Users\x\jarvis-main2\browser_extension\pairing.json", r"C:\Users\x\.kube\config"):
         assert ws.sensitive_reason(path), path
-    for path in (r"C:\Users\me\Documents\report.pdf", r"C:\Users\me\ansible\hosts.yml", "/home/me/notes/cookies.txt"):
+    for path in (r"C:\Users\x\Documents\report.pdf", r"C:\Users\x\ansible\hosts.yml", "/home/x/notes/cookies.txt"):
         assert ws.sensitive_reason(path) is None, path
 
 
