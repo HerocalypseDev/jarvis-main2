@@ -9754,13 +9754,17 @@ def _launch_focus_app(name: str) -> None:
     _launch_app(name)
 
 
-def _system_action_lock() -> None:
+def _system_action_lock() -> bool:
+    """True when Windows accepted the lock (LockWorkStation returns 0 on failure; it was ignored before 2026-10-04)."""
     if sys.platform != "win32":
         log.warning("Lock workstation is only implemented on Windows.")
-        return
+        return False
     import ctypes
 
-    ctypes.windll.user32.LockWorkStation()
+    ok = bool(ctypes.windll.user32.LockWorkStation())
+    if not ok:
+        log.warning("LockWorkStation failed (error %s).", ctypes.GetLastError())
+    return ok
 
 
 def _system_action_minimize_all() -> None:
@@ -9818,9 +9822,10 @@ def _send_vk_key(vk: int) -> None:
     user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
 
 
-def _run_system_action(name: str) -> None:
+def _run_system_action(name: str) -> str | None:
+    """None when done, else why not (only the lock can say it failed; the others give Windows no answer to check)."""
     if name == "lock":
-        _system_action_lock()
+        return None if _system_action_lock() else "Windows didn't lock the PC"
     elif name == "minimize_all":
         _system_action_minimize_all()
     elif name == "minimize_active":
@@ -12436,8 +12441,8 @@ def _execute_tool_impl(
         elif tool_name == "system_action":
             action = str(inp.get("system_action") or "").strip()
             if action in ALLOWED_SYSTEM_ACTIONS:
-                _run_system_action(action)
-                result = f"Ran system action {action}."
+                problem = _run_system_action(action)
+                result = f"Tool failed: {problem}." if problem else f"Ran system action {action}."
             else:
                 result = f"{action!r} is not a known system action."
         elif tool_name == "read_screen":
