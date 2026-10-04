@@ -605,3 +605,19 @@ def test_restart_helper_survives_an_apostrophe_in_the_path():
     cmd = jarvis_restart.helper_command(42, Path("C:/Users/O'Brien/jarvis/Jarvis.vbs"))
     script = cmd[-1]
     assert "O''Brien" in script and script.count("'") % 2 == 0
+
+
+def test_an_unattended_overwrite_keeps_the_previous_version(J, monkeypatch, tmp_path):
+    import jarvis_workspace
+    target = tmp_path / "notes.txt"
+    target.write_text("my own notes", encoding="utf-8")
+    monkeypatch.setattr(jarvis_workspace, "resolve_write_path", lambda path, content="": (target, ""))
+    monkeypatch.setattr(J, "_current_command_source", lambda: None)            # a scheduled run
+    out = J._write_file_tool(str(target), "replaced", False)
+    kept = list((tmp_path / ".jarvis-previous").glob("notes-*.txt"))
+    assert kept and kept[0].read_text(encoding="utf-8") == "my own notes" and "previous version" in out
+    monkeypatch.setattr(J, "_current_command_source", lambda: "voice")         # the owner asked: no copy
+    target2 = tmp_path / "b.txt"
+    target2.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(jarvis_workspace, "resolve_write_path", lambda path, content="": (target2, ""))
+    assert "previous version" not in J._write_file_tool(str(target2), "y", False)
