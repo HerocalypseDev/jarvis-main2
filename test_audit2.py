@@ -540,7 +540,7 @@ def test_an_email_started_task_cannot_save_skills_or_write_memory(J):
     J._command_ctx.untrusted_origin = True
     try:
         for name in ("save_skill", "remember_fact", "remember_decision", "remember_code_pattern",
-                     "update_project_status", "autonomy_skill"):
+                     "update_project_status", "autonomy_skill", "send_to_my_phone"):
             assert J._untrusted_block(name), name
     finally:
         J._command_ctx.untrusted_origin = False

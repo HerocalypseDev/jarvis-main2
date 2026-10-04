@@ -8354,7 +8354,10 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             # every later prompt (a relationship fact with an address even joins the Sleep Mode
                             # family auto-reply list): nothing from someone else's message is written there
                             "save_skill", "remember_fact", "remember_decision", "remember_code_pattern",
-                            "update_project_status", "autonomy_skill"}
+                            "update_project_status", "autonomy_skill",
+                            # a message to the owner's own phone comes from their trusted bot: an injected email could
+                            # use it to send them a phishing link (autonomy's own notices go through another path)
+                            "send_to_my_phone"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
