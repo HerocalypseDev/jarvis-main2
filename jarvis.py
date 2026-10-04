@@ -5268,6 +5268,18 @@ def send_windows_toast(title: str, message: str) -> bool:
 _NTFY_PRIORITIES = {"min": 1, "low": 2, "default": 3, "high": 4, "urgent": 5}
 
 
+PHONE_MAX_CHARS = 4000
+
+
+def _phone_cut(message: str) -> str:
+    """Phone messages are capped (Telegram's limit is 4096); a longer one now says it was cut (audit 2026-10-04: the
+    end of a long reply just vanished)."""
+    if len(message) <= PHONE_MAX_CHARS:
+        return message
+    note = "\n\n[cut here: the full reply is on the dashboard]"
+    return message[:PHONE_MAX_CHARS - len(note)].rstrip() + note
+
+
 def _ntfy_publish(message: str, title: str = "Jarvis", priority: str = "default") -> bool:
     """Best-effort push via ntfy's JSON publish endpoint (not the raw-body+headers form —
     headers can't safely carry arbitrary unicode, JSON can). Never raises.
@@ -5284,7 +5296,7 @@ def _ntfy_publish(message: str, title: str = "Jarvis", priority: str = "default"
     payload = json.dumps(
         {
             "topic": NTFY_TOPIC,
-            "message": message[:4000],
+            "message": _phone_cut(message),
             "title": title,
             "priority": _NTFY_PRIORITIES.get(priority, 3),
         }
@@ -5311,7 +5323,7 @@ def _telegram_send(message: str) -> bool:
     message = (message or "").strip()
     if not message:
         return False
-    payload = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": message[:4000]}).encode("utf-8")
+    payload = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": _phone_cut(message)}).encode("utf-8")
     try:
         req = urllib.request.Request(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
