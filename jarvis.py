@@ -11811,11 +11811,28 @@ def _set_plan(transcript: str, steps: list) -> str:
     )
 
 
-def _redact_audit_input(tool_input):
-    """The audit trail never stores a password value."""
-    if not isinstance(tool_input, dict):
+_SECRET_ARG_RE = re.compile(r"password|passcode|passwd|\bpin\b|_pin$|^pin|secret|token|api_?key|otp|cvv", re.I)
+
+
+def _is_secret_arg(key, value) -> bool:
+    """A secret-named argument holding a value (a count/limit such as max_tokens or token_count is not a secret)."""
+    k = str(key).lower()
+    if not _SECRET_ARG_RE.search(k) or isinstance(value, bool) or "count" in k or "max" in k:
+        return False
+    return isinstance(value, (str, int)) and str(value) != ""
+
+
+def _redact_audit_input(tool_input, depth: int = 0):
+    """The audit trail and the log never store a password / PIN / token value, however deep it sits (audit 2026-10-04:
+    only a top-level "password" key was hidden, and the log line printed the raw input)."""
+    if depth > 6:
         return tool_input
-    return {k: ("[hidden]" if "password" in str(k).lower() and v else v) for k, v in tool_input.items()}
+    if isinstance(tool_input, dict):
+        return {k: "[hidden]" if _is_secret_arg(k, v) else _redact_audit_input(v, depth + 1)
+                for k, v in tool_input.items()}
+    if isinstance(tool_input, list):
+        return [_redact_audit_input(v, depth + 1) for v in tool_input]
+    return tool_input
 
 
 def _log_action_audit(tool_name: str, tool_input: dict, transcript: str, result: str) -> None:
@@ -12944,7 +12961,7 @@ def _execute_tool_impl(
         result = _verify_action(tool_name, inp, result)
     except Exception as e:  # a broken check must never break the action itself
         log.debug("Verification of %s skipped: %s", tool_name, e)
-    log.info("Tool %s(%r) -> %s", tool_name, inp, (result or "")[:200])
+    log.info("Tool %s(%r) -> %s", tool_name, _redact_audit_input(inp), (result or "")[:200])
     _log_action_audit(tool_name, inp, transcript, result)
     return result
 
