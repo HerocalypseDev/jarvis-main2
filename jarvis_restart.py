@@ -66,9 +66,12 @@ def check_imports(project_dir: Path) -> str | None:
 
 
 def helper_command(pid: int, launcher: Path) -> list[str]:
+    # A ' in the path (a user folder like O'Brien) ended the single-quoted string, so the helper failed and Jarvis
+    # closed without coming back (audit 2026-10-04). Inside '...' PowerShell reads '' as one quote.
+    quoted = str(launcher).replace("'", "''")
     script = (
         f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; "
-        f"Start-Process -FilePath wscript.exe -ArgumentList '\"{launcher}\"'"
+        f"Start-Process -FilePath wscript.exe -ArgumentList '\"{quoted}\"'"
     )
     return ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script]
 
