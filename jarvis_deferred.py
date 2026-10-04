@@ -28,6 +28,8 @@ RETRY_MIN = 5
 DEDUPE_WINDOW_MIN = 20
 STALE_RUNNING_MIN = 90  # a job left 'running' by a crash/restart this long is retried
 # Only an explicit "Jarvis": "You should call mom" is a reminder FOR the user (audit 2026-09-27).
+_RESTART_RE = re.compile(r"\b(?:restart|reboot|relaunch|reload)\s+(?:yourself|jarvis|itself)\b|\brestart_jarvis\b"
+                         r"|\bupdate (?:time|yourself|and restart)\b|\b(?:pull|update) and restart\b", re.I)
 _REMIND_JARVIS_RE = re.compile(r"^\s*(?:please\s+)?(?:remind\s+)?jarvis\s*,?\s+"
                                r"(?:to|should|needs? to|will|must|has to)\s+(.+)$", re.I)
 
@@ -139,10 +141,26 @@ def claim_due(store: Store, now: datetime | None = None, limit: int = 1,
     STALE_RUNNING_MIN by a crash is retried, but never one this process is still running (`still_running`)."""
     now = now or datetime.now()
     stale = (now - timedelta(minutes=STALE_RUNNING_MIN)).isoformat(timespec="seconds")
-    for j in store.q("SELECT id FROM autonomy_deferred_jobs WHERE status='running' AND started_at < ?", (stale,)):
-        if j["id"] not in (still_running or set()):
+    for j in store.q("SELECT id, instruction, attempts FROM autonomy_deferred_jobs WHERE status='running' "
+                     "AND started_at < ?", (stale,)):
+        if j["id"] in (still_running or set()):
+            continue
+        # Audit 2026-10-04: "git pull then restart yourself" is cut off by its own restart (Jarvis exits ~8 s later,
+        # often before the job is marked done), and a stale job was retried with no attempt limit: Jarvis restarted
+        # itself every 90 minutes, for ever. A job that asked for the restart is finished by it; any other stale job
+        # is retried only while it has attempts left.
+        if _RESTART_RE.search(j["instruction"] or ""):
+            status, result = "done", "Jarvis restarted during this job (the job asked for a restart), so it isn't run again."
+        elif (j["attempts"] or 0) >= MAX_ATTEMPTS:
+            status, result = "failed", f"Cut off {j['attempts']} times (Jarvis stopped or restarted mid-job); not run again."
+        else:
+            status, result = "pending", None
+        if status == "pending":
             store.q("UPDATE autonomy_deferred_jobs SET status='pending' WHERE id=? AND status='running'",
                     (j["id"],), write=True)
+        else:
+            store.q("UPDATE autonomy_deferred_jobs SET status=?, result=?, finished_at=? WHERE id=? AND status='running'",
+                    (status, result, now.isoformat(timespec="seconds"), j["id"]), write=True)
     claimed = []
     for j in store.q("SELECT * FROM autonomy_deferred_jobs WHERE status='pending' AND due_at <= ? ORDER BY due_at "
                      "LIMIT ?", (now.isoformat(timespec="seconds"), limit)):
