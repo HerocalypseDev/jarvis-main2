@@ -433,3 +433,11 @@ def test_open_url_says_so_when_nothing_opened(J, monkeypatch):
     assert J._execute_tool("open_url", {"url": "https://example.com"}, "open it").startswith("Tool failed")
     monkeypatch.setattr(J.browsers, "open_link", lambda u: True)
     assert J._execute_tool("open_url", {"url": "https://example.com"}, "open it") == "Opened https://example.com."
+
+
+def test_a_lock_windows_refused_is_reported(J, monkeypatch):
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(J, "_system_action_lock", lambda: False)
+    assert J._execute_tool("system_action", {"system_action": "lock"}, "lock it").startswith("Tool failed")
+    monkeypatch.setattr(J, "_system_action_lock", lambda: True)
+    assert J._execute_tool("system_action", {"system_action": "lock"}, "lock it") == "Ran system action lock."
