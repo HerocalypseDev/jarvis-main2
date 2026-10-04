@@ -300,7 +300,7 @@ async def run(tool: str, args: dict | None, fmt) -> str:
     try:
         result = await asyncio.to_thread(homework_api.call, tool, args or {})
     except homework_api.HomeworkApiError as e:
-        return f"Tool failed: homework app: {e.message}"
+        return f"Tool failed: homework app: {scrub(str(e.message))[:400]}"  # the app's error text may quote a signed link
     try:
         return fmt(result)
     except Exception as e:  # an unexpected shape must still answer something useful

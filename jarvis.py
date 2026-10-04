@@ -4687,7 +4687,8 @@ def queue_or_deliver_notification(
         log.info("Queued non-urgent notification (unrecognized person in view): %r", text)
         return
     kind = "reminder" if is_reminder else notify_priority.infer_kind(text)
-    if not (urgent or bypass_busy_gate or is_reminder) and _env_on("JARVIS_NOTIFY_SMART", True) and \
+    # `important` never waits for the hourly digest (audit 2026-10-04: a "meeting in 10 minutes" heads-up could).
+    if not (urgent or bypass_busy_gate or is_reminder or important) and _env_on("JARVIS_NOTIFY_SMART", True) and \
             notify_priority.should_batch(_memory_db_connect, _memory_db_lock, kind):
         # C6: a kind the user keeps cutting off waits for the hourly digest instead of interrupting.
         with _session_context_lock:
@@ -4696,7 +4697,9 @@ def queue_or_deliver_notification(
             _save_session_context_locked()
         log.info("Batched low-priority notification (%s) for the digest: %r", kind, text)
         return
-    if urgent or bypass_busy_gate or not (user_is_actively_working() and _is_preferred_work_hours()):
+    # `important` (a meeting about to start, a job the user asked for) is time-bound like a reminder: it must not
+    # wait for the next command just because the user is typing during work hours (audit 2026-10-04).
+    if urgent or bypass_busy_gate or important or not (user_is_actively_working() and _is_preferred_work_hours()):
         try:
             notify_priority.delivered(_memory_db_connect, _memory_db_lock, kind)
         except Exception as e:
@@ -6240,7 +6243,7 @@ _single_flight_lock = threading.Lock()
 # --- Email auto-replies (2026-10-03, jarvis_mail_reply): answers mail from the calendar and memory, sent automatically.
 # Known people (an address in memory, or anyone the owner has emailed) may get anything from memory and the calendar;
 # strangers get a polite reply with nothing personal. Paused in safe mode / when autonomy is hard-disabled.
-_mail_reply_state: dict = {"last": 0.0}
+_mail_reply_state: dict = {"last": None}  # None = never ran (monotonic() starts near 0 after a boot)
 _mail_reply_store: mail_reply.Store | None = None
 
 
@@ -6256,7 +6259,8 @@ def _mail_autoreply_tick(now: datetime) -> None:
         return
     if not {"mcp_gmail_search_emails", "mcp_gmail_read_email", "mcp_gmail_send_email"} <= set(_mcp_tool_index):
         return
-    if time.monotonic() - _mail_reply_state["last"] < mail_reply.interval_min() * 60:
+    last = _mail_reply_state["last"]
+    if last is not None and time.monotonic() - last < mail_reply.interval_min() * 60:
         return
     _mail_reply_state["last"] = time.monotonic()
     _run_single_flight("mail-autoreply", _mail_autoreply_cycle, now)
@@ -7772,7 +7776,7 @@ _agents_running: set = set()
 _agents_lock = threading.Lock()
 _agent_pending_lock = threading.Lock()
 _AGENT_FORBIDDEN_TOOLS = {"background_agents", "macros"}
-_kg_state = {"last": 0.0}
+_kg_state = {"last": None}  # None = never synced (monotonic() starts near 0 after a boot)
 _digest_state = {"last": time.monotonic()}
 
 
@@ -7936,7 +7940,7 @@ def _memory_search_tool(inp: dict) -> str:
 
 
 def _kg_sync_tick() -> None:
-    if time.monotonic() - _kg_state["last"] >= kg.SYNC_MIN * 60:
+    if _kg_state["last"] is None or time.monotonic() - _kg_state["last"] >= kg.SYNC_MIN * 60:
         _kg_state["last"] = time.monotonic()
         threading.Thread(target=lambda: kg.sync(_memory_db_connect, _memory_db_lock), daemon=True, name="kg-sync").start()
 

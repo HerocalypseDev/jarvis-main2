@@ -121,6 +121,7 @@ GITIGNORE_EXTRA = (
 DENY_WORDS = (
     "Hero", "Racheal", "Jacob", "Ayo", "Lagos", "Nigeria", "PPM", "ayojacobgo", "rachealpower",
     "01_Projects", "Jarvis_Workspace\\Notes", "LearnAi", "learn-ai", "delete_homework", "set_student_password", "UTME", "Ilorin", "Obafemi",
+    "homework_mcp_server", "homework_gate", "homework_api", "homework_marker",
 )
 DENY_ALLOWED_FILES = {"LICENSE"}  # the copyright line names the GitHub account on purpose
 PERSONAL_MAIL_DOMAINS = ("gmail.com", "googlemail.com", "yahoo.", "hotmail.", "outlook.", "live.com",
@@ -236,6 +237,12 @@ def build(target: Path) -> list[str]:
         if rel == "mcp_servers.example.json":
             cfg = json.loads(text)
             cfg.pop("discord", None)
+            # Audit 2026-10-04: a "homework" entry added to the example went public, naming the private app. Drop any
+            # server that runs a file the public copy doesn't have (an EXCLUDE'd one), whatever it is called.
+            for name in [n for n, spec in cfg.items() if isinstance(spec, dict) and any(
+                    _excluded(str(a).replace("\\", "/").rsplit("/", 1)[-1]) or _excluded(str(a).replace("\\", "/"))
+                    for a in (spec.get("args") or []))]:
+                cfg.pop(name, None)
             text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"
         if rel == ".gitignore":
             text = text.rstrip("\n") + "\n" + "\n".join(GITIGNORE_EXTRA) + "\n"

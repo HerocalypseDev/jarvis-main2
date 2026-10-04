@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import os
 import urllib.error
 import urllib.parse
@@ -103,6 +104,7 @@ def _request(method: str, body: dict | None, timeout: float):
         payload = {}
     if status >= 400 or not payload.get("ok", status < 400):
         msg = str(payload.get("error") or "").strip() or _FALLBACK.get(status) or f"The homework app answered {status}."
+        msg = re.sub(r"https?://\S+", "[link hidden]", msg)[:400]  # audit 2026-10-04: an error may quote a signed link
         raise HomeworkApiError(msg, status)
     return payload
 
