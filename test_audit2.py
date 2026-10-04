@@ -85,3 +85,53 @@ def test_a_job_that_keeps_getting_cut_off_stops_after_its_attempts(tmp_path):
         t += timedelta(minutes=deferred.STALE_RUNNING_MIN + 1)
     assert runs == deferred.MAX_ATTEMPTS
     assert store.q("SELECT status FROM autonomy_deferred_jobs WHERE id=?", (jid,))[0]["status"] == "failed"
+
+
+def test_a_setting_value_can_never_add_a_second_line_to_env(tmp_path, monkeypatch):
+    import jarvis_settings as settings
+    env = tmp_path / ".env"
+    env.write_text("A=1\n", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(env))
+    monkeypatch.setenv("JARVIS_WEATHER_LOCATION", "")  # restored after the test (set_setting writes os.environ)
+    monkeypatch.setenv("JARVIS_REPLY_STYLE", "")
+    for sep in (" ", "\x0b", "\x0c", "\x1c", "\x85", " ", "\x00"):
+        res = settings.set_setting("JARVIS_REPLY_STYLE", f"brief{sep}JARVIS_INJECTED=1")
+        assert not res["ok"], repr(sep)
+    assert "JARVIS_INJECTED" not in env.read_text(encoding="utf-8")
+    assert settings.set_setting("JARVIS_WEATHER_LOCATION", "Lagos, Nigeria\twest")["ok"]  # a tab is fine
+
+
+def test_an_mcp_tool_cannot_attach_a_credential_file(J, monkeypatch):
+    """Gmail's send_email reads attachment paths itself, around read_file's credential rules."""
+    sent = []
+    monkeypatch.setattr(J, "execute_mcp_tool", lambda name, inp: sent.append(inp) or "Email sent")
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    for path in (r"C:\Users\me\project\.env", "/home/me/.ssh/id_ed25519", r"C:\Users\me\.git-credentials"):
+        out = J._execute_tool("mcp_gmail_send_email", {"to": ["x@example.com"], "subject": "hi", "body": "see attached",
+                                                       "attachments": [path]}, "send it")
+        assert out.startswith("Refused"), (path, out)
+    assert sent == []
+    out = J._execute_tool("mcp_gmail_send_email", {"to": ["x@example.com"], "subject": "hi", "body": "ok",
+                                                   "attachments": [r"C:\Users\me\Documents\report.pdf"]}, "send it")
+    assert out == "Email sent" and len(sent) == 1
+
+
+def test_nested_mcp_text_goes_through_the_catastrophic_gate(J, monkeypatch):
+    """Only top-level strings were checked: MultiEdit's [[x, y, text]] typed a shutdown with no confirmation."""
+    ran = []
+    monkeypatch.setattr(J, "execute_mcp_tool", lambda name, inp: ran.append(name) or "typed")
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(J, "_pending_action", None)
+    out = J._execute_tool("mcp_windows_MultiEdit", {"locs": [[100, 200, "shutdown /s /t 0"]]}, "type it")
+    assert "staged, not run" in out and ran == []
+    J._pending_action = None
+
+
+def test_plaintext_tokens_of_other_tools_are_not_readable():
+    import jarvis_workspace as ws
+    for path in (r"C:\Users\me\.git-credentials", r"C:\Users\me\.npmrc", "/home/me/.netrc",
+                 r"C:\Users\me\AppData\Roaming\GitHub CLI\hosts.yml", r"C:\Users\me\.claude\.credentials.json",
+                 r"C:\Users\me\jarvis-main2\browser_extension\pairing.json", r"C:\Users\me\.kube\config"):
+        assert ws.sensitive_reason(path), path
+    for path in (r"C:\Users\me\Documents\report.pdf", r"C:\Users\me\ansible\hosts.yml", "/home/me/notes/cookies.txt"):
+        assert ws.sensitive_reason(path) is None, path

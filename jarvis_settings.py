@@ -332,7 +332,10 @@ def set_setting(key: str, value: str) -> dict:
     value = "" if value is None else str(value)
     if not _KEY_RE.match(key):
         return {"ok": False, "error": "Setting names are CAPITALS_WITH_UNDERSCORES."}
-    if "\n" in value or "\r" in value:
+    # Not just \n/\r (audit 2026-10-04): the .env reader splits with str.splitlines(), which also breaks on \x0b, \x0c,
+    # \x1c-\x1e, \x85, \u2028 and \u2029, so such a value became a second line (an extra setting) on the next save.
+    if len(value.splitlines()) > 1 or any(ord(c) < 32 and c != "\t" for c in value) or \
+            any(c in value for c in "\x85\u2028\u2029"):
         return {"ok": False, "error": "Values must be a single line."}
     spec = _BY_KEY.get(key)
     if spec and spec["kind"] == "choice" and value not in spec["choices"]:
