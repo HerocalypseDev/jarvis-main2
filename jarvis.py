@@ -1499,24 +1499,27 @@ def _unsafe_open_target(tool_name: str, url) -> bool:
     return not u.startswith(ok)
 
 
-def _open_uri(uri: str) -> None:
+def _open_uri(uri: str) -> bool:
+    """True when it was handed to a browser/app (audit 2026-10-04: a failure was only logged, and open_url said
+    "Opened ..." anyway)."""
     u = uri.strip()
     if not u:
-        return
+        return False
     if not u.lower().startswith(("http://", "https://", "spotify:")):
         # Defence in depth (audit 2026-10-03): os.startfile runs a file path / shell: target as a program. Every
         # caller already checks; this keeps a future caller from forgetting.
         log.warning("Refused to open a non-web target: %r", u[:120])
-        return
+        return False
     if browsers.open_link(u):  # web links go to the main browser (JARVIS_BROWSER), not whatever Windows picks
-        return
+        return True
     try:
         if sys.platform == "win32":
             os.startfile(u)
-        else:
-            webbrowser.open(u)
+            return True
+        return bool(webbrowser.open(u))
     except OSError as e:
         log.warning("Could not open %s: %s", u, e)
+        return False
 
 
 # --- push-to-talk: Claude decides zero or more actions from a fixed, safe set ---------
@@ -8593,8 +8596,7 @@ def _browser_tabs_tool(inp: dict, confirmed: bool = False) -> str:
                 return f"Opened {url} in a new tab."
             except browser_bridge.BridgeError as e:
                 log.info("Browser tabs: open via the extension failed (%s); opening the normal way.", e)
-        _open_uri(url)
-        return f"Opened {url}."
+        return f"Opened {url}." if _open_uri(url) else f"Tool failed: couldn't open {url} (no browser answered)."
     if not online:
         return _tabs_setup_hint()
     name = bridge.browser_name() or browsers.label()
@@ -12415,13 +12417,13 @@ def _execute_tool_impl(
         elif tool_name == "open_url":
             url = str(inp.get("url") or "").strip()
             result = f"Opened {url}." if url else "No URL given."
-            if url:
-                _open_uri(url)
+            if url and not _open_uri(url):
+                result = f"Tool failed: couldn't open {url} (no browser answered)."
         elif tool_name == "play_media":
             url = str(inp.get("url") or "").strip()
             result = "Opened." if url else "No URL given."
-            if url:
-                _open_uri(url)
+            if url and not _open_uri(url):
+                result = f"Tool failed: couldn't open {url}."
         elif tool_name == "open_app":
             app = str(inp.get("app") or "").strip().lower()
             app = APP_ALIASES.get(app, app)
