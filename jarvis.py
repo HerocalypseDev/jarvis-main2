@@ -6383,7 +6383,10 @@ def _memory_email_addresses() -> set[str]:
 def _mail_reply_facts(query: str) -> str:
     """Only what the email is about (audit 2026-10-03: the newest 40 facts went into every known-person reply): the
     profile basics plus the facts that match the message."""
-    return (get_user_profile_context() + memory_enhance.relevant_memory_line(query, skip_newest=0)).strip()
+    text = (get_user_profile_context() + memory_enhance.relevant_memory_line(query, skip_newest=0)).strip()
+    # A fact holding a password, PIN, code or bank detail is never put in front of the model writing to someone else
+    # (audit 2026-10-04: the code check catches a written value, not one spelled out in words).
+    return "\n".join(line for line in text.splitlines() if not quickfacts._SENSITIVE_RE.search(line))
 
 
 def _mail_reply_calendar() -> str | None:
