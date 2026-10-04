@@ -5340,6 +5340,18 @@ def _ntfy_listen_loop() -> None:
             time.sleep(5)
 
 
+TELEGRAM_STALE_S = 15 * 60  # a command older than this was sent while Jarvis was off: asked again, never just run
+
+
+def _telegram_ack(base: str, offset: int) -> None:
+    """Tell Telegram every update before `offset` was received (best effort; a failure only means a possible repeat)."""
+    try:
+        with urllib.request.urlopen(f"{base}/getUpdates?timeout=0&limit=1&offset={offset}", timeout=10) as resp:
+            resp.read()
+    except Exception as e:
+        log.debug("Telegram ack failed: %s", type(e).__name__)
+
+
 def _telegram_listen_loop() -> None:
     """Long-polls Telegram's getUpdates and runs each message through handle_text_command —
     but only from TELEGRAM_CHAT_ID; a message from any other chat is logged and dropped, since
@@ -5361,6 +5373,16 @@ def _telegram_listen_loop() -> None:
                 if chat_id != TELEGRAM_CHAT_ID:
                     if chat_id:
                         log.warning("Ignoring Telegram message from unauthorized chat %s", chat_id)
+                    continue
+                # Audit 2026-10-04: Telegram only counts an update as received at the NEXT getUpdates call, and the
+                # command runs before that. "restart yourself" / "update time" from the phone restarted Jarvis first,
+                # so the new copy fetched the same message again and restarted for ever. Confirm it, then run it.
+                _telegram_ack(base, offset)
+                age = time.time() - float(msg.get("date") or time.time())
+                if age > TELEGRAM_STALE_S and (text or _telegram_picture_id(msg)):
+                    log.info("Telegram message from %.0f min ago not run (Jarvis was offline).", age / 60)
+                    _telegram_send(f"I was offline when you sent \"{text[:60] or 'that picture'}\" "
+                                   f"({age / 60:.0f} minutes ago), so I didn't run it. Send it again if you still want it.")
                     continue
                 if text:
                     log.info("Telegram command received: %r", text)
