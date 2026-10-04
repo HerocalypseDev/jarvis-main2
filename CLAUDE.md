@@ -2598,6 +2598,20 @@ Owner's choices for this audit: tighten risky-by-design items when cheap, publis
   dashboard routes, Pro packs/widgets/themes, face, netscan, speed test, Gemini/Ollama providers, browser tabs end to end,
   macros/update time, wake word.
 
+## Full audit, second pass (2026-10-04, IN PROGRESS: paused at the owner's request)
+
+Paused at ~57 measured minutes of the owed 90-minute audit (started 16:56 UTC from the owner's audit prompt; the clock
+restarted once with the container, so time is measured from the transcript). 42 fix batches committed (git log "Audit 2
+batch 1".."42" + the git fsmonitor fix), regression tests in `test_audit2.py`; full suite: no new failures vs the baseline.
+Main themes: email-started (untrusted) and unattended runs can no longer exfiltrate (web/browser/phone/mail scope, file
+reads in email runs), escalate (queue_task keeps the marker, no save_skill/memory writes/plans/research) or reach code after
+reading outside text (taint: `_taint_block`); tools that silently failed now say "Tool failed"; timezone offsets in
+reminders/deadlines/calendar; Telegram restart loop; deferred-job restart loop; secrets redacted in logs.
+**To resume:** continue the hunt (not yet visited: jarvis_tech_understanding, jarvis_focus, jarvis_vibes, jarvis_roblox,
+jarvis_email_templates, jarvis_filewatcher, jarvis_autonomy_organise, jarvis_proactive, jarvis_memory_enhance), then
+re-run the full suite, write the final version of this section + phase row 150 with the MEASURED total time, merge to main,
+export + publish Jarvis4U, and give the findings table / live residual list / cost table.
+
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
 - `gmail_watch` searched `is:unread` every hour and re-announced the same unread mail ("New sign-in detected on your Vercel account").
