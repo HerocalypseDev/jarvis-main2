@@ -665,3 +665,14 @@ def test_secret_facts_never_reach_the_auto_reply_writer(J, monkeypatch):
                         lambda q, skip_newest=0: "\nThe wifi password is banana forty two.\nThe user's exam score was 280.")
     out = J._mail_reply_facts("what's the wifi password and your score?")
     assert "password" not in out and "exam score was 280" in out and "Hero" in out
+
+
+def test_update_time_is_not_taken_from_the_hands_free_follow_up_window(J, monkeypatch):
+    ran = []
+    monkeypatch.setattr(J, "_git", lambda *a, **k: ran.append(a) or None)
+    J._command_ctx.hands_free, J._command_ctx.wake = True, False
+    try:
+        out = J._update_and_restart_reply("update time")
+    finally:
+        J._command_ctx.hands_free = False
+    assert "push-to-talk" in out and ran == []
