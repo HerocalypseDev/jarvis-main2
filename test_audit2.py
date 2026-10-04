@@ -493,3 +493,11 @@ def test_calendar_args_survive_a_start_with_an_offset_and_an_end_without():
     args = A.build_calendar_args(props, {"title": "Standup", "start_iso": "2026-10-05T09:00:00+01:00",
                                          "end_iso": "2026-10-05T09:30:00"})
     assert args and "10:00" in str(args.get("end")), args
+
+
+def test_a_request_phrased_as_a_question_is_not_backed_by_an_earlier_action(J):
+    for said in ("Can you send Sam the report?", "could you email Ada the notes?", "Will you remind me at 5?",
+                 "send it?", "Jarvis, please set a reminder for 6?"):
+        assert J._recent_succeeded_tools(said) == [], said
+    for said in ("What message did you send me on Telegram?", "did you reply to Ada?", "so did you send it"):
+        assert J._ASKS_ABOUT_PAST_RE.search(said) and not J._POLITE_REQUEST_RE.search(said), said

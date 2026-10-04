@@ -11994,11 +11994,17 @@ _ASKS_ABOUT_PAST_RE = re.compile(
     r"^\W*(?:ok(?:ay)?\W+|so\W+|and\W+|wait\W+)*(?:what|which|when|where|did|have|has|was|were|how|why|tell me what)\b"
     r"|\?\s*$", re.I)
 RECENT_BACKING_MINUTES = 30
+# "Can you send Sam the report?" ends with "?" but is a request, not a question about what happened (audit 2026-10-04:
+# a false "I've sent it" was then backed by an unrelated send from earlier). Only real questions about the past count.
+_POLITE_REQUEST_RE = re.compile(
+    r"^\W*(?:(?:hey|ok(?:ay)?)\W+)?(?:jarvis\W+)?(?:(?:can|could|would|will|wo?n'?t)\s+(?:you|u)\b|please\b|"
+    r"(?:send|email|text|message|reply|forward|set|create|add|remind|schedule|book|save|write|type|fill|delete|"
+    r"remove|cancel|clear|open|close|turn|switch|make|put|move|copy|run|start|stop)\b)", re.I)
 
 
 def _recent_succeeded_tools(transcript: str, minutes: int = RECENT_BACKING_MINUTES) -> list[str]:
     """Tools that succeeded in the user's earlier commands of the last few minutes (never autonomy's own runs)."""
-    if not _ASKS_ABOUT_PAST_RE.search(transcript or ""):
+    if not _ASKS_ABOUT_PAST_RE.search(transcript or "") or _POLITE_REQUEST_RE.search(transcript or ""):
         return []
     since = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
     try:
