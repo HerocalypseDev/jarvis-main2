@@ -11094,6 +11094,26 @@ def _write_docx(p: Path, content: str, append: bool) -> None:
     jarvis_docx.write(p, content, append)
 
 
+def _keep_previous_version(p: Path) -> str:
+    """In a run nobody is watching (autonomy, a scheduled skill or job, a task from someone's email), overwriting an
+    existing file first keeps the old one in .jarvis-previous/ beside it (audit 2026-10-04: an overwrite was
+    unrecoverable). The owner's own commands overwrite as asked."""
+    watched = (_attended() or _current_command_source() == "phone") and not getattr(_command_ctx, "untrusted_origin", False)
+    if watched:
+        return ""
+    try:
+        if not p.is_file() or p.stat().st_size == 0:
+            return ""
+        keep_dir = p.parent / ".jarvis-previous"
+        keep_dir.mkdir(exist_ok=True)
+        kept = keep_dir / f"{p.stem}-{datetime.now():%Y%m%d-%H%M%S}{p.suffix}"
+        shutil.copy2(p, kept)
+        return f" (The previous version is kept at {kept}.)"
+    except OSError as e:
+        log.warning("Couldn't keep the previous version of %s: %s", p, e)
+        return ""
+
+
 def _write_file_tool(path: str, content: str, append: bool) -> str:
     if not path:
         return "No path given."
@@ -11102,8 +11122,11 @@ def _write_file_tool(path: str, content: str, append: bool) -> str:
         return refusal
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
+        kept = _keep_previous_version(p) if not append else ""
         if p.suffix.lower() == ".docx":
             _write_docx(p, content or "", append)
+            if kept:
+                return f"Wrote a Word document ({len(content or '')} chars) to {p}.{kept}"
             return f"{'Appended' if append else 'Wrote'} a Word document ({len(content or '')} chars) to {p}."
         if p.suffix.lower() == ".pptx":
             import jarvis_pptx
@@ -11111,7 +11134,7 @@ def _write_file_tool(path: str, content: str, append: bool) -> str:
             return f"{'Added to' if append else 'Wrote'} a PowerPoint deck ({n} slides) at {p}."
         with open(p, "a" if append else "w", encoding="utf-8") as f:
             f.write(content or "")
-        return f"{'Appended' if append else 'Wrote'} {len(content or '')} chars to {p}."
+        return f"{'Appended' if append else 'Wrote'} {len(content or '')} chars to {p}.{kept}"
     except Exception as e:
         return f"Failed to write {path}: {e}"
 
