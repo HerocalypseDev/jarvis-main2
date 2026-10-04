@@ -10929,6 +10929,9 @@ def _contains_secret(text: str) -> bool:
     return False
 
 
+HTTP_REQUEST_MAX_BYTES = 2_000_000
+
+
 def _http_request_tool(url: str, method: str, headers: dict | None, body: str | None) -> str:
     if not url:
         return "No URL given."
@@ -10945,10 +10948,12 @@ def _http_request_tool(url: str, method: str, headers: dict | None, body: str | 
         )
         opener = urllib.request.build_opener(image_download._CheckedRedirects())
         with opener.open(req, timeout=20) as resp:
-            text = resp.read().decode(errors="replace")
+            # Bounded (audit 2026-10-04): the whole body used to be read before truncation, so a huge download could
+            # fill memory. A little over what the model is shown is enough to say it was cut.
+            text = resp.read(HTTP_REQUEST_MAX_BYTES).decode(errors="replace")
             status = resp.status
     except urllib.error.HTTPError as e:
-        text = e.read().decode(errors="replace") if e.fp else str(e)
+        text = e.read(HTTP_REQUEST_MAX_BYTES).decode(errors="replace") if e.fp else str(e)
         status = e.code
     except Exception as e:
         return f"Request failed: {e}"

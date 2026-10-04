@@ -135,3 +135,50 @@ def test_plaintext_tokens_of_other_tools_are_not_readable():
         assert ws.sensitive_reason(path), path
     for path in (r"C:\Users\me\Documents\report.pdf", r"C:\Users\me\ansible\hosts.yml", "/home/me/notes/cookies.txt"):
         assert ws.sensitive_reason(path) is None, path
+
+
+def test_http_request_never_reads_a_huge_body_into_memory(J, monkeypatch):
+    import io
+    import jarvis_image_download as image_download
+
+    asked = []
+
+    class Resp(io.BytesIO):
+        status = 200
+
+        def read(self, n=-1):
+            asked.append(n)
+            return b"x" * (n if n and n > 0 else 50_000_000)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class Opener:
+        def open(self, req, timeout=None):
+            return Resp()
+
+    monkeypatch.setattr(image_download, "_check_host", lambda url: None)
+    monkeypatch.setattr(J.urllib.request, "build_opener", lambda *a: Opener())
+    out = J._http_request_tool("https://example.com/big", "GET", None, None)
+    assert asked and all(0 < n <= J.HTTP_REQUEST_MAX_BYTES for n in asked)
+    assert out.startswith("status=200") and "truncated" in out
+
+
+def test_restart_refuses_code_that_needs_a_package_that_isnt_installed(tmp_path):
+    """"update time" could pull code needing a new dependency: it compiled, so Jarvis restarted into a copy that
+    died at import and could say nothing."""
+    import threading
+    import jarvis_restart
+    (tmp_path / "Jarvis.vbs").write_text("x", encoding="utf-8")
+    (tmp_path / "jarvis.py").write_text("import os\nimport jarvis_local\ntry:\n    import nope_optional_pkg\n"
+                                        "except ImportError:\n    pass\n", encoding="utf-8")
+    (tmp_path / "jarvis_local.py").write_text("x = 1\n", encoding="utf-8")
+    assert jarvis_restart.check_imports(tmp_path) is None  # local modules and optional imports are fine
+    (tmp_path / "jarvis_new.py").write_text("import surely_not_installed_pkg_42\n", encoding="utf-8")
+    started = []
+    out = jarvis_restart.restart(tmp_path, 0, False, threading.Event(), popen=lambda *a, **k: started.append(a),
+                                 exit_fn=lambda c: None, sleep=lambda s: None, background=False)
+    assert out.startswith("Not restarting") and "surely_not_installed_pkg_42" in out and started == []
