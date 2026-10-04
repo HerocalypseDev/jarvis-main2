@@ -64,3 +64,12 @@ def test_the_billing_skill_is_gone_from_the_repo():
     """The owner asked for it to be removed (it needs an admin key personal accounts can't have, so it failed nightly)."""
     import pathlib
     assert not (pathlib.Path(__file__).parent / "skills" / "billing_watch.json").exists()
+
+
+def test_a_deleted_skill_is_kept_aside_and_never_loaded_again(J, tmp_path):
+    """Audit 2026-10-04: delete erased the file; a hand-written skill (often not in git) was lost for good."""
+    out = J._execute_tool("skills", {"action": "delete", "name": "billing"}, "remove the billing monitor")
+    kept = list((tmp_path / "skills" / ".deleted").glob("billing_watch-*.json"))
+    assert kept and ".deleted" in out
+    J._skills_cache = None
+    assert all(s["name"] != "billing_watch" for s in J._load_skills())

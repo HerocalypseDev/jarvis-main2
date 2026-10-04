@@ -7258,14 +7258,20 @@ def _skills_tool(inp: dict) -> str:
             off.add(name.lower())
             settings.set_setting(SKILLS_OFF_KEY, ",".join(sorted(off)))
             return f"{name} comes with the Pro pack, so I turned it off instead of deleting it."
+        # Moved aside, not erased (audit 2026-10-04): a skill the owner wrote by hand is often not in git, and a
+        # mis-heard name would otherwise lose it for good.
+        bin_dir = path.parent / ".deleted"  # not loaded (skills are read from *.json in the folder itself); gitignored
         try:
-            path.unlink()
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            kept = bin_dir / f"{path.stem}-{datetime.now():%Y%m%d-%H%M%S}{path.suffix}"
+            os.replace(path, kept)
         except OSError as e:
             return f"Tool failed: couldn't delete {path.name}: {e}"
         off.discard(name.lower())
         settings.set_setting(SKILLS_OFF_KEY, ",".join(sorted(off)))
         _invalidate_read_caches()
-        return f"Deleted the {name} skill ({_skill_schedule_text(skill.get('schedule'))}); it won't run again."
+        return (f"Deleted the {name} skill ({_skill_schedule_text(skill.get('schedule'))}); it won't run again. "
+                f"(A copy is kept in {path.parent.name}/.deleted/{kept.name} in case you want it back.)")
     return f"Tool failed: unknown action {action!r}."
 
 
