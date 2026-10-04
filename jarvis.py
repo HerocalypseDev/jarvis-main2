@@ -8322,7 +8322,12 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             # or a request body): an email-started task reports to the owner, it has no need for them.
                             "http_request", "download_image", "open_url", "play_media",
                             # background work started from here would run later WITHOUT these limits
-                            "set_plan", "delegate_research"}
+                            "set_plan", "delegate_research",
+                            # ...and so would a saved skill (scheduled, full tools), while a remembered fact steers
+                            # every later prompt (a relationship fact with an address even joins the Sleep Mode
+                            # family auto-reply list): nothing from someone else's message is written there
+                            "save_skill", "remember_fact", "remember_decision", "remember_code_pattern",
+                            "update_project_status", "autonomy_skill"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 

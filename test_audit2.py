@@ -534,3 +534,14 @@ def test_work_queued_from_an_email_started_task_keeps_its_limits(J, monkeypatch,
     import sqlite3
     row = sqlite3.connect(tmp_path / "q.db").execute("SELECT instructions FROM task_queue").fetchone()
     assert row[0].startswith(J.UNTRUSTED_TASK_MARKER)
+
+
+def test_an_email_started_task_cannot_save_skills_or_write_memory(J):
+    J._command_ctx.untrusted_origin = True
+    try:
+        for name in ("save_skill", "remember_fact", "remember_decision", "remember_code_pattern",
+                     "update_project_status", "autonomy_skill"):
+            assert J._untrusted_block(name), name
+    finally:
+        J._command_ctx.untrusted_origin = False
+    assert J._untrusted_block("remember_fact") is None
