@@ -12408,7 +12408,10 @@ def _email_scope_problem(tool_name: str, inp: dict) -> str | None:
 _MCP_FILE_KEY_RE = re.compile(r"attach|path|file", re.I)
 
 
-def _mcp_file_problem(value, depth: int = 0, filey: bool = False) -> str | None:
+_MCP_WRITE_KEY_RE = re.compile(r"save|output|out_?path|dest|target|download", re.I)
+
+
+def _mcp_file_problem(value, depth: int = 0, filey: bool = False, writing: bool = False) -> str | None:
     """A refusal when an MCP tool would read a credential / private file itself (audit 2026-10-04: Gmail's send_email
     takes attachment PATHS and reads them, so an injected email could have .env or an SSH key mailed out, around
     read_file's sensitive-path rules). Checks every string under a key that names a file/path/attachment."""
@@ -12416,16 +12419,19 @@ def _mcp_file_problem(value, depth: int = 0, filey: bool = False) -> str | None:
         return None
     if isinstance(value, dict):
         for k, v in value.items():
-            hit = _mcp_file_problem(v, depth + 1, filey or bool(_MCP_FILE_KEY_RE.search(str(k))))
+            # a path the tool WRITES to (savePath, outputPath...) gets the write rules: never the Startup folder,
+            # .git/.claude or Jarvis's own code folder (a downloaded file there would run later)
+            w = writing or bool(_MCP_WRITE_KEY_RE.search(str(k)))
+            hit = _mcp_file_problem(v, depth + 1, filey or w or bool(_MCP_FILE_KEY_RE.search(str(k))), w)
             if hit:
                 return hit
     elif isinstance(value, (list, tuple)):
         for v in value:
-            hit = _mcp_file_problem(v, depth + 1, filey)
+            hit = _mcp_file_problem(v, depth + 1, filey, writing)
             if hit:
                 return hit
     elif filey and isinstance(value, str) and value.strip():
-        bad = jarvis_workspace.sensitive_reason(value.strip())
+        bad = jarvis_workspace.sensitive_reason(value.strip(), write=writing)
         if bad:
             return f"Refused: {value.strip()!r}: {bad}."
     return None

@@ -577,3 +577,16 @@ def test_outside_text_read_in_parallel_still_marks_the_run(J, monkeypatch):
         assert J._command_ctx.outside_text_seen
     finally:
         J._command_ctx.taint_watch, J._command_ctx.outside_text_seen = False, False
+
+
+def test_an_mcp_download_cannot_land_in_the_startup_folder(J, monkeypatch):
+    ran = []
+    monkeypatch.setattr(J, "execute_mcp_tool", lambda name, inp: ran.append(inp) or "saved")
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    startup = r"C:\Users\x\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+    out = J._execute_tool("mcp_gmail_download_attachment", {"messageId": "1", "attachmentId": "2",
+                                                           "savePath": startup}, "save it")
+    assert out.startswith("Refused") and ran == []
+    out = J._execute_tool("mcp_gmail_download_attachment", {"messageId": "1", "attachmentId": "2",
+                                                           "savePath": r"C:\Users\x\Downloads"}, "save it")
+    assert out == "saved"
