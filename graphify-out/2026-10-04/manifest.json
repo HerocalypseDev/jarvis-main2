@@ -786,9 +786,9 @@
     "semantic_hash": ""
   },
   "jarvis_macros.py": {
-    "mtime": 1791021866.1475182,
-    "seen": 1791022148.170592,
-    "ast_hash": "04b78ddd0a7929edc5fabb96923bba58",
+    "mtime": 1791133626.889933,
+    "seen": 1791133700.6155922,
+    "ast_hash": "13f4eade34993d49682891f554142225",
     "semantic_hash": ""
   },
   "test_feature_batch_a.py": {
@@ -900,9 +900,9 @@
     "semantic_hash": ""
   },
   "jarvis_deferred.py": {
-    "mtime": 1790973507.4677744,
-    "seen": 1790973679.4213243,
-    "ast_hash": "2224ad06db23343ad298de0f29269478",
+    "mtime": 1791133672.4907608,
+    "seen": 1791133700.615555,
+    "ast_hash": "a67af6edc1c7e33c9d6b50822bb086cc",
     "semantic_hash": ""
   },
   "test_executive.py": {
@@ -1692,9 +1692,9 @@
     "semantic_hash": ""
   },
   "test_audit2.py": {
-    "mtime": 1791133569.3600245,
-    "seen": 1791133601.8800225,
-    "ast_hash": "0d46169a6be670be2cf3b455abd81e57",
+    "mtime": 1791133666.0240302,
+    "seen": 1791133700.6157808,
+    "ast_hash": "94b05347be9507ff22a7043c224d4475",
     "semantic_hash": ""
   }
 }

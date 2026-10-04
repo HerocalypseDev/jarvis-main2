@@ -20,9 +20,14 @@ _CODE_DIR = Path(__file__).resolve().parent
 _SENSITIVE_NAMES = {
     "face.key", "credentials.json", "gcp-oauth.keys.json", "mcp_servers.json", "id_rsa", "id_ed25519",
     "id_ecdsa", "known_hosts", "jarvis_memory.db", "session_state.json", "llm_provider.json", "ntuser.dat",
+    # audit 2026-10-04: plaintext tokens other tools keep (git, npm, PyPI, netrc, GitHub CLI, Claude Code), the
+    # browser extension's pairing key, and Firefox's saved-password files
+    ".git-credentials", ".npmrc", ".pypirc", ".netrc", "_netrc", ".credentials.json", "pairing.json",
+    "logins.json", "key4.db", "login data", "cookies",
 }
 _SENSITIVE_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".kdbx", ".ppk")
-_SENSITIVE_DIRS = {".ssh", ".gnupg", ".aws", ".gmail-mcp", "google-calendar-mcp", "jarvis"}  # last = %LOCALAPPDATA%\Jarvis
+_SENSITIVE_DIRS = {".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", "gcloud", "github cli", ".gmail-mcp", "google-calendar-mcp",
+                   "jarvis"}  # last = %LOCALAPPDATA%\Jarvis
 _WRITE_ONLY_DIRS = {".claude", ".git", "startup"}
 
 
@@ -41,7 +46,8 @@ def sensitive_reason(path: str, write: bool = False) -> str | None:
     raw = (path or "").strip()
     if not raw:
         return None
-    p = Path(raw)
+    # A Windows path checked on another OS (tests, or a path quoted from the PC) still splits on its backslashes.
+    p = Path(raw.replace("\\", "/")) if os.sep == "/" else Path(raw)
     name, parents = _sensitive_parts(p)
     if name.startswith(".env") or name in _SENSITIVE_NAMES or name.endswith(_SENSITIVE_SUFFIXES) \
             or name.startswith(("face.db", "jarvis_memory.db")):

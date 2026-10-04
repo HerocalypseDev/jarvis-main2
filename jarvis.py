@@ -12154,6 +12154,44 @@ def _tool_schema(name: str) -> dict | None:
     return _schema_index["by_name"].get(name)
 
 
+def _mcp_scalars(value, depth: int = 0) -> list[str]:
+    """Every text/number inside an MCP tool's input, nested lists/objects included (audit 2026-10-04: only top-level
+    strings were checked, so Windows-MCP MultiEdit's [[x, y, "shutdown /s /t 0"]] skipped the catastrophic tripwire)."""
+    if depth > 6:
+        return []
+    if isinstance(value, dict):
+        return [t for v in value.values() for t in _mcp_scalars(v, depth + 1)]
+    if isinstance(value, (list, tuple)):
+        return [t for v in value for t in _mcp_scalars(v, depth + 1)]
+    return [str(value)] if isinstance(value, (str, int, float)) and not isinstance(value, bool) else []
+
+
+_MCP_FILE_KEY_RE = re.compile(r"attach|path|file", re.I)
+
+
+def _mcp_file_problem(value, depth: int = 0, filey: bool = False) -> str | None:
+    """A refusal when an MCP tool would read a credential / private file itself (audit 2026-10-04: Gmail's send_email
+    takes attachment PATHS and reads them, so an injected email could have .env or an SSH key mailed out, around
+    read_file's sensitive-path rules). Checks every string under a key that names a file/path/attachment."""
+    if depth > 6:
+        return None
+    if isinstance(value, dict):
+        for k, v in value.items():
+            hit = _mcp_file_problem(v, depth + 1, filey or bool(_MCP_FILE_KEY_RE.search(str(k))))
+            if hit:
+                return hit
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            hit = _mcp_file_problem(v, depth + 1, filey)
+            if hit:
+                return hit
+    elif filey and isinstance(value, str) and value.strip():
+        bad = jarvis_workspace.sensitive_reason(value.strip())
+        if bad:
+            return f"Refused: {value.strip()!r}: {bad}."
+    return None
+
+
 def _execute_tool_impl(
     tool_name: str, tool_input: dict, transcript: str, skip_confirmation: bool = False
 ) -> str:
@@ -12181,9 +12219,12 @@ def _execute_tool_impl(
             # MCP tools can type into a terminal or Run box (Windows-MCP Type/Shortcut, the
             # browser), so their text goes through the same tripwire as run_shell/run_python.
             reason = None if skip_confirmation else (_catastrophic_reason(
-                " ".join(str(v) for v in inp.values() if isinstance(v, (str, int, float)))
+                " ".join(_mcp_scalars(inp))
             ) or _addon_confirm_reason(tool_name, inp))
-            if reason:
+            file_problem = _mcp_file_problem(inp)
+            if file_problem:
+                result = file_problem
+            elif reason:
                 if _queue_pending_confirmation(tool_name, dict(inp), reason):
                     result = (
                         f"That would {reason} — staged, not run. "
