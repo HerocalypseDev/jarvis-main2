@@ -348,3 +348,13 @@ def test_a_telegram_command_is_confirmed_before_it_runs_and_stale_ones_are_not_r
         pass
     assert events[:2] == [("ack", "8"), ("run", "restart yourself")]   # confirmed first, then run
     assert ("run", "shut down my pc") not in events and sent and "offline" in sent[0]
+
+
+def test_a_held_message_read_out_later_says_when_it_came_in(J):
+    from datetime import datetime, timedelta
+    now = datetime(2026, 10, 4, 17, 0)
+    old = {"text": "In 10 minutes: Standup.", "queued_at": (now - timedelta(hours=2)).isoformat(timespec="seconds")}
+    fresh = {"text": "Reminder: tea.", "queued_at": (now - timedelta(minutes=2)).isoformat(timespec="seconds")}
+    assert J._held_text_with_time(old, now) == "Earlier, at 3:00 PM: In 10 minutes: Standup."
+    assert J._held_text_with_time(fresh, now) == "Reminder: tea."
+    assert J._held_text_with_time({"text": "x"}, now) == "x"

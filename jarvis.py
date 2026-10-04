@@ -5006,9 +5006,24 @@ def flush_pending_notifications() -> None:
             continue
         seen.add(key)
         try:
-            _speak_shaped(item.get("text", ""))
+            _speak_shaped(_held_text_with_time(item))
         except Exception as e:
             log.warning("Could not speak queued notification: %s", e)
+
+
+HELD_SAY_TIME_AFTER_S = 600
+
+
+def _held_text_with_time(item: dict, now: datetime | None = None) -> str:
+    """A held message read out later says when it came in (audit 2026-10-04: "In 10 minutes: Standup", held through
+    Focus Mode and read two hours later, sounded current)."""
+    text = str(item.get("text", ""))
+    when = _safe_parse_iso(item.get("queued_at"))
+    now = now or datetime.now()
+    if when is None or (now - when).total_seconds() < HELD_SAY_TIME_AFTER_S:
+        return text
+    stamp = when.strftime("%I:%M %p").lstrip("0") if when.date() == now.date() else when.strftime("%A %I:%M %p").replace(" 0", " ")
+    return f"Earlier, at {stamp}: {text}"
 
 
 def _reminders_held_now(urgent: bool = False) -> bool:
