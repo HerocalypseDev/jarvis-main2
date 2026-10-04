@@ -597,3 +597,11 @@ def test_a_long_phone_message_says_it_was_cut(J):
     out = J._phone_cut(long)
     assert len(out) <= J.PHONE_MAX_CHARS and out.endswith("on the dashboard]")
     assert J._phone_cut("short") == "short"
+
+
+def test_restart_helper_survives_an_apostrophe_in_the_path():
+    from pathlib import Path
+    import jarvis_restart
+    cmd = jarvis_restart.helper_command(42, Path("C:/Users/O'Brien/jarvis/Jarvis.vbs"))
+    script = cmd[-1]
+    assert "O''Brien" in script and script.count("'") % 2 == 0
