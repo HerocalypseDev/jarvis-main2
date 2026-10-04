@@ -8211,13 +8211,17 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             # stores and then mail them out (sending must stay allowed for autonomy's email actions).
                             "dashboard_data", "memory_search", "recall_facts", "quick_recall", "semantic_recall",
                             "knowledge_graph", "clipboard_history", "read_clipboard", "refactor_clipboard_code",
-                            "self_report", "lessons"}
+                            "self_report", "lessons",
+                            # Audit 2026-10-04: the built-in screen tools did what the blocked mcp_windows_* ones do
+                            # (read the screen, click, scroll, close windows), so an email could still drive the desktop.
+                            "read_screen", "click_at", "scroll_screen", "control_window"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
 def _untrusted_block(tool_name: str) -> str | None:
     if getattr(_command_ctx, "untrusted_origin", False) and (
-            tool_name in _UNTRUSTED_BLOCKED_TOOLS or tool_name.startswith("mcp_windows_")):
+            tool_name in _UNTRUSTED_BLOCKED_TOOLS or tool_name.startswith(("mcp_windows_", "mcp_whatsapp_"))):
+        # mcp_whatsapp_*: an email must never read the owner's chats or send WhatsApp messages as them.
         return (f"Refused: {tool_name} can't run in a task that came from someone else's message or email "
                 "(it could be a hidden instruction). Ask me directly if you want this.")
     return None
@@ -11772,10 +11776,18 @@ _ACTION_CLAIMS = [
      re.compile(r"type|fill|multiedit|paste|write_file", re.I)),  # write_file: "I've written the answer down in a note"
     ("clear those",  # found live 2026-10-02: "I've cleared those old reminders" after only list_reminders ran
      re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:cleared|removed|deleted|cancelled|canceled|dismissed|closed|wiped)\b"
-                r"[^.!?]{0,40}\b(?:reminders?|deadlines?|overdue|commitments?|items?|tasks?|alerts?)\b"
+                r"[^.!?]{0,40}\b(?:reminders?|deadlines?|overdue|commitments?|items?|tasks?|alerts?"
+                # audit 2026-10-04: "I've cancelled your billing monitoring / turned off that skill" was never checked
+                r"|skills?|monitor(?:ing|s)?|routines?|macros?|jobs?)\b"
+                r"|\b(?:i'?ve|i have|i just|i)\s+(?:turned off|switched off|disabled|stopped)\b[^.!?]{0,40}"
+                r"\b(?:skills?|monitor(?:ing|s)?|routines?|macros?|jobs?|checks?)\b"
                 r"|\b(?:reminders?|deadlines?|commitments?|overdue items?)\b (?:have been |has been |were |was |are |is )?"
                 r"(?:cleared|removed|deleted|cancelled|canceled|closed)\b", re.I),
-     re.compile(r"cancel|complete|delete|remove|clear|autonomy|forget|dismiss", re.I)),
+     re.compile(r"cancel|complete|delete|remove|clear|autonomy|forget|dismiss|skills|macros|job|agents", re.I)),
+    ("close that",  # audit 2026-10-04: "I've closed the YouTube tab" with no tab/window tool behind it
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:closed|shut)\b[^.!?]{0,40}\b(?:tabs?|windows?)\b"
+                r"|\b(?:tabs?|windows?)\b (?:have been |has been |were |was |are |is )?closed\b", re.I),
+     re.compile(r"browser_tabs|control_window|close", re.I)),
     ("remember that",
      re.compile(r"\bi'?ll remember\b|\b(?:i'?ve|i have)\s+(?:noted|remembered|saved)\b[^.!?]{0,20}\b(?:that|it|this)\b"
                 r"[^.!?]{0,20}\b(?:memory|remember)?", re.I),
