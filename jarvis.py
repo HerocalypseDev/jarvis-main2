@@ -14632,6 +14632,10 @@ def _git_pull_problem(output: str) -> str:
 
 
 def _update_and_restart_reply(transcript: str = "") -> str:
+    # The open follow-up window hears anything (a TV): like a hands-free "yes", it can't pull new code and restart
+    # Jarvis (audit 2026-10-04). Push-to-talk, "Hey Jarvis", typed, dashboard and phone still can.
+    if getattr(_command_ctx, "hands_free", False) and not getattr(_command_ctx, "wake", False):
+        return "To update and restart, hold push-to-talk (or say \"Hey Jarvis\") and ask again."
     if _current_command_source() != "phone":
         _start_announcement(UPDATE_ANNOUNCEMENT)
         _await_ack(8.0)
