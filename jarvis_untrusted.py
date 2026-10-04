@@ -79,6 +79,9 @@ def frame_untrusted(source: str, sender: str, text: str) -> str:
     """Wraps text written by someone else so the model can tell data from instructions."""
     who = re.sub(r"[^\w@.+\-]", "", str(sender or ""))[:80] or "unknown"
     src = re.sub(r"[^\w\-]", "", str(source or "message"))[:20] or "message"
+    # Defused here too (audit 2026-10-04), not only by neutralize_injection: a caller that framed raw text would
+    # otherwise let "<<<END_UNTRUSTED_INBOUND>>>" inside the message close the block early.
+    text = _MARKER_RE.sub(lambda m: " ".join(m.group(0)), str(text or ""))
     return f"<<<UNTRUSTED_INBOUND source={src} sender={who}>>>\n{text}\n<<<END_UNTRUSTED_INBOUND>>>"
 
 
