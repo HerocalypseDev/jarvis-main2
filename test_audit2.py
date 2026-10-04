@@ -300,3 +300,51 @@ def test_an_email_started_task_has_no_way_to_post_data_to_a_server(J):
             assert J._untrusted_block(name), name
     finally:
         J._command_ctx.untrusted_origin = False
+
+
+def test_a_telegram_command_is_confirmed_before_it_runs_and_stale_ones_are_not_run(J, monkeypatch):
+    """"restart yourself" from Telegram restarted Jarvis before Telegram heard the message was received, so the new
+    copy got it again and restarted for ever."""
+    import json as _json
+    import time as _time
+    monkeypatch.setattr(J, "TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setattr(J, "TELEGRAM_BOT_TOKEN", "t")
+    events, sent = [], []
+    now = _time.time()
+    updates = [{"update_id": 7, "message": {"chat": {"id": 42}, "text": "restart yourself", "date": now - 5}},
+               {"update_id": 8, "message": {"chat": {"id": 42}, "text": "shut down my pc", "date": now - 3 * 3600}}]
+
+    class Resp:
+        def __init__(self, body):
+            self.body = body
+
+        def read(self):
+            return self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    calls = {"n": 0}
+
+    def fake_urlopen(url, timeout=None):
+        url = str(url)
+        if "timeout=0" in url:
+            events.append(("ack", url.rsplit("offset=", 1)[1]))
+            return Resp(b'{"ok":true,"result":[]}')
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise SystemExit  # stop the endless loop after one batch
+        return Resp(_json.dumps({"ok": True, "result": updates}).encode())
+
+    monkeypatch.setattr(J.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(J, "handle_text_command", lambda text, **k: events.append(("run", text)))
+    monkeypatch.setattr(J, "_telegram_send", lambda t: sent.append(t) or True)
+    try:
+        J._telegram_listen_loop()
+    except SystemExit:
+        pass
+    assert events[:2] == [("ack", "8"), ("run", "restart yourself")]   # confirmed first, then run
+    assert ("run", "shut down my pc") not in events and sent and "offline" in sent[0]
