@@ -5687,6 +5687,21 @@ def cancel_reminder(reminder_id: int) -> str:
     return f"Cancelled reminder #{reminder_id}." if cur.rowcount else f"No active reminder #{reminder_id}."
 
 
+def _late_note(due_at: str | None, now: datetime) -> str:
+    """' (it was due at 9:00 AM)' for a reminder that fires late (audit 2026-10-04: after the PC was off, yesterday's
+    reminders all fired at boot as if they were due now)."""
+    due = _safe_parse_iso(due_at)
+    if due is None:
+        return ""
+    if due.tzinfo is not None:
+        due = due.astimezone().replace(tzinfo=None)
+    if (now - due).total_seconds() < HELD_SAY_TIME_AFTER_S:
+        return ""
+    when = due.strftime("%I:%M %p").lstrip("0") if due.date() == now.date() else \
+        due.strftime("%A %I:%M %p").replace(" 0", " ")
+    return f" (it was due at {when})"
+
+
 def _check_due_reminders(now: datetime) -> None:
     """Called once per scheduler tick. A due, non-repeating reminder is marked delivered; a
     repeating one is re-armed for now + its interval instead, so it keeps firing."""
@@ -5694,13 +5709,13 @@ def _check_due_reminders(now: datetime) -> None:
         conn = _memory_db_connect()
         try:
             rows = conn.execute(
-                "SELECT id, text, repeat_every_minutes, urgent FROM reminders "
+                "SELECT id, text, repeat_every_minutes, urgent, due_at FROM reminders "
                 "WHERE cancelled_at IS NULL AND delivered_at IS NULL AND due_at <= ?",
                 (now.isoformat(timespec="seconds"),),
             ).fetchall()
         finally:
             conn.close()
-    for rid, text, repeat, urgent in rows:
+    for rid, text, repeat, urgent, due_at in rows:
         # The toast fires immediately and unconditionally — unlike the spoken announcement,
         # a silent visual banner doesn't talk over anything, so it doesn't need to wait out
         # queue_or_deliver_notification's busy-gate to avoid being missed.
@@ -5710,7 +5725,7 @@ def _check_due_reminders(now: datetime) -> None:
                 send_windows_toast("Jarvis Reminder", text)
             # A reminder the user set must fire on time; only unprompted messages wait out the busy gate.
             queue_or_deliver_notification(
-                f"Reminder: {text}", urgent=bool(urgent), bypass_busy_gate=True, is_reminder=True
+                f"Reminder{_late_note(due_at, now)}: {text}", urgent=bool(urgent), bypass_busy_gate=True, is_reminder=True
             )
             record_recent_task(f"reminder delivered: {text}")
         except Exception as e:

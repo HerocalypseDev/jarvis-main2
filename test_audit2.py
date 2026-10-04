@@ -358,3 +358,11 @@ def test_a_held_message_read_out_later_says_when_it_came_in(J):
     assert J._held_text_with_time(old, now) == "Earlier, at 3:00 PM: In 10 minutes: Standup."
     assert J._held_text_with_time(fresh, now) == "Reminder: tea."
     assert J._held_text_with_time({"text": "x"}, now) == "x"
+
+
+def test_a_reminder_that_fires_late_says_when_it_was_due(J):
+    from datetime import datetime
+    now = datetime(2026, 10, 4, 9, 30)
+    assert J._late_note("2026-10-03T21:00:00", now) == " (it was due at Saturday 9:00 PM)"
+    assert J._late_note("2026-10-04T09:29:00", now) == ""
+    assert J._late_note(None, now) == ""
