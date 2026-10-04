@@ -182,7 +182,7 @@ def test_jarvis_runs_it_only_with_gmail_and_not_in_safe_mode(J, monkeypatch):
     ran = []
     monkeypatch.setattr(J, "_run_single_flight", lambda name, fn, *a: ran.append(name))
     monkeypatch.setenv("JARVIS_MAIL_AUTOREPLY", "1")
-    J._mail_reply_state["last"] = 0.0
+    J._mail_reply_state["last"] = None
     J._mail_autoreply_tick(datetime.now())
     assert ran == []  # no Gmail tools connected
     for t in ("search_emails", "read_email", "send_email"):
@@ -196,7 +196,7 @@ def test_jarvis_runs_it_only_with_gmail_and_not_in_safe_mode(J, monkeypatch):
     J._mail_autoreply_tick(datetime.now())
     assert ran == ["mail-autoreply"]  # not again before the interval
     monkeypatch.setenv("JARVIS_MAIL_AUTOREPLY", "0")
-    J._mail_reply_state["last"] = 0.0
+    J._mail_reply_state["last"] = None
     J._mail_autoreply_tick(datetime.now())
     assert ran == ["mail-autoreply"]
 
@@ -220,3 +220,22 @@ def test_jarvis_cycle_end_to_end_records_and_audits(J, monkeypatch):
     assert J._feature_mail_autoreply("get", {})["replies"][0]["sender"] == "ada@family.test"
     assert J.missed.unseen(J._memory_db_connect, J._memory_db_lock)[0]["text"].startswith("I replied to")
     assert audits and audits[0][0] == "mail_autoreply"
+
+
+def test_the_first_check_runs_even_right_after_a_boot(J, monkeypatch):
+    """Audit 2026-10-04: "never ran" was stored as 0.0 and compared with time.monotonic(), which counts from boot, so for
+    the first 5 minutes after a PC start the first mail check (and the knowledge-graph sync) was skipped."""
+    ran = []
+    monkeypatch.setattr(J, "_run_single_flight", lambda name, fn, *a: ran.append(name))
+    monkeypatch.setenv("JARVIS_MAIL_AUTOREPLY", "1")
+    for t in ("search_emails", "read_email", "send_email"):
+        monkeypatch.setitem(J._mcp_tool_index, f"mcp_gmail_{t}", ("gmail", t))
+    monkeypatch.setattr(J.time, "monotonic", lambda: 30.0)  # 30 s after boot
+    monkeypatch.setitem(J._mail_reply_state, "last", None)
+    J._mail_autoreply_tick(datetime.now())
+    assert ran == ["mail-autoreply"]
+    synced = []
+    monkeypatch.setattr(J.threading, "Thread", lambda target=None, **k: type("T", (), {"start": lambda s: synced.append(1)})())
+    monkeypatch.setitem(J._kg_state, "last", None)
+    J._kg_sync_tick()
+    assert synced == [1]

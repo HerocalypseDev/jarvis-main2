@@ -134,3 +134,13 @@ def test_the_model_is_told_to_leave_old_things_alone(J):
 
 def test_a_bare_what_happened_still_goes_to_the_model():
     assert latency.classify_intent("what happened?") != "missed"  # usually about the last thing said
+
+
+def test_an_important_message_is_never_batched_or_held_for_the_next_command(J, monkeypatch):
+    """Audit 2026-10-04: a meeting heads-up (important) could land in the hourly digest of a kind the user often cuts
+    off, or wait for the next command while the user typed during work hours."""
+    monkeypatch.setattr(J.notify_priority, "should_batch", lambda *a: True)
+    monkeypatch.setattr(J, "user_is_actively_working", lambda: True)
+    monkeypatch.setattr(J, "_is_preferred_work_hours", lambda: True)
+    J.queue_or_deliver_notification("In 10 minutes: Standup with Sam.", important=True)
+    assert J._test_spoken == ["In 10 minutes: Standup with Sam."]

@@ -912,3 +912,35 @@ def test_public_jarvis_py_holds_no_homework_app_code(jarvis, monkeypatch):
     monkeypatch.setattr(jarvis, "_CONFIRM_GATES", [])          # the public copy: no gate files -> nothing extra staged
     assert jarvis._execute_tool_impl("mcp_homework_delete_homework", {"homework_id": "h1"}, "t") == "done"
     assert ran == ["mcp_homework_delete_homework"] and jarvis._pending_action is None
+
+
+def test_the_public_example_mcp_config_never_names_the_homework_server(tmp_path):
+    """Audit 2026-10-04: a "homework" server added to mcp_servers.example.json would have gone public (only "discord"
+    was stripped). Any server running an export-excluded file is now dropped, and the file names fail the scan."""
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("export_public", Path(__file__).parent / "tools" / "export_public.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.build(tmp_path)
+    cfg = json.loads((tmp_path / "mcp_servers.example.json").read_text(encoding="utf-8"))
+    assert not any("homework" in json.dumps(v) for v in cfg.values()) and "discord" not in cfg
+    assert "homework_mcp_server" in mod.DENY_WORDS
+
+
+def test_an_app_error_never_carries_a_signed_link(monkeypatch):
+    import io
+    import urllib.error
+
+    body = b'{"ok": false, "error": "file missing: https://x.supabase.co/storage/v1/object/sign/a.png?token=SECRET123"}'
+
+    def fake_open(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, io.BytesIO(body))
+    monkeypatch.setattr(homework_api._api_opener, "open", fake_open)
+    monkeypatch.setenv("HOMEWORK_APP_URL", "https://learn.example.app")
+    monkeypatch.setenv("HOMEWORK_API_TOKEN", TOKEN)
+    with pytest.raises(homework_api.HomeworkApiError) as e:
+        homework_api.call("get_submission", {})
+    assert "SECRET123" not in e.value.message and "[link hidden]" in e.value.message
