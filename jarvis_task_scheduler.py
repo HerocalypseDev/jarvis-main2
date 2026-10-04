@@ -162,9 +162,8 @@ def _parse_busy_intervals(busy_intervals: list[dict] | None) -> list[tuple[datet
     parsed = []
     for b in busy_intervals or []:
         try:
-            start = datetime.fromisoformat(b["start"])
-            end = datetime.fromisoformat(b["end"])
-            if end > start:
+            start, end = _local(b["start"]), _local(b["end"])  # calendar times carry an offset: made local
+            if start and end and end > start:
                 parsed.append((start, end))
         except (KeyError, ValueError, TypeError):
             log.warning("Skipping malformed busy interval: %r", b)
@@ -219,9 +218,9 @@ def plan_task_queue(
 
             scheduled_count = 0
             for task_id, est, priority, earliest_start, deadline in pending:
-                earliest = datetime.fromisoformat(earliest_start) if earliest_start else now
+                earliest = _local(earliest_start) or now
                 earliest = max(earliest, now)
-                dl = datetime.fromisoformat(deadline) if deadline else None
+                dl = _local(deadline)
                 placed = False
                 for day_offset in range(days_ahead):
                     day = (now + timedelta(days=day_offset)).date()
@@ -283,6 +282,18 @@ def _push_back_remaining(conn: sqlite3.Connection, after: datetime, overrun: tim
             "UPDATE task_queue SET scheduled_start = ?, scheduled_end = ? WHERE id = ?",
             (new_start.isoformat(timespec="seconds"), new_end.isoformat(timespec="seconds"), task_id),
         )
+
+
+def _local(value: str | None) -> datetime | None:
+    """A stored time as local naive datetime (audit 2026-10-04: a "...Z" / "+01:00" deadline from the model made
+    planning raise when compared with local time, so no task got a slot)."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
 
 
 def tick(now: datetime, run_callback, notify_callback) -> None:

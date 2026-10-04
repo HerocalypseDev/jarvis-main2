@@ -728,9 +728,12 @@ def _plausible_deadline(deadline: str | None) -> str | None:
     if not deadline:
         return None
     try:
-        dt = datetime.fromisoformat(deadline)
+        dt = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
     except ValueError:
         return None
+    if dt.tzinfo:  # audit 2026-10-04: "...Z" raised comparing with local time; deadlines are stored local + naive
+        dt = dt.astimezone().replace(tzinfo=None)
+        deadline = dt.isoformat(timespec="seconds")
     if dt < _now() - timedelta(days=1) or dt > _now() + timedelta(days=MAX_DEADLINE_AHEAD_DAYS):
         return None
     return deadline
@@ -1191,7 +1194,8 @@ def build_calendar_args(props: dict, details: dict) -> dict:
         e_dt = datetime.fromisoformat(str(details.get("end_iso"))) if details.get("end_iso") else s_dt + timedelta(hours=1)
     except ValueError:
         e_dt = s_dt + timedelta(hours=1)
-    if e_dt <= s_dt:
+    # one with an offset and one without can't be compared (raised; audit 2026-10-04): take start + 1 h then
+    if (e_dt.tzinfo is None) != (s_dt.tzinfo is None) or e_dt <= s_dt:
         e_dt = s_dt + timedelta(hours=1)
 
     def pick(*names: str) -> str | None:

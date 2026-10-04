@@ -464,3 +464,32 @@ def test_a_reminder_time_with_a_timezone_is_stored_as_local_time(J, monkeypatch)
     finally:
         monkeypatch.delenv("TZ")
         _time.tzset()
+
+
+def test_planning_works_with_calendar_times_and_deadlines_that_carry_an_offset(monkeypatch, tmp_path):
+    """Google Calendar times always carry an offset ("+01:00"), and models often write "...Z": comparing those with
+    local time raised, so plan_task_queue failed and no task got a slot."""
+    from datetime import datetime, timedelta, timezone
+    import jarvis_task_scheduler as ts
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "ts.db"))
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0)
+    ts.queue_task("write the report", 30, deadline=(tomorrow + timedelta(days=1)).isoformat().replace("+00:00", "Z"))
+    busy = [{"start": tomorrow.isoformat(), "end": (tomorrow + timedelta(hours=1)).isoformat()}]
+    out = ts.plan_task_queue(busy_intervals=busy)
+    assert out.startswith("Planned 1 task"), out
+
+
+def test_an_autonomy_deadline_in_utc_is_kept_and_made_local():
+    from datetime import datetime, timedelta, timezone
+    import jarvis_autonomy as A
+    z = (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    got = A._plausible_deadline(z)
+    assert got and "+" not in got and not got.endswith("Z")
+
+
+def test_calendar_args_survive_a_start_with_an_offset_and_an_end_without():
+    import jarvis_autonomy as A
+    props = {"summary": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"}}
+    args = A.build_calendar_args(props, {"title": "Standup", "start_iso": "2026-10-05T09:00:00+01:00",
+                                         "end_iso": "2026-10-05T09:30:00"})
+    assert args and "10:00" in str(args.get("end")), args
