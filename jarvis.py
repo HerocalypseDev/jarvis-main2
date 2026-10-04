@@ -9619,25 +9619,31 @@ def start_prompt_cache_warmup() -> None:
         ).start()
 
 
-def _launch_app_notepad() -> None:
+def _launch_app_notepad() -> str | None:
     try:
         subprocess.Popen(["notepad.exe"])
     except OSError as e:
         log.warning("Could not open Notepad: %s", e)
+        return str(e)
+    return None
 
 
-def _launch_app_calculator() -> None:
+def _launch_app_calculator() -> str | None:
     try:
         subprocess.Popen(["calc.exe"])
     except OSError as e:
         log.warning("Could not open Calculator: %s", e)
+        return str(e)
+    return None
 
 
-def _launch_app_explorer() -> None:
+def _launch_app_explorer() -> str | None:
     try:
         subprocess.Popen(["explorer.exe"])
     except OSError as e:
         log.warning("Could not open File Explorer: %s", e)
+        return str(e)
+    return None
 
 
 def _launch_app_browser(which: str | None = None) -> str:
@@ -9711,29 +9717,33 @@ def _ensure_whatsapp_desktop(wait_s: float = 20.0) -> str | None:
             "Fall back to the mcp_windows_* UI tools.")
 
 
-def _launch_app(name: str) -> None:
+def _launch_app(name: str) -> str | None:
+    """Opens an allowed app. Returns why it failed (None = opened). Audit 2026-10-04: failures were only logged, so
+    open_app said "Opened notepad." when nothing opened."""
     if name == "whatsapp":
         problem = _ensure_whatsapp_desktop()
         if problem:
             log.warning("%s", problem)
-    elif name == "cursor":
+        return problem
+    if name == "cursor":
+        if not _cursor_executable():
+            return "Cursor isn't installed (or the `cursor` command isn't on the PATH)"
         open_cursor_window()
-    elif name == "notepad":
-        _launch_app_notepad()
-    elif name == "calculator":
-        _launch_app_calculator()
-    elif name == "explorer":
-        _launch_app_explorer()
-    elif name == "browser":
-        _launch_app_browser()
-    elif name == "opera":
-        _launch_app_browser("operagx")
-    elif name == "firefox":
-        _launch_app_browser("firefox")
-    elif name == "spotify":
+        return None
+    if name == "notepad":
+        return _launch_app_notepad()
+    if name == "calculator":
+        return _launch_app_calculator()
+    if name == "explorer":
+        return _launch_app_explorer()
+    if name in ("browser", "opera", "firefox"):
+        _launch_app_browser({"browser": None, "opera": "operagx", "firefox": "firefox"}[name])
+        return None
+    if name == "spotify":
         _launch_app_spotify()
-    else:
-        log.warning("Unknown app: %r", name)
+        return None
+    log.warning("Unknown app: %r", name)
+    return f"{name!r} is not a known app"
 
 
 def _launch_focus_app(name: str) -> None:
@@ -9823,12 +9833,13 @@ sleep_mode.set_system_action_handler(_run_system_action)  # lets disable() undo 
 
 
 # --- screen interaction: click / drag / scroll / window focus -------------------------
-def click_at(x: int, y: int, button: str = "left", clicks: int = 1) -> None:
+def click_at(x: int, y: int, button: str = "left", clicks: int = 1) -> str | None:
+    """None when it clicked, else why not (audit 2026-10-04: a failure was only logged and the tool said "Clicked")."""
     try:
         import pyautogui
     except ImportError:
         log.warning("Install `pyautogui` (see requirements.txt) to click on screen.")
-        return
+        return "pyautogui isn't installed"
     pyautogui.FAILSAFE = True
     btn = button if button in ALLOWED_MOUSE_BUTTONS else "left"
     n = 2 if clicks == 2 else 1
@@ -9836,14 +9847,16 @@ def click_at(x: int, y: int, button: str = "left", clicks: int = 1) -> None:
         pyautogui.click(x=x, y=y, clicks=n, button=btn)
     except Exception as e:
         log.warning("Could not click at (%d, %d): %s", x, y, e)
+        return str(e) or type(e).__name__
+    return None
 
 
-def drag_and_drop(x: int, y: int, end_x: int, end_y: int, button: str = "left") -> None:
+def drag_and_drop(x: int, y: int, end_x: int, end_y: int, button: str = "left") -> str | None:
     try:
         import pyautogui
     except ImportError:
         log.warning("Install `pyautogui` (see requirements.txt) to drag on screen.")
-        return
+        return "pyautogui isn't installed"
     pyautogui.FAILSAFE = True
     btn = button if button in ALLOWED_MOUSE_BUTTONS else "left"
     try:
@@ -9851,14 +9864,16 @@ def drag_and_drop(x: int, y: int, end_x: int, end_y: int, button: str = "left") 
         pyautogui.dragTo(end_x, end_y, duration=0.3, button=btn)
     except Exception as e:
         log.warning("Could not drag (%d, %d) -> (%d, %d): %s", x, y, end_x, end_y, e)
+        return str(e) or type(e).__name__
+    return None
 
 
-def scroll_screen(amount: int, x: int | None = None, y: int | None = None) -> None:
+def scroll_screen(amount: int, x: int | None = None, y: int | None = None) -> str | None:
     try:
         import pyautogui
     except ImportError:
         log.warning("Install `pyautogui` (see requirements.txt) to scroll the screen.")
-        return
+        return "pyautogui isn't installed"
     pyautogui.FAILSAFE = True
     try:
         if x is not None and y is not None:
@@ -9867,6 +9882,8 @@ def scroll_screen(amount: int, x: int | None = None, y: int | None = None) -> No
             pyautogui.scroll(amount)
     except Exception as e:
         log.warning("Could not scroll: %s", e)
+        return str(e) or type(e).__name__
+    return None
 
 
 def focus_window(title_substring: str) -> bool:
@@ -10889,19 +10906,23 @@ def web_search_and_summarize(transcript: str, query: str) -> str:
     return _claude_text(data) or f"{results[0][0]}. {results[0][1]}"
 
 
-def type_text(text: str) -> None:
+def type_text(text: str) -> str | None:
+    """None when it typed, else why not (audit 2026-10-04: a failure was logged but the tool said "Typed N characters",
+    which then backed an "I've filled in the form" reply)."""
     t = text or ""
     if not t:
-        return
+        return None
     try:
         import keyboard
     except ImportError:
         log.warning("Install `keyboard` (see requirements.txt) to type text.")
-        return
+        return "the keyboard package isn't installed"
     try:
         keyboard.write(t)
     except Exception as e:
         log.warning("Could not type text: %s", e)
+        return str(e) or type(e).__name__
+    return None
 
 
 SHELL_TIMEOUT_S = 60
@@ -12405,8 +12426,9 @@ def _execute_tool_impl(
             app = str(inp.get("app") or "").strip().lower()
             app = APP_ALIASES.get(app, app)
             if app in ALLOWED_APPS:
-                _launch_app(app)
-                result = f"Opened {browsers.label() if app == 'browser' else app}."
+                problem = _launch_app(app)
+                result = (f"Tool failed: couldn't open {app}: {problem}." if problem else
+                          f"Opened {browsers.label() if app == 'browser' else app}.")
             else:
                 result = f"{app!r} is not a known app."
         elif tool_name == "system_action":
@@ -12430,8 +12452,8 @@ def _execute_tool_impl(
         elif tool_name == "type_text":
             text = str(inp.get("text") or "")
             if text:
-                type_text(text)
-                result = f"Typed {len(text)} characters."
+                problem = type_text(text)
+                result = f"Tool failed: couldn't type: {problem}." if problem else f"Typed {len(text)} characters."
             else:
                 result = "No text given."
         elif tool_name == "system_status":
@@ -12484,8 +12506,8 @@ def _execute_tool_impl(
             if x is not None and y is not None:
                 button = str(inp.get("button") or "left").strip().lower()
                 clicks = int(inp.get("clicks") or 1)
-                click_at(int(x), int(y), button=button, clicks=clicks)
-                result = f"Clicked at ({x}, {y})."
+                problem = click_at(int(x), int(y), button=button, clicks=clicks)
+                result = f"Tool failed: couldn't click: {problem}." if problem else f"Clicked at ({x}, {y})."
             else:
                 result = "Missing x/y."
         elif tool_name == "drag_and_drop":
@@ -12493,15 +12515,16 @@ def _execute_tool_impl(
             end_x, end_y = inp.get("end_x"), inp.get("end_y")
             if None not in (x, y, end_x, end_y):
                 button = str(inp.get("button") or "left").strip().lower()
-                drag_and_drop(int(x), int(y), int(end_x), int(end_y), button=button)
-                result = f"Dragged ({x}, {y}) to ({end_x}, {end_y})."
+                problem = drag_and_drop(int(x), int(y), int(end_x), int(end_y), button=button)
+                result = (f"Tool failed: couldn't drag: {problem}." if problem else
+                          f"Dragged ({x}, {y}) to ({end_x}, {end_y}).")
             else:
                 result = "Missing coordinates."
         elif tool_name == "scroll_screen":
             amount = inp.get("scroll_amount")
             if amount is not None:
-                scroll_screen(int(amount), x=inp.get("x"), y=inp.get("y"))
-                result = f"Scrolled {amount}."
+                problem = scroll_screen(int(amount), x=inp.get("x"), y=inp.get("y"))
+                result = f"Tool failed: couldn't scroll: {problem}." if problem else f"Scrolled {amount}."
             else:
                 result = "Missing scroll_amount."
         elif tool_name == "focus_window":

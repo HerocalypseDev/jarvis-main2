@@ -396,3 +396,30 @@ def test_backup_deletion_system_folder_wipes_and_critical_kills_are_staged(J, cm
 ])
 def test_ordinary_commands_near_those_are_not_staged(J, cmd):
     assert J._catastrophic_reason(cmd) is None, cmd
+
+
+def test_open_app_says_so_when_the_app_did_not_open(J, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("not found")
+
+    monkeypatch.setattr(J.subprocess, "Popen", boom)
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    out = J._execute_tool("open_app", {"app": "notepad"}, "open notepad")
+    assert out.startswith("Tool failed") and "notepad" in out
+    monkeypatch.setattr(J.subprocess, "Popen", lambda *a, **k: None)
+    assert J._execute_tool("open_app", {"app": "notepad"}, "open notepad") == "Opened notepad."
+
+
+def test_screen_tools_report_a_failure_instead_of_claiming_success(J, monkeypatch):
+    import sys
+    import types
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    broken = types.SimpleNamespace(write=lambda t: (_ for _ in ()).throw(OSError("no input desktop")))
+    monkeypatch.setitem(sys.modules, "keyboard", broken)
+    out = J._execute_tool("type_text", {"text": "my answer"}, "type it")
+    assert out.startswith("Tool failed") and "no input desktop" in out
+    gui = types.SimpleNamespace(FAILSAFE=False, click=lambda **k: (_ for _ in ()).throw(RuntimeError("locked")),
+                                scroll=lambda *a, **k: None)
+    monkeypatch.setitem(sys.modules, "pyautogui", gui)
+    assert J._execute_tool("click_at", {"x": 10, "y": 20}, "click").startswith("Tool failed")
+    assert J._execute_tool("scroll_screen", {"scroll_amount": 3}, "scroll") == "Scrolled 3."
