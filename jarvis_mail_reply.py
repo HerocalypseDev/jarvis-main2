@@ -294,7 +294,12 @@ def run_cycle(*, store: Store, mcp, claude, notify, record, now: datetime, own: 
             stats[outcome if outcome in stats else "skipped"] += 1
             if outcome == "dry_run":
                 _dry_seen.add(msg["id"])  # not marked handled: leaving dry-run answers it for real
-            elif outcome != "retry":  # a read that failed is tried again next cycle
+            elif outcome == "retry":  # a read that failed is tried again next cycle, but not for ever (audit 2026-10-04)
+                _read_failures[msg["id"]] = _read_failures.get(msg["id"], 0) + 1
+                if _read_failures[msg["id"]] >= MAX_READ_RETRIES:
+                    _read_failures.pop(msg["id"], None)
+                    store.mark(msg["id"], msg.get("sender") or "", "failed")
+            else:
                 store.mark(msg["id"], msg.get("sender") or "", outcome)
     finally:
         _cycle_lock.release()
@@ -304,6 +309,8 @@ def run_cycle(*, store: Store, mcp, claude, notify, record, now: datetime, own: 
 
 
 _dry_seen: set[str] = set()
+MAX_READ_RETRIES = 5
+_read_failures: dict[str, int] = {}  # message id -> failed reads (a message that never opens is given up on)
 
 
 def _handle(msg, store, mcp, claude, notify, record, after, own, memory_addresses, skip_senders, facts_text,

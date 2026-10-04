@@ -214,3 +214,27 @@ def test_what_did_i_miss_reads_the_newest_items_when_there_are_many(tmp_path):
     items = missed.unseen(connect, lock, limit=8)
     assert [i["text"] for i in items][-1] == "Update number 11 came in"      # the newest is included
     assert items == sorted(items, key=lambda i: i["ts"])                       # still oldest first
+
+
+def test_an_email_that_can_never_be_read_is_given_up_on(tmp_path):
+    import sqlite3
+    import threading
+    from datetime import datetime
+    import jarvis_mail_reply as mr
+    from test_mail_reply import FakeGmail, FakeModel, _mail, _run
+    store = mr.Store(lambda: sqlite3.connect(tmp_path / "mr.db"), threading.Lock())
+    store.since(datetime(2026, 10, 1))
+
+    class Broken(FakeGmail):
+        reads = 0
+
+        def __call__(self, tool, args):
+            if tool == "read_email":
+                Broken.reads += 1
+                return "MCP tool reported an error: message not found"
+            return super().__call__(tool, args)
+
+    gmail = Broken([_mail("gone-1", "sam@work.test")])
+    for _ in range(mr.MAX_READ_RETRIES + 4):
+        _run(store, gmail, FakeModel())
+    assert Broken.reads == mr.MAX_READ_RETRIES and store.handled("gone-1")
