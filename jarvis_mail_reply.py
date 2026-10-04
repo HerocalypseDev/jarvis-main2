@@ -249,7 +249,10 @@ def safe_reply(reply: str, known: bool, sender: str) -> str | None:
     r = (reply or "").strip()
     if not r or len(r) > 2000:
         return None
-    if _SECRET_RE.search(r) and re.search(r"\d{4,}", r):
+    # Any value next to a secret word, not only 4+ digits (audit 2026-10-04: "the wifi password is Banana42", from a
+    # fact the owner saved, went out to a known sender). A reply never needs to give one.
+    if re.search(_SECRET_RE.pattern + r"\W{0,12}(?:is|was|:|=)?\W{0,6}[A-Za-z0-9!@#$%^&*._-]*\d", r, re.I) or \
+            (_SECRET_RE.search(r) and re.search(r"\d{4,}", r)):
         return None
     if not known:
         if _PHONE_RE.search(r) or any(a.lower() != sender for a in _EMAIL_RE.findall(r)):

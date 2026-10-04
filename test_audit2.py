@@ -650,3 +650,10 @@ def test_read_file_reads_a_huge_text_file_in_bounded_memory(J, monkeypatch, tmp_
     monkeypatch.setattr(jarvis_workspace, "resolve_read_path", lambda path: big)
     out = J._read_file_tool(str(big))
     assert "truncated" in out and len(out) < 20_000
+
+
+def test_an_auto_reply_never_gives_out_a_password_or_code_even_to_someone_known():
+    import jarvis_mail_reply as mr
+    for r in ("The wifi password is Banana42.", "The wifi password: Lagos2026!", "Your one-time code is ABC123"):
+        assert mr.safe_reply(r, True, "ada@family.test") is None, r
+    assert mr.safe_reply("Sorry, I can't share passwords. See you Sunday!", True, "ada@family.test")
