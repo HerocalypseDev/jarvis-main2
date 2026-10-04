@@ -148,6 +148,9 @@ def validate(name: str, phrases, steps, known_tools: set[str], check_step=None, 
 def save(connect, lock, name: str, phrases: list, steps: list, known_tools: set[str], enabled: bool = True,
          instructions: str = "", description: str = "", check_step=None) -> str:
     instructions = str(instructions or "").strip()[:2000]
+    # The stored name is cut to 60 characters: compare and store that same form, or re-saving a long-named macro
+    # found its own phrases "already taken" by itself (audit 2026-10-04).
+    name = str(name or "").strip()[:60]
     steps = steps if isinstance(steps, list) else []
     if instructions or description:
         mode, why = classify(description, instructions, steps, check_step, known_tools)

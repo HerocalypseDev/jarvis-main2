@@ -36,3 +36,52 @@ def test_claims_about_closing_tabs_or_turning_off_a_skill_need_a_tool_behind_the
     assert J._unbacked_claims("I've turned off that skill.", []) == ["clear those"]
     assert J._unbacked_claims("Shall I close the other tabs?", []) == []
     assert J._unbacked_claims("You have 4 tabs open in Opera GX.", []) == []
+
+
+def test_a_macro_with_a_long_name_can_be_saved_again(tmp_path):
+    import sqlite3
+    import threading
+    import jarvis_macros as macros
+    connect = lambda: sqlite3.connect(tmp_path / "m.db")  # noqa: E731
+    lock = threading.Lock()
+    name = "start my whole evening study routine with music and the lights and focus mode on"  # > 60 chars
+    steps = [{"tool": "open_app", "input": {"app": "notepad"}}]
+    assert macros.save(connect, lock, name, ["evening study time"], steps, {"open_app"}).startswith("Saved")
+    again = macros.save(connect, lock, name, ["evening study time", "study time now"], steps, {"open_app"})
+    assert again.startswith("Saved"), again
+    assert len(macros.list_macros(connect, lock)) == 1
+
+
+def _deferred_store(tmp_path):
+    import sqlite3
+    import threading
+    import jarvis_deferred as deferred
+    return deferred, deferred.Store(lambda: sqlite3.connect(tmp_path / "d.db"), threading.Lock())
+
+
+def test_a_job_cut_off_by_its_own_restart_is_never_run_again(tmp_path):
+    """A stale 'running' job was reset to pending with no attempt limit: "git pull then restart yourself", cut off
+    by its own restart, would run (and restart Jarvis) again every 90 minutes for ever."""
+    from datetime import datetime, timedelta
+    deferred, store = _deferred_store(tmp_path)
+    t0 = datetime(2026, 10, 4, 10, 0)
+    jid, _ = deferred.schedule(store, "Run a git pull, then restart yourself", t0, now=t0 - timedelta(minutes=5))
+    assert [j["id"] for j in deferred.claim_due(store, t0)] == [jid]       # claimed, then Jarvis exits mid-job
+    later = t0 + timedelta(minutes=deferred.STALE_RUNNING_MIN + 1)
+    assert deferred.claim_due(store, later) == []                          # not run again
+    row = store.q("SELECT status, result FROM autonomy_deferred_jobs WHERE id=?", (jid,))[0]
+    assert row["status"] == "done" and "restart" in row["result"]
+
+
+def test_a_job_that_keeps_getting_cut_off_stops_after_its_attempts(tmp_path):
+    from datetime import datetime, timedelta
+    deferred, store = _deferred_store(tmp_path)
+    t = datetime(2026, 10, 4, 10, 0)
+    jid, _ = deferred.schedule(store, "Summarise the research folder", t, now=t - timedelta(minutes=5))
+    runs = 0
+    for _ in range(6):
+        if deferred.claim_due(store, t):
+            runs += 1
+        t += timedelta(minutes=deferred.STALE_RUNNING_MIN + 1)
+    assert runs == deferred.MAX_ATTEMPTS
+    assert store.q("SELECT status FROM autonomy_deferred_jobs WHERE id=?", (jid,))[0]["status"] == "failed"
