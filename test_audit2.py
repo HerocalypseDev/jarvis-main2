@@ -296,7 +296,8 @@ def test_a_task_that_came_from_an_email_cannot_send_email(J, monkeypatch):
 def test_an_email_started_task_has_no_way_to_post_data_to_a_server(J):
     J._command_ctx.untrusted_origin = True
     try:
-        for name in ("http_request", "download_image", "open_url", "play_media"):
+        for name in ("http_request", "download_image", "open_url", "play_media", "mcp_browser_navigate",
+                     "mcp_browser_file_upload"):
             assert J._untrusted_block(name), name
     finally:
         J._command_ctx.untrusted_origin = False
