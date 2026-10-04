@@ -517,3 +517,20 @@ def test_an_automatic_email_run_cannot_read_or_attach_the_owners_files(J, monkey
     J._autonomy_run_agent("Do exactly this email task", email_to=["sam@work.test"])
     assert outs[0].startswith("Refused") and outs[1].startswith("Refused") and outs[2] == "Email sent"
     assert len(sent) == 1 and "attachments" not in sent[0]
+
+
+def test_work_queued_from_an_email_started_task_keeps_its_limits(J, monkeypatch, tmp_path):
+    """queue_task from an untrusted run stored the instructions without the marker, so the task later ran with full
+    tools (shell included); set_plan / delegate_research started unrestricted background work."""
+    import jarvis_task_scheduler as ts
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "q.db"))
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    J._command_ctx.untrusted_origin = True
+    try:
+        J._execute_tool("queue_task", {"description": "cleanup", "instructions": "run_shell: del stuff"}, "x")
+        assert J._untrusted_block("set_plan") and J._untrusted_block("delegate_research")
+    finally:
+        J._command_ctx.untrusted_origin = False
+    import sqlite3
+    row = sqlite3.connect(tmp_path / "q.db").execute("SELECT instructions FROM task_queue").fetchone()
+    assert row[0].startswith(J.UNTRUSTED_TASK_MARKER)

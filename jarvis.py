@@ -8320,7 +8320,9 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             "read_screen", "click_at", "scroll_screen", "control_window",
                             # ...and the ways to carry what a task read out to a server someone else picks (in a URL
                             # or a request body): an email-started task reports to the owner, it has no need for them.
-                            "http_request", "download_image", "open_url", "play_media"}
+                            "http_request", "download_image", "open_url", "play_media",
+                            # background work started from here would run later WITHOUT these limits
+                            "set_plan", "delegate_research"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
@@ -12814,11 +12816,17 @@ def _execute_tool_impl(
             rid = inp.get("reminder_id")
             result = cancel_reminder(int(rid)) if rid is not None else "Missing reminder_id."
         elif tool_name == "queue_task":
+            instructions = inp.get("instructions")
+            if instructions and getattr(_command_ctx, "untrusted_origin", False) and \
+                    UNTRUSTED_TASK_MARKER not in str(instructions):
+                # Audit 2026-10-04: queued from a task that came from someone's email, it would later run with full
+                # tools (shell included); it keeps the same limits.
+                instructions = f"{UNTRUSTED_TASK_MARKER} {instructions}"
             result = task_scheduler.queue_task(
                 str(inp.get("description") or ""),
                 estimate_minutes=inp.get("estimate_minutes"),
                 priority=str(inp.get("priority") or "normal"),
-                instructions=inp.get("instructions"),
+                instructions=instructions,
                 earliest_start=inp.get("earliest_start"),
                 deadline=inp.get("deadline"),
             )
