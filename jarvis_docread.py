@@ -12,6 +12,17 @@ from pathlib import Path
 
 DOC_SUFFIXES = {".docx", ".pdf", ".pptx"}
 MAX_PDF_PAGES = 60
+MAX_UNPACKED_BYTES = 300_000_000
+
+
+def _unpacked_size(path) -> int:
+    """What a .docx/.pptx (a zip) claims it unpacks to; a broken zip reports 0 and the reader says what is wrong."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            return sum(i.file_size for i in z.infolist())
+    except (OSError, zipfile.BadZipFile):
+        return 0
 
 
 def _row(cells: list[str]) -> str:
@@ -88,6 +99,10 @@ def read_document(path: Path) -> str | None:
         return None
     reader = {".docx": _docx_text, ".pdf": _pdf_text, ".pptx": _pptx_text}[suffix]
     try:
+        if suffix in (".docx", ".pptx") and _unpacked_size(path) > MAX_UNPACKED_BYTES:
+            # audit 2026-10-04: a crafted (zip bomb) document from Downloads would unpack into gigabytes of memory
+            return (f"Failed to read {path.name}: it would unpack to more than {MAX_UNPACKED_BYTES // 1_000_000} MB, "
+                    "far more than any real document; not opened.")
         return reader(path) or "(the document has no text)"
     except ImportError as e:
         return f"Failed to read {path.name}: the library for {suffix} files isn't installed ({e.name})."

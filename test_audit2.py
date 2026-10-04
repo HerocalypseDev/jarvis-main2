@@ -621,3 +621,32 @@ def test_an_unattended_overwrite_keeps_the_previous_version(J, monkeypatch, tmp_
     target2.write_text("x", encoding="utf-8")
     monkeypatch.setattr(jarvis_workspace, "resolve_write_path", lambda path, content="": (target2, ""))
     assert "previous version" not in J._write_file_tool(str(target2), "y", False)
+
+
+def test_a_zip_bomb_document_is_not_opened(tmp_path, monkeypatch):
+    import zipfile
+    import jarvis_docread as dr
+    p = tmp_path / "bomb.docx"
+    with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/document.xml", b"0" * 2_000_000)
+    monkeypatch.setattr(dr, "MAX_UNPACKED_BYTES", 1_000_000)
+    out = dr.read_document(p)
+    assert out.startswith("Failed to read bomb.docx") and "unpack" in out
+
+
+def test_read_file_checks_the_file_it_really_opens(J, monkeypatch, tmp_path):
+    import jarvis_workspace
+    secret = tmp_path / ".env"
+    secret.write_text("KEY=abc", encoding="utf-8")
+    monkeypatch.setattr(jarvis_workspace, "resolve_read_path", lambda path: secret)   # e.g. a link in the workspace
+    assert J._read_file_tool("notes.txt").startswith("Refused")
+
+
+def test_read_file_reads_a_huge_text_file_in_bounded_memory(J, monkeypatch, tmp_path):
+    import jarvis_workspace
+    big = tmp_path / "big.log"
+    big.write_text("x" * 50_000, encoding="utf-8")
+    monkeypatch.setattr(J, "READ_FILE_MAX_CHARS", 10_000)
+    monkeypatch.setattr(jarvis_workspace, "resolve_read_path", lambda path: big)
+    out = J._read_file_tool(str(big))
+    assert "truncated" in out and len(out) < 20_000

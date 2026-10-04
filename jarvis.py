@@ -11067,6 +11067,9 @@ def _run_python_code(code: str) -> str:
         return f"Failed to run code: {e}"
 
 
+READ_FILE_MAX_CHARS = 2_000_000
+
+
 def _read_file_tool(path: str) -> str:
     if not path:
         return "No path given."
@@ -11075,11 +11078,20 @@ def _read_file_tool(path: str) -> str:
         return f"Refused to read {path}: {bad}."
     try:
         target = jarvis_workspace.resolve_read_path(path)
+        # The file actually opened is checked too (audit 2026-10-04): a workspace link pointing at .env passed the
+        # check on the name that was asked for.
+        bad = jarvis_workspace.sensitive_reason(str(target), write=False)
+        if bad:
+            return f"Refused to read {path}: {bad}."
         # Word/PDF/PowerPoint are zip/binary files: read as text they came back as gibberish, and the model burned
         # every agent step trying other ways to open them (found live 2026-10-02 with a table in a .docx).
         data = jarvis_docread.read_document(target)
         if data is None:
-            data = target.read_text(encoding="utf-8", errors="replace")
+            with open(target, encoding="utf-8", errors="replace") as f:  # bounded: a huge log no longer fills memory
+                data = f.read(READ_FILE_MAX_CHARS + 1)
+            if len(data) > READ_FILE_MAX_CHARS:
+                total = target.stat().st_size
+                return data[: MAX_TOOL_RESULT_CHARS * 2] + f"\n... [truncated, the file is about {total:,} bytes]"
     except Exception as e:
         return f"Failed to read {path}: {e}"
     if len(data) > MAX_TOOL_RESULT_CHARS * 2:
