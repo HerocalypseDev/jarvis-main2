@@ -423,3 +423,13 @@ def test_screen_tools_report_a_failure_instead_of_claiming_success(J, monkeypatc
     monkeypatch.setitem(sys.modules, "pyautogui", gui)
     assert J._execute_tool("click_at", {"x": 10, "y": 20}, "click").startswith("Tool failed")
     assert J._execute_tool("scroll_screen", {"scroll_amount": 3}, "scroll") == "Scrolled 3."
+
+
+def test_open_url_says_so_when_nothing_opened(J, monkeypatch):
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(J.browsers, "open_link", lambda u: False)
+    monkeypatch.setattr(J.webbrowser, "open", lambda u: False)
+    monkeypatch.setattr(J.sys, "platform", "linux")
+    assert J._execute_tool("open_url", {"url": "https://example.com"}, "open it").startswith("Tool failed")
+    monkeypatch.setattr(J.browsers, "open_link", lambda u: True)
+    assert J._execute_tool("open_url", {"url": "https://example.com"}, "open it") == "Opened https://example.com."
