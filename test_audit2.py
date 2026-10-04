@@ -377,3 +377,22 @@ def test_a_daily_skill_does_not_catch_up_hours_late(J, monkeypatch):
     assert not J._skill_is_due(skill, datetime(2026, 10, 4, 23, 0))    # not "good morning" at 11 pm
     late_ok = {"name": "x", "schedule": {"daily_at": "08:00", "catch_up_hours": 24}}
     assert J._skill_is_due(late_ok, datetime(2026, 10, 4, 23, 0))
+
+
+@pytest.mark.parametrize("cmd", [
+    "vssadmin delete shadows /all /quiet", "wbadmin delete catalog", "wmic shadowcopy delete",
+    "Get-WmiObject Win32_ShadowCopy | Remove-WmiObject", "Remove-Item -Path C:\\Windows\\System32 -Recurse",
+    "rd /s /q C:\\Windows", "Remove-Item 'C:\\Program Files' -Recurse -Force", "Remove-Item $env:windir -Recurse -Force",
+    "taskkill /f /im svchost.exe", "taskkill /f /im csrss.exe", "Stop-Process -Name lsass -Force",
+])
+def test_backup_deletion_system_folder_wipes_and_critical_kills_are_staged(J, cmd):
+    assert J._catastrophic_reason(cmd), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "vssadmin list shadows", "taskkill /f /im chrome.exe", "Stop-Process -Name notepad",
+    "Remove-Item C:\\Windows\\Temp\\old.log", "Remove-Item C:\\Users\\USER\\Documents\\temp -Recurse",
+    "Get-ChildItem 'C:\\Program Files' -Recurse -Filter *.exe", "wbadmin get versions", "Get-Service",
+])
+def test_ordinary_commands_near_those_are_not_staged(J, cmd):
+    assert J._catastrophic_reason(cmd) is None, cmd

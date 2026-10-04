@@ -376,6 +376,25 @@ _CATASTROPHIC_PATTERNS = _CATASTROPHIC_PATTERNS + (
         ),
         "delete a Windows service or user account, add an administrator, or take over permissions on system folders",
     ),
+    # Audit 2026-10-04: deleting the backups (shadow copies, Windows backup catalog) can't be undone either, and
+    # force-killing a critical system process blue-screens / reboots the PC at once.
+    (
+        re.compile(
+            r"\bvssadmin\b[^\n]*\b(?:delete|resize)\b|\bwmic\b[^\n]*\bshadowcopy\b[^\n]*\bdelete\b|"
+            r"\bwbadmin\b[^\n]*\bdelete\b|remove-wmiobject\b[^\n]*win32_shadowcopy|"
+            r"get-(?:wmiobject|ciminstance)\b[^\n]*win32_shadowcopy[^\n]*\|\s*remove-",
+            re.I,
+        ),
+        "delete the system's backups (shadow copies or the Windows backup catalog)",
+    ),
+    (
+        re.compile(
+            r"\b(?:taskkill|stop-process|kill|pskill)\b[^\n]*\b(?:csrss|lsass|wininit|winlogon|smss|services\.exe|svchost)"
+            r"(?:\.exe)?\b",
+            re.I,
+        ),
+        "kill a critical Windows process (that crashes or restarts the PC at once)",
+    ),
 )
 
 # A recursive-delete verb anywhere in the text, together with a whole-drive / user-profile /
@@ -394,7 +413,10 @@ _WIPE_TARGET_RE = re.compile(
     r"(?<![\w])[a-z]:[\\/]+users[\\/]+[^\\/\s\"']+[\\/]*\*?" + _END + r"|"     # C:\Users\<name>
     r"(?<![\w])[a-z]:[\\/]+users[\\/]+[^\\/\s\"']+[\\/]+(?:onedrive|documents|desktop|pictures|downloads)"
     r"[\\/]*\*?" + _END + r"|"
-    r"(?<![\w])/\*?" + _END + r"|expanduser|(?:%|\$env:)(?:onedrive|homepath)\b",
+    r"(?<![\w])/\*?" + _END + r"|expanduser|(?:%|\$env:)(?:onedrive|homepath)\b|"
+    # audit 2026-10-04: the Windows and Program Files folders themselves (Remove-Item C:\Windows\System32 -Recurse)
+    r"(?<![\w])[a-z]:[\\/]+(?:windows(?:[\\/]+system32)?|program files(?: \(x86\))?|programdata)[\\/]*\*?" + _END
+    + r"|%(?:windir|systemroot|programfiles)%|\$env:(?:windir|systemroot|programfiles)\b",
     re.I,
 )
 
