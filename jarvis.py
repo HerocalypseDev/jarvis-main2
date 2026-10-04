@@ -8369,8 +8369,9 @@ _EMAIL_RUN_NO_FILES = {"read_file", "quick_search", "find_files", "code_search",
 # text (gmail_watch reads mail hourly). Once such a run has read outside text, the rest of it can't run code, type,
 # drive the desktop, start the coding agent, save a skill or start background work: an injected email could otherwise
 # reach the shell. Email, reminders and everything else keep working, so the owner's own jobs still do their work.
-_OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_\w*?(?:gmail|mail|email|outlook)\w*?_(?:read|search|list|get)|"
-                                   r"^mcp_(?:browser|whatsapp)_|^(?:http_request|web_search|browser_tabs|download_image)$")
+# Every connected (MCP) tool counts: mail, calendar invites, screen snapshots, an app's user-written content (a
+# child's homework) are all text someone else wrote.
+_OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_tabs|download_image|read_screen)$")
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
                         "delegate_research"}
