@@ -366,3 +366,14 @@ def test_a_reminder_that_fires_late_says_when_it_was_due(J):
     assert J._late_note("2026-10-03T21:00:00", now) == " (it was due at Saturday 9:00 PM)"
     assert J._late_note("2026-10-04T09:29:00", now) == ""
     assert J._late_note(None, now) == ""
+
+
+def test_a_daily_skill_does_not_catch_up_hours_late(J, monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(J, "_get_last_skill_run", lambda name: None)
+    skill = {"name": "morning_briefing", "schedule": {"daily_at": "08:00"}}
+    assert J._skill_is_due(skill, datetime(2026, 10, 4, 8, 1))
+    assert J._skill_is_due(skill, datetime(2026, 10, 4, 13, 30))       # PC on at 1:30 pm: still catches up
+    assert not J._skill_is_due(skill, datetime(2026, 10, 4, 23, 0))    # not "good morning" at 11 pm
+    late_ok = {"name": "x", "schedule": {"daily_at": "08:00", "catch_up_hours": 24}}
+    assert J._skill_is_due(late_ok, datetime(2026, 10, 4, 23, 0))
