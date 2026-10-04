@@ -592,7 +592,7 @@ def _take_pending_action(expect=None) -> dict | None:
 def _execute_confirmed_action(step: dict, reply_sink=None) -> None:
     tool_name = str(step.get("tool_name") or "")
     tool_input = step.get("tool_input") or {}
-    log.info("Confirmed by user: executing staged %s(%r)", tool_name, tool_input)
+    log.info("Confirmed by user: executing staged %s(%r)", tool_name, _redact_audit_input(tool_input))
     if step.get("batch"):
         reply = _run_confirmed_batch(tool_name, _pending_calls(step))
     else:
