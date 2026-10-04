@@ -6220,6 +6220,7 @@ def _run_scheduled_skill(skill: dict) -> None:
     if not skill.get("announce"):
         synthetic_transcript += SKILL_QUIET_NOTE
     _command_ctx.scheduled_skill, _command_ctx.mail_shown = skill["name"], set()
+    _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
     try:
         # An unprompted run must stay quiet when the model gives no text: never fall back to the
         # last tool's result (e.g. a remember_fact ack), and treat a bare "OK"/"Done." as silence.
@@ -6238,6 +6239,7 @@ def _run_scheduled_skill(skill: dict) -> None:
         log.warning("Scheduled skill %r failed: %s", skill["name"], e)
     finally:
         _command_ctx.scheduled_skill, _command_ctx.mail_shown = None, None
+        _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
         _set_scheduled_task_running(False)
         _set_last_skill_run(skill["name"], datetime.now())
 
@@ -6251,6 +6253,7 @@ def _run_queued_task(description: str, instructions: str) -> None:
     instructions = (instructions or "").replace(UNTRUSTED_TASK_MARKER, "").strip()
     prev_untrusted = getattr(_command_ctx, "untrusted_origin", False)
     _command_ctx.untrusted_origin = untrusted
+    _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
     _set_scheduled_task_running(True)
     record_recent_task(f"queued task: {description}")
     synthetic_transcript = (
@@ -6264,6 +6267,7 @@ def _run_queued_task(description: str, instructions: str) -> None:
             queue_or_deliver_notification(reply, important=not _command_ctx.untrusted_origin)
     finally:
         _command_ctx.untrusted_origin = prev_untrusted
+        _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
         _set_scheduled_task_running(False)
 
 
@@ -8228,6 +8232,7 @@ def _run_deferred_job(job: dict) -> None:
     _deferred_running.add(job["id"])  # (already added by _deferred_tick; kept for direct callers)
     prev = (getattr(_command_ctx, "source", None), getattr(_command_ctx, "autonomous", False))
     _command_ctx.source, _command_ctx.autonomous = DEFERRED_SOURCE, True
+    _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
     _set_scheduled_task_running(True)
     session_id = dashboard.start_session("autonomy", transcript)
     dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "autonomy", "transcript": transcript}})
@@ -8247,6 +8252,7 @@ def _run_deferred_job(job: dict) -> None:
         log.warning("Deferred job %s failed: %s", job["id"], e)
     finally:
         _command_ctx.source, _command_ctx.autonomous = prev
+        _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
         _set_scheduled_task_running(False)
     try:
         _finish_deferred_job(job, ok, reply, transient, transcript, session_id)
@@ -8335,7 +8341,34 @@ _EMAIL_RUN_NO_FILES = {"read_file", "quick_search", "find_files", "code_search",
                        "dev_tools", "analyze_code", "trace_dependencies"}
 
 
+# Audit 2026-10-04: a scheduled skill / job / queued task runs unattended with full tools, and some read other people's
+# text (gmail_watch reads mail hourly). Once such a run has read outside text, the rest of it can't run code, type,
+# drive the desktop, start the coding agent, save a skill or start background work: an injected email could otherwise
+# reach the shell. Email, reminders and everything else keep working, so the owner's own jobs still do their work.
+_OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_\w*?(?:gmail|mail|email|outlook)\w*?_(?:read|search|list|get)|"
+                                   r"^mcp_(?:browser|whatsapp)_|^(?:http_request|web_search|browser_tabs|download_image)$")
+_TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
+                        "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
+                        "delegate_research"}
+
+
+def _taint_block(tool_name: str) -> str | None:
+    if getattr(_command_ctx, "outside_text_seen", False) and (
+            tool_name in _TAINT_BLOCKED_TOOLS or tool_name.startswith("mcp_windows_")):
+        return (f"Refused: {tool_name} can't run in this unattended task after it read other people's text "
+                "(mail, a web page); it could be a hidden instruction. Ask me directly if you want this.")
+    return None
+
+
+def _note_outside_text(tool_name: str) -> None:
+    if getattr(_command_ctx, "taint_watch", False) and _OUTSIDE_TEXT_TOOL_RE.search(tool_name):
+        _command_ctx.outside_text_seen = True
+
+
 def _untrusted_block(tool_name: str) -> str | None:
+    tainted = _taint_block(tool_name)
+    if tainted:
+        return tainted
     # Audit 2026-10-04: an autonomous email reply goes back to the sender, who may be the one who wrote the injected
     # text: during that run nothing of the owner's files may be read (a reply never needs them).
     if getattr(_command_ctx, "email_scope", None) and tool_name in _EMAIL_RUN_NO_FILES:
@@ -12990,6 +13023,7 @@ def _execute_tool_impl(
         log.warning("Tool %r raised: %s", tool_name, e)
         result = f"Tool failed: {e}"
 
+    _note_outside_text(tool_name)
     try:
         result = _verify_action(tool_name, inp, result)
     except Exception as e:  # a broken check must never break the action itself
@@ -14031,6 +14065,8 @@ def _run_read_only_tools_parallel(tool_uses: list[dict], transcript: str) -> dic
                 out[i] = f"Tool failed: {tool_uses[i].get('name')} did not answer in {PARALLEL_TOOL_TIMEOUT_S} seconds."
     finally:
         ex.shutdown(wait=False)
+    for i in idx:  # workers set flags on their own copy of the context: the outside-text mark must reach this run
+        _note_outside_text(tool_uses[i].get("name", ""))
     log.info("Ran %d read-only tools in parallel in %.2fs: %s", len(idx), time.monotonic() - t0,
              ", ".join(tool_uses[i].get("name", "") for i in idx))
     return out
