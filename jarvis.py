@@ -6048,6 +6048,9 @@ def _schedule_gate_ok(schedule: dict, now: datetime) -> bool:
     return True
 
 
+DAILY_SKILL_CATCH_UP_HOURS = 6
+
+
 def _skill_is_due(skill: dict, now: datetime) -> bool:
     schedule = skill.get("schedule")
     if not isinstance(schedule, dict):
@@ -6064,6 +6067,14 @@ def _skill_is_due(skill: dict, now: datetime) -> bool:
         except (TypeError, ValueError):
             return False
         if now < target_today:
+            return False
+        # Audit 2026-10-04: a PC switched on at 11 pm ran (and spoke) the 8 am morning briefing. Like background
+        # agents, a daily skill catches up only within `catch_up_hours` (default 6) of its time; later it waits a day.
+        try:
+            catch_up = float(schedule.get("catch_up_hours", DAILY_SKILL_CATCH_UP_HOURS))
+        except (TypeError, ValueError):
+            catch_up = DAILY_SKILL_CATCH_UP_HOURS
+        if now - target_today > timedelta(hours=catch_up):
             return False
         return last_run is None or last_run.date() != now.date()
 
