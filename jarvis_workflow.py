@@ -87,7 +87,9 @@ def _run_git(path: str, args: list[str]) -> str | None:
         if os.name == "nt":
             popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.run(
-            ["git", "-C", path, *args],
+            # core.fsmonitor off (audit 2026-10-04): a repo's own config can name a program that `git status` runs,
+            # so checking a downloaded project would execute it. These calls only read.
+            ["git", "-c", "core.fsmonitor=false", "-C", path, *args],
             capture_output=True,
             text=True,
             timeout=GIT_TIMEOUT_S,
