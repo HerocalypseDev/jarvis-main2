@@ -582,9 +582,9 @@
     "semantic_hash": ""
   },
   "jarvis_untrusted.py": {
-    "mtime": 1791060951.4646914,
-    "seen": 1791061296.7424407,
-    "ast_hash": "2c3f9ade64e9960850817d167eb41702",
+    "mtime": 1791133957.9315248,
+    "seen": 1791134025.9326997,
+    "ast_hash": "683a27b57e20aef80c6d0daec20f613f",
     "semantic_hash": ""
   },
   "test_hardening.py": {
@@ -1692,9 +1692,9 @@
     "semantic_hash": ""
   },
   "test_audit2.py": {
-    "mtime": 1791133901.3440442,
-    "seen": 1791133936.9840624,
-    "ast_hash": "c9efb479c4f5ce8167bc80e345b9cb24",
+    "mtime": 1791133957.9320476,
+    "seen": 1791134025.932779,
+    "ast_hash": "63c9d6da048a01b22953782ae9e1175d",
     "semantic_hash": ""
   }
 }

@@ -42,7 +42,10 @@ _BORN_RE = re.compile(r"\bi was born (?P<val>(?:on|in) [^.!?;]{2,40})", re.I)
 # Never learned, whatever the wording: secrets and money details (they would sit in every prompt and could reach an
 # auto-reply to someone the owner knows).
 _SENSITIVE_RE = re.compile(r"\b(?:password|passcode|pass ?word|pin|cvv|card|account|bank|bvn|nin|ssn|otp|code|secret|"
-                           r"token|key|api|login|sort code|iban|routing)\b", re.I)
+                           r"token|key|api|login|sort code|iban|routing|"
+                           # audit 2026-10-04: a phone number or home address learned silently sat in every prompt
+                           # and could reach a known sender's automatic email reply; say "remember ..." to keep them
+                           r"phone number|mobile number|phone no|address|passport)\b", re.I)
 _QUESTION_RE = re.compile(r"^\s*(?:what|when|where|who|whom|whose|why|how|which|is|are|was|were|do|does|did|can|could|"
                           r"would|will|should|shall|have|has|am)\b", re.I)
 _SKIP_RE = re.compile(r"\b(?:if|suppose|imagine|pretend|what if|wish|hope|maybe|probably|might|tell (?:him|her|them)|"
@@ -50,8 +53,18 @@ _SKIP_RE = re.compile(r"\b(?:if|suppose|imagine|pretend|what if|wish|hope|maybe|
 _VAGUE_VAL_RE = re.compile(r"^(?:it|that|this|those|them|these|you|your|yours|him|her|when|how|what|so|too|very|not)\b",
                            re.I)
 _TRANSIENT_VAL_RE = re.compile(r"\b(?:dead|broken|slow|hurting|aching|low|charging|off|tired|sick|ill|busy|"
-                               r"bored|hungry|late|now|today|tomorrow|tonight|right now|currently|at the moment)\b|%",
+                               r"bored|hungry|late|now|today|tomorrow|tonight|right now|currently|at the moment|"
+                               r"hospital|angry|annoyed|annoying|upset|mad|sad|away|travell?ing|on (?:his|her|their|the) way)\b|%",
                                re.I)
+# "my brother is annoying" / "my mum is in the hospital" are opinions or passing states, not who someone is: a person's
+# value must be a name ("Ada") or a role ("a doctor", "the head of ...") (audit 2026-10-04).
+_PERSON_VAL_RE = re.compile(r"^(?:[A-Z]|(?:a|an|the) [a-z])")
+# "call me later / back / when you're free / a taxi" is not a name (audit 2026-10-04).
+_CALL_NOT_NAME_RE = re.compile(r"^(?:later|back|tomorrow|soon|now|when|whenever|if|at|in|on|after|before|tonight|again|"
+                               r"please|anytime|asap|once|first|today|maybe|then|by|around|sometime|next|this|a|an|the|"
+                               r"up|out|over|immediately|quickly|in a bit)\b", re.I)
+# "I live in fear of exams" is an idiom, not a place.
+_LIVE_IDIOM_RE = re.compile(r"^(?:fear|hope|denial|peace|harmony|the past|a dream|a bubble|my head|misery|shame)\b", re.I)
 _FAMILY_RE = re.compile(r"\b(?:friend|brother|sister|mum|mom|mother|dad|father|wife|husband|girlfriend|boyfriend|son|"
                         r"daughter|uncle|aunt|cousin|grandma|grandpa|pastor|boss|teacher)\b")
 
@@ -92,6 +105,8 @@ def extract(text: str) -> list[dict]:
                 m.group(0).lower().split(subj, 1)[-1].split()[0]
             if not _ok_value(val) or _TRANSIENT_VAL_RE.search(val):
                 continue
+            if _FAMILY_RE.search(subj) and not _PERSON_VAL_RE.match(val):
+                continue
             out.append({"category": "preference" if subj.startswith("favo") else
                         "relationship" if _FAMILY_RE.search(subj) else "fact",
                         "key": _key("my", subj), "content": f"The user's {subj} {verb} {val}."})
@@ -103,7 +118,7 @@ def extract(text: str) -> list[dict]:
                 out.append({"category": "fact", "key": key, "content": f"The user is {val}."})
         for rx, label, key in ((_LIVE_RE, "lives in", "lives_in"), (_BORN_RE, "was born", "born")):
             m = rx.search(s)
-            if m and _ok_value(_clean(m.group("val"))):
+            if m and _ok_value(_clean(m.group("val"))) and not _LIVE_IDIOM_RE.match(_clean(m.group("val"))):
                 out.append({"category": "fact", "key": _key(key), "content": f"The user {label} {_clean(m.group('val'))}."})
         m = _WORK_RE.search(s)
         if m and _ok_value(_clean(m.group("val"))):
@@ -120,7 +135,7 @@ def extract(text: str) -> list[dict]:
                         "dislike": "dislikes", "don't like": "doesn't like", "do not like": "doesn't like"}.get(verb, verb)
                 out.append({"category": "preference", "key": None, "content": f"The user {verb} {val}."})
         m = _CALL_RE.search(s)
-        if m and _ok_value(_clean(m.group("val"))):
+        if m and _ok_value(_clean(m.group("val"))) and not _CALL_NOT_NAME_RE.match(_clean(m.group("val"))):
             out.append({"category": "preference", "key": _key("call me"),
                         "content": f"The user wants to be called {_clean(m.group('val'))}."})
         m = _SCORED_RE.search(s)
