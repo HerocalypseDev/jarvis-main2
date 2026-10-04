@@ -32,6 +32,39 @@ def check_syntax(project_dir: Path) -> str | None:
     return None
 
 
+def check_imports(project_dir: Path) -> str | None:
+    """Error text when a jarvis*.py imports, at module level and outside try/except, a package that isn't
+    installed (audit 2026-10-04: "update time" can pull code that needs a new dependency; it compiles, so the
+    syntax check passed, and the new copy then died at import, leaving no Jarvis to say why)."""
+    import ast
+    import importlib.util
+
+    for f in sorted(project_dir.glob("jarvis*.py")):
+        try:
+            tree = ast.parse(f.read_bytes(), str(f))
+        except (SyntaxError, ValueError):
+            continue  # check_syntax reports it
+        for node in tree.body:  # module level only; imports inside try/except or functions are optional
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                names = [node.module]
+            else:
+                continue
+            for name in names:
+                top = name.split(".")[0]
+                if (project_dir / f"{top}.py").exists() or (project_dir / top).is_dir():
+                    continue
+                try:
+                    found = importlib.util.find_spec(top) is not None
+                except (ImportError, ValueError):
+                    found = False
+                if not found:
+                    return (f"{f.name} needs the package '{top}', which isn't installed here "
+                            "(run: pip install -r requirements.txt)")
+    return None
+
+
 def helper_command(pid: int, launcher: Path) -> list[str]:
     script = (
         f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; "
@@ -82,6 +115,9 @@ def restart(
     err = check_syntax(project_dir)
     if err:
         return f"Not restarting: the code has a syntax error ({err}). Still running the old version."
+    err = check_imports(project_dir)
+    if err:
+        return f"Not restarting: {err}. Still running the old version."
     flags = 0
     if sys.platform == "win32":
         # NOT DETACHED_PROCESS: verified live that a PowerShell helper started with it never
