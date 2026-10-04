@@ -8324,7 +8324,15 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
+_EMAIL_RUN_NO_FILES = {"read_file", "quick_search", "find_files", "code_search", "scan_large_files", "read_screen",
+                       "dev_tools", "analyze_code", "trace_dependencies"}
+
+
 def _untrusted_block(tool_name: str) -> str | None:
+    # Audit 2026-10-04: an autonomous email reply goes back to the sender, who may be the one who wrote the injected
+    # text: during that run nothing of the owner's files may be read (a reply never needs them).
+    if getattr(_command_ctx, "email_scope", None) and tool_name in _EMAIL_RUN_NO_FILES:
+        return f"Refused: {tool_name} can't run while sending an automatic email (it could mail your files out)."
     if getattr(_command_ctx, "untrusted_origin", False) and (
             tool_name in _UNTRUSTED_BLOCKED_TOOLS or tool_name.startswith(("mcp_windows_", "mcp_whatsapp_", "mcp_browser_"))):
         # mcp_whatsapp_*: an email must never read the owner's chats or send WhatsApp messages as them.
@@ -12351,6 +12359,8 @@ def _email_scope_problem(tool_name: str, inp: dict) -> str | None:
         return f"Refused: this autonomous email may only go to {', '.join(sorted(scope))}, not {', '.join(extra)}."
     if getattr(_command_ctx, "email_sends", 0) >= 1:
         return "Refused: this autonomous task already sent its one email."
+    if any(re.search(r"attach", str(k), re.I) and v for k, v in (inp or {}).items()):
+        return "Refused: an automatic email can't carry attachments."
     _command_ctx.email_sends = getattr(_command_ctx, "email_sends", 0) + 1
     return None
 

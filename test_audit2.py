@@ -502,3 +502,18 @@ def test_a_request_phrased_as_a_question_is_not_backed_by_an_earlier_action(J):
         assert J._recent_succeeded_tools(said) == [], said
     for said in ("What message did you send me on Telegram?", "did you reply to Ada?", "so did you send it"):
         assert J._ASKS_ABOUT_PAST_RE.search(said) and not J._POLITE_REQUEST_RE.search(said), said
+
+
+def test_an_automatic_email_run_cannot_read_or_attach_the_owners_files(J, monkeypatch):
+    sent = []
+    monkeypatch.setattr(J, "execute_mcp_tool", lambda name, inp: sent.append(inp) or "Email sent")
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    outs = []
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: outs.extend([
+        J._execute_tool("read_file", {"path": "C:\\Users\\x\\Documents\\private.docx"}, "t"),
+        J._execute_tool("mcp_gmail_send_email", {"to": ["sam@work.test"], "subject": "Re", "body": "here",
+                                                 "attachments": ["C:\\Users\\x\\Documents\\private.docx"]}, "t"),
+        J._execute_tool("mcp_gmail_send_email", {"to": ["sam@work.test"], "subject": "Re", "body": "ok"}, "t")]) or "x")
+    J._autonomy_run_agent("Do exactly this email task", email_to=["sam@work.test"])
+    assert outs[0].startswith("Refused") and outs[1].startswith("Refused") and outs[2] == "Email sent"
+    assert len(sent) == 1 and "attachments" not in sent[0]
