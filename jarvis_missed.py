@@ -74,8 +74,10 @@ def add(connect, lock, text: str, source: str = "", now: float | None = None) ->
 
 
 def unseen(connect, lock, limit: int = 50) -> list[dict]:
-    return _rows(connect, lock, "SELECT id, ts, text, kind, source FROM missed_items WHERE seen_at IS NULL "
-                                "ORDER BY ts LIMIT ?", (limit,))
+    """The NEWEST `limit` unread items, oldest first (audit 2026-10-04: the oldest `limit` were taken, so with more
+    unread than that "what did I miss" read items from the middle and the newest ones were never reached)."""
+    return _rows(connect, lock, "SELECT * FROM (SELECT id, ts, text, kind, source FROM missed_items WHERE seen_at IS NULL "
+                                "ORDER BY ts DESC, id DESC LIMIT ?) ORDER BY ts, id", (limit,))
 
 
 def recent(connect, lock, limit: int = 20) -> list[dict]:

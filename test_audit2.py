@@ -201,3 +201,16 @@ def test_the_fact_learner_skips_opinions_passing_states_and_contact_details():
                        ("my favourite color is blue", "favourite color is blue")):
         got = q.extract(said)
         assert got and want in got[0]["content"], (said, got)
+
+
+def test_what_did_i_miss_reads_the_newest_items_when_there_are_many(tmp_path):
+    import sqlite3
+    import threading
+    import jarvis_missed as missed
+    connect, lock = (lambda: sqlite3.connect(tmp_path / "m.db")), threading.Lock()
+    t0 = 1_800_000_000.0
+    for i in range(12):
+        missed.add(connect, lock, f"Update number {i} came in", now=t0 + i)
+    items = missed.unseen(connect, lock, limit=8)
+    assert [i["text"] for i in items][-1] == "Update number 11 came in"      # the newest is included
+    assert items == sorted(items, key=lambda i: i["ts"])                       # still oldest first
