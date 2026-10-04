@@ -5526,7 +5526,10 @@ def _parse_due_at(due_at: str) -> datetime | None:
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s)
+        when = datetime.fromisoformat(s.replace("Z", "+00:00") if s.endswith("Z") else s)
+        # Audit 2026-10-04: "...Z" / "+01:00" was stored with its offset; due_at is compared as TEXT against local time
+        # (so it fired at the wrong hour) and a naive/aware comparison raised. Always local, naive.
+        return when.astimezone().replace(tzinfo=None) if when.tzinfo else when
     except ValueError:
         pass
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):

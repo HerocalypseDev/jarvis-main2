@@ -449,3 +449,18 @@ def test_secret_values_never_reach_the_audit_or_the_log(J):
     assert red["new_password"] == red["auth"]["api_key"] == red["items"][0]["pin"] == "[hidden]"
     assert red["student_id"] == 3 and red["query"] == "pin code" and red["force"] is True and red["token_count"] == 5
     assert J._redact_audit_input({"pin": 4321, "max_tokens": 900}) == {"pin": "[hidden]", "max_tokens": 900}
+
+
+def test_a_reminder_time_with_a_timezone_is_stored_as_local_time(J, monkeypatch):
+    import time as _time
+    from datetime import datetime, timezone
+    monkeypatch.setenv("TZ", "Africa/Lagos")
+    _time.tzset()
+    try:
+        when = J._parse_due_at("2026-10-04T15:00:00Z")
+        assert when.tzinfo is None and when == datetime(2026, 10, 4, 15, 0, tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+        assert when.hour == 16                                   # Lagos is UTC+1
+        assert J._parse_due_at("2026-10-04T15:00") == datetime(2026, 10, 4, 15, 0)
+    finally:
+        monkeypatch.delenv("TZ")
+        _time.tzset()
