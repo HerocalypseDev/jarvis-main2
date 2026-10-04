@@ -111,10 +111,21 @@ def _test_source(rel: Path, mod_name: str, api: list[tuple[str, str, list[str]]]
     return "\n".join(out) + "\n"
 
 
+def _write_refusal(root: Path) -> str | None:
+    """The same write rules as write_file (audit 2026-10-04: these wrote anywhere, Jarvis's own code folder and
+    the Startup folder included)."""
+    import jarvis_workspace
+    bad = jarvis_workspace.sensitive_reason(str(root / "x.py"), write=True)
+    return f"Refused: {bad}." if bad else None
+
+
 def generate_tests(repo_path: str, max_files: int = 10) -> str:
     root = Path(repo_path).expanduser()
     if not root.is_dir():
         return f"{repo_path} is not a folder."
+    refusal = _write_refusal(root / "tests_generated")
+    if refusal:
+        return refusal
     tested = _existing_tests(root)
     out_dir = root / "tests_generated"
     written, skipped = [], 0
@@ -142,6 +153,9 @@ def scaffold_module(repo_path: str, name: str, description: str = "") -> str:
         return f"{repo_path} is not a folder."
     if not re.fullmatch(r"[a-z_][a-z0-9_]*", name or ""):
         return "Module name must be lowercase letters, digits and underscores."
+    refusal = _write_refusal(root)
+    if refusal:
+        return refusal
     mod, test = root / f"{name}.py", root / f"test_{name}.py"
     if mod.exists() or test.exists():
         return f"{name}.py or test_{name}.py already exists; not overwriting."
