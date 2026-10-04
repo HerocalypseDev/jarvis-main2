@@ -590,3 +590,10 @@ def test_an_mcp_download_cannot_land_in_the_startup_folder(J, monkeypatch):
     out = J._execute_tool("mcp_gmail_download_attachment", {"messageId": "1", "attachmentId": "2",
                                                            "savePath": r"C:\Users\x\Downloads"}, "save it")
     assert out == "saved"
+
+
+def test_a_long_phone_message_says_it_was_cut(J):
+    long = "word " * 2000
+    out = J._phone_cut(long)
+    assert len(out) <= J.PHONE_MAX_CHARS and out.endswith("on the dashboard]")
+    assert J._phone_cut("short") == "short"
