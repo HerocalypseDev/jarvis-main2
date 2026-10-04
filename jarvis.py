@@ -8326,8 +8326,9 @@ UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 def _untrusted_block(tool_name: str) -> str | None:
     if getattr(_command_ctx, "untrusted_origin", False) and (
-            tool_name in _UNTRUSTED_BLOCKED_TOOLS or tool_name.startswith(("mcp_windows_", "mcp_whatsapp_"))):
+            tool_name in _UNTRUSTED_BLOCKED_TOOLS or tool_name.startswith(("mcp_windows_", "mcp_whatsapp_", "mcp_browser_"))):
         # mcp_whatsapp_*: an email must never read the owner's chats or send WhatsApp messages as them.
+        # mcp_browser_*: it can open any address (data in the link) or upload files, like http_request.
         return (f"Refused: {tool_name} can't run in a task that came from someone else's message or email "
                 "(it could be a hidden instruction). Ask me directly if you want this.")
     return None
