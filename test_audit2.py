@@ -697,3 +697,18 @@ def test_dev_tools_cannot_write_into_jarvis_own_code_folder(tmp_path):
     assert dt.scaffold_module(here, "new_thing").startswith("Refused")
     assert dt.generate_tests(here).startswith("Refused")
     assert dt.scaffold_module(str(tmp_path), "new_thing").startswith("Created")
+
+
+def test_close_window_never_guesses_between_several_matches(monkeypatch):
+    import types
+    import jarvis_window_control as wc
+    closed = []
+
+    def win(title):
+        return types.SimpleNamespace(title=title, close=lambda: closed.append(title))
+
+    wins = [win("Notes - Notepad"), win("Meeting notes.docx - Word"), win("Calculator")]
+    monkeypatch.setattr(wc, "_pygetwindow", lambda: types.SimpleNamespace(getAllWindows=lambda: wins))
+    assert wc.close_window("notes").startswith("Tool failed") and closed == []
+    assert wc.close_window("calculator") == "Closed 'Calculator'." and closed == ["Calculator"]
+    assert wc.close_window("Notes - Notepad").startswith("Closed")

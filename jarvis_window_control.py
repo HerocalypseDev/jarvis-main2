@@ -110,7 +110,26 @@ def restore_window(title: str) -> str:
 
 
 def close_window(title: str) -> str:
-    return _with_window(title, "Closed", lambda w: w.close())
+    """Closes ONE window: an exact title, or the only window whose title contains the text (audit 2026-10-04: the
+    first of several matches was closed, so "close notes" could shut the wrong app and lose its unsaved work)."""
+    gw = _pygetwindow()
+    if gw is None:
+        return "PyGetWindow isn't installed."
+    needle = (title or "").strip().lower()
+    hits = [w for w in gw.getAllWindows() if needle and w.title and needle in w.title.lower()]
+    exact = [w for w in hits if w.title.strip().lower() == needle]
+    if len(exact) == 1 or len(hits) == 1:
+        win = (exact or hits)[0]
+        try:
+            win.close()
+            return f"Closed {win.title!r}."
+        except Exception as e:
+            log.warning("Could not close window %r: %s", title, e)
+            return f"Could not close {win.title!r}: {e}"
+    if not hits:
+        return f"No open window matching {title!r}."
+    names = "; ".join(repr(w.title) for w in hits[:6])
+    return f"Tool failed: {len(hits)} windows match {title!r} ({names}). Say the full title of the one to close."
 
 
 def resize_window(
