@@ -208,7 +208,7 @@ def test_reminders_are_held_texted_and_silent_once_disabled(j, phone):
 def test_toast_is_not_shown_while_held_but_is_when_normal(j, monkeypatch):
     from datetime import datetime
 
-    rows = [(1, "secret plan", 0, 0)]
+    rows = [(1, "secret plan", 0, 0, None)]  # id, text, repeat, urgent, due_at
 
     class Conn:
         def execute(self, sql, *a):
