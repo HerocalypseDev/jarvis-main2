@@ -8226,7 +8226,10 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             "self_report", "lessons",
                             # Audit 2026-10-04: the built-in screen tools did what the blocked mcp_windows_* ones do
                             # (read the screen, click, scroll, close windows), so an email could still drive the desktop.
-                            "read_screen", "click_at", "scroll_screen", "control_window"}
+                            "read_screen", "click_at", "scroll_screen", "control_window",
+                            # ...and the ways to carry what a task read out to a server someone else picks (in a URL
+                            # or a request body): an email-started task reports to the owner, it has no need for them.
+                            "http_request", "download_image", "open_url", "play_media"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
@@ -12192,7 +12195,13 @@ def _email_scope_problem(tool_name: str, inp: dict) -> str | None:
     """In an autonomous email/calendar/file action (_autonomy_run_agent): a mail-send call may only go to the
     recipients autonomy checked against its limits, and only once (audit 2026-10-04)."""
     scope = getattr(_command_ctx, "email_scope", None)
-    if scope is None or not _MAIL_SEND_TOOL_RE.search(tool_name):
+    if not _MAIL_SEND_TOOL_RE.search(tool_name):
+        return None
+    if scope is None:
+        # A queued task that came from someone's email ([untrusted-origin]) reports to the owner; it never needs to
+        # send mail, and could otherwise mail what it read to anyone.
+        if getattr(_command_ctx, "untrusted_origin", False):
+            return "Refused: a task that came from someone else's message can't send email. Ask me directly."
         return None
     if not scope:
         return "Refused: this autonomous task may not send email."
