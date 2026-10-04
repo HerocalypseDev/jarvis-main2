@@ -55,8 +55,11 @@ def sensitive_reason(path: str, write: bool = False) -> str | None:
     if any(part in _SENSITIVE_DIRS for part in parents if part != "jarvis" or "appdata" in parents):
         return "that folder holds credentials or Jarvis's private data"
     if write:
-        if any(part in _WRITE_ONLY_DIRS for part in parents):
+        # the folder itself counts too (a download "savePath" can name the Startup folder directly)
+        if any(part in _WRITE_ONLY_DIRS for part in parents + [name]):
             return "writing there could plant code that runs later (.git, .claude or the Startup folder)"
+        if os.sep == "/" and re.match(r"^[A-Za-z]:[\\/]", raw):
+            return None  # a Windows path checked elsewhere (tests): it can't be this machine's code folder
         try:
             rp = p.expanduser().resolve()
             if rp == _CODE_DIR or _CODE_DIR in rp.parents:
