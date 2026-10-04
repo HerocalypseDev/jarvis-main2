@@ -657,3 +657,11 @@ def test_an_auto_reply_never_gives_out_a_password_or_code_even_to_someone_known(
     for r in ("The wifi password is Banana42.", "The wifi password: Lagos2026!", "Your one-time code is ABC123"):
         assert mr.safe_reply(r, True, "ada@family.test") is None, r
     assert mr.safe_reply("Sorry, I can't share passwords. See you Sunday!", True, "ada@family.test")
+
+
+def test_secret_facts_never_reach_the_auto_reply_writer(J, monkeypatch):
+    monkeypatch.setattr(J, "get_user_profile_context", lambda: "Name: Hero\n")
+    monkeypatch.setattr(J.memory_enhance, "relevant_memory_line",
+                        lambda q, skip_newest=0: "\nThe wifi password is banana forty two.\nThe user's exam score was 280.")
+    out = J._mail_reply_facts("what's the wifi password and your score?")
+    assert "password" not in out and "exam score was 280" in out and "Hero" in out
