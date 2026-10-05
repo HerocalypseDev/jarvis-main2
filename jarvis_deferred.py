@@ -40,6 +40,9 @@ def ensure(conn: sqlite3.Connection) -> None:
                  "origin TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', result TEXT, created_at TEXT NOT NULL, "
                  "started_at TEXT, finished_at TEXT, attempts INTEGER NOT NULL DEFAULT 0)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_deferred_due ON autonomy_deferred_jobs(status, due_at)")
+    if "start_line" not in {r[1] for r in conn.execute("PRAGMA table_info(autonomy_deferred_jobs)")}:
+        # 2026-10-05: what the job says the moment it starts (written when it was scheduled)
+        conn.execute("ALTER TABLE autonomy_deferred_jobs ADD COLUMN start_line TEXT")
 
 
 class Store:
@@ -111,7 +114,7 @@ def _similar(a: str, b: str) -> bool:
 
 
 def schedule(store: Store, instruction: str, due_at: datetime, source_quote: str = "", origin: str = "user",
-             kind: str = "execute_jarvis", now: datetime | None = None) -> tuple[int | None, str]:
+             kind: str = "execute_jarvis", now: datetime | None = None, start_line: str = "") -> tuple[int | None, str]:
     """-> (job id or None, message). A near-identical pending job due within DEDUPE_WINDOW_MIN is reused, so
     one request (seen by both the live tool call and autonomy's extraction) never becomes two runs."""
     instruction = re.sub(r"\s+", " ", (instruction or "")).strip()[:2000]
@@ -128,10 +131,11 @@ def schedule(store: Store, instruction: str, due_at: datetime, source_quote: str
                      "AND kind=? AND due_at BETWEEN ? AND ?", (kind, lo, hi)):
         if _similar(j["instruction"], instruction):
             return j["id"], f"Already scheduled as job #{j['id']}."
-    jid = store.q("INSERT INTO autonomy_deferred_jobs (due_at, kind, instruction, source_quote, origin, created_at) "
-                  "VALUES (?, ?, ?, ?, ?, ?)", (due_at.isoformat(timespec="seconds"), kind, instruction,
-                                                (source_quote or "")[:500], origin, now.isoformat(timespec="seconds")),
-                  write=True)
+    start_line = re.sub(r"\s+", " ", str(start_line or "")).strip()[:140]
+    jid = store.q("INSERT INTO autonomy_deferred_jobs (due_at, kind, instruction, source_quote, origin, created_at, "
+                  "start_line) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (due_at.isoformat(timespec="seconds"), kind, instruction, (source_quote or "")[:500], origin,
+                   now.isoformat(timespec="seconds"), start_line or None), write=True)
     return jid, f"Scheduled job #{jid} for {due_at.strftime('%A %H:%M')}: {instruction[:120]}"
 
 

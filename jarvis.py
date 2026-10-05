@@ -111,6 +111,7 @@ import jarvis_pro_widgets as pro_widgets
 import jarvis_clipboard_history as clip_history
 import jarvis_everything as everything
 import jarvis_macros as macros
+import jarvis_startline as startline
 import jarvis_battery as battery
 import jarvis_meeting_capture as meeting
 import jarvis_file_index as file_index
@@ -133,6 +134,11 @@ import jarvis_context as reqctx
 import jarvis_missed as missed
 import jarvis_quickfacts as quickfacts
 import jarvis_mail_reply as mail_reply
+
+# Start lines (owner 2026-10-05): every skill / scheduled job / routine says one sentence about ITS task the moment it
+# starts, written once when it is made (jarvis_startline.py builds one when none was stored).
+SKILL_START_LINE_DESC = ("One short sentence Jarvis says out loud the moment this starts, about what it actually does, in "
+                         "Jarvis's voice (e.g. 'Checking your inbox for anything new since the last hour.'). Always fill it.")
 
 settings.JARVIS_MODULE = sys.modules[__name__]
 
@@ -2326,6 +2332,7 @@ AGENT_TOOLS = [
                         "relevant (e.g. \"run_shell to list...\")"
                     ),
                 },
+                "start_line": {"type": "string", "description": SKILL_START_LINE_DESC},
                 "schedule": {
                     "type": "object",
                     "description": (
@@ -3268,6 +3275,7 @@ BATCH_TOOLS = [
             "name": {"type": "string"}, "phrases": {"type": "array", "items": {"type": "string"}},
             "instructions": {"type": "string", "description": "What the routine does, in plain words."},
             "description": {"type": "string"},
+            "start_line": {"type": "string", "description": SKILL_START_LINE_DESC},
             "steps": {"type": "array", "items": {"type": "object"}}}, "required": ["action"]},
     },
     {
@@ -3398,7 +3406,8 @@ BATCH_TOOLS = [
         ),
         "input_schema": {"type": "object", "properties": {
             "instruction": {"type": "string"}, "due_at": {"type": "string", "description": "local date/time"},
-            "due_in_minutes": {"type": "number"}, "source_quote": {"type": "string"}},
+            "due_in_minutes": {"type": "number"}, "source_quote": {"type": "string"},
+            "start_line": {"type": "string", "description": SKILL_START_LINE_DESC}},
             "required": ["instruction"]},
     },
     {
@@ -6003,7 +6012,7 @@ def _relevant_skills_line(query: str) -> str:
 
 
 def save_skill(
-    name: str, description: str, instructions: str, schedule: dict | None = None
+    name: str, description: str, instructions: str, schedule: dict | None = None, start_line: str = ""
 ) -> str:
     """Writes name/description/instructions (and optional schedule) as a new
     skills/<name>.json file, or overwrites an existing skill of the same name. Called via the
@@ -6033,6 +6042,12 @@ def save_skill(
         if (description or "").strip() or "description" not in payload:
             payload["description"] = (description or "").strip()
         payload["instructions"] = instructions
+        # What Jarvis says the moment it starts (owner 2026-10-05): written once now, never per run.
+        line = startline.clean(start_line)
+        if line:
+            payload["start_line"] = line
+        elif not payload.get("start_line"):
+            payload["start_line"] = startline.from_text(payload.get("description") or instructions, slug)
         if isinstance(schedule, dict) and (schedule.get("daily_at") or schedule.get("every_minutes")):
             payload["schedule"] = {k: v for k, v in schedule.items() if k != "off"}
         elif isinstance(schedule, dict) and schedule.get("off"):
@@ -6247,8 +6262,64 @@ def _skill_reply_urgency(reply: str) -> tuple[str, bool]:
     return (reply or "").strip(), False
 
 
+def _skill_start_line(skill: dict) -> str:
+    """What a skill says the moment it starts: the line stored with it, else one built from its description."""
+    return startline.clean(skill.get("start_line")) or startline.from_text(
+        skill.get("description") or skill.get("instructions") or "", str(skill.get("name") or ""))
+
+
+def _named_skill(transcript: str) -> dict | None:
+    """The skill a request names outright (every word of its name is in the request: "run my morning briefing"),
+    or None. A looser description match is left to the model, so a wrong skill's line is never spoken."""
+    want = reqctx.content_words(transcript or "")
+    if not want:
+        return None
+    hits = []
+    for sk in _active_skills():
+        words = reqctx.content_words(str(sk.get("name") or "").replace("_", " "))
+        if words and words <= want:
+            hits.append((len(words), sk))
+    hits.sort(key=lambda h: -h[0])
+    if not hits or (len(hits) > 1 and hits[0][0] == hits[1][0]):
+        return None
+    return hits[0][1]
+
+
+def _start_line_held() -> bool:
+    """True when anything unprompted would be held right now (sleep, focus, safe mode, a recorded meeting, a
+    visitor, critical battery): a start line is only worth saying at the moment it starts, so it is dropped."""
+    try:
+        return bool(sleep_mode.is_active() or focus_mode.should_suppress(False) or safe_mode_on()
+                    or _cascade_flags["hold_announcements"] or battery.current() == "critical"
+                    or _reminders_held_now(False))
+    except Exception:
+        return True
+
+
+def _say_start_line(line: str) -> bool:
+    """Speak a scheduled run's start line now (no phone push, never queued for later). False when skipped."""
+    if not line or not _ack_enabled() or _start_line_held():
+        return False
+    try:
+        speak_text(line)
+        return True
+    except Exception as e:
+        log.debug("start line not spoken: %s", e)
+        return False
+
+
 def _run_scheduled_skill(skill: dict) -> None:
     log.info("Running scheduled skill %r.", skill["name"])
+    # Start line (owner 2026-10-05): spoken only when this skill speaks anyway ("announce"); a quiet one shows it on
+    # the dashboard as this run's session, so the owner can still see what ran and what it found.
+    line = _skill_start_line(skill)
+    log.info("Skill %r start line: %s", skill["name"], line)
+    session_id = dashboard.start_session("scheduled", f"{skill['name']}: {line}")
+    dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "scheduled",
+                                                        "transcript": f"{skill['name']}: {line}"}})
+    if skill.get("announce"):
+        _say_start_line(line)
+    reply = None
     # Session context: mark a scheduled task as in-flight so anything checking
     # "is the user free right now" (e.g. queue_or_deliver_notification) can see it, and
     # record it as a recent task for the session_context history.
@@ -6279,6 +6350,9 @@ def _run_scheduled_skill(skill: dict) -> None:
     except Exception as e:
         log.warning("Scheduled skill %r failed: %s", skill["name"], e)
     finally:
+        status = "failed" if reply is None or reply == _llm_unavailable_reply() else "done"
+        dashboard.end_session(session_id, status, reply or "(nothing to report)")
+        dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": status, "reply": reply}})
         _command_ctx.scheduled_skill, _command_ctx.mail_shown = None, None
         _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
         _set_scheduled_task_running(False)
@@ -6301,6 +6375,8 @@ def _run_queued_task(description: str, instructions: str) -> None:
         f"(This is a scheduled, proactive run of a queued task: \"{description}\" — the user "
         f"didn't just ask for this out loud, act on it now.) {instructions}"
     )
+    if not untrusted:  # its result is said too (important), so its start is
+        _say_start_line(startline.from_text(description, description))
     try:
         reply = run_agent_loop(synthetic_transcript)
         if reply:
@@ -8248,7 +8324,8 @@ def _schedule_jarvis_task_tool(inp: dict) -> str:
     if when is None:
         return "When should I do it? Give a time or a number of minutes from now."
     jid, msg = deferred.schedule(_deferred_store, str(inp.get("instruction") or ""), when,
-                                 str(inp.get("source_quote") or ""), origin="user")
+                                 str(inp.get("source_quote") or ""), origin="user",
+                                 start_line=startline.clean(inp.get("start_line")))
     return msg
 
 
@@ -8289,7 +8366,12 @@ def _run_deferred_job(job: dict) -> None:
     started = time.monotonic()
     session_id = dashboard.start_session("autonomy", transcript)
     dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "autonomy", "transcript": transcript}})
-    _deferred_speech(f"Starting: {job['instruction'][:120]}")
+    # Start line (owner 2026-10-05): the one written when it was scheduled, else built from the instruction. Said
+    # for a job the owner asked for (its result is said too); an autonomy-origin job stays quiet.
+    line = startline.clean(job.get("start_line")) or startline.from_text(job["instruction"], f"job {job['id']}")
+    log.info("Job %s start line: %s", job["id"], line)
+    if job.get("origin") in ("user", "conversation"):
+        _say_start_line(line)
     ok, reply, transient = False, "", False
     try:
         reply = run_agent_loop(
@@ -12939,6 +13021,7 @@ def _execute_tool_impl(
                 str(inp.get("description") or ""),
                 str(inp.get("instructions") or ""),
                 schedule if isinstance(schedule, dict) else None,
+                str(inp.get("start_line") or ""),
             )
         elif tool_name == "create_reminder" and _current_command_source() in ("voice", "text", "dashboard", "phone") \
                 and not getattr(_command_ctx, "autonomous", False) \
@@ -13787,8 +13870,32 @@ def _await_ack(timeout: float = 6.0) -> None:
     t.join(timeout)
 
 
-def _maybe_ack_before_task(transcript: str) -> None:
-    kind = _ack_kind(transcript)
+def _routine_start_line(routine: dict) -> str:
+    return startline.clean(routine.get("start_line")) or startline.from_text(
+        routine.get("instructions") or "", f"your {routine.get('name') or 'routine'} routine")
+
+
+def _command_start_line(transcript: str, routine: dict | None = None) -> str | None:
+    """The task-specific line for a command the owner just gave: its routine's line, a skill it names, or the
+    request itself in Jarvis's words ("Sure, I'll check the git status of your project."). None = generic lead-in."""
+    if routine:
+        return _routine_start_line(routine)
+    try:
+        sk = _named_skill(transcript)
+    except Exception:
+        sk = None
+    if sk:
+        return _skill_start_line(sk)
+    if _catastrophic_reason(transcript or ""):
+        return None  # never promise what the confirmation gate is about to stage
+    return startline.from_request(transcript)
+
+
+def _maybe_ack_before_task(transcript: str, routine: dict | None = None) -> None:
+    line = _command_start_line(transcript, routine)
+    if line and _start_announcement(line):
+        return
+    kind = _ack_kind(transcript) or ("action" if line else None)
     if kind:
         _start_ack(kind)
 
@@ -14992,7 +15099,7 @@ def _handle_text_command_impl(
             raise
     else:
         if speaks_here and intent_path == "full":
-            _maybe_ack_before_task(loop_transcript)
+            _maybe_ack_before_task(transcript, routine)
         try:
             # Narrate mid-task only where the reply will also be spoken here (not phone-only).
             reply = run_agent_loop(

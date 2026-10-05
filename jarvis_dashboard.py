@@ -126,7 +126,8 @@ def recent_commands(limit: int = 50) -> list[dict]:
             try:
                 rows = conn.execute(
                     "SELECT transcript, COUNT(*) AS n, MAX(started_at) AS last FROM dashboard_sessions "
-                    "WHERE length(transcript) <= 300 GROUP BY transcript ORDER BY last DESC LIMIT ?",
+                    "WHERE length(transcript) <= 300 AND source IN ('voice', 'text', 'dashboard', 'phone') "
+                    "GROUP BY transcript ORDER BY last DESC LIMIT ?",
                     (max(1, min(int(limit), 200)),),
                 ).fetchall()
             finally:

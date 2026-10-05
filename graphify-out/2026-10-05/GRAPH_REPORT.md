@@ -1,7 +1,7 @@
 # Graph Report - jarvis-main2  (2026-10-05)
 
 ## Corpus Check
-- 245 files · ~446,617 words
+- 245 files · ~447,300 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 14 file(s) not represented in the graph (top: .css 9, (none) 3, .vbs 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `0fc8ea47`
+- Built from commit: `a8520dbd`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
