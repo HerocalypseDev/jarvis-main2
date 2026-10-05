@@ -8263,6 +8263,7 @@ def _run_deferred_job(job: dict) -> None:
     _command_ctx.source, _command_ctx.autonomous = DEFERRED_SOURCE, True
     _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
     _set_scheduled_task_running(True)
+    started = time.monotonic()
     session_id = dashboard.start_session("autonomy", transcript)
     dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "autonomy", "transcript": transcript}})
     _deferred_speech(f"Starting: {job['instruction'][:120]}")
@@ -8284,12 +8285,13 @@ def _run_deferred_job(job: dict) -> None:
         _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
         _set_scheduled_task_running(False)
     try:
-        _finish_deferred_job(job, ok, reply, transient, transcript, session_id)
+        _finish_deferred_job(job, ok, reply, transient, transcript, session_id, started)
     finally:
         _deferred_running.discard(job["id"])  # last: "running" covers the result being recorded and reported
 
 
-def _finish_deferred_job(job: dict, ok: bool, reply: str, transient: bool, transcript: str, session_id) -> None:
+def _finish_deferred_job(job: dict, ok: bool, reply: str, transient: bool, transcript: str, session_id,
+                         started: float | None = None) -> None:
     # Only a transient failure (no model reachable, a crash) is retried: a run that finished and reported a
     # problem already did whatever it could, and doing it again could repeat its side effects.
     attempts = job["attempts"] if transient else deferred.MAX_ATTEMPTS
@@ -8299,7 +8301,11 @@ def _finish_deferred_job(job: dict, ok: bool, reply: str, transient: bool, trans
     _log_action_audit("deferred_job", {"id": job["id"], "attempt": job["attempts"], "status": status},
                       transcript, reply)
     _remember_deferred_job(job, status, reply)
-    if "staged, not run" in (reply or "") or _dashboard_get_pending():
+    pending = _dashboard_get_pending()
+    # Only an action this job staged (audit 2026-10-05: one the owner had staged earlier made every job that
+    # finished afterwards say urgently that it needed their yes).
+    staged_here = bool(pending) and (started is None or float(pending.get("queued_at") or 0) >= started)
+    if "staged, not run" in (reply or "") or staged_here:
         _deferred_speech(f"Scheduled job needs your yes: {reply[:200]}", urgent=True)
     elif status == "failed":
         tries = f" after {job['attempts']} tries" if job["attempts"] > 1 else ""
@@ -11123,6 +11129,9 @@ def _write_docx(p: Path, content: str, append: bool) -> None:
     jarvis_docx.write(p, content, append)
 
 
+KEEP_PREVIOUS_VERSIONS = 10
+
+
 def _keep_previous_version(p: Path) -> str:
     """In a run nobody is watching (autonomy, a scheduled skill or job, a task from someone's email), overwriting an
     existing file first keeps the old one in .jarvis-previous/ beside it (audit 2026-10-04: an overwrite was
@@ -11137,6 +11146,14 @@ def _keep_previous_version(p: Path) -> str:
         keep_dir.mkdir(exist_ok=True)
         kept = keep_dir / f"{p.stem}-{datetime.now():%Y%m%d-%H%M%S}{p.suffix}"
         shutil.copy2(p, kept)
+        # Newest KEEP_PREVIOUS_VERSIONS per file (audit 2026-10-05: an hourly skill rewriting a report piled up copies).
+        mine = re.compile(re.escape(p.stem) + r"-\d{8}-\d{6}" + re.escape(p.suffix), re.I)
+        olds = sorted((f for f in keep_dir.iterdir() if mine.fullmatch(f.name)), key=lambda f: f.name, reverse=True)
+        for old in olds[KEEP_PREVIOUS_VERSIONS:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
         return f" (The previous version is kept at {kept}.)"
     except OSError as e:
         log.warning("Couldn't keep the previous version of %s: %s", p, e)
