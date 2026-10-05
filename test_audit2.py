@@ -763,3 +763,12 @@ def test_a_task_queued_after_reading_mail_keeps_the_limits(J, monkeypatch, tmp_p
         J._command_ctx.taint_watch, J._command_ctx.outside_text_seen = False, False
     row = sqlite3.connect(tmp_path / "q2.db").execute("SELECT instructions FROM task_queue").fetchone()
     assert row[0].startswith(J.UNTRUSTED_TASK_MARKER)
+
+
+def test_an_unattended_run_that_read_mail_cannot_write_memory(J):
+    J._command_ctx.taint_watch, J._command_ctx.outside_text_seen = True, True
+    try:
+        assert J._untrusted_block("remember_fact") and J._untrusted_block("update_project_status")
+        assert J._untrusted_block("create_reminder") is None
+    finally:
+        J._command_ctx.taint_watch, J._command_ctx.outside_text_seen = False, False

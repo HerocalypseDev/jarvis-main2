@@ -8374,7 +8374,9 @@ _EMAIL_RUN_NO_FILES = {"read_file", "quick_search", "find_files", "code_search",
 _OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_tabs|download_image|read_screen)$")
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
-                        "delegate_research"}
+                        "delegate_research",
+                        # memory steers every later prompt: an instruction hidden in a mail must not be written there
+                        "remember_fact", "remember_decision", "remember_code_pattern", "update_project_status"}
 
 
 def _taint_block(tool_name: str) -> str | None:
