@@ -97,6 +97,8 @@ def resolve(tabs: list[dict], ref, focused) -> tuple[list[dict], str]:
         return list(tabs), ""
     if r in _OTHERS:
         f = front(tabs, focused)
+        if f is None:  # "the others" with no tab in front would have meant every tab (audit 2026-10-05)
+            return [], "No tab is in front, so I can't tell which ones are the others."
         return [t for t in tabs if t is not f], ""
     if r in _PREVIOUS:
         f = front(tabs, focused)

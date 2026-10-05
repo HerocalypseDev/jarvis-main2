@@ -814,3 +814,13 @@ def test_a_word_file_saves_when_the_text_holds_control_characters(tmp_path):
     import docx
     text = "\n".join(par.text for par in docx.Document(str(p)).paragraphs)
     assert "Tom & Jerry" in text and "page two" in text and "\x01" not in text and "\x0c" not in text
+
+
+def test_close_the_other_tabs_never_means_every_tab():
+    import jarvis_browser_tabs as bt
+    tabs = [{"id": 1, "windowId": 9, "active": False, "title": "a"}, {"id": 2, "windowId": 9, "active": False, "title": "b"}]
+    hits, why = bt.resolve(tabs, "others", None)
+    assert hits == [] and "front" in why
+    tabs[0]["active"] = True
+    hits, _ = bt.resolve(tabs, "others", 9)
+    assert [t["id"] for t in hits] == [2]
