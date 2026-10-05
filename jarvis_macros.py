@@ -169,7 +169,7 @@ def save(connect, lock, name: str, phrases: list, steps: list, known_tools: set[
         return f"The phrase {clash[0]!r} already triggers the macro {taken[clash[0]]!r}."
     _q(connect, lock, "INSERT INTO macros (name, phrases, steps, enabled, created_at, mode, instructions) "
                       "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET phrases=excluded.phrases, "
-                      "steps=excluded.steps, enabled=excluded.enabled, mode=excluded.mode, instructions=excluded.instructions",
+                      "steps=excluded.steps, mode=excluded.mode, instructions=excluded.instructions",  # keeps on/off
        (name.strip()[:60], json.dumps(clean_phrases), json.dumps(clean_steps), int(bool(enabled)),
         datetime.now().isoformat(timespec="seconds"), mode, instructions or str(description or "").strip()[:2000]), write=True)
     if mode == "ai":

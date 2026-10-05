@@ -888,3 +888,15 @@ def test_refreshing_the_daily_plan_keeps_that_days_review(J, monkeypatch):
     conn.close()
     J.build_daily_plan(now)
     assert J._daily_plan_row("2026-10-05")["review"] == {"done": ["x"]}
+
+
+def test_re_saving_a_macro_keeps_it_switched_off(tmp_path):
+    import sqlite3
+    import threading
+    import jarvis_macros as m
+    connect, lock = (lambda: sqlite3.connect(tmp_path / "m.db")), threading.Lock()
+    steps = [{"tool": "open_app", "input": {"app": "notepad"}}]
+    assert "Saved" in m.save(connect, lock, "notes", ["open my notes"], steps, {"open_app"})
+    m.set_enabled(connect, lock, "notes", False)
+    m.save(connect, lock, "notes", ["open my notes now"], steps, {"open_app"})
+    assert m.list_macros(connect, lock)[0]["enabled"] in (0, False)
