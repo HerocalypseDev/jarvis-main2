@@ -805,3 +805,12 @@ def test_a_late_held_reminder_is_forwarded_once_labelled(monkeypatch):
     gr.forward_reminder("Reminder (it was due at 9:00 PM): call mum")
     gr.forward_reminder("Reminder: take medication")
     assert sent == ["Held reminder: (it was due at 9:00 PM) call mum", "Held reminder: take medication"]
+
+
+def test_a_word_file_saves_when_the_text_holds_control_characters(tmp_path):
+    import jarvis_docx
+    p = tmp_path / "notes.docx"
+    jarvis_docx.write(p, "Tom & Jerry <b>\x01 page one\x0c page two \x1b[31mred\x1b[0m\tend")
+    import docx
+    text = "\n".join(par.text for par in docx.Document(str(p)).paragraphs)
+    assert "Tom & Jerry" in text and "page two" in text and "\x01" not in text and "\x0c" not in text
