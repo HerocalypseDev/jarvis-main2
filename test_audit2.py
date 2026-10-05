@@ -824,3 +824,35 @@ def test_close_the_other_tabs_never_means_every_tab():
     tabs[0]["active"] = True
     hits, _ = bt.resolve(tabs, "others", 9)
     assert [t["id"] for t in hits] == [2]
+
+
+def test_kept_previous_versions_are_capped_per_file(J, monkeypatch, tmp_path):
+    keep = tmp_path / ".jarvis-previous"
+    keep.mkdir()
+    for i in range(14):
+        (keep / f"report-20261001-1000{i:02d}.txt").write_text(str(i), encoding="utf-8")
+    other = keep / "report-2-final-20261001-100000.txt"  # another file's copy that a loose pattern would match
+    other.write_text("keep me", encoding="utf-8")
+    target = tmp_path / "report.txt"
+    target.write_text("current", encoding="utf-8")
+    monkeypatch.setattr(J, "_current_command_source", lambda: None)
+    J._keep_previous_version(target)
+    mine = [f for f in keep.iterdir() if f.name.startswith("report-2026")]
+    assert len(mine) == J.KEEP_PREVIOUS_VERSIONS and other.exists()
+    assert any(f.read_text(encoding="utf-8") == "current" for f in mine)
+
+
+def test_a_job_only_says_it_needs_a_yes_for_an_action_it_staged(J, monkeypatch):
+    said = []
+    monkeypatch.setattr(J, "_deferred_speech", lambda text, **kw: said.append(text))
+    monkeypatch.setattr(J.deferred, "finish", lambda *a, **k: "done")
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(J, "_remember_deferred_job", lambda *a, **k: None)
+    monkeypatch.setattr(J.dashboard, "end_session", lambda *a, **k: None)
+    monkeypatch.setattr(J.dashboard, "notify", lambda *a, **k: None)
+    job = {"id": 7, "attempts": 1, "instruction": "run the speed test", "origin": "user"}
+    monkeypatch.setattr(J, "_dashboard_get_pending", lambda: {"tool_name": "run_shell", "queued_at": 100.0})
+    J._finish_deferred_job(job, True, "Download 20 Mbps.", False, "t", 1, started=200.0)  # staged before the job
+    assert said and said[-1].startswith("As you asked earlier")
+    J._finish_deferred_job(job, True, "Shutdown staged.", False, "t", 1, started=50.0)    # staged by this job
+    assert said[-1].startswith("Scheduled job needs your yes")

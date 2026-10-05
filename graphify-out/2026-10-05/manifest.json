@@ -1602,9 +1602,9 @@
     "semantic_hash": ""
   },
   "jarvis_browser_tabs.py": {
-    "mtime": 1791020814.6791422,
-    "seen": 1791021106.8744442,
-    "ast_hash": "c0aa921433915d601eee0fb164c7f5f6",
+    "mtime": 1791184695.880778,
+    "seen": 1791184729.9575768,
+    "ast_hash": "f139f0314b3b19dab34bc449f3f3a841",
     "semantic_hash": ""
   },
   "jarvis_browsers.py": {
@@ -1692,9 +1692,9 @@
     "semantic_hash": ""
   },
   "test_audit2.py": {
-    "mtime": 1791184621.6545477,
-    "seen": 1791184651.7019458,
-    "ast_hash": "5a30c42d69917aa1ae48922c6742140d",
+    "mtime": 1791184700.9425483,
+    "seen": 1791184729.9580321,
+    "ast_hash": "a898e101e0760ccbd994f15b5a7f5623",
     "semantic_hash": ""
   }
 }
