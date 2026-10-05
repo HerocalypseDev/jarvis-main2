@@ -245,6 +245,9 @@ def write(path, content: str, append: bool = False) -> None:
     from pathlib import Path
 
     p = Path(path)
+    # XML can't hold control characters (a form feed from a PDF, an ANSI escape from terminal output): one of them
+    # made the whole save fail (audit 2026-10-05). Tabs and line breaks stay.
+    content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]", "", content or "")
     doc = docx.Document(str(p)) if append and p.exists() else docx.Document()
     if not (append and p.exists()):
         _base_styles(doc)

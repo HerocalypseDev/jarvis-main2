@@ -49,6 +49,7 @@ def _plain(text: str) -> str:
 
 def write(path: Path, markdown: str, append: bool = False) -> int:
     from pptx import Presentation
+    markdown = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]", "", markdown or "")  # XML can't hold them
     prs = Presentation(str(path)) if append and Path(path).exists() else Presentation()
     first_new = len(prs.slides) == 0
     for i, s in enumerate(parse(markdown)):
