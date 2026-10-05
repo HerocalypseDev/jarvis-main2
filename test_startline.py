@@ -42,7 +42,7 @@ def test_questions_chat_and_dangerous_requests_keep_the_generic_lead_in(said):
 def test_a_line_is_built_from_a_description_when_none_was_stored():
     assert sl.from_text("Runs automatically every hour to check the price of bitcoin, and tell me if it moved",
                         "btc_watch").startswith("Sure, I'll check the price of bitcoin")
-    assert sl.from_text("Anything the user asks about homework", "homework_admin") == "Starting homework admin."
+    assert sl.from_text("Anything the user asks about recipes", "cooking_helper") == "Starting cooking helper."
     assert sl.clean("  Checking\nyour mail ") == "Checking your mail."
     assert len(sl.clean("word " * 80)) <= sl.MAX_CHARS + 1
 
