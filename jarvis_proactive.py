@@ -197,6 +197,10 @@ def scan_path(root_path: str) -> dict:
     root = Path(root_path).expanduser().resolve()
     if not root.exists():
         return {"error": f"{root_path!r} does not exist."}
+    if root.parent == root or root == Path.home().resolve():
+        # audit 2026-10-05: only matching files were capped, so a drive root or the whole profile meant walking every
+        # folder on it (minutes of disk churn). code_search refuses the same.
+        return {"error": f"{root_path!r} is a whole drive or your whole profile; give a project folder."}
 
     all_findings: list[dict] = []
     files_scanned = 0
