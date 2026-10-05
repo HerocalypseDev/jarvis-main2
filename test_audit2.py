@@ -732,3 +732,11 @@ def test_project_health_never_walks_a_whole_drive_or_profile(tmp_path):
     import jarvis_proactive as pro
     assert "whole drive" in pro.scan_path("/").get("error", "")
     assert "whole drive" in pro.scan_path(str(Path.home())).get("error", "")
+
+
+def test_a_whole_drive_or_profile_is_not_watched(tmp_path):
+    from pathlib import Path
+    import jarvis_filewatcher as fw
+    w = fw.FileWatcher(paths=[str(tmp_path / "none")])
+    assert "whole drive" in w.add_path("/") and "whole drive" in w.add_path(str(Path.home()))
+    assert w.add_path(str(tmp_path)).startswith("Now watching")
