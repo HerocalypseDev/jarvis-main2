@@ -900,3 +900,14 @@ def test_re_saving_a_macro_keeps_it_switched_off(tmp_path):
     m.set_enabled(connect, lock, "notes", False)
     m.save(connect, lock, "notes", ["open my notes now"], steps, {"open_app"})
     assert m.list_macros(connect, lock)[0]["enabled"] in (0, False)
+
+
+def test_switching_the_brain_writes_the_choice_atomically(tmp_path, monkeypatch):
+    import jarvis_gemini as g
+    path = tmp_path / "llm_provider.json"
+    replaced = []
+    real = type(path).replace
+    monkeypatch.setattr(type(path), "replace", lambda self, target: (replaced.append(self.name), real(self, target))[1])
+    g.set_provider(path, "gemini")
+    assert g.get_provider(path) == "gemini" and replaced == ["llm_provider.json.tmp"]
+    assert not (tmp_path / "llm_provider.json.tmp").exists()
