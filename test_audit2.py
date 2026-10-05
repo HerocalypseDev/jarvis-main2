@@ -796,3 +796,12 @@ def test_find_files_limit_is_bounded(tmp_path):
                 "indexed_at) VALUES (?,?,?,?,?,?,?,?,?,?)", (str(p), p.name, "txt", "document", 1, i, None, "", "rules",
                 "now"), write=True)
     assert len(idx.find(limit=-1)) == 1 and len(idx.find(limit=3)) == 3 and len(idx.find(limit=10**9)) == 5
+
+
+def test_a_late_held_reminder_is_forwarded_once_labelled(monkeypatch):
+    import jarvis_guest_reminders as gr
+    sent = []
+    monkeypatch.setattr(gr, "_send", sent.append)
+    gr.forward_reminder("Reminder (it was due at 9:00 PM): call mum")
+    gr.forward_reminder("Reminder: take medication")
+    assert sent == ["Held reminder: (it was due at 9:00 PM) call mum", "Held reminder: take medication"]

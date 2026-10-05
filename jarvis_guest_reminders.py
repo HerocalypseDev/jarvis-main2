@@ -86,7 +86,9 @@ def has_open_question() -> bool:
 def forward_reminder(text: str) -> None:
     """Text a held reminder to the owner's phone (best effort; it stays queued either way)."""
     if _send:
-        body = text[len("Reminder: "):] if text.startswith("Reminder: ") else text
+        # "Reminder: X" or "Reminder (it was due at 9:00 PM): X" (a late one keeps its due time)
+        m = re.match(r"^Reminder( \([^)]*\))?: ", text)
+        body = (m.group(1).strip() + " " if m and m.group(1) else "") + text[m.end():] if m else text
         try:
             _send(f"Held reminder: {body}")
         except Exception as e:
