@@ -112,6 +112,7 @@ import jarvis_clipboard_history as clip_history
 import jarvis_everything as everything
 import jarvis_macros as macros
 import jarvis_startline as startline
+import jarvis_speech_script as speech_script
 import jarvis_battery as battery
 import jarvis_meeting_capture as meeting
 import jarvis_file_index as file_index
@@ -1186,6 +1187,33 @@ _SPEECH_HASH_NUM_RE = re.compile(r"#(\d+)\b")
 _SPEECH_LEFTOVER_SYMBOLS_RE = re.compile(r"[*_#~^|<>{}\[\]`]")
 
 
+_PRONOUNCE_CACHE: dict = {}
+PRONOUNCE_TIMEOUT_S = 8
+
+
+def _pronounce_with_model(run: str) -> str | None:
+    """How a phrase in another script is pronounced, in Latin letters ("ai shiteru"), for the few cases the reply
+    gave no pronunciation and no table covers (kanji, Chinese, Arabic, Hindi...). One small call, cached."""
+    run = (run or "").strip()[:120]
+    if not run or os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
+    if run in _PRONOUNCE_CACHE:
+        return _PRONOUNCE_CACHE[run]
+    data = _claude_request({
+        "model": CLAUDE_MODEL, "max_tokens": 60,
+        "system": ("Give ONLY how the user's text is pronounced, written in plain Latin letters the way an English "
+                   "speaker would read it aloud (for example: 愛してる -> ai shiteru, 你好 -> nee how). No other words, "
+                   "no quotes, no translation."),
+        "messages": [{"role": "user", "content": run}],
+    }, timeout=PRONOUNCE_TIMEOUT_S)
+    said = speech_script.clean_pronunciation(_claude_text(data) if data else "", run)
+    if said:
+        if len(_PRONOUNCE_CACHE) > 300:
+            _PRONOUNCE_CACHE.clear()
+        _PRONOUNCE_CACHE[run] = said
+    return said
+
+
 def _sanitize_for_speech(text: str) -> str:
     """Strips markdown and rewrites symbols Piper's phonemizer mangles into garbled noise, so
     replies are read as natural words instead of nonsense syllables."""
@@ -1398,7 +1426,9 @@ def speak_text(text: str) -> None:
     jarvis_sleep_mode.tts_overrides/fish_audio_prosody_overrides) when Sleep Mode is active.
     Long text is split into sentences and pipelined (see _split_sentences) so playback of the
     first sentence starts without waiting for the whole reply to be synthesized."""
-    t = _sanitize_for_speech(text)
+    # Japanese/Korean/Russian/... text said in Latin letters: the voices are English and mangled it (owner report
+    # 2026-10-05, "I love you" in Japanese). Only the spoken copy changes; the dashboard keeps the real script.
+    t = _sanitize_for_speech(speech_script.for_speech(text, _pronounce_with_model))
     if not t:
         return
     _await_ack()  # a spoken lead-in ("On it.") started for this command finishes before anything else
@@ -1680,7 +1710,9 @@ Your reply is spoken aloud by a text-to-speech engine, not displayed as text —
 use symbols that aren't natural to say out loud. Write numbers and symbols as words instead: "76 \
 thousand dollars" not "$76,000", "94 percent" not "94%", "X and Y" not "X & Y". If a tool result \
 (e.g. a web search) contains markdown or symbols, rephrase it in plain spoken sentences rather than \
-repeating it verbatim.
+repeating it verbatim. The voice can't read other writing systems (Japanese, Chinese, Korean, Arabic, Russian...): \
+whenever you write such words, put their pronunciation in Latin letters in brackets right after, e.g. "愛してる \
+(ai shiteru)", so it is said correctly while the screen still shows the real script.
 
 You have persistent memory across sessions via remember_fact/recall_facts — call remember_fact \
 proactively whenever the user states a preference, decision, standing instruction, goal, or fact \
@@ -3916,7 +3948,9 @@ def _summarize_for_speech(text: str) -> str:
             "Rewrite the following assistant reply as one short, natural sentence (two at "
             "most) meant to be spoken aloud by a voice assistant. Keep the key facts and any "
             "direct answer; drop filler and repetition. Never read out a full file path — "
-            "refer to a file or folder by name only, not its full location."
+            "refer to a file or folder by name only, not its full location. Words in another writing "
+            "system (Japanese, Chinese, Korean, Arabic, Russian...) are written only as their pronunciation in "
+            "Latin letters (e.g. 'ai shiteru'), never in the original script."
         ),
         "messages": [{"role": "user", "content": text[:4000]}],
     }
