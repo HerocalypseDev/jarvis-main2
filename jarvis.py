@@ -2330,10 +2330,16 @@ AGENT_TOOLS = [
                     "type": "object",
                     "description": (
                         "optional — makes this skill run on its own, unprompted, speaking "
-                        "whatever it produces. Provide exactly one of the two properties below. "
-                        "Omit \"schedule\" entirely for a skill that only runs when asked."
+                        "whatever it produces. Provide exactly one of daily_at / every_minutes. "
+                        "Omit \"schedule\" for a new skill that only runs when asked; when UPDATING an existing "
+                        "skill, omitting it keeps the skill's current schedule, and {\"off\": true} stops it "
+                        "running on its own."
                     ),
                     "properties": {
+                        "off": {
+                            "type": "boolean",
+                            "description": "true = remove an existing skill's schedule (it then only runs when asked)",
+                        },
                         "daily_at": {
                             "type": "string",
                             "description": "24-hour local time, e.g. \"08:00\", to run once a day",
@@ -6012,19 +6018,32 @@ def save_skill(
     try:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{slug}.json"
-        payload = {
-            "name": slug,
-            "description": (description or "").strip(),
-            "instructions": instructions,
-        }
+        # Updating a skill keeps every field the update doesn't replace (audit 2026-10-05: "check weekly releases in my
+        # morning briefing" rewrote the file with name/description/instructions only, silently dropping its 8:00
+        # schedule and "announce", so the briefing stopped running while the reply said "Saved").
+        payload: dict = {}
+        if path.is_file():
+            try:
+                old = json.loads(path.read_text(encoding="utf-8"))
+                payload = old if isinstance(old, dict) else {}
+            except (OSError, ValueError):
+                payload = {}
+        updating = bool(payload)
+        payload["name"] = slug
+        if (description or "").strip() or "description" not in payload:
+            payload["description"] = (description or "").strip()
+        payload["instructions"] = instructions
         if isinstance(schedule, dict) and (schedule.get("daily_at") or schedule.get("every_minutes")):
-            payload["schedule"] = schedule
+            payload["schedule"] = {k: v for k, v in schedule.items() if k != "off"}
+        elif isinstance(schedule, dict) and schedule.get("off"):
+            payload.pop("schedule", None)
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception as e:
         return f"Failed to save skill: {e}"
+    verb = "Updated" if updating else "Saved"
     if payload.get("schedule"):
-        return f"Saved skill {slug!r} to {path} (scheduled: {payload['schedule']})."
-    return f"Saved skill {slug!r} to {path}."
+        return f"{verb} skill {slug!r} at {path} (scheduled: {payload['schedule']})."
+    return f"{verb} skill {slug!r} at {path} (runs only when asked)."
 
 
 # --- proactive scheduler: a skill can carry an optional "schedule" so Jarvis acts on its own ---
