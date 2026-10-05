@@ -246,6 +246,12 @@ class Index:
     # --- query ---------------------------------------------------------------------------------
     def find(self, tag: str = "", category: str = "", name_query: str = "", duplicates: bool = False,
              limit: int = 25) -> list[dict]:
+        # audit 2026-10-05: the model's number went straight in; -1 meant "LIMIT -2" (= every row, each checked on
+        # disk) and 100000 meant a reply listing the whole index
+        try:
+            limit = max(1, min(int(limit), 100))
+        except (TypeError, ValueError):
+            limit = 25
         if duplicates:
             rows = self._db("SELECT * FROM file_index WHERE sha256 IN (SELECT sha256 FROM file_index WHERE sha256 IS "
                             "NOT NULL AND size > 0 GROUP BY sha256 HAVING COUNT(*) > 1) ORDER BY sha256, mtime")
