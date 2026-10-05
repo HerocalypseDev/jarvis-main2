@@ -1811,7 +1811,8 @@ row there each phase rather than only stating the total in chat.
 | 147 (assistant overhaul phase D: email auto-replies from memory + calendar, known vs stranger split, automated/loop/limit guards, code check on what a reply may contain, public default off; 18 new tests) | Opus 5.5 | ~45 min | ~$3.60–$5.00 |
 | 148 (full audit (its phone-confirm block was later undone at the owner's request): email-started tasks can't read private stores, sender spoof fix, auto-reply dry-run/own-address/fact scope/double-reply, secret masking in inbox and prompt lines, learner limits, calendar back-off, conversation jobs speak, inbox fixes; 36 new tests. Real time was ~40 min, not the 90+ the owner asked for: a full 90-min audit is still owed) | Opus 5.5 | ~40 min | ~$4.00–$5.50 |
 | 149 (phone confirmation of staged actions restored at the owner's request) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
-| **Running total (final)** | | **~4489 min** | **~$300.15–$421.85** |
+| 150 (full audit, second pass: 60 fix batches in email-started/unattended run limits, honest tool results, timezones, restart/Telegram loops, secrets, updates that keep schedules (the morning briefing had silently stopped), atomic writes; ~95 new tests; MEASURED ~90 min) | Opus 5.5 | ~90 min | ~$9.00–$13.00 |
+| **Running total (final)** | | **~4579 min** | **~$309.15–$434.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2598,19 +2599,62 @@ Owner's choices for this audit: tighten risky-by-design items when cheap, publis
   dashboard routes, Pro packs/widgets/themes, face, netscan, speed test, Gemini/Ollama providers, browser tabs end to end,
   macros/update time, wake word.
 
-## Full audit, second pass (2026-10-04, IN PROGRESS: paused at the owner's request)
+## Full audit, second pass (2026-10-04/05, the owed 90-minute audit)
 
-Paused at ~57 measured minutes of the owed 90-minute audit (started 16:56 UTC from the owner's audit prompt; the clock
-restarted once with the container, so time is measured from the transcript). 42 fix batches committed (git log "Audit 2
-batch 1".."42" + the git fsmonitor fix), regression tests in `test_audit2.py`; full suite: no new failures vs the baseline.
-Main themes: email-started (untrusted) and unattended runs can no longer exfiltrate (web/browser/phone/mail scope, file
-reads in email runs), escalate (queue_task keeps the marker, no save_skill/memory writes/plans/research) or reach code after
-reading outside text (taint: `_taint_block`); tools that silently failed now say "Tool failed"; timezone offsets in
-reminders/deadlines/calendar; Telegram restart loop; deferred-job restart loop; secrets redacted in logs.
-**To resume:** continue the hunt (not yet visited: jarvis_tech_understanding, jarvis_focus, jarvis_vibes, jarvis_roblox,
-jarvis_email_templates, jarvis_filewatcher, jarvis_autonomy_organise, jarvis_proactive, jarvis_memory_enhance), then
-re-run the full suite, write the final version of this section + phase row 150 with the MEASURED total time, merge to main,
-export + publish Jarvis4U, and give the findings table / live residual list / cost table.
+Measured: ~90 minutes of audit work in two sittings (2026-10-04 16:56 UTC to the pause at 57 min, resumed 2026-10-05 07:05 UTC); time is measured from the transcript/clock, not estimated.
+60 fix batches (git log "Audit 2 batch 1".."60" + the git fsmonitor fix), regression tests in `test_audit2.py` (+ additions
+to test_mail_reply/test_quiet/test_homework/test_skills_tool/test_guest_reminders). Full suite: no new failures vs the
+baseline (the ~87 known Linux-container failures: Windows-only, camera, missing python-pptx, ...). Rules to keep:
+- **Email-started (untrusted-origin) runs** also may not use: screen/UI tools, `mcp_windows_*`, `mcp_whatsapp_*`,
+  `mcp_browser_*`, `browser_tabs`, `http_request`/`download_image`/`open_url`/`play_media` (no carrying data out), `set_plan`, `delegate_research`, `save_skill`, any memory write
+  (`remember_*`, `update_project_status`), `autonomy_skill`, `send_to_my_phone`, and no file reads in automatic email runs
+  (`_EMAIL_RUN_NO_FILES`). A task they queue keeps the `[untrusted-origin]` marker. Never relax `_untrusted_block`.
+- **Autonomous email scope**: autonomy calls `email_scope(recipients)` before `run_agent`; the run may send ONE email, only
+  to those recipients, with no attachments (`_email_scope_problem`). Calendar/file actions send none. An email action
+  needs a recipient.
+- **Taint for unattended runs** (scheduled skill, deferred job, queued task): once a run reads outside text (any `mcp_`
+  tool result, http_request, web_search, browser_tabs, download_image, read_screen; `_OUTSIDE_TEXT_TOOL_RE`) it can't run
+  code, type, drive the desktop, start the coding agent, write memory or queue un-marked work (`_taint_block`).
+  Parallel workers carry the flag back.
+- **MCP input**: nested values go through the catastrophic gate (`_mcp_scalars`); file/path/attach keys get the read rules
+  and save/output/dest/download keys the write rules (`_mcp_file_problem`). `jarvis_workspace.sensitive_reason` knows more
+  credential names/folders and Windows paths on any OS; `too_broad()` refuses a whole drive or profile for every folder
+  walker (project health, watched folders, Roblox review, dependency tracing).
+- **Tools tell the truth**: open_app/type_text/click_at/drag/scroll/open_url/play_media/lock return "Tool failed" when
+  nothing happened; argument errors start "Tool failed".
+- **Times**: reminder/deadline/calendar times with an offset are made local (`_parse_due_at`, `_local`); a late reminder
+  says when it was due, a held message says when it came in; a daily skill catches up only within 6 h; repeats are at
+  least a minute (`MIN_REPEAT_MINUTES`), zero/negative repeat = one-off.
+- **Loops**: Telegram updates are acknowledged before a command runs and commands older than 15 min aren't run at boot
+  (restart/update from the phone looped for ever); a deferred job cut off by its own restart is marked done; retries
+  capped at `MAX_ATTEMPTS`; auto-reply gives up on an unreadable email after `MAX_READ_RETRIES`.
+- **Secrets**: passwords/PINs/tokens hidden at any depth in the audit trail and the tool log line (`_is_secret_arg`);
+  auto-replies never contain a secret value and their context skips sensitive facts; the fact learner skips phone
+  numbers, addresses, passports; `frame_untrusted` defuses frame markers inside the text.
+- **Gate**: also stages shadow-copy/backup deletion (vssadmin, wbadmin), killing critical processes, recursive deletes of
+  Windows/Program Files. String concatenation (`'shut'+'down'`) still gets past it (text tripwire).
+- **Updates keep what they don't replace**: `save_skill` on an existing skill keeps its schedule, `announce` and every
+  other field (the owner's morning briefing silently lost its 08:00 schedule when Jarvis updated its instructions; restored);
+  `schedule: {"off": true}` removes a schedule; the reply says "Updated ... (scheduled: ...)" / "(runs only when asked)".
+  Re-saving a macro keeps it off; refreshing the daily plan keeps that day's review (upsert, never INSERT OR REPLACE on a
+  row with other columns). Use an upsert that names the columns it changes for any new "save/update".
+- **Timers**: a timer missed on an earlier day says which day; an unreadable one is closed (it blocked the cap).
+- **Atomic writes**: `llm_provider.json` (a read mid-switch went to the default brain) and saved skills use temp file + replace.
+- **Public export hygiene**: tests use `C:\Users\x\...`, no city names (the export renames places, which broke a TZ
+  test), no homework wording in jarvis.py comments.
+- **A finished job** only says "needs your yes" for an action it staged itself (queued after it started).
+- **Smaller fixes**: restart helper escapes an apostrophe in the path and refuses code whose packages aren't installed;
+  skill delete moves the file to `skills/.deleted/`; unattended overwrites keep the old file in `.jarvis-previous/`
+  (newest 10 per file); read_file checks the file it really opens and bounds memory; zip-bomb documents are refused;
+  Word/PowerPoint writes strip XML-invalid control characters; `close_window` needs one clear match; "close the other
+  tabs" with no tab in front is refused; dev_tools writes follow write_file's rules; stop_jarvis.ps1 matches only
+  jarvis.py; git calls set `core.fsmonitor=false`; settings reject any control character; "update time" and
+  `restart_jarvis` refuse a hands-free (non-wake) capture; "what did I miss" reaches the newest items; export drops the
+  homework MCP entry.
+- Residual (accepted or needs live Windows): gate string-concat obfuscation; a Telegram group chat lets every member
+  command Jarvis (keep `TELEGRAM_CHAT_ID` a private chat); `_mcp_file_problem` may refuse a remote path like `.env.example`
+  through the GitHub MCP; a failed Telegram ack can still repeat one command after a restart; not verified on the PC:
+  Startup-folder blocking, fsmonitor, the lock result, toast, restart helper quoting, Telegram ack.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
