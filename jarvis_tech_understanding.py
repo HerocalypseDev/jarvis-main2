@@ -355,6 +355,9 @@ def build_import_graph(root_path: str) -> dict[str, list[str]]:
     """Maps each Python module under `root_path` to the list of modules it imports."""
     root = Path(root_path).expanduser().resolve()
     graph: dict[str, list[str]] = {}
+    import jarvis_workspace
+    if jarvis_workspace.too_broad(root):  # only .py files were capped: a drive root walked every folder on it
+        return graph
     count = 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
@@ -376,6 +379,9 @@ def trace_dependencies(root_path: str, target: str = "") -> str:
     root = Path(root_path).expanduser()
     if not root.is_dir():
         return f"{root_path!r} is not a directory."
+    import jarvis_workspace
+    if jarvis_workspace.too_broad(root):
+        return f"{root_path!r} is a whole drive or your whole profile; give a project folder."
     graph = build_import_graph(str(root))
     if not graph:
         return f"No Python files found under {root_path}."

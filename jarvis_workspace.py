@@ -120,6 +120,15 @@ def classify(filename: str, content: str = "") -> str:
     return "Notes"
 
 
+def too_broad(path) -> bool:
+    """A whole drive or the whole user profile: too big for any tool that walks a folder tree (audit 2026-10-05)."""
+    try:
+        p = Path(path).expanduser().resolve()
+        return p.parent == p or p == Path.home().resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
 def _inside(child: Path, parent: Path) -> bool:
     try:
         child.relative_to(parent)

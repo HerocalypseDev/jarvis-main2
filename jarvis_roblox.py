@@ -76,6 +76,9 @@ def review_folder(folder: str, limit: int = 15) -> str:
     root = Path(folder).expanduser()
     if not root.is_dir():
         return f"{folder} is not a folder."
+    import jarvis_workspace
+    if jarvis_workspace.too_broad(root):  # the whole tree was listed before the file cap applied
+        return f"{folder} is a whole drive or your whole profile; give the game's project folder."
     files = [
         p for p in root.rglob("*")
         if p.suffix.lower() in (".lua", ".luau") and not any(s in p.parts for s in (".git", "Packages", "node_modules"))
