@@ -392,7 +392,7 @@ def test_backup_deletion_system_folder_wipes_and_critical_kills_are_staged(J, cm
 
 @pytest.mark.parametrize("cmd", [
     "vssadmin list shadows", "taskkill /f /im chrome.exe", "Stop-Process -Name notepad",
-    "Remove-Item C:\\Windows\\Temp\\old.log", "Remove-Item C:\\Users\\USER\\Documents\\temp -Recurse",
+    "Remove-Item C:\\Windows\\Temp\\old.log", "Remove-Item C:\\Users\\x\\Documents\\temp -Recurse",
     "Get-ChildItem 'C:\\Program Files' -Recurse -Filter *.exe", "wbadmin get versions", "Get-Service",
 ])
 def test_ordinary_commands_near_those_are_not_staged(J, cmd):
@@ -455,12 +455,12 @@ def test_secret_values_never_reach_the_audit_or_the_log(J):
 def test_a_reminder_time_with_a_timezone_is_stored_as_local_time(J, monkeypatch):
     import time as _time
     from datetime import datetime, timezone
-    monkeypatch.setenv("TZ", "Africa/Lagos")
+    monkeypatch.setenv("TZ", "ABC-1")  # fixed UTC+1 (no city name: the public export renames places)
     _time.tzset()
     try:
         when = J._parse_due_at("2026-10-04T15:00:00Z")
         assert when.tzinfo is None and when == datetime(2026, 10, 4, 15, 0, tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
-        assert when.hour == 16                                   # Lagos is UTC+1
+        assert when.hour == 16                                   # UTC+1
         assert J._parse_due_at("2026-10-04T15:00") == datetime(2026, 10, 4, 15, 0)
     finally:
         monkeypatch.delenv("TZ")
@@ -602,7 +602,7 @@ def test_a_long_phone_message_says_it_was_cut(J):
 def test_restart_helper_survives_an_apostrophe_in_the_path():
     from pathlib import Path
     import jarvis_restart
-    cmd = jarvis_restart.helper_command(42, Path("C:/Users/O'Brien/jarvis/Jarvis.vbs"))
+    cmd = jarvis_restart.helper_command(42, Path("C:/Users/x/O'Brien files/jarvis/Jarvis.vbs"))
     script = cmd[-1]
     assert "O''Brien" in script and script.count("'") % 2 == 0
 
