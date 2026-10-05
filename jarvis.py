@@ -12921,7 +12921,8 @@ def _execute_tool_impl(
             result = cancel_reminder(int(rid)) if rid is not None else "Missing reminder_id."
         elif tool_name == "queue_task":
             instructions = inp.get("instructions")
-            if instructions and getattr(_command_ctx, "untrusted_origin", False) and \
+            if instructions and (getattr(_command_ctx, "untrusted_origin", False)
+                                 or getattr(_command_ctx, "outside_text_seen", False)) and \
                     UNTRUSTED_TASK_MARKER not in str(instructions):
                 # Audit 2026-10-04: queued from a task that came from someone's email, it would later run with full
                 # tools (shell included); it keeps the same limits.
