@@ -782,3 +782,17 @@ def test_a_reminder_can_never_repeat_faster_than_a_minute_or_backwards(J):
         got = conn.execute("SELECT repeat_every_minutes FROM reminders ORDER BY id DESC LIMIT 1").fetchone()[0]
         conn.close()
         assert got == stored, (asked, got)
+
+
+def test_find_files_limit_is_bounded(tmp_path):
+    import sqlite3
+    import threading
+    import jarvis_file_index as fi
+    idx = fi.Index(lambda: sqlite3.connect(tmp_path / "fi.db"), threading.Lock(), lambda text: "[]")
+    for i in range(5):
+        p = tmp_path / f"doc{i}.txt"
+        p.write_text("x", encoding="utf-8")
+        idx._db("INSERT OR REPLACE INTO file_index (path, name, ext, category, size, mtime, sha256, tags, tag_source, "
+                "indexed_at) VALUES (?,?,?,?,?,?,?,?,?,?)", (str(p), p.name, "txt", "document", 1, i, None, "", "rules",
+                "now"), write=True)
+    assert len(idx.find(limit=-1)) == 1 and len(idx.find(limit=3)) == 3 and len(idx.find(limit=10**9)) == 5
