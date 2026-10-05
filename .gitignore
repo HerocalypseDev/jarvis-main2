@@ -43,3 +43,5 @@ update_note.tmp
 
 # deleted skills are moved here, not erased (audit 2026-10-04)
 skills/.deleted/
+llm_provider.json.tmp
+skills/*.json.tmp

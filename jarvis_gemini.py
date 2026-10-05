@@ -62,7 +62,12 @@ def get_provider(settings_path: Path) -> str:
 def set_provider(settings_path: Path, provider: str) -> None:
     if provider not in PROVIDERS:
         raise ValueError(f"unknown provider {provider!r}")
-    Path(settings_path).write_text(json.dumps({"provider": provider}), encoding="utf-8")
+    # temp file + replace (audit 2026-10-05): get_provider runs on every request from several threads, and a
+    # truncated-then-written file read in between sent that request to the default brain.
+    path = Path(settings_path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"provider": provider}), encoding="utf-8")
+    tmp.replace(path)
 
 
 def api_key() -> str:

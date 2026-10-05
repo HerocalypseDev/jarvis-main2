@@ -6037,7 +6037,9 @@ def save_skill(
             payload["schedule"] = {k: v for k, v in schedule.items() if k != "off"}
         elif isinstance(schedule, dict) and schedule.get("off"):
             payload.pop("schedule", None)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")  # never a half-written skill if Jarvis stops mid-save
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(path)
     except Exception as e:
         return f"Failed to save skill: {e}"
     verb = "Updated" if updating else "Saved"
