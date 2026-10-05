@@ -725,3 +725,10 @@ def test_an_organise_rule_cannot_file_into_the_startup_folder(monkeypatch, tmp_p
     assert real is None
     real, err = org.resolve_dest(str(tmp_path / "Documents" / "PDFs"))
     assert err is None and real
+
+
+def test_project_health_never_walks_a_whole_drive_or_profile(tmp_path):
+    from pathlib import Path
+    import jarvis_proactive as pro
+    assert "whole drive" in pro.scan_path("/").get("error", "")
+    assert "whole drive" in pro.scan_path(str(Path.home())).get("error", "")
