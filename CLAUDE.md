@@ -1813,7 +1813,8 @@ row there each phase rather than only stating the total in chat.
 | 149 (phone confirmation of staged actions restored at the owner's request) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
 | 150 (full audit, second pass: 60 fix batches in email-started/unattended run limits, honest tool results, timezones, restart/Telegram loops, secrets, updates that keep schedules (the morning briefing had silently stopped), atomic writes; ~95 new tests; MEASURED ~90 min) | Opus 5.5 | ~90 min | ~$9.00–$13.00 |
 | 151 (start lines: each skill/job/routine stores a line about its task, one-off commands get one from the owner's words, scheduled runs speak it only when they talk anyway (quiet ones show it on the dashboard), existing skills backfilled; 24 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~4604 min** | **~$311.15–$437.65** |
+| 152 (foreign words in speech: Japanese/Korean/Russian/Greek and other scripts said in Latin letters by the same voice, bracketed pronunciation from the AI used first, tables for kana/Hangul/Cyrillic/Greek, tiny cached model call for the rest; 14 new tests) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~4624 min** | **~$312.35–$439.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2684,6 +2685,24 @@ Code: `jarvis_startline.py` (pure), tests `test_startline.py` (24). Rules to kee
   sessions. Instant macros (no AI, finish in milliseconds) still just say their results, no start line.
 - Existing skills backfilled: morning_briefing, gmail_watch, homework_watch, homework_admin, auto_save_code_to_box
   (`test_every_own_skill_has_a_start_line`). Not verified live on the PC (real voice).
+
+## Foreign words in speech (2026-10-05, owner report)
+
+"The Japanese for I love you" was pronounced wrong and weirdly: every voice is English (Deepgram `aura-2-...-en`, Fish,
+Piper), so 愛してる was read as noise. Owner's choices (asked first): say it in Latin letters with the same voice, for every
+non-Latin script. Code: `jarvis_speech_script.py` (pure), applied at the top of `speak_text`, so every spoken path (replies,
+live-streamed sentences, notifications, start lines) goes through it; the dashboard/phone/history keep the real script.
+Tests: `test_speech_script.py` (14). Rules to keep:
+- Per run of foreign text: a pronunciation the reply gives in brackets is used and the script dropped ("愛してる (ai shiteru)"
+  -> "ai shiteru"; "ai shiteru (愛してる)" -> "ai shiteru"); else kana / Hangul / Cyrillic / Greek are converted exactly by
+  tables in the module; else (kanji, Chinese, Arabic, Hindi, Thai...) one small model call `_pronounce_with_model` (8 s,
+  cached, at most `MAX_HELPER_CALLS` 3 per spoken text, never under pytest) whose answer is used only if it is plain Latin
+  letters; else the run is left out (silence beats noise).
+- The stable prompt tells the model to put the pronunciation in brackets after any such words, and the speech summariser to
+  keep only the pronunciation, so the model call is rarely needed.
+- A local Japanese dictionary (pykakasi 2.3.0) was tried and NOT used: it read 愛してる as "itoshi teru" and は as "ha".
+- Not verified live on the PC (real voice). Residuals: kana-only text reads the particle は as "ha"; Korean is romanized
+  syllable by syllable (no sound-change rules); the English voice still has an English accent.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
