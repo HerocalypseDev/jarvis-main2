@@ -5,5 +5,6 @@
   "schedule": {
     "daily_at": "08:00"
   },
-  "announce": true
+  "announce": true,
+  "start_line": "Getting your morning briefing ready: weather, mail, your calendar and today's anime."
 }

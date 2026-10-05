@@ -6,5 +6,6 @@
     "daily_at": "21:30",
     "days": "wed,sat"
   },
-  "announce": true
+  "announce": true,
+  "start_line": "Checking who handed in their homework and marking what came in."
 }

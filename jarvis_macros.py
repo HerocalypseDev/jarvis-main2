@@ -56,6 +56,8 @@ def ensure(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE macros ADD COLUMN mode TEXT NOT NULL DEFAULT 'instant'")
     if "instructions" not in cols:
         conn.execute("ALTER TABLE macros ADD COLUMN instructions TEXT")
+    if "start_line" not in cols:  # 2026-10-05: what an AI routine says the moment it starts
+        conn.execute("ALTER TABLE macros ADD COLUMN start_line TEXT")
 
 
 # What makes a routine need the AI: words asking it to think, judge, write or pick, rather than do a fixed thing.
@@ -146,8 +148,9 @@ def validate(name: str, phrases, steps, known_tools: set[str], check_step=None, 
 
 
 def save(connect, lock, name: str, phrases: list, steps: list, known_tools: set[str], enabled: bool = True,
-         instructions: str = "", description: str = "", check_step=None) -> str:
+         instructions: str = "", description: str = "", check_step=None, start_line: str = "") -> str:
     instructions = str(instructions or "").strip()[:2000]
+    start_line = re.sub(r"[\x00-\x1f\x7f]+", " ", str(start_line or "")).strip()[:140]
     # The stored name is cut to 60 characters: compare and store that same form, or re-saving a long-named macro
     # found its own phrases "already taken" by itself (audit 2026-10-04).
     name = str(name or "").strip()[:60]
@@ -167,11 +170,13 @@ def save(connect, lock, name: str, phrases: list, steps: list, known_tools: set[
     clash = [p for p in clean_phrases if p in taken]
     if clash:
         return f"The phrase {clash[0]!r} already triggers the macro {taken[clash[0]]!r}."
-    _q(connect, lock, "INSERT INTO macros (name, phrases, steps, enabled, created_at, mode, instructions) "
-                      "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET phrases=excluded.phrases, "
-                      "steps=excluded.steps, mode=excluded.mode, instructions=excluded.instructions",  # keeps on/off
+    _q(connect, lock, "INSERT INTO macros (name, phrases, steps, enabled, created_at, mode, instructions, start_line) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET phrases=excluded.phrases, "
+                      "steps=excluded.steps, mode=excluded.mode, instructions=excluded.instructions, "
+                      "start_line=COALESCE(NULLIF(excluded.start_line, ''), start_line)",  # keeps on/off
        (name.strip()[:60], json.dumps(clean_phrases), json.dumps(clean_steps), int(bool(enabled)),
-        datetime.now().isoformat(timespec="seconds"), mode, instructions or str(description or "").strip()[:2000]), write=True)
+        datetime.now().isoformat(timespec="seconds"), mode, instructions or str(description or "").strip()[:2000],
+        start_line), write=True)
     if mode == "ai":
         return (f"Saved {name.strip()!r}: say {clean_phrases[0]!r} and I'll do it with the AI each time ({why}).")
     return f"Saved macro {name.strip()!r}: say {clean_phrases[0]!r} to run its {len(clean_steps)} step(s) instantly, no AI call."
@@ -413,7 +418,8 @@ def handle_tool(connect, lock, inp: dict, known_tools: set[str], attended: bool,
         phrases = inp.get("phrases") or ([inp["phrase"]] if inp.get("phrase") else [])
         return save(connect, lock, str(inp.get("name") or ""), phrases, inp.get("steps") or [],
                     known_tools, instructions=str(inp.get("instructions") or ""),
-                    description=str(inp.get("description") or ""), check_step=check_step)
+                    description=str(inp.get("description") or ""), check_step=check_step,
+                    start_line=str(inp.get("start_line") or ""))
     if action == "delete":
         return "Deleted." if delete(connect, lock, str(inp.get("name") or "")) else "No macro by that name."
     if action in ("enable", "disable"):

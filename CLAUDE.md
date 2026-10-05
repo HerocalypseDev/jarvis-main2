@@ -1812,7 +1812,8 @@ row there each phase rather than only stating the total in chat.
 | 148 (full audit (its phone-confirm block was later undone at the owner's request): email-started tasks can't read private stores, sender spoof fix, auto-reply dry-run/own-address/fact scope/double-reply, secret masking in inbox and prompt lines, learner limits, calendar back-off, conversation jobs speak, inbox fixes; 36 new tests. Real time was ~40 min, not the 90+ the owner asked for: a full 90-min audit is still owed) | Opus 5.5 | ~40 min | ~$4.00–$5.50 |
 | 149 (phone confirmation of staged actions restored at the owner's request) | Opus 5.5 | ~5 min | ~$0.30–$0.50 |
 | 150 (full audit, second pass: 60 fix batches in email-started/unattended run limits, honest tool results, timezones, restart/Telegram loops, secrets, updates that keep schedules (the morning briefing had silently stopped), atomic writes; ~95 new tests; MEASURED ~90 min) | Opus 5.5 | ~90 min | ~$9.00–$13.00 |
-| **Running total (final)** | | **~4579 min** | **~$309.15–$434.85** |
+| 151 (start lines: each skill/job/routine stores a line about its task, one-off commands get one from the owner's words, scheduled runs speak it only when they talk anyway (quiet ones show it on the dashboard), existing skills backfilled; 24 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~4604 min** | **~$311.15–$437.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2655,6 +2656,34 @@ baseline (the ~87 known Linux-container failures: Windows-only, camera, missing 
   command Jarvis (keep `TELEGRAM_CHAT_ID` a private chat); `_mcp_file_problem` may refuse a remote path like `.env.example`
   through the GitHub MCP; a failed Telegram ack can still repeat one command after a restart; not verified on the PC:
   Startup-folder blocking, fsmonitor, the lock result, toast, restart helper quoting, Telegram ack.
+
+## Start lines: every task says what it is doing (2026-10-05, owner request)
+
+Owner: "for every skill or scheduled work or anything Jarvis does it should have a custom immediate answer related to what
+it's supposed to do, not just 'let me run that on your PC'". Owner's choices (asked first): written once when made, spoken
+only when the run would talk anyway, one-off commands too (from their own words), existing skills backfilled.
+Code: `jarvis_startline.py` (pure), tests `test_startline.py` (24). Rules to keep:
+- **Stored lines**: `start_line` on skills (`save_skill(..., start_line)`, kept on update like every other field; if the model
+  leaves it out a line is built from the description at save time), on deferred jobs (`schedule_jarvis_task` `start_line`,
+  column on `autonomy_deferred_jobs`) and on AI routines (`macros create` `start_line`, column on `macros`, kept on re-save).
+  The schemas say "Always fill it" (`SKILL_START_LINE_DESC`). No model call per run; `startline.clean` caps 140 chars, one line.
+- **Fallback** (`startline.from_text`): built from the description/instruction ("Runs every hour to check X" -> "Sure, I'll
+  check X."), else "Starting <name>." Used for jobs made from reminders, queued tasks and anything older.
+- **One-off commands** (`_command_start_line`, from `_maybe_ack_before_task(transcript, routine)`): the routine's line, else a
+  skill the request names outright (`_named_skill`: every word of the skill's name is in the request, one clear winner),
+  else the request in Jarvis's words (`startline.from_request`: lead words dropped, my<->your swapped, a plain "you" or a
+  question -> None, <= 90 chars). It replaces "On it." + the per-tool line ("Sure, I'll run that on your PC now") for that
+  command; the per-tool lines stay as the fallback. **Never for anything dangerous**: shut down/format/wipe/delete/remove/
+  uninstall/kill/restart the PC, or text `_catastrophic_reason` flags, keep the generic lead-in (no promise before the gate).
+- **Scheduled runs**: a skill speaks its line only if it has `"announce": true` (it talks anyway); a quiet one (hourly Gmail
+  check) shows it on the dashboard as that run's session (source `scheduled`, ended with the reply). A deferred job of
+  origin user/conversation speaks it (its result is said too); an autonomy-made one stays quiet; a queued task the owner
+  queued speaks it. `_say_start_line` speaks right away or not at all (dropped in Sleep/Focus/safe mode, meeting hold,
+  visitor, critical battery: a stale "starting..." later is useless), never a phone push.
+- The palette's recent commands now list only things the owner said (voice/text/dashboard/phone), not scheduled/autonomy
+  sessions. Instant macros (no AI, finish in milliseconds) still just say their results, no start line.
+- Existing skills backfilled: morning_briefing, gmail_watch, homework_watch, homework_admin, auto_save_code_to_box
+  (`test_every_own_skill_has_a_start_line`). Not verified live on the PC (real voice).
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
