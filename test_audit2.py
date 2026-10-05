@@ -772,3 +772,13 @@ def test_an_unattended_run_that_read_mail_cannot_write_memory(J):
         assert J._untrusted_block("create_reminder") is None
     finally:
         J._command_ctx.taint_watch, J._command_ctx.outside_text_seen = False, False
+
+
+def test_a_reminder_can_never_repeat_faster_than_a_minute_or_backwards(J):
+    import sqlite3
+    for asked, stored in ((0.05, 1.0), (-30, None), (0, None), (15, 15.0)):
+        J.create_reminder("drink water", due_in_minutes=5, repeat_every_minutes=asked)
+        conn = sqlite3.connect(J.os.environ["JARVIS_MEMORY_DB_PATH"])
+        got = conn.execute("SELECT repeat_every_minutes FROM reminders ORDER BY id DESC LIMIT 1").fetchone()[0]
+        conn.close()
+        assert got == stored, (asked, got)
