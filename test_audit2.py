@@ -712,3 +712,16 @@ def test_close_window_never_guesses_between_several_matches(monkeypatch):
     assert wc.close_window("notes").startswith("Tool failed") and closed == []
     assert wc.close_window("calculator") == "Closed 'Calculator'." and closed == ["Calculator"]
     assert wc.close_window("Notes - Notepad").startswith("Closed")
+
+
+def test_an_organise_rule_cannot_file_into_the_startup_folder(monkeypatch, tmp_path):
+    import jarvis_autonomy_organise as org
+    monkeypatch.setattr(org, "home", lambda: tmp_path)
+    monkeypatch.setattr(org, "roots", lambda: [str(tmp_path / "Downloads")])
+    startup = tmp_path / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    real, err = org.resolve_dest(str(startup))
+    assert real is None and "Startup" in err
+    real, err = org.resolve_dest(str(tmp_path / ".ssh"))
+    assert real is None
+    real, err = org.resolve_dest(str(tmp_path / "Documents" / "PDFs"))
+    assert err is None and real

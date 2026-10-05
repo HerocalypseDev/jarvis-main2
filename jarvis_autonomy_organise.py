@@ -221,6 +221,13 @@ def resolve_dest(dest: str) -> tuple[str | None, str | None]:
     for r in roots():
         if _norm(real) == _norm(r):
             return None, "destination cannot be one of the organised folders itself"
+    try:  # audit 2026-10-05: the Startup folder is inside the profile too (a filed .bat/.lnk would run at sign-in)
+        import jarvis_workspace
+        bad = jarvis_workspace.sensitive_reason(os.path.join(real, "x"), write=True)
+    except Exception:
+        bad = None
+    if bad:
+        return None, f"not that folder: {bad}"
     return real, None
 
 
