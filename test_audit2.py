@@ -875,3 +875,16 @@ def test_updating_a_skill_keeps_its_schedule_and_other_fields(J, monkeypatch, tm
     assert "schedule" not in saved and saved["announce"] is True
     J.save_skill("fresh", "d", "steps", {"every_minutes": 30})
     assert json.loads((tmp_path / "fresh.json").read_text(encoding="utf-8"))["schedule"] == {"every_minutes": 30}
+
+
+def test_refreshing_the_daily_plan_keeps_that_days_review(J, monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(J, "_daily_plan_gather", lambda now: [])
+    now = datetime(2026, 10, 5, 21, 0)
+    J.build_daily_plan(now)
+    conn = J._daily_plan_db()
+    conn.execute("UPDATE daily_plans SET review_json=?, reviewed_at=? WHERE day=?", ('{"done": ["x"]}', "21:00", "2026-10-05"))
+    conn.commit()
+    conn.close()
+    J.build_daily_plan(now)
+    assert J._daily_plan_row("2026-10-05")["review"] == {"done": ["x"]}

@@ -7034,7 +7034,9 @@ def build_daily_plan(now: datetime | None = None) -> list[dict]:
     with _memory_db_lock:
         conn = _daily_plan_db()
         try:
-            conn.execute("INSERT OR REPLACE INTO daily_plans (day, items_json, created_at) VALUES (?,?,?)",
+            # an upsert, not INSERT OR REPLACE: a refresh after the evening review erased that review (audit 2026-10-05)
+            conn.execute("INSERT INTO daily_plans (day, items_json, created_at) VALUES (?,?,?) ON CONFLICT(day) DO "
+                         "UPDATE SET items_json=excluded.items_json, created_at=excluded.created_at",
                          (now.date().isoformat(), json.dumps(plan), now.isoformat(timespec="seconds")))
             conn.commit()
         finally:
