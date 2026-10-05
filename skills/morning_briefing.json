@@ -1,5 +1,9 @@
 {
   "name": "morning_briefing",
   "description": "Provide the morning briefing automatically every day at 8 AM, covering weather, Gmail unread messages, calendar schedule, anime news, and today's anime release schedule from the anime document.",
-  "instructions": "1. Call the weather tool (no place, days 1) for today's conditions. \n2. Use mcp_gmail tools to check unread email and summarize important messages. \n3. Use mcp_calendar tools to list today's calendar events. \n4. Use web_search to find today's anime news and updates. \n5. Read C:\\Users\\USER\\OneDrive\\Documents\\Jarvis_Workspace\\Notes\\Anime.docx to check which anime releases a weekly episode on today's day of the week, matching against their listed premiere days of the week through the end of the fall season. If any anime matches today, name them. If none matches, say \"No animes are releasing new episodes today\".\n6. Speak the combined briefing clearly and out loud without writing any file."
+  "instructions": "1. Call the weather tool (no place, days 1) for today's conditions. \n2. Use mcp_gmail tools to check unread email and summarize important messages. \n3. Use mcp_calendar tools to list today's calendar events. \n4. Use web_search to find today's anime news and updates. \n5. Read C:\\Users\\USER\\OneDrive\\Documents\\Jarvis_Workspace\\Notes\\Anime.docx to check which anime releases a weekly episode on today's day of the week, matching against their listed premiere days of the week through the end of the fall season. If any anime matches today, name them. If none matches, say \"No animes are releasing new episodes today\".\n6. Speak the combined briefing clearly and out loud without writing any file.",
+  "schedule": {
+    "daily_at": "08:00"
+  },
+  "announce": true
 }

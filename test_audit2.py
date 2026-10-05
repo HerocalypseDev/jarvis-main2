@@ -856,3 +856,22 @@ def test_a_job_only_says_it_needs_a_yes_for_an_action_it_staged(J, monkeypatch):
     assert said and said[-1].startswith("As you asked earlier")
     J._finish_deferred_job(job, True, "Shutdown staged.", False, "t", 1, started=50.0)    # staged by this job
     assert said[-1].startswith("Scheduled job needs your yes")
+
+
+def test_updating_a_skill_keeps_its_schedule_and_other_fields(J, monkeypatch, tmp_path):
+    """The owner's morning_briefing lost its 8:00 schedule and "announce" when Jarvis updated its instructions."""
+    import json
+    monkeypatch.setattr(J, "_skills_dir", lambda: tmp_path)
+    (tmp_path / "morning_briefing.json").write_text(json.dumps({
+        "name": "morning_briefing", "description": "8 AM briefing", "instructions": "old steps",
+        "schedule": {"daily_at": "08:00"}, "announce": True}), encoding="utf-8")
+    out = J.save_skill("morning_briefing", "", "new steps")
+    saved = json.loads((tmp_path / "morning_briefing.json").read_text(encoding="utf-8"))
+    assert saved["schedule"] == {"daily_at": "08:00"} and saved["announce"] is True
+    assert saved["instructions"] == "new steps" and saved["description"] == "8 AM briefing"
+    assert out.startswith("Updated") and "08:00" in out
+    J.save_skill("morning_briefing", "", "new steps", {"off": True})
+    saved = json.loads((tmp_path / "morning_briefing.json").read_text(encoding="utf-8"))
+    assert "schedule" not in saved and saved["announce"] is True
+    J.save_skill("fresh", "d", "steps", {"every_minutes": 30})
+    assert json.loads((tmp_path / "fresh.json").read_text(encoding="utf-8"))["schedule"] == {"every_minutes": 30}
