@@ -5602,6 +5602,11 @@ def create_reminder(
             repeat = float(repeat_every_minutes)
         except (TypeError, ValueError):
             repeat = None
+        # audit 2026-10-05: 0.1 or a negative number re-armed it into the past, so it fired on every tick for ever
+        if repeat is not None and repeat <= 0:
+            repeat = None
+        elif repeat is not None:
+            repeat = max(repeat, MIN_REPEAT_MINUTES)
     now_iso = datetime.now().isoformat(timespec="seconds")
     with _memory_db_lock:
         conn = _memory_db_connect()
@@ -5727,6 +5732,9 @@ def cancel_reminder(reminder_id: int) -> str:
     return f"Cancelled reminder #{reminder_id}." if cur.rowcount else f"No active reminder #{reminder_id}."
 
 
+MIN_REPEAT_MINUTES = 1.0
+
+
 def _late_note(due_at: str | None, now: datetime) -> str:
     """' (it was due at 9:00 AM)' for a reminder that fires late (audit 2026-10-04: after the PC was off, yesterday's
     reminders all fired at boot as if they were due now)."""
@@ -5775,8 +5783,8 @@ def _check_due_reminders(now: datetime) -> None:
         with _memory_db_lock:
             conn = _memory_db_connect()
             try:
-                if repeat:
-                    next_due = (now + timedelta(minutes=float(repeat))).isoformat(timespec="seconds")
+                if repeat and float(repeat) > 0:  # a stored 0.1 / negative repeat must not fire every tick
+                    next_due = (now + timedelta(minutes=max(float(repeat), MIN_REPEAT_MINUTES))).isoformat(timespec="seconds")
                     conn.execute("UPDATE reminders SET due_at = ? WHERE id = ?", (next_due, rid))
                 else:
                     conn.execute(
