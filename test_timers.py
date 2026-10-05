@@ -68,3 +68,15 @@ def test_timer_fires_urgent_and_is_closed_in_the_db(jarvis):
 def test_named_timer_phrases_route_to_the_timer_fast_path():
     for text in ("set a pasta timer for 10 minutes", "cancel the pasta timer", "how long is left on the pasta timer"):
         assert latency.classify_intent(text) == "timer"
+
+
+def test_restore_names_the_day_of_an_old_timer_and_closes_unreadable_ones(jarvis):
+    now = datetime.now()
+    jarvis._timers_db("INSERT INTO timers (name, label, ends_at, created_at) VALUES (?, ?, ?, ?)",
+                      ("oven", "oven", (now - timedelta(days=3)).isoformat(timespec="seconds"), now.isoformat()))
+    jarvis._timers_db("INSERT INTO timers (name, label, ends_at, created_at) VALUES (?, ?, ?, ?)",
+                      ("bad", "bad", "not a time", now.isoformat()))
+    jarvis._restore_timers()
+    said = jarvis._test_fired[0][0]
+    assert (now - timedelta(days=3)).strftime("%A") in said and "went off " in said and " at " in said
+    assert jarvis._timers_db("SELECT status FROM timers WHERE name = 'bad'") == [("cancelled",)]

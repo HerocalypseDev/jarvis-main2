@@ -14444,15 +14444,18 @@ def _restore_timers() -> None:
     for tid, name, label, ends_at in rows:
         try:
             ends = datetime.fromisoformat(ends_at)
-        except ValueError:
+        except (TypeError, ValueError):
+            # never re-armable: it would stay "running" for ever and count against the active-timer cap (audit 2026-10-05)
+            _timers_db("UPDATE timers SET status = 'cancelled' WHERE id = ?", (tid,))
             continue
         if ends > now:
             _schedule_timer(tid, label, name, ends)
         else:
             _timers_db("UPDATE timers SET status = 'done' WHERE id = ?", (tid,))
-            queue_or_deliver_notification(
-                f"Your {label} timer went off at {ends.strftime('%I:%M %p').lstrip('0')} while I wasn't running.",
-                urgent=True)
+            when = "at " + ends.strftime('%I:%M %p').lstrip('0')
+            if ends.date() != now.date():  # "went off at 3:05 PM" sounded like today
+                when = ("yesterday" if (now.date() - ends.date()).days == 1 else ends.strftime("%A %d %B")) + " " + when
+            queue_or_deliver_notification(f"Your {label} timer went off {when} while I wasn't running.", urgent=True)
     if rows:
         log.info("Restored %d timer(s).", len(rows))
 
