@@ -86,7 +86,8 @@ class FileWatcher:
         p = str(Path(path).expanduser().resolve())
         if not os.path.isdir(p):
             return f"{path!r} is not a folder that exists."
-        if Path(p).parent == Path(p) or Path(p) == Path.home().resolve():
+        import jarvis_workspace
+        if jarvis_workspace.too_broad(p):
             # audit 2026-10-05: every poll would walk a whole drive / profile (capped at 20,000 files, so changes past
             # that were silently missed) and every change anywhere became a file event
             return f"{p} is a whole drive or your whole profile; watch a specific folder (Downloads, Desktop...)."

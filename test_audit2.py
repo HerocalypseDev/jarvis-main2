@@ -740,3 +740,13 @@ def test_a_whole_drive_or_profile_is_not_watched(tmp_path):
     w = fw.FileWatcher(paths=[str(tmp_path / "none")])
     assert "whole drive" in w.add_path("/") and "whole drive" in w.add_path(str(Path.home()))
     assert w.add_path(str(tmp_path)).startswith("Now watching")
+
+
+def test_folder_walking_tools_refuse_a_whole_drive_or_profile():
+    from pathlib import Path
+    import jarvis_roblox
+    import jarvis_tech_understanding as tu
+    import jarvis_workspace as ws
+    assert ws.too_broad("/") and ws.too_broad(str(Path.home())) and not ws.too_broad(str(Path.home() / "proj"))
+    assert "whole drive" in jarvis_roblox.review_folder("/")
+    assert "whole drive" in tu.trace_dependencies("/")
