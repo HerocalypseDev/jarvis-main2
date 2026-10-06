@@ -1013,6 +1013,9 @@ function connectWs() {
     if (isRouteActive("audit")) fetchAuditResults();
     if (event && event.type === "face_event" && isRouteActive("identity")) fetchIdentity();
     if (event && event.type === "autonomy_update" && window.refreshAutonomy) window.refreshAutonomy();
+    if (event && event.type === "settings_changed" && isRouteActive("settings") && window.applySettingChange) {
+      window.applySettingChange(event.data || {});
+    }
   };
 }
 

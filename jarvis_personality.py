@@ -205,15 +205,20 @@ _ALIAS_RE = "|".join(sorted((re.escape(a).replace(r"\ ", r"[\s-]?") for a in ALI
 
 # Whole utterances only ("switch to playful mode", "be serious", "talk like gen z", "go back to normal",
 # "what's your personality"), so "a serious problem" or "play something fun" never switches anything.
+_KIND = r"(?:personality|mode|vibe|attitude|voice(?:\s+type)?|character|style)"
 INTENT_RE = re.compile(
     r"\A\s*(?:hey\s+)?(?:jarvis,?\s*)?(?:please\s+|can you\s+|could you\s+)?(?:"
-    rf"(?:switch|change|set|turn|put)\s+(?:your\s+)?(?:personality|mode|vibe|attitude)\s+(?:to|on)\s+(?:{_ALIAS_RE})"
-    rf"|(?:switch|change|go|turn)\s+(?:back\s+)?(?:to|into)\s+(?:{_ALIAS_RE})(?:\s+(?:mode|personality|jarvis|vibe))?"
+    rf"(?:switch|change|set|turn|put|make)\s+(?:your\s+|the\s+)?{_KIND}\s+(?:to|on|into)\s+(?:the\s+)?(?:{_ALIAS_RE})"
+    rf"(?:\s+{_KIND})?"
+    rf"|(?:switch|change|go|turn)\s+(?:back\s+)?(?:to|into)\s+(?:the\s+|a\s+)?(?:{_ALIAS_RE})"
+    rf"(?:\s+(?:{_KIND}|jarvis))?"
+    rf"|(?:i want|give me|use)\s+(?:the\s+|a\s+)?(?:{_ALIAS_RE})\s+{_KIND}"
+    rf"|make\s+(?:your\s+)?{_KIND}\s+(?:{_ALIAS_RE})"
     rf"|(?:be|act|talk|sound|speak)\s+(?:more\s+)?(?:like\s+(?:a\s+)?|in\s+)?(?:{_ALIAS_RE})"
     rf"(?:\s+(?:mode|personality|from now on|again))?"
     rf"|(?:{_ALIAS_RE})\s+(?:mode|personality)(?:\s+(?:on|please))?"
     r"|go back to (?:normal|classic|default|your usual self)"
-    r"|(?:what(?:'s| is)|which)\s+(?:your\s+)?(?:personality|mode|vibe)(?:\s+(?:are you in|is on|now))?"
+    rf"|(?:what(?:'s| is)|which)\s+(?:your\s+)?{_KIND}(?:\s+(?:are you in|is on|now|are you using))?"
     r"|(?:list|what are)\s+(?:your\s+|the\s+)?personalities"
     r")(?:\s+from now on)?(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)
 

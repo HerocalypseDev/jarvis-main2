@@ -3337,6 +3337,17 @@ BATCH_TOOLS = [
             "notes": {"type": "string"}}, "required": ["action"]},
     },
     {
+        "name": "personality",
+        "description": (
+            "Jarvis's personality: how it talks and which voice it uses. action=set with name = classic, playful, "
+            "serious, genz, tired, hype, naija or auto (changes with the time of day); action=status. Use this for "
+            "ANY request to change the personality, mode, vibe or voice type: just talking differently in one reply "
+            "does not change the setting."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["set", "status"]},
+            "name": {"type": "string"}}, "required": ["action"]},
+    },
+    {
         "name": "watches",
         "description": (
             "Watches: Jarvis keeps checking something the user names (a timetable PDF, their calendar, a web page, "
@@ -4054,6 +4065,24 @@ def _personality_name() -> str:
         return _personality_now()[0]
     except Exception:
         return personality.DEFAULT
+
+
+def _personality_tool(inp: dict) -> str:
+    if str(inp.get("action") or "status").lower() != "set":
+        name, why = _personality_now()
+        return personality.status_reply(os.environ.get("JARVIS_PERSONALITY"), name, why)
+    if getattr(_command_ctx, "untrusted_origin", False):
+        return "Tool failed: the personality can only be changed by the user."
+    choice = personality.setting_value(str(inp.get("name") or ""))
+    raw = re.sub(r"[\s_-]+", " ", str(inp.get("name") or "").strip().lower())
+    if raw not in personality.ALIASES and raw not in personality.PERSONALITIES:
+        return ("Tool failed: unknown personality. Pick one of: "
+                + ", ".join(personality.choices()) + ".")
+    res = settings.set_setting("JARVIS_PERSONALITY", choice)
+    if not res.get("ok"):
+        return f"Tool failed: {res.get('error')}"
+    return f"Personality set to {choice} (saved in Settings). Say this in the new voice: " + personality.switched_reply(
+        choice, _personality_name())
 
 
 def _personality_reply(transcript: str) -> str:
@@ -7027,6 +7056,9 @@ def _selfaware_tick() -> None:
 
 
 def _selfaware_setting_hook(key: str, value, live: bool) -> None:
+    # An open Settings page updates that row live (2026-10-06, owner: "switch to tired mode" changed Jarvis but the
+    # page kept showing the old personality). Only the key is sent; the page re-reads values through /api/settings.
+    dashboard.notify({"type": "settings_changed", "data": {"key": key}})
     # Only on/off, choice and number settings journal their value; free text can hold an address, a path or a name
     # and would then ride into the model's prompt.
     if value not in (None, "") and (settings._BY_KEY.get(key) or {}).get("kind") not in ("bool", "choice", "number"):
@@ -9119,7 +9151,7 @@ def _send_to_my_phone_tool(inp: dict) -> str:
 
 
 _BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
-                             "watches": _watches_tool})
+                             "watches": _watches_tool, "personality": _personality_tool})
 
 
 # --- The user's real browser tabs (2026-10-03, owner request) -----------------------------------------------------
@@ -12775,6 +12807,9 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core |= {"skills", "watches"}
     if _WATCH_RE.search(transcript or ""):
         core.add("watches")
+    if re.search(r"\b(?:personality|personalities|voice type|vibe|attitude|gen ?z|pidgin|naija|playful|sarcastic|"
+                 r"hype|tired mode|serious mode|classic mode|auto mode)\b", transcript or "", re.I):
+        core.add("personality")
     return core
 
 

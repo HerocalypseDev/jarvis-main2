@@ -108,6 +108,34 @@ document.getElementById("settings-add-form")?.addEventListener("submit", async (
 });
 
 window.refreshSettings = refreshSettings;
+
+// A setting changed somewhere else (by voice: "switch to tired mode", the phone, or Jarvis itself): update just that
+// row in place, so the page shows the real value without a reload. A field you're typing in is left alone.
+async function applySettingChange(change) {
+  const known = document.getElementById("settings-known");
+  if (!known || !change || !change.key) return;
+  let data;
+  try {
+    data = await (await fetch("/api/settings", { cache: "no-store" })).json();
+  } catch (e) {
+    return;
+  }
+  const spec = [...data.known, ...data.other].find((s) => s.key === change.key);
+  const row = [...document.querySelectorAll("#view-settings .setting-row")].find((r) => r.dataset.key === change.key);
+  if (!spec || !row) { refreshSettings(); return; }  // a brand-new key: rebuild the lists
+  const input = row.querySelector(".setting-input");
+  if (!input || input === document.activeElement || input.type === "password") return;
+  if (input.dataset.kind === "bool") {
+    input.checked = ["1", "true", "yes", "on"].includes(String(spec.value).toLowerCase());
+  } else if (input.tagName === "SELECT" && ![...input.options].some((o) => o.value === spec.value)) {
+    row.querySelector(".setting-control").innerHTML = settingControl(spec);
+  } else {
+    input.value = spec.value ?? "";
+  }
+  const status = row.querySelector(".setting-status");
+  if (status) { status.textContent = "Updated"; status.className = "setting-status ok"; }
+}
+window.applySettingChange = applySettingChange;
 // app.js activates the initial route before this file loads, so cover a direct #/settings load.
 if (typeof currentRoute === "function" && currentRoute() === "settings") refreshSettings();
 
