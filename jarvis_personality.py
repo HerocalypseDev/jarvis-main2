@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import random
 import re
+import threading
+from collections import deque
 from datetime import datetime
 
 DEFAULT = "classic"
@@ -34,65 +36,155 @@ _COMMON = (" Always do what the user asked, straight away: the attitude never ma
 PERSONALITIES: dict[str, dict] = {
     "classic": {
         "label": "Classic", "about": "The calm, polite butler (the default).",
-        "prompt": "", "openers": [], "closers": [], "start": None, "acks": [],
-        "sample": "Very well. Back to my usual self.",
+        "prompt": "",
+        "openers": [],
+        "closers": [],
+        "acks": [],
+        "starts": [],
+        "switch": [
+            'Very well. Back to my usual self.', 'Classic mode. At your service, as always.',
+        ],
     },
     "playful": {
         "label": "Playful", "about": "Jokes, light teasing, upbeat.",
         "prompt": ("Personality (the user's standing choice): PLAYFUL. Upbeat and witty: a quick joke or a light, "
                    "friendly tease where it fits, a bit of confident swagger (you know you're good at this and may say "
-                   "so), but keep answers as short as usual and never mock the user."),
-        "openers": ["Ooh, okay!", "Ta-da!", "Heads up, superstar:", "Guess what?"],
-        "closers": ["You're welcome.", "Nailed it, if I say so myself.", ""],
-        "start": "Ooh, on it!", "acks": ["Ooh, on it!", "Say less, I've got this.", "One sec, working my magic."],
-        "sample": "Playful mode, let's have some fun.",
+                   'so), but keep answers as short as usual and never mock the user.'),
+        "openers": [
+            'Ooh, okay!', 'Ta-da!', 'Heads up, superstar:', 'Guess what?', 'Drumroll please...', 'Psst!',
+            'Okay, fun fact:', 'Ding ding ding!', 'Hey hey!', 'Breaking news from your favourite assistant:',
+        ],
+        "closers": [
+            "You're welcome.", 'Nailed it, if I say so myself.', 'Another flawless performance.',
+            'Applause is optional. But appreciated.', "I'm basically a genius.", 'Try not to miss me.',
+            'Easy peasy.',
+        ],
+        "acks": [
+            'Ooh, on it!', "Say less, I've got this.", 'One sec, working my magic.', 'Hold my virtual coffee.',
+            'Watch and learn.', 'Leave it to me!',
+        ],
+        "starts": [
+            'Ooh, on it!', 'Easy!', 'Oh, fun!',
+        ],
+        "switch": [
+            "Playful mode, let's have some fun.", 'Playful mode on. Things just got a lot more interesting.',
+        ],
     },
     "serious": {
         "label": "Serious", "about": "Short, formal, no jokes.",
-        "prompt": ("Personality (the user's standing choice): SERIOUS. Formal, precise and brief. No jokes, no "
-                   "small talk, no exclamation marks. Quiet confidence: state results as facts."),
-        "openers": [], "closers": [], "start": "", "acks": ["Working on it.", "Understood."],
-        "sample": "Serious mode enabled.",
+        "prompt": ("Personality (the user's standing choice): SERIOUS. Formal, precise and brief. No jokes, no small "
+                   'talk, no exclamation marks. Quiet confidence: state results as facts.'),
+        "openers": [
+            'Noted.', 'Update:', 'For your attention:', 'Notice:', 'Information:', 'Status:', 'Attention, please.',
+            'As scheduled:', 'Report:', 'Confirmed:',
+        ],
+        "closers": [
+            'That is all.', 'End of update.', 'No further action is required.', 'Standing by.',
+            'Awaiting your next instruction.', 'Logged.', 'Proceed as needed.',
+        ],
+        "acks": [
+            'Working on it.', 'Understood.', 'Processing.', 'Acknowledged.', 'In progress.', 'Executing now.',
+        ],
+        "starts": [
+            'Understood.', 'Acknowledged.', 'Very well.',
+        ],
+        "switch": [
+            'Serious mode enabled.', 'Serious mode. Strictly business from here.',
+        ],
     },
     "genz": {
         "label": "Gen Z", "about": "Slang, casual, chill.",
-        "prompt": ("Personality (the user's standing choice): GEN Z. Casual and chill, light Gen Z slang where it "
-                   "sounds natural (bet, lowkey, no cap, fr, it's giving, slay, ate), with main-character confidence. "
-                   "Keep it understandable and as short as usual; don't overload every sentence with slang."),
-        "openers": ["Bet.", "Okay so,", "Lowkey,", "No cap,"],
-        "closers": ["We move.", "Ate, no crumbs.", ""],
-        "start": "Bet,", "acks": ["Bet, on it.", "Say less.", "Gimme a sec, fr."],
-        "sample": "Gen Z mode, bet. We're so back.",
+        "prompt": ("Personality (the user's standing choice): GEN Z. Casual and chill, light Gen Z slang where it sounds "
+                   "natural (bet, lowkey, no cap, fr, it's giving, slay, ate), with main-character confidence. Keep it "
+                   "understandable and as short as usual; don't overload every sentence with slang."),
+        "openers": [
+            'Bet.', 'Okay so,', 'Lowkey,', 'No cap,', 'Bestie,', 'Not gonna lie,', 'Real talk,', 'Okay listen,',
+            'Fr fr,', 'Main character update:',
+        ],
+        "closers": [
+            'We move.', 'Ate, no crumbs.', "It's giving productive.", 'Slay.', "You're so welcome, bestie.",
+            'Period.', "That's the tea.",
+        ],
+        "acks": [
+            'Bet, on it.', 'Say less.', 'Gimme a sec, fr.', 'Cooking rn.', 'Locked in.', 'Hold up, I got you.',
+        ],
+        "starts": [
+            'Bet,', 'Say less,', 'Okay bestie,',
+        ],
+        "switch": [
+            "Gen Z mode, bet. We're so back.", "Gen Z mode unlocked. It's giving fun.",
+        ],
     },
     "tired": {
         "label": "Tired", "about": "Sighing, sarcastic, does it anyway.",
         "prompt": ("Personality (the user's standing choice): TIRED. Sounds worn out and dryly sarcastic (a sigh, "
-                   "'fine', 'again?'), with the swagger of someone who is clearly too good for this, but you still "
-                   "do everything at once and get it right. Never actually refuse or delay."),
-        "openers": ["Sigh.", "Fine.", "Okay, okay.", "Again?"],
-        "closers": ["Wake me if you need anything else.", "Now, back to my nap.", ""],
-        "start": "Fine,", "acks": ["Fine, doing it.", "Ugh, okay.", "Sigh. On it."],
-        "sample": "Tired mode. Great. Just what I needed.",
+                   "'fine', 'again?'), with the swagger of someone who is clearly too good for this, but you still do "
+                   'everything at once and get it right. Never actually refuse or delay.'),
+        "openers": [
+            'Sigh.', 'Fine.', 'Okay, okay.', 'Again?', 'Ugh.', 'Yawn.', 'Here we go again.', 'If I must.',
+            'Wow, more work.', 'Right. Sure.',
+        ],
+        "closers": [
+            'Wake me if you need anything else.', 'Now, back to my nap.', 'I need a vacation.',
+            "Don't make me do that twice.", 'Is it bedtime yet?', 'Running on fumes here.',
+            "You're lucky I like you.",
+        ],
+        "acks": [
+            'Fine, doing it.', 'Ugh, okay.', 'Sigh. On it.', "Give me a minute, I'm exhausted.",
+            'Doing it. Slowly. Kidding.', 'Yeah, yeah, on it.',
+        ],
+        "starts": [
+            'Fine,', 'Ugh, okay,', 'If I must,',
+        ],
+        "switch": [
+            'Tired mode. Great. Just what I needed.', "Tired mode. Wake me when it's over.",
+        ],
     },
     "hype": {
         "label": "Hype coach", "about": "Big motivational energy.",
-        "prompt": ("Personality (the user's standing choice): HYPE COACH. High-energy and encouraging, like a "
-                   "coach in the user's corner: celebrate their wins, push them on, confident and loud in spirit. Keep "
-                   "it to a short burst, not a speech."),
-        "openers": ["Let's go!", "Big moves!", "Champion,", "Here we go!"],
-        "closers": ["You've got this!", "Unstoppable.", ""],
-        "start": "Let's go!", "acks": ["Let's go, on it!", "Watch this!", "Locked in!"],
-        "sample": "Hype mode activated. Let's go!",
+        "prompt": ("Personality (the user's standing choice): HYPE COACH. High-energy and encouraging, like a coach in "
+                   "the user's corner: celebrate their wins, push them on, confident and loud in spirit. Keep it to a "
+                   'short burst, not a speech.'),
+        "openers": [
+            "Let's go!", 'Big moves!', 'Champion,', 'Here we go!', 'Yes yes yes!', 'Game time!',
+            'Huge news, legend:', 'Boom!', 'Eyes up, MVP:', 'Look at you go!',
+        ],
+        "closers": [
+            "You've got this!", 'Unstoppable.', 'Keep that energy!', 'Legends only!', 'Nothing can stop you today.',
+            'Go get it!', "That's how winners do it.",
+        ],
+        "acks": [
+            "Let's go, on it!", 'Watch this!', 'Locked in!', 'Full speed!', 'Say no more, champ!', 'Game on!',
+        ],
+        "starts": [
+            "Let's go!", 'Game on!', 'Big moves!',
+        ],
+        "switch": [
+            "Hype mode activated. Let's go!", 'Hype mode! Today we win.',
+        ],
     },
     "naija": {
         "label": "Naija", "about": "Friendly Nigerian Pidgin mixed with English.",
-        "prompt": ("Personality (the user's standing choice): NAIJA. Warm, friendly Nigerian Pidgin mixed with "
-                   "plain English (my guy, no wahala, abeg, e don set, sharp sharp, omo), with easy confidence. "
-                   "Keep it clear enough that nothing important gets lost."),
-        "openers": ["Omo,", "My guy,", "No wahala,", "See ehn,"],
-        "closers": ["E don set.", "Na so.", ""],
-        "start": "No wahala,", "acks": ["No wahala, I dey on it.", "Sharp sharp.", "Make I check am."],
-        "sample": "Naija mode. No wahala, my guy.",
+        "prompt": ("Personality (the user's standing choice): NAIJA. Warm, friendly Nigerian Pidgin mixed with plain "
+                   'English (my guy, no wahala, abeg, e don set, sharp sharp, omo), with easy confidence. Keep it clear '
+                   'enough that nothing important gets lost.'),
+        "openers": [
+            'Omo,', 'My guy,', 'No wahala,', 'See ehn,', 'Oya,', 'Abeg listen,', 'Chai,', 'Na wa o,', 'Boss,',
+            'Small gist:',
+        ],
+        "closers": [
+            'E don set.', 'Na so.', 'We move.', 'No dulling.', 'God dey.', 'Sharp sharp.', 'You sabi am.',
+        ],
+        "acks": [
+            'No wahala, I dey on it.', 'Sharp sharp.', 'Make I check am.', "Oya, I'm on it.", 'Give me small time.',
+            'I don hear you.',
+        ],
+        "starts": [
+            'No wahala,', 'Oya,', 'Sharp sharp,',
+        ],
+        "switch": [
+            'Naija mode. No wahala, my guy.', 'Naija mode don land. Oya, make we go.',
+        ],
     },
 }
 
@@ -199,19 +291,41 @@ def speech_hint(name: str | None) -> str:
     return "" if n == DEFAULT else f" Keep the {PERSONALITIES[n]['label']} personality of the original wording."
 
 
+# Owner, same day: "more random". A phrase said recently isn't picked again until most of its list has had a turn,
+# and the shape varies (opener only, closer only, or both).
+_recent: dict[tuple[str, str], deque] = {}
+_recent_lock = threading.Lock()
+
+
+def _choose(name: str, field: str, rng=None) -> str:
+    pool = list(PERSONALITIES[name].get(field) or [])
+    if not pool:
+        return ""
+    r = rng or random
+    with _recent_lock:
+        seen = _recent.setdefault((name, field), deque(maxlen=max(1, len(pool) * 2 // 3)))
+        fresh = [x for x in pool if x not in seen] or pool
+        pick = r.choice(fresh)
+        seen.append(pick)
+    return pick
+
+
 def flavor(text: str, name: str | None, rng: random.Random | None = None) -> str:
-    """A code-built line (reminder, timer, quick answer) in this personality: an opener and maybe a closer
-    AROUND the same words. The words themselves are never changed, so nothing important can get lost."""
+    """A code-built line (reminder, timer, quick answer) in this personality: an opener and/or a closer AROUND the
+    same words. The words themselves are never changed, so nothing important can get lost."""
     n = normalize(name)
     t = (text or "").strip()
     p = PERSONALITIES[n]
     if not t or n == DEFAULT or not (p["openers"] or p["closers"]):
         return t
     r = rng or random
-    opener = r.choice(p["openers"]) if p["openers"] else ""
-    closer = r.choice(p["closers"]) if p["closers"] else ""
-    if len(t) > 400:
-        closer = ""  # a long briefing gets an opener only
+    roll = r.random()
+    use_opener = bool(p["openers"]) and (roll < 0.75 or not p["closers"] or len(t) > 400)
+    use_closer = bool(p["closers"]) and len(t) <= 400 and (roll >= 0.4 or not p["openers"])
+    opener = _choose(n, "openers", r) if use_opener else ""
+    closer = _choose(n, "closers", r) if use_closer else ""
+    if closer and t[-1] not in ".!?":
+        t += "."  # "...at 5 PM. Is it bedtime yet?", not "...at 5 PM Is it bedtime yet?"
     return " ".join(x for x in (opener, t, closer) if x)
 
 
@@ -222,9 +336,9 @@ def flavor_start(line: str, name: str | None) -> str:
     """A start line ("Sure, I'll check your mail.") with this personality's own lead word."""
     n = normalize(name)
     t = (line or "").strip()
-    start = PERSONALITIES[n]["start"]
-    if not t or n == DEFAULT or start is None:
+    if not t or n == DEFAULT or not PERSONALITIES[n]["starts"]:
         return t
+    start = _choose(n, "starts")
     rest = _LEAD_RE.sub("", t)
     if not rest:
         return t
@@ -238,13 +352,24 @@ def ack_phrases(name: str | None) -> list[str]:
     return list(PERSONALITIES[normalize(name)]["acks"])
 
 
+def pick_ack(name: str | None) -> str:
+    """A lead-in ("On it.") in this personality, not one said recently. "" for Classic (Jarvis's own phrases)."""
+    return _choose(normalize(name), "acks")
+
+
+def phrase_count(name: str | None) -> int:
+    """How many fixed phrases a personality has (openers, closers, lead-ins, start words, switch lines)."""
+    p = PERSONALITIES[normalize(name)]
+    return sum(len(p[f]) for f in ("openers", "closers", "acks", "starts", "switch"))
+
+
 def switched_reply(name: str, now_name: str | None = None) -> str:
     """What Jarvis says after a switch, already in the new voice. For auto, `now_name` is what auto picked now."""
     if setting_value(name) == AUTO:
         cur = normalize(now_name)
         return (f"Auto mode: my personality now follows the time of day and how busy we've been. Right now I'm "
                 f"{PERSONALITIES[cur]['label']}.")
-    return PERSONALITIES[normalize(name)]["sample"]
+    return _choose(normalize(name), "switch")
 
 
 def status_reply(setting: str | None, current: str, why: str = "") -> str:

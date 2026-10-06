@@ -37,22 +37,56 @@ def test_auto_follows_the_time_of_day_and_tires_after_a_busy_day():
     assert p.parse_schedule("nonsense") == p.parse_schedule(p.DEFAULT_SCHEDULE)
 
 
+def test_a_closer_after_a_line_without_a_full_stop_gets_one():
+    import random as _r
+    outs = {p.flavor("Reminder: Post the parcel at 5 PM", "tired", _r.Random(i)) for i in range(30)}
+    assert not any(" 5 PM " in o for o in outs)  # never "5 PM Is it bedtime yet?"
+    assert any("5 PM. " in o for o in outs)
+
+
 def test_code_built_lines_keep_their_exact_words():
     """A reminder in any personality still contains the whole reminder, unchanged."""
     line = "Reminder: Post the parcel at 5 PM"
     for name in p.choices():
         out = p.flavor(line, name, random.Random(1))
         assert line in out
-    assert p.flavor(line, "classic") == line and p.flavor(line, "serious") == line
+    assert p.flavor(line, "classic") == line
     assert p.flavor(line, "tired", random.Random(1)) != line
 
 
 def test_start_lines_take_the_personalitys_own_lead_word():
-    assert p.flavor_start("Sure, I'll check your mail.", "genz") == "Bet, I'll check your mail."
-    assert p.flavor_start("Sure, I'll check your mail.", "serious") == "I'll check your mail."
-    assert p.flavor_start("Sure, I'll check your mail.", "hype") == "Let's go! I'll check your mail."
+    for _ in range(10):
+        out = p.flavor_start("Sure, I'll check your mail.", "genz")
+        assert out.endswith("I'll check your mail.") and out.split(" I'll")[0] in p.PERSONALITIES["genz"]["starts"]
+        assert p.flavor_start("Sure, I'll check your mail.", "serious").endswith(" I'll check your mail.")
+        assert p.flavor_start("Checking the bitcoin price.", "tired").lower().endswith("checking the bitcoin price.")
     assert p.flavor_start("Sure, I'll check your mail.", "classic") == "Sure, I'll check your mail."
-    assert p.flavor_start("Checking the bitcoin price.", "tired") == "Fine, checking the bitcoin price."
+
+
+def test_every_personality_but_classic_has_at_least_25_fixed_phrases():
+    """Owner, 2026-10-06: at least 25 each."""
+    for name in p.PERSONALITIES:
+        if name != "classic":
+            assert p.phrase_count(name) >= 25, name
+            for field in ("openers", "closers", "acks", "starts", "switch"):
+                assert len(set(p.PERSONALITIES[name][field])) == len(p.PERSONALITIES[name][field]), (name, field)
+
+
+def test_phrases_dont_repeat_until_most_of_the_list_had_a_turn():
+    p._recent.clear()
+    import random as _r
+    rng = _r.Random(7)
+    line = "Your pasta timer is done."
+    picks = [p.flavor(line, "naija", rng) for _ in range(40)]
+    openers = [x.split(line)[0].strip() for x in picks if x.split(line)[0].strip()]
+    window = len(p.PERSONALITIES["naija"]["openers"]) * 2 // 3
+    for i in range(len(openers) - 1):
+        assert openers[i] not in openers[max(0, i - window + 1):i], openers[:i + 1]
+    shapes = {(bool(x.split(line)[0].strip()), bool(x.split(line)[1].strip())) for x in picks}
+    assert shapes == {(True, False), (False, True), (True, True)}  # opener only, closer only, both
+    window = len(p.PERSONALITIES["tired"]["acks"]) * 2 // 3
+    acks = [p.pick_ack("tired") for _ in range(window)]
+    assert len(set(acks)) == window
 
 
 def test_the_prompt_line_keeps_tasks_safety_and_other_peoples_text_plain():
@@ -75,7 +109,7 @@ def J(monkeypatch, tmp_path):
 
 def test_voice_switch_saves_the_setting_and_answers_in_the_new_voice(J, monkeypatch):
     monkeypatch.setenv("JARVIS_PERSONALITY", "classic")
-    assert J._deterministic_intent_reply("personality", "switch to gen z mode") == p.switched_reply("genz")
+    assert J._deterministic_intent_reply("personality", "switch to gen z mode") in p.PERSONALITIES["genz"]["switch"]
     assert J.os.environ["JARVIS_PERSONALITY"] == "genz" and J._personality_name() == "genz"
     assert "Gen Z mode" in J._deterministic_intent_reply("personality", "what's your personality")
     out = J._deterministic_intent_reply("personality", "switch to auto mode")

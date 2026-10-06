@@ -14061,8 +14061,11 @@ def _ack_kind(transcript: str) -> str | None:
 
 
 def _pick_ack(kind: str) -> str:
-    own = personality.ack_phrases(_personality_name())  # the personality's own lead-ins replace the stock ones
-    pool = [p for p in (own or (ACK_LOOKUP if kind == "lookup" else ACK_ACTION)) if p != _ack_last["phrase"]]
+    own = personality.pick_ack(_personality_name())  # the personality's own lead-ins, none said recently
+    if own:
+        _ack_last["phrase"] = own
+        return own
+    pool = [p for p in (ACK_LOOKUP if kind == "lookup" else ACK_ACTION) if p != _ack_last["phrase"]]
     phrase = random.choice(pool or list(ACK_PHRASES))
     _ack_last["phrase"] = phrase
     return phrase
