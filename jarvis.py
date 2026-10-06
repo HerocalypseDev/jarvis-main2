@@ -1033,7 +1033,8 @@ def _piper_synthesize(text: str, syn_overrides: dict | None = None) -> tuple[byt
     return raw, chunks[0].sample_rate
 
 
-def _fish_audio_synthesize(text: str, prosody_overrides: dict | None = None) -> tuple[bytes, int]:
+def _fish_audio_synthesize(text: str, prosody_overrides: dict | None = None,
+                           voice_id: str | None = None) -> tuple[bytes, int]:
     """Calls Fish Audio's TTS REST API and returns (pcm_int16_bytes, sample_rate) — the exact
     same contract as _piper_synthesize, so speak_text can use either interchangeably. Requests
     WAV (not raw PCM) specifically so the sample rate is read from the response's own header
@@ -1043,8 +1044,8 @@ def _fish_audio_synthesize(text: str, prosody_overrides: dict | None = None) -> 
     if not FISH_AUDIO_API_KEY:
         raise RuntimeError("FISH_AUDIO_API_KEY is not set")
     body: dict = {"text": text, "format": "wav"}
-    if FISH_AUDIO_VOICE_ID:
-        body["reference_id"] = FISH_AUDIO_VOICE_ID
+    if voice_id or FISH_AUDIO_VOICE_ID:
+        body["reference_id"] = voice_id or FISH_AUDIO_VOICE_ID
     if prosody_overrides:
         body["prosody"] = prosody_overrides
     req = urllib.request.Request(
@@ -1281,7 +1282,7 @@ def _use_deepgram_tts_stream() -> bool:
     this one plays" into "wait for this one to finish, then wait again," defeating the whole
     point of pre-fetching. Streaming is only ever attempted for the sentence about to play
     synchronously right now — see speak_text()."""
-    return _use_deepgram_tts() and tts_deepgram.STREAM_ENABLED
+    return _use_deepgram_tts() and tts_deepgram.STREAM_ENABLED and not _voice_profile()["fish_first"]
 
 
 # Voice-bug follow-up (2026-09-22): bumped from the bare "deepgram" tag used since the
@@ -1294,14 +1295,57 @@ def _use_deepgram_tts_stream() -> bool:
 _TTS_DEEPGRAM_CACHE_TAG = "deepgram2"
 
 
-def _tts_cache_keys(text: str) -> dict[str, str]:
+def _voice_profile() -> dict:
+    """The voice the current personality speaks with (2026-10-06): which Deepgram voice and speed, which Fish voice,
+    and whether Fish goes first (Naija's Pidgin voice). Classic = exactly the voice set up before."""
+    try:
+        v = personality.voice_for(_personality_name(), os.environ)
+    except Exception:
+        v = {"engine": "", "voice": "", "speed": 1.0}
+    speed = float(v.get("speed") or 1.0)
+    fish_first = v.get("engine") == "fish" and bool(FISH_AUDIO_API_KEY)
+    return {
+        "dg_model": v["voice"] if v.get("engine") == "deepgram" else tts_deepgram.DEEPGRAM_TTS_MODEL,
+        "dg_speed": speed if not fish_first else 1.0,
+        "fish_voice": v["voice"] if v.get("engine") == "fish" else FISH_AUDIO_VOICE_ID,
+        "fish_speed": speed,
+        "fish_first": fish_first,
+    }
+
+
+def _voice_kwargs(prof: dict) -> dict:
+    """Deepgram voice/speed arguments, only when the personality changes them (Classic calls exactly as before)."""
+    kw = {}
+    if prof["dg_model"] != tts_deepgram.DEEPGRAM_TTS_MODEL:
+        kw["model"] = prof["dg_model"]
+    if abs(prof["dg_speed"] - 1.0) > 0.005:
+        kw["speed"] = prof["dg_speed"]
+    return kw
+
+
+def _deepgram_cache_key(text: str, prof: dict) -> str:
+    if abs(prof["dg_speed"] - 1.0) > 0.005:  # keyed by voice + speed, so a personality's clip is never replayed in another's
+        return cache.stable_hash(_TTS_DEEPGRAM_CACHE_TAG, prof["dg_model"], text, f"speed={prof['dg_speed']:.2f}")
+    return cache.stable_hash(_TTS_DEEPGRAM_CACHE_TAG, prof["dg_model"], text)
+
+
+def _fish_prosody(prof: dict) -> dict | None:
+    """Sleep Mode's calmer voice wins; otherwise the personality's speed (None at normal speed, as before)."""
+    sleep_prosody = sleep_mode.fish_audio_prosody_overrides()
+    if sleep_prosody:
+        return sleep_prosody
+    return {"speed": prof["fish_speed"]} if abs(prof["fish_speed"] - 1.0) > 0.005 else None
+
+
+def _tts_cache_keys(text: str, prof: dict | None = None) -> dict[str, str]:
+    prof = prof or _voice_profile()
     keys: dict[str, str] = {}
+    if prof["fish_first"]:
+        keys["fish"] = cache.stable_hash("fish", FISH_AUDIO_MODEL, prof["fish_voice"], text, _fish_prosody(prof))
     if _use_deepgram_tts():
-        keys["deepgram"] = cache.stable_hash(_TTS_DEEPGRAM_CACHE_TAG, tts_deepgram.DEEPGRAM_TTS_MODEL, text)
-    if FISH_AUDIO_API_KEY:
-        keys["fish"] = cache.stable_hash(
-            "fish", FISH_AUDIO_MODEL, FISH_AUDIO_VOICE_ID, text, sleep_mode.fish_audio_prosody_overrides()
-        )
+        keys["deepgram"] = _deepgram_cache_key(text, prof)
+    if FISH_AUDIO_API_KEY and not prof["fish_first"]:
+        keys["fish"] = cache.stable_hash("fish", FISH_AUDIO_MODEL, prof["fish_voice"], text, _fish_prosody(prof))
     keys["piper"] = cache.stable_hash("piper", PIPER_VOICE, text, sleep_mode.tts_overrides())
     return keys
 
@@ -1332,10 +1376,11 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
     Never attempts the streaming WebSocket path — this function is used both directly and by the
     sentence-pipelining pre-fetch thread, which must only fetch bytes, never play audio itself
     (see _use_deepgram_tts_stream's docstring)."""
-    fish_prosody = sleep_mode.fish_audio_prosody_overrides()
+    prof = _voice_profile()
+    fish_prosody = _fish_prosody(prof)
     piper_overrides = sleep_mode.tts_overrides()
     use_cache = cache.enabled("tts") and len(text) <= TTS_CACHE_MAX_CHARS
-    keys = _tts_cache_keys(text) if use_cache else {}
+    keys = _tts_cache_keys(text, prof) if use_cache else {}
     if use_cache:
         for backend, key in keys.items():
             hit = _tts_disk_cache.get(key)
@@ -1345,9 +1390,26 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
                 return hit[0], hit[1], backend
         cache.record("tts", False, repr(text[:30]))
 
+    def _fish():
+        raw, sr = (_fish_audio_synthesize(text, fish_prosody, prof["fish_voice"])
+                   if prof["fish_voice"] != FISH_AUDIO_VOICE_ID else _fish_audio_synthesize(text, fish_prosody))
+        if raw:
+            if use_cache:
+                _tts_disk_cache.put(keys["fish"], raw, sr)
+            _record_voice("tts", "fish", text, _pcm_seconds(raw, sr))
+        return raw, sr
+
+    if prof["fish_first"]:  # Naija: the Pidgin voice first, the usual voice if Fish fails
+        try:
+            raw, sr = _fish()
+            if raw:
+                return raw, sr, "fish"
+        except Exception as e:
+            log.warning("Fish Audio TTS (personality voice) failed, falling back: %s", e)
+
     if _use_deepgram_tts():
         try:
-            raw, sr = tts_deepgram.synthesize(text)
+            raw, sr = tts_deepgram.synthesize(text, **_voice_kwargs(prof))
             _dg_tts_breaker.record(True)
             if raw:
                 if use_cache:
@@ -1358,13 +1420,10 @@ def _synthesize_and_cache(text: str) -> tuple[bytes, int, str]:
             _dg_tts_breaker.record(False)
             log.warning("Deepgram TTS failed, falling back: %s", e)
 
-    if FISH_AUDIO_API_KEY:
+    if FISH_AUDIO_API_KEY and not prof["fish_first"]:
         try:
-            raw, sr = _fish_audio_synthesize(text, fish_prosody)
+            raw, sr = _fish()
             if raw:
-                if use_cache:
-                    _tts_disk_cache.put(keys["fish"], raw, sr)
-                _record_voice("tts", "fish", text, _pcm_seconds(raw, sr))
                 return raw, sr, "fish"
         except Exception as e:
             log.warning("Fish Audio TTS failed, falling back to Piper: %s", e)
@@ -1396,7 +1455,8 @@ def _speak_streamed(text: str, on_first_audio=None) -> tuple[bool, bytes, int, s
     on_first_audio, if given, fires the instant the first chunk actually plays (see
     _play_pcm_stream) — used to mark a true time-to-first-audio instead of one measured only
     after this whole call returns."""
-    session = tts_deepgram.StreamingSynthesis(text)
+    prof = _voice_profile()
+    session = tts_deepgram.StreamingSynthesis(text, **_voice_kwargs(prof))
     if not session.connect():
         return False, b"", 0, "", False
     collected: list[bytes] = []
@@ -1430,7 +1490,7 @@ def speak_text(text: str) -> None:
     first sentence starts without waiting for the whole reply to be synthesized."""
     # Japanese/Korean/Russian/... text said in Latin letters: the voices are English and mangled it (owner report
     # 2026-10-05, "I love you" in Japanese). Only the spoken copy changes; the dashboard keeps the real script.
-    t = _sanitize_for_speech(speech_script.for_speech(text, _pronounce_with_model))
+    t = _sanitize_for_speech(personality.spoken(speech_script.for_speech(text, _pronounce_with_model)))
     if not t:
         return
     _await_ack()  # a spoken lead-in ("On it.") started for this command finishes before anything else
@@ -1485,8 +1545,7 @@ def speak_text(text: str) -> None:
                         raw, sr, backend = s_raw, s_sr, s_backend
                         _record_voice("tts", s_backend, sentence, _pcm_seconds(s_raw, s_sr))
                         if complete and raw and cache.enabled("tts") and len(sentence) <= TTS_CACHE_MAX_CHARS:
-                            key = cache.stable_hash(_TTS_DEEPGRAM_CACHE_TAG, tts_deepgram.DEEPGRAM_TTS_MODEL, sentence)
-                            _tts_disk_cache.put(key, raw, sr)
+                            _tts_disk_cache.put(_deepgram_cache_key(sentence, _voice_profile()), raw, sr)
                 if not already_played:
                     if _speech_cancelled_since(since):
                         return  # barge-in before the live stream's first chunk: no REST replay

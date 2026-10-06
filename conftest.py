@@ -6,5 +6,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _classic_personality(monkeypatch):
-    for key in ("JARVIS_PERSONALITY", "JARVIS_PERSONALITY_SCHEDULE", "JARVIS_PERSONALITY_TIRED_AFTER"):
+    for key in ("JARVIS_PERSONALITY", "JARVIS_PERSONALITY_SCHEDULE", "JARVIS_PERSONALITY_TIRED_AFTER",
+                "JARVIS_VOICE_CLASSIC", "JARVIS_VOICE_PLAYFUL", "JARVIS_VOICE_SERIOUS", "JARVIS_VOICE_GENZ",
+                "JARVIS_VOICE_TIRED", "JARVIS_VOICE_HYPE", "JARVIS_VOICE_NAIJA"):
         monkeypatch.delenv(key, raising=False)

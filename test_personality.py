@@ -164,3 +164,93 @@ def test_silent_and_replayed_answers_never_reach_the_ai_in_any_personality(J, mo
     monkeypatch.setattr(J, "run_agent_loop", lambda *a, **k: pytest.fail("no AI call expected"))
     J.handle_text_command("stop talking", source="voice")
     assert spoken == []
+
+
+# --- voices (owner, same day: a voice and speed per personality, Naija on a Fish Audio Pidgin voice) -------------------
+def test_voice_settings_parse_names_speeds_and_fish_ids():
+    assert p.parse_voice("pluto 0.85") == {"engine": "deepgram", "voice": "aura-2-pluto-en", "speed": 0.85}
+    assert p.parse_voice("aura-2-zeus-en") == {"engine": "deepgram", "voice": "aura-2-zeus-en", "speed": 1.0}
+    assert p.parse_voice("fish:7223183d489044b1a4cb9c31ea18b296")["engine"] == "fish"
+    assert p.parse_voice("") == {"engine": "", "voice": "", "speed": 1.0}
+    assert p.parse_voice("0.9")["speed"] == 0.9 and p.parse_voice("delia 9")["speed"] == 1.5  # clamped
+    assert p.voice_for("tired", {})["voice"] == "aura-2-pluto-en" and p.voice_for("tired", {})["speed"] == 0.85
+    assert p.voice_for("tired", {"JARVIS_VOICE_TIRED": "zeus 0.8"})["voice"] == "aura-2-zeus-en"
+    assert p.voice_for("classic", {}) == {"engine": "", "voice": "", "speed": 1.0}
+
+
+@pytest.mark.parametrize("written,said", [
+    ("Cooking rn, fr fr.", "Cooking right now, for real for real."),
+    ("idk tbh lol", "I don't know to be honest haha"),
+    ("*sigh* Fine.", "Fine."),
+    ("Visit fr.wikipedia.org", "Visit fr.wikipedia.org"),
+    ("The U.S. office", "The U.S. office"),
+])
+def test_chat_slang_is_said_in_words_and_stage_directions_are_dropped(written, said):
+    assert p.spoken(written) == said
+
+
+def test_tired_has_no_sigh_or_yawn_the_voice_would_read_as_words():
+    tired = p.PERSONALITIES["tired"]
+    flat = " ".join(tired["openers"] + tired["closers"] + tired["acks"] + tired["starts"] + tired["switch"]).lower()
+    assert "sigh" not in flat and "yawn" not in flat
+    assert "sound effects" in p.prompt_line("tired")
+
+
+@pytest.fixture
+def voice(J, monkeypatch):
+    calls = []
+    monkeypatch.setattr(J.tts_deepgram, "DEEPGRAM_API_KEY", "x")
+    monkeypatch.setattr(J, "FISH_AUDIO_API_KEY", "y")
+    monkeypatch.setattr(J, "FISH_AUDIO_VOICE_ID", "ownvoice")
+    monkeypatch.setattr(J.cache, "enabled", lambda layer: False)
+    monkeypatch.setattr(J, "_record_voice", lambda *a, **k: None)
+    monkeypatch.setattr(J.tts_deepgram, "synthesize",
+                        lambda text, timeout_s=None, model=None, speed=None: calls.append(("dg", model, speed)) or (b"\0\0", 24000))
+    monkeypatch.setattr(J, "_fish_audio_synthesize",
+                        lambda text, prosody=None, voice_id=None: calls.append(("fish", voice_id, prosody)) or (b"\0\0", 44100))
+    return calls
+
+
+def test_each_personality_speaks_with_its_own_voice_and_speed(J, voice, monkeypatch):
+    monkeypatch.setenv("JARVIS_PERSONALITY", "tired")
+    J._synthesize_and_cache("Fine, it's done.")
+    assert voice[-1] == ("dg", "aura-2-pluto-en", 0.85)
+    monkeypatch.setenv("JARVIS_PERSONALITY", "hype")
+    J._synthesize_and_cache("Let's go!")
+    assert voice[-1] == ("dg", "aura-2-atlas-en", 1.15)
+    monkeypatch.setenv("JARVIS_PERSONALITY", "classic")
+    J._synthesize_and_cache("Very well.")
+    assert voice[-1] == ("dg", None, None)  # Classic: called exactly as before personalities
+
+
+def test_naija_uses_the_fish_pidgin_voice_first_and_falls_back_to_the_usual_voice(J, voice, monkeypatch):
+    monkeypatch.setenv("JARVIS_PERSONALITY", "naija")
+    assert not J._use_deepgram_tts_stream()  # Fish goes first, so no Deepgram live stream
+    J._synthesize_and_cache("No wahala, e don set.")
+    assert voice == [("fish", "7223183d489044b1a4cb9c31ea18b296", None)]
+
+    def broken(*a, **k):
+        raise RuntimeError("fish down")
+    monkeypatch.setattr(J, "_fish_audio_synthesize", broken)
+    raw, sr, backend = J._synthesize_and_cache("No wahala.")
+    assert backend == "deepgram" and voice[-1] == ("dg", None, None)  # the usual voice
+
+
+def test_classic_keeps_its_old_cached_audio(J, monkeypatch):
+    """Classic's cache keys are exactly the ones used before personalities, so nothing is re-synthesised."""
+    monkeypatch.setattr(J.tts_deepgram, "DEEPGRAM_API_KEY", "x")
+    monkeypatch.setattr(J, "FISH_AUDIO_API_KEY", "y")
+    keys = J._tts_cache_keys("Hello there.")
+    assert keys["deepgram"] == J.cache.stable_hash(J._TTS_DEEPGRAM_CACHE_TAG, J.tts_deepgram.DEEPGRAM_TTS_MODEL,
+                                                   "Hello there.")
+    assert keys["fish"] == J.cache.stable_hash("fish", J.FISH_AUDIO_MODEL, J.FISH_AUDIO_VOICE_ID, "Hello there.",
+                                               J.sleep_mode.fish_audio_prosody_overrides())
+    monkeypatch.setenv("JARVIS_PERSONALITY", "tired")
+    assert J._tts_cache_keys("Hello there.")["deepgram"] != keys["deepgram"]  # another voice, another clip
+
+
+def test_the_spoken_copy_says_slang_in_words(J, monkeypatch):
+    seen = []
+    monkeypatch.setattr(J, "_sanitize_for_speech", lambda t: seen.append(t) or "")
+    J.speak_text("Cooking rn, fr.")
+    assert seen == ["Cooking right now, for real."]

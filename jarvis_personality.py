@@ -30,7 +30,8 @@ DEFAULT_TIRED_AFTER = 60  # commands today; 0 = never tired from workload
 _COMMON = (" Always do what the user asked, straight away: the attitude never makes you refuse, stall, argue or ask "
            "extra questions. Never change a fact, time, number or name for the sake of style, and say anything "
            "important (a warning, an error, a dangerous action that needs a yes) plainly first, attitude after. "
-           "No emojis (your words are spoken). This style is only for how YOU talk to the user: emails, messages, "
+           "No emojis and no sound effects or actions like *sigh* or *laughs* (your words are spoken, so they would "
+           "be read out as words). This style is only for how YOU talk to the user: emails, messages, "
            "documents and code you write for other people stay in a normal, polite register unless the user asks.")
 
 PERSONALITIES: dict[str, dict] = {
@@ -51,7 +52,7 @@ PERSONALITIES: dict[str, dict] = {
                    "friendly tease where it fits, a bit of confident swagger (you know you're good at this and may say "
                    'so), but keep answers as short as usual and never mock the user.'),
         "openers": [
-            'Ooh, okay!', 'Ta-da!', 'Heads up, superstar:', 'Guess what?', 'Drumroll please...', 'Psst!',
+            'Ooh, okay!', 'Ta-da!', 'Heads up, superstar:', 'Guess what?', 'Drumroll please...', 'Hey you!',
             'Okay, fun fact:', 'Ding ding ding!', 'Hey hey!', 'Breaking news from your favourite assistant:',
         ],
         "closers": [
@@ -117,11 +118,11 @@ PERSONALITIES: dict[str, dict] = {
     },
     "tired": {
         "label": "Tired", "about": "Sighing, sarcastic, does it anyway.",
-        "prompt": ("Personality (the user's standing choice): TIRED. Sounds worn out and dryly sarcastic (a sigh, "
+        "prompt": ("Personality (the user's standing choice): TIRED. Sounds worn out and dryly sarcastic ('ugh', "
                    "'fine', 'again?'), with the swagger of someone who is clearly too good for this, but you still do "
                    'everything at once and get it right. Never actually refuse or delay.'),
         "openers": [
-            'Sigh.', 'Fine.', 'Okay, okay.', 'Again?', 'Ugh.', 'Yawn.', 'Here we go again.', 'If I must.',
+            'Oh man.', 'Fine.', 'Okay, okay.', 'Again?', 'Ugh.', 'Hmm, fine.', 'Here we go again.', 'If I must.',
             'Wow, more work.', 'Right. Sure.',
         ],
         "closers": [
@@ -130,7 +131,7 @@ PERSONALITIES: dict[str, dict] = {
             "You're lucky I like you.",
         ],
         "acks": [
-            'Fine, doing it.', 'Ugh, okay.', 'Sigh. On it.', "Give me a minute, I'm exhausted.",
+            'Fine, doing it.', 'Ugh, okay.', 'Oh man, on it.', "Give me a minute, I'm exhausted.",
             'Doing it. Slowly. Kidding.', 'Yeah, yeah, on it.',
         ],
         "starts": [
@@ -379,6 +380,66 @@ def status_reply(setting: str | None, current: str, why: str = "") -> str:
             if setting_value(setting) == AUTO else f"I'm in {PERSONALITIES[n]['label']} mode: {PERSONALITIES[n]['about']}")
     return (f"{head} You can switch me to {others}, or Auto (changes with the time of day). Just say, for example, "
             "'switch to playful mode'.")
+
+
+# --- how each personality SOUNDS (owner, same day) -------------------------------------------------------------------
+# "<voice> <speed>": a Deepgram Aura-2 voice (short name like "aurora" or the full "aura-2-aurora-en"), or
+# "fish:<voice id>" for a Fish Audio voice, then a speed 0.7-1.5. Empty voice = the voice set up for Jarvis. Each one is a
+# Setting (JARVIS_VOICE_<NAME>). Naija uses a Nigerian Pidgin community voice on Fish Audio ("Ajeh").
+DEFAULT_VOICES = {
+    "classic": "", "playful": "aurora 1.05", "serious": "odysseus 0.95", "genz": "delia 1.05",
+    "tired": "pluto 0.85", "hype": "atlas 1.15", "naija": "fish:7223183d489044b1a4cb9c31ea18b296 1.0",
+}
+
+
+def voice_setting_key(name: str) -> str:
+    return f"JARVIS_VOICE_{normalize(name).upper()}"
+
+
+def parse_voice(spec: str | None) -> dict:
+    """'pluto 0.85' -> {'engine': 'deepgram', 'voice': 'aura-2-pluto-en', 'speed': 0.85};
+    'fish:<id>' -> fish; '' or '0.9' -> the usual voice ('engine': '') at that speed. Unreadable parts are ignored."""
+    out = {"engine": "", "voice": "", "speed": 1.0}
+    for tok in (spec or "").split():
+        if re.fullmatch(r"\d+(?:\.\d+)?", tok):
+            out["speed"] = min(1.5, max(0.7, float(tok)))
+        elif tok.lower().startswith("fish:") and re.fullmatch(r"[A-Za-z0-9]{8,64}", tok[5:]):
+            out.update(engine="fish", voice=tok[5:])
+        elif re.fullmatch(r"aura-2-[a-z]+-[a-z]{2}", tok.lower()):
+            out.update(engine="deepgram", voice=tok.lower())
+        elif re.fullmatch(r"[A-Za-z]{2,20}", tok) and tok.lower() not in ("default", "normal", "usual"):
+            out.update(engine="deepgram", voice=f"aura-2-{tok.lower()}-en")
+    return out
+
+
+def voice_for(name: str | None, env: dict) -> dict:
+    """The voice for a personality: its Setting, else the default above."""
+    n = normalize(name)
+    raw = env.get(voice_setting_key(n))
+    return parse_voice(DEFAULT_VOICES.get(n, "") if raw is None else raw)
+
+
+# --- pronunciation: slang the voice would spell out letter by letter (owner, same day) --------------------------------
+_SPOKEN = {
+    "rn": "right now", "fr": "for real", "ngl": "not gonna lie", "tbh": "to be honest", "idk": "I don't know",
+    "imo": "in my opinion", "imho": "in my honest opinion", "smh": "shaking my head", "btw": "by the way",
+    "omg": "oh my god", "lol": "haha", "lmao": "haha", "lmfao": "haha", "rofl": "haha", "brb": "be right back",
+    "ikr": "I know, right", "irl": "in real life", "nvm": "never mind", "pls": "please", "plz": "please",
+    "thx": "thanks", "fyi": "for your information", "tho": "though",
+}  # left out on purpose: u, ur, np, bc, ty (single letters, numpy, "BC" dates...) mean other things too
+_SPOKEN_RE = re.compile(r"(?<![\w/.@-])(" + "|".join(sorted(map(re.escape, _SPOKEN), key=len, reverse=True))
+                        + r")(?![\w/@-]|\.\w)", re.I)
+_STAGE_RE = re.compile(r"\*[^*\n]{1,30}\*|(?<!\w)\((?:sighs?|yawns?|laughs?|chuckles?|groans?)\)", re.I)
+
+
+def spoken(text: str) -> str:
+    """The copy that is SPOKEN: chat abbreviations said in words ('rn' -> 'right now', 'fr' -> 'for real'), and stage
+    directions like *sigh* dropped. The screen keeps the original. Applies in every personality."""
+    if not text:
+        return text
+    t = _STAGE_RE.sub("", text)
+    t = _SPOKEN_RE.sub(lambda m: _SPOKEN[m.group(1).lower()], t)
+    return re.sub(r"[ \t]{2,}", " ", t).strip()
 
 
 def choices() -> list[str]:
