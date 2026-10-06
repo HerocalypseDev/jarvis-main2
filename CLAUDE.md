@@ -1816,7 +1816,8 @@ row there each phase rather than only stating the total in chat.
 | 152 (foreign words in speech: Japanese/Korean/Russian/Greek and other scripts said in Latin letters by the same voice, bracketed pronunciation from the AI used first, tables for kana/Hangul/Cyrillic/Greek, tiny cached model call for the rest; 14 new tests) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
 | 153 (Watches: keep checking something the user names and speak up once per stage by their own rule, asks again when details are missing, Toolbox panel; save_skill reads cron/word schedules; 36 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
 | 154 (personalities: Classic + Playful/Serious/Gen Z/Tired/Hype/Naija + Auto by time of day and workload, Settings + voice switch, fixed openers around code-built lines; conftest isolation; found and fixed a quick-answer branch bug; 24 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
-| **Running total (final)** | | **~4704 min** | **~$319.35–$449.15** |
+| 155 (personalities: 28 fixed phrases each (min 25), no-repeat random picks, varied opener/closer shape, full stop before a closer; 4 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~4719 min** | **~$320.55–$450.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2759,6 +2760,10 @@ Code: `jarvis_personality.py` (pure), wiring in jarvis.py (`_personality_now`, `
   change the wording other tests check.
 - Found while building: a misplaced flavour step broke the quick-answer branch and sent "stop talking"/"repeat" to the AI;
   fixed and pinned by a test.
+- **At least 25 fixed phrases per non-Classic personality** (owner, same day; 28 each now: 10 openers, 7 closers, 6
+  lead-ins, 3 start words, 2 switch lines), pinned by `test_every_personality_but_classic_has_at_least_25_fixed_phrases`.
+  "More random": `_choose` never repeats a phrase until two thirds of its list had a turn, the shape varies (opener only
+  ~40%, both ~35%, closer only ~25%; a long line gets an opener only), and start words/switch lines are random too.
 - Not verified live on the PC: how each personality actually sounds through the voice (Naija through an English voice).
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
