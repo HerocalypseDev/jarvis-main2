@@ -1818,7 +1818,8 @@ row there each phase rather than only stating the total in chat.
 | 154 (personalities: Classic + Playful/Serious/Gen Z/Tired/Hype/Naija + Auto by time of day and workload, Settings + voice switch, fixed openers around code-built lines; conftest isolation; found and fixed a quick-answer branch bug; 24 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
 | 155 (personalities: 28 fixed phrases each (min 25), no-repeat random picks, varied opener/closer shape, full stop before a closer; 4 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 156 (personality voices: a Deepgram voice + speed per personality, Naija on a Fish Audio Pidgin voice with Deepgram fallback, slang said in words, no sigh/yawn, Classic unchanged incl. its cache; 11 new tests) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~4754 min** | **~$323.55–$455.05** |
+| 157 (open Settings page updates live when a setting changes by voice/phone/AI, voice-type phrasings switch the personality, personality tool for the AI; headless check; 14 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
+| **Running total (final)** | | **~4774 min** | **~$325.15–$457.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2775,6 +2776,12 @@ Code: `jarvis_personality.py` (pure), wiring in jarvis.py (`_personality_now`, `
   per Deepgram's docs, REST and WebSocket; `tts_deepgram.voice_query`). **Classic calls the engines exactly as before
   (`_voice_kwargs` passes nothing) and keeps the exact old cache keys**, so its cached audio is still used. Sleep Mode's
   calmer Fish prosody wins over a personality's speed.
+- **Settings page stayed stale (owner, same day)**: "switch to tired voice" changed Jarvis but an open Settings page kept
+  showing the old value (it only loaded on open). Every setting change now sends `settings_changed` (key only) from
+  `_selfaware_setting_hook`; app.js passes it to `applySettingChange` (qol.js), which re-reads `/api/settings` and updates
+  just that row ("Updated"), never a field being typed in or a secret. Checked in headless Chromium. Also: voice phrasings
+  ("switch to tired voice", "change voice type to gen z", "I want the playful personality") now switch, and a
+  `personality` tool (set/status; refused in email-started runs) lets the AI really change it for any other wording.
 - **Pronunciation** (`personality.spoken`, applied in `speak_text` for every personality): chat abbreviations are said in
   words (rn, fr, ngl, tbh, idk, lol -> "haha"...; not u/ur/np/bc/ty, which mean other things; never inside a web address
   like fr.wikipedia.org or "U.S."), stage directions like *sigh* / (laughs) are dropped; the screen keeps the original.

@@ -254,3 +254,41 @@ def test_the_spoken_copy_says_slang_in_words(J, monkeypatch):
     monkeypatch.setattr(J, "_sanitize_for_speech", lambda t: seen.append(t) or "")
     J.speak_text("Cooking rn, fr.")
     assert seen == ["Cooking right now, for real."]
+
+
+# --- "switch to tired voice" changed Jarvis but not the Settings page (owner, 2026-10-06) ------------------------------
+@pytest.mark.parametrize("said,choice", [
+    ("switch to tired voice", "tired"), ("switch your voice to tired", "tired"), ("change voice to gen z", "genz"),
+    ("use the playful voice", "playful"), ("switch to the tired personality", "tired"),
+    ("switch the voice type to playful", "playful"), ("I want the playful personality", "playful"),
+    ("make your personality tired", "tired"), ("switch voice type to gen z", "genz"),
+    ("switch to dark mode", None), ("change the voice to something deeper", None),
+])
+def test_voice_type_wordings_switch_the_personality(said, choice):
+    assert p.parse_switch(said) == choice
+
+
+def test_a_switch_tells_an_open_settings_page(monkeypatch, tmp_path):
+    """Uses the REAL settings save (the J fixture stubs it)."""
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "p.db"))
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(tmp_path / ".env"))
+    import jarvis as J
+    import jarvis_settings
+    monkeypatch.setattr(jarvis_settings, "JARVIS_MODULE", None)
+    monkeypatch.setattr(jarvis_settings, "change_hook", J._selfaware_setting_hook)
+    sent = []
+    monkeypatch.setattr(J.dashboard, "notify", lambda ev: sent.append(ev))
+    J._deterministic_intent_reply("personality", "switch to tired voice")
+    assert {"type": "settings_changed", "data": {"key": "JARVIS_PERSONALITY"}} in sent
+    row = next(r for r in jarvis_settings.list_settings()["known"] if r["key"] == "JARVIS_PERSONALITY")
+    assert row["value"] == "tired"  # what the page shows when it re-reads
+
+
+def test_the_ai_has_a_real_switch_for_any_other_wording(J, monkeypatch):
+    out = J._personality_tool({"action": "set", "name": "Gen Z"})
+    assert "Personality set to genz" in out and J.os.environ["JARVIS_PERSONALITY"] == "genz"
+    assert "Tool failed" in J._personality_tool({"action": "set", "name": "pirate"})
+    assert "Gen Z" in J._personality_tool({"action": "status"})
+    monkeypatch.setattr(J._command_ctx, "untrusted_origin", True, raising=False)
+    assert "Tool failed" in J._personality_tool({"action": "set", "name": "tired"})
+    assert "personality" in J._narrowing_core("can you change your vibe to something more playful")
