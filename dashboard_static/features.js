@@ -299,6 +299,38 @@ document.getElementById("tb-agent-form")?.addEventListener("submit", async (e) =
   refreshAgents();
 });
 
+// --- Watches (2026-10-06): GET /api/feature/watches, POST .../{off,on,delete,check} ----------------------------
+async function refreshWatches() {
+  const list = document.getElementById("tb-watch-list");
+  if (!list) return;
+  const data = await featureGet("watches");
+  list.innerHTML = (data.watches || []).length ? data.watches.map((w) => `
+    <li class="list-item">
+      <div><span class="tool">${esc(w.name)}</span> ${w.enabled ? "" : '<span class="pill">off</span>'}
+        ${w.running ? '<span class="pill pill-running">checking</span>' : ""}
+        <span class="muted">${esc(w.schedule_text)}</span></div>
+      <div class="muted">Checks: ${esc(w.what)}</div>
+      <div class="muted">Speaks up when: ${esc(w.rule)}</div>
+      ${w.announce ? `<div class="muted">Says: ${esc(w.announce)}</div>` : ""}
+      <div class="muted">${w.last_run ? `Last check ${fmtWhen(w.last_run)} (${esc(w.last_status || "?")}): ${esc(String(w.last_result || "").slice(0, 200))}` : "Not checked yet."}</div>
+      ${(w.told || []).length ? `<ul class="list">${w.told.map((t) => `<li class="muted">${fmtWhen(t.told_at)} &middot; ${esc(t.item)}${t.event_date ? ` (${esc(t.event_date)})` : ""} &middot; ${esc(t.stage)}: ${esc(t.said || "")}</li>`).join("")}</ul>` : ""}
+      <div class="memory-actions">
+        <button class="btn btn-ghost" type="button" data-watch="${escAttr(String(w.id))}" data-verb="check">Check now</button>
+        <button class="btn btn-ghost" type="button" data-watch="${escAttr(String(w.id))}" data-verb="${w.enabled ? "off" : "on"}">${w.enabled ? "Turn off" : "Turn on"}</button>
+        <button class="btn btn-ghost" type="button" data-watch="${escAttr(String(w.id))}" data-name="${escAttr(w.name)}" data-verb="delete">Delete</button>
+      </div></li>`).join("") : `<li class="empty-state">No watches yet.</li>`;
+}
+TOOLBOX_PANELS.push(refreshWatches);
+
+document.getElementById("tb-watch-list")?.addEventListener("click", async (e) => {
+  const id = e.target.dataset.watch, verb = e.target.dataset.verb;
+  if (!id) return;
+  if (verb === "delete" && !confirm(`Delete the watch "${e.target.dataset.name}"?`)) return;
+  const r = await featurePost("watches", verb, { name: id }).catch((err) => ({ result: String(err) }));
+  document.getElementById("tb-watch-status").textContent = r.result || "";
+  setTimeout(() => refreshWatches().catch(() => {}), 500);
+});
+
 // --- Notification priority (C6) ----------------------------------------------------------------
 async function refreshNotifyStats() {
   const list = document.getElementById("tb-notify-list");

@@ -133,6 +133,7 @@ import jarvis_browser_bridge as browser_bridge
 import jarvis_browser_tabs as browser_tabs
 import jarvis_context as reqctx
 import jarvis_missed as missed
+import jarvis_watches as watches_mod
 import jarvis_quickfacts as quickfacts
 import jarvis_mail_reply as mail_reply
 
@@ -2344,7 +2345,9 @@ AGENT_TOOLS = [
             "procedure so you don't have to work it out from scratch again. Pass \"schedule\" "
             "to make it run automatically, proactively speaking the result, instead of only "
             "when asked (e.g. \"give me a briefing every morning at 8\", \"check this every 30 "
-            "minutes\")."
+            "minutes\"). To MONITOR something and speak up only when something important comes "
+            "up (\"watch my timetable and tell me when exams are near\"), use the watches tool "
+            "instead."
         ),
         "input_schema": {
             "type": "object",
@@ -3272,6 +3275,31 @@ BATCH_TOOLS = [
             "action": {"type": "string", "enum": ["list", "named", "name", "unname"]},
             "device": {"type": "string"}, "name": {"type": "string"}, "type": {"type": "string"},
             "notes": {"type": "string"}}, "required": ["action"]},
+    },
+    {
+        "name": "watches",
+        "description": (
+            "Watches: Jarvis keeps checking something the user names (a timetable PDF, their calendar, a web page, "
+            "mail from someone...) on a schedule and SPEAKS UP on its own when something matches the user's own rule "
+            "for 'important' (e.g. 'exams coming up', 'results being released'). Use this, not save_skill or a "
+            "reminder, for 'monitor/watch/keep an eye on/keep track of X and tell me when...'. action=create: name "
+            "(short, e.g. exam_timetable), what (what to check and where, in plain words: file path, 'my Google "
+            "Calendar', a URL...), rule (what counts as important, in the user's words), announce (what to say when "
+            "something matches, in the user's words, e.g. 'days left and ask how I feel'), schedule (e.g. 'every day "
+            "at 8', 'every 3 hours', '0 8 * * *'; ask the user, the usual is every day at 8), start_line (one short "
+            "sentence about the check, e.g. 'Checking your exam timetable.'). Only fill these from what the user "
+            "actually said: if something is missing the tool says what to ask them. Each thing is said once per stage "
+            "(first notice, ~2 weeks, 3 days, the day before, on the day). Also: list; show/told (name: what it "
+            "already told the user); edit (name + any of what/rule/schedule/start_line); off; on; delete; check "
+            "(name: check right now and say what matches)."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["create", "list", "show", "told", "edit", "off", "on", "delete",
+                                                  "check"]},
+            "name": {"type": "string"}, "what": {"type": "string"}, "rule": {"type": "string"},
+            "announce": {"type": "string", "description": "what to tell the user when something matches"},
+            "schedule": {"type": "string", "description": "e.g. 'every day at 8', 'weekdays at 7:30 pm', "
+                                                          "'every 3 hours', or cron '0 8 * * *'"},
+            "start_line": {"type": "string"}}, "required": ["action"]},
     },
     {
         "name": "skills",
@@ -6082,6 +6110,14 @@ def save_skill(
             payload["start_line"] = line
         elif not payload.get("start_line"):
             payload["start_line"] = startline.from_text(payload.get("description") or instructions, slug)
+        schedule_note = ""
+        if isinstance(schedule, str) and schedule.strip():
+            # Found live 2026-10-06: a schedule given as "0 8 * * *" was dropped and the skill only ran when asked.
+            parsed, why = watches_mod.parse_schedule(schedule)
+            if parsed:
+                schedule = parsed
+            else:
+                schedule, schedule_note = None, f" The schedule wasn't saved: {why}."
         if isinstance(schedule, dict) and (schedule.get("daily_at") or schedule.get("every_minutes")):
             payload["schedule"] = {k: v for k, v in schedule.items() if k != "off"}
         elif isinstance(schedule, dict) and schedule.get("off"):
@@ -6093,8 +6129,8 @@ def save_skill(
         return f"Failed to save skill: {e}"
     verb = "Updated" if updating else "Saved"
     if payload.get("schedule"):
-        return f"{verb} skill {slug!r} at {path} (scheduled: {payload['schedule']})."
-    return f"{verb} skill {slug!r} at {path} (runs only when asked)."
+        return f"{verb} skill {slug!r} at {path} (scheduled: {payload['schedule']}).{schedule_note}"
+    return f"{verb} skill {slug!r} at {path} (runs only when asked).{schedule_note}"
 
 
 # --- proactive scheduler: a skill can carry an optional "schedule" so Jarvis acts on its own ---
@@ -6579,6 +6615,7 @@ def _run_single_flight(name: str, fn, *args) -> bool:
 def _scheduler_steps(now: datetime) -> list:
     return [
         ("scheduled skills", _start_due_skills, (now,)),
+        ("watches", _start_due_watches, (now,)),
         ("reminders", _check_due_reminders, (now,)),
         ("background tasks", _check_background_tasks, (now,)),
         ("mcp retry", _retry_failed_mcp_servers, (now,)),
@@ -7426,6 +7463,178 @@ def _skill_name_in_file(path: Path) -> str:
         return ""
 
 
+# --- Watches (2026-10-06, owner request; jarvis_watches.py) ------------------------------------------------------
+# "Keep monitoring X and, when something important comes up by my rule, say it out loud." Each due check is one
+# unattended agent run (same limits as a scheduled skill: no command source, taint rules once it reads outside
+# text); the code decides what is new, so each thing is said once per stage. Spoken right away (owner's choice), but
+# Sleep/Focus/Safe mode hold it like the owner's own reminders.
+def _watches() -> watches_mod.Store:
+    return watches_mod.Store(_memory_db_connect, _memory_db_lock)
+
+
+def _watch_changes_allowed() -> bool:
+    """The user makes and changes watches (PC or their own phone); an automatic run never does: what a watch says
+    to check becomes instructions for later unattended runs."""
+    return (_current_command_source() in ("voice", "text", "dashboard", "phone")
+            and not getattr(_command_ctx, "untrusted_origin", False))
+
+
+def _watch_summary(w: dict) -> str:
+    last = (f" Last check {str(w['last_run'])[:16].replace('T', ' ')} ({w.get('last_status') or '?'})"
+            if w.get("last_run") else " Not checked yet.")
+    say = f" | says: {w['announce'][:120]}" if w.get("announce") else ""
+    return (f"#{w['id']} {w['name']} ({'on' if w['enabled'] else 'OFF'}, {watches_mod.describe(w['schedule'])}): "
+            f"checks {w['what'][:160]} | speaks up when: {w['rule'][:160]}{say}.{last}")
+
+
+def _watches_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "list").strip().lower()
+    store = _watches()
+    if action == "list":
+        rows = store.all()
+        return ("\n".join(_watch_summary(w) for w in rows) if rows else
+                "No watches yet. Say e.g. 'watch my exam timetable and tell me when an exam is coming up'.")
+    if action in ("show", "told"):
+        w, why = store.find(str(inp.get("name") or ""))
+        if not w:
+            return f"Tool failed: {why}."
+        told = store.told(w["id"])
+        lines = [f"- {t['told_at'][:10]}: {t['item']}" + (f" ({t['event_date']})" if t.get("event_date") else "")
+                 + f" [{t['stage']}]: {t['said']}" for t in told[-15:]]
+        return _watch_summary(w) + "\nAlready told the user:\n" + ("\n".join(lines) or "- nothing yet")
+    if not _watch_changes_allowed():
+        return "Tool failed: watches can only be made or changed by the user, not from an automatic run."
+    if action == "create":
+        name = watches_mod.clip(inp.get("name"), 60)
+        what, rule = watches_mod.clip(inp.get("what")), watches_mod.clip(inp.get("rule"))
+        announce = watches_mod.clip(inp.get("announce"), 400)
+        given = inp.get("schedule")
+        schedule, note = watches_mod.parse_schedule(given) if given not in (None, "", {}) else (None, "")
+        # Owner, 2026-10-06: a watch that isn't complete is never saved half-done; the user is asked again.
+        asks = watches_mod.missing_parts(name, what, rule, given not in (None, "", {}), announce)
+        if given not in (None, "", {}) and schedule is None:
+            asks.append(f"I couldn't understand the timing ({note}): how often should I check, e.g. every day at 8 am?")
+        if asks:
+            return ("Tool failed: the watch is NOT saved yet, some details are missing or unclear. Ask the user these "
+                    "questions in one short message, then call watches create again with everything (keep what they "
+                    "already said). Don't say the watch is set up.\n" + "\n".join(f"{i}. {q}" for i, q in
+                                                                          enumerate(asks, 1)))
+        rows = store.all()
+        if any(w["name"].lower() == name.lower() for w in rows):
+            return f"Tool failed: a watch called {name!r} already exists; use action=edit to change it."
+        twin = store.similar(what)
+        if twin:
+            return (f"Tool failed: there's already a watch for that: {_watch_summary(twin)}\nAsk the user whether to "
+                    "change that one (action=edit" + (", or action=on to turn it back on" if not twin["enabled"] else "")
+                    + ") instead of making a second one.")
+        if len(rows) >= watches_mod.MAX_WATCHES:
+            return f"Tool failed: there are already {len(rows)} watches; delete one first."
+        line = startline.clean(inp.get("start_line")) or f"Checking your {name.replace('_', ' ')} watch."
+        wid = store.create(name, what, rule, schedule, line, announce)
+        return (f"Made watch #{wid} {name!r}: I'll check {what[:160]} {note}, and speak up when something matches '{rule[:160]}'. "
+                "Each thing is said once per stage (when I first notice it, about two weeks before, three days "
+                "before, the day before and on the day); in Sleep or Focus mode it waits until that ends. Say "
+                f"'check my {name.replace('_', ' ')} watch' to run it now.")
+    w, why = store.find(str(inp.get("name") or ""))
+    if not w:
+        return f"Tool failed: {why}."
+    if action == "edit":
+        fields, notes = {}, []
+        for key in ("what", "rule", "announce"):
+            if watches_mod.clip(inp.get(key)):
+                fields[key] = watches_mod.clip(inp.get(key))
+        if watches_mod.clip(inp.get("start_line")):
+            fields["start_line"] = startline.clean(inp.get("start_line"))
+        if str(inp.get("schedule") or "").strip():
+            schedule, note = watches_mod.parse_schedule(inp.get("schedule"))
+            if schedule is None:
+                return f"Tool failed: {note}."
+            fields["schedule"], fields["fails"] = schedule, 0
+            notes.append(f"now {note}")
+        if not fields:
+            return "Tool failed: say what to change (what, rule, announce, schedule or start_line)."
+        merged = dict(w, **fields)
+        asks = [q for q in watches_mod.missing_parts(merged["name"], merged["what"], merged["rule"], True,
+                                                     merged.get("announce") or "x x")]
+        if asks:  # an edit may not leave the watch too vague to run (watches made before 'announce' existed pass)
+            return ("Tool failed: not changed, the new wording is too unclear. Ask the user:\n"
+                    + "\n".join(f"{i}. {q}" for i, q in enumerate(asks, 1)))
+        store.update(w["id"], **fields)
+        return f"Updated watch {w['name']!r} ({', '.join(fields)}{'; ' + '; '.join(notes) if notes else ''})."
+    if action in ("off", "on"):
+        store.update(w["id"], enabled=1 if action == "on" else 0, fails=0)
+        return (f"Turned off the {w['name']} watch; it won't check on its own until you turn it back on."
+                if action == "off" else
+                f"Turned the {w['name']} watch back on ({watches_mod.describe(w['schedule'])}).")
+    if action == "delete":
+        store.delete(w["id"])
+        return f"Deleted the {w['name']} watch and what it remembered telling you."
+    if action == "check":
+        if not _run_single_flight(f"watch:{w['id']}", _run_watch, w, True):
+            return f"The {w['name']} watch is being checked right now already."
+        return (f"Checking the {w['name']} watch now in the background; I'll say what I find (it can take a "
+                "minute). Don't claim any result yet.")
+    return f"Tool failed: unknown action {action!r}."
+
+
+def _start_due_watches(now: datetime) -> None:
+    for w in _watches().all():
+        if watches_mod.is_due(w, now):
+            _run_single_flight(f"watch:{w['id']}", _run_watch, w)
+
+
+def _run_watch(watch: dict, manual: bool = False) -> None:
+    """One check of a watch: an agent run that answers with JSON alerts; only NEW ones (per stage) are spoken."""
+    store, name, now = _watches(), watch["name"], datetime.now()
+    line = startline.clean(watch.get("start_line")) or f"Checking your {name.replace('_', ' ')} watch."
+    label = f"watch {name}: {line}"
+    session_id = dashboard.start_session("scheduled", label)
+    dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "scheduled", "transcript": label}})
+    log.info("Running watch %r%s.", name, " (asked for now)" if manual else "")
+    reply, status, said = None, "failed", []
+    _set_scheduled_task_running(True)
+    record_recent_task(f"watch: {name}")
+    _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
+    try:
+        told = store.told(watch["id"])
+        reply = run_agent_loop(watches_mod.check_prompt(watch, told, now, USER_NAME, manual=manual),
+                               tool_result_fallback=False)
+        alerts = None if reply is None or reply == _llm_unavailable_reply() else watches_mod.parse_alerts(reply)
+        if reply is not None and reply != _llm_unavailable_reply() and alerts is None:
+            status = "unreadable"
+            log.warning("Watch %r: the check's answer had no readable alerts: %.200r", name, reply)
+        elif alerts is not None:
+            status = "ok"
+            for alert in watches_mod.pick_new(alerts, told, now.date(), repeat=manual):
+                store.mark_told(watch["id"], alert)
+                said.append(alert["say"])
+        if said:
+            # Spoken right away like the owner's own reminders (bypass the busy-hours hold); Sleep/Focus/Safe mode
+            # still hold it until they end.
+            queue_or_deliver_notification(" ".join(said), important=True, bypass_busy_gate=True)
+        elif manual:
+            queue_or_deliver_notification(
+                f"I checked your {name.replace('_', ' ')} watch: nothing matches your rule right now." if status == "ok"
+                else f"I couldn't finish checking your {name.replace('_', ' ')} watch; I'll try again later.",
+                important=True, bypass_busy_gate=True)
+    except Exception as e:
+        log.warning("Watch %r failed: %s", name, e)
+    finally:
+        fails = 0 if status == "ok" else int(watch.get("fails") or 0) + 1
+        summary = (" ".join(said) or ("Nothing new matched." if status == "ok" else
+                                      f"Check {status}: {str(reply or '(no answer)')[:300]}"))
+        try:
+            store.update(watch["id"], last_run=now.isoformat(timespec="seconds"), last_status=status,
+                         last_result=watches_mod.clip(summary, 400), fails=fails)
+        except Exception as e:
+            log.warning("Watch %r: couldn't record the check: %s", name, e)
+        dashboard.end_session(session_id, "done" if status == "ok" else "failed", summary)
+        dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "done" if status == "ok"
+                                                          else "failed", "reply": summary}})
+        _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
+        _set_scheduled_task_running(False)
+
+
 def _macros_tool(inp: dict) -> str:
     transcript = f"(macro tool) {inp.get('name') or ''}"
     return macros.handle_tool(_memory_db_connect, _memory_db_lock, inp, _macro_known_tools(), _attended(),
@@ -8252,6 +8461,27 @@ _BATCH_TOOL_HANDLERS.update({
 })
 
 
+@_feature("watches")
+def _feature_watches(action: str, payload: dict):
+    """Toolbox "Watches" panel: each watch, its rule and what it already told you; off/on/delete/check now."""
+    store = _watches()
+    if action == "get":
+        with _single_flight_lock:
+            running = sorted(n for n in _single_flight_running if n.startswith("watch:"))
+        rows = []
+        for w in store.all():
+            told = store.told(w["id"])
+            rows.append(dict(w, schedule_text=watches_mod.describe(w["schedule"]), told=told[-8:],
+                             running=f"watch:{w['id']}" in running))
+        return {"watches": rows}
+    if action in ("off", "on", "delete", "check"):
+        inp = {"action": action, "name": str((payload or {}).get("name") or "")}
+        res = _as_dashboard(_watches_tool, inp)
+        _log_action_audit("watches", inp, "(dashboard)", res)
+        return {"result": res}
+    return None
+
+
 @_feature("agents")
 def _feature_agents(action: str, payload: dict):
     if action == "get":
@@ -8772,7 +9002,8 @@ def _send_to_my_phone_tool(inp: dict) -> str:
     return f"Sent to your {' and '.join(sent)}: {text[:120]}{'...' if len(text) > 120 else ''}{note}"
 
 
-_BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool})
+_BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
+                             "watches": _watches_tool})
 
 
 # --- The user's real browser tabs (2026-10-03, owner request) -----------------------------------------------------
@@ -12424,8 +12655,16 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
     if _BROWSER_TAB_RE.search(transcript or "") or _browser_in_front():
         core.add("browser_tabs")
     if _SKILL_MANAGE_RE.search(transcript or ""):
-        core.add("skills")
+        core |= {"skills", "watches"}
+    if _WATCH_RE.search(transcript or ""):
+        core.add("watches")
     return core
+
+
+# "monitor my timetable and tell me when exams are near", "keep an eye on X", "let me know when..." (2026-10-06)
+_WATCH_RE = re.compile(
+    r"\b(?:monitor(?:ing)?|watch(?:es|ing)?|keep (?:an )?eye on|keep track of|track(?:ing)?|"
+    r"(?:let me know|tell me|alert me|warn me|inform me|notify me) (?:when|if|whenever|once|before))\b", re.I)
 
 
 # "cancel my billing monitoring", "turn off the gmail check", "what skills do I have" (2026-10-03 debug report)
