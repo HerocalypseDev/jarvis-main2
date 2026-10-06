@@ -1814,7 +1814,8 @@ row there each phase rather than only stating the total in chat.
 | 150 (full audit, second pass: 60 fix batches in email-started/unattended run limits, honest tool results, timezones, restart/Telegram loops, secrets, updates that keep schedules (the morning briefing had silently stopped), atomic writes; ~95 new tests; MEASURED ~90 min) | Opus 5.5 | ~90 min | ~$9.00–$13.00 |
 | 151 (start lines: each skill/job/routine stores a line about its task, one-off commands get one from the owner's words, scheduled runs speak it only when they talk anyway (quiet ones show it on the dashboard), existing skills backfilled; 24 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 152 (foreign words in speech: Japanese/Korean/Russian/Greek and other scripts said in Latin letters by the same voice, bracketed pronunciation from the AI used first, tables for kana/Hangul/Cyrillic/Greek, tiny cached model call for the rest; 14 new tests) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~4624 min** | **~$312.35–$439.35** |
+| 153 (Watches: keep checking something the user names and speak up once per stage by their own rule, asks again when details are missing, Toolbox panel; save_skill reads cron/word schedules; 36 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
+| **Running total (final)** | | **~4664 min** | **~$315.85–$444.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2703,6 +2704,33 @@ Tests: `test_speech_script.py` (14). Rules to keep:
 - A local Japanese dictionary (pykakasi 2.3.0) was tried and NOT used: it read 愛してる as "itoshi teru" and は as "ha".
 - Not verified live on the PC (real voice). Residuals: kana-only text reads the particle は as "ha"; Korean is romanized
   syllable by syllable (no sound-change rules); the English voice still has an English accent.
+
+## Watches: keep checking something and speak up (2026-10-06, owner request)
+
+"Will my timetable skill actually monitor my calendar and say 'Hero, your exams are coming soon' without me asking?"
+No: its schedule came in as "0 8 * * *" (save_skill silently dropped any non-dict schedule), and a scheduled skill only
+speaks for a fixed list of urgent things, not the user's own rule. Owner's choices (asked first): a separate Watches
+feature (not skills), schedule per watch (default asked for, usual every day at 8), each thing said once per stage,
+spoken right away but held in Sleep/Focus/Safe mode. Then (same day): "if not enough is given, ask me again".
+Code: `jarvis_watches.py` (pure: schedule parser, due check, stages, JSON alert parsing, completeness check, Store),
+`watches` batch tool + `_run_watch` + scheduler step "watches" + `@_feature("watches")` Toolbox panel in jarvis.py.
+Tests: `test_watches.py` (36). Rules to keep:
+- A watch = name + what (where to look) + rule (what counts as important, user's words) + announce (what to say) +
+  schedule. `missing_parts` refuses to save until all are there and clear (a "what" with no place to look: file,
+  calendar, mail, URL...; a vague rule like "anything important"; no announce; no schedule; unreadable timing): the tool
+  answers "Tool failed: NOT saved yet" with numbered questions for the model to ask. A watch on the same thing as an
+  existing one is refused with that one's details (edit it / turn it on instead). An edit may not make a watch vague.
+- Each due check = one unattended `run_agent_loop` (no command source, taint rules once it reads outside text) whose
+  answer is JSON `{"alerts": [{item, date, say}]}`. The CODE decides what is new: stage from the date (`ahead` = first
+  notice, `2 weeks`, `3 days`, `tomorrow`, `today`, `passed` up to 2 days after, `now` for undated); one telling per
+  item per stage (`watch_told`, items matched by shared words, different dates = different items). New ones are spoken
+  through `queue_or_deliver_notification(important=True, bypass_busy_gate=True)`. "check my X watch" runs it now and
+  repeats current items.
+- A failed or unreadable check retries after 30 min, at most twice; daily checks catch up only within 6 h; shortest
+  interval 15 min (each check is an AI call). Making/changing watches: voice/typed/dashboard/phone only, never from an
+  automatic or email-started run (its text becomes instructions for later unattended runs).
+- `save_skill` now understands a schedule given as words or cron (shared parser) and says when one couldn't be read.
+- Not verified live on the PC: a real check against the owner's timetable PDF/Google Calendar and the spoken result.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
