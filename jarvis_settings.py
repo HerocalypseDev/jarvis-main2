@@ -109,6 +109,16 @@ SETTINGS: list[dict] = [
      "live": "env"},
     {"key": "JARVIS_REPLY_STYLE", "label": "Reply length", "kind": "choice", "default": "normal",
      "choices": ["normal", "brief", "detailed"], "help": "Also by voice: \"be brief from now on\".", "live": "env"},
+    {"key": "JARVIS_PERSONALITY", "label": "Personality", "kind": "choice", "default": "classic",
+     "choices": ["classic", "playful", "serious", "genz", "tired", "hype", "naija", "auto"],
+     "help": "How Jarvis talks: classic (calm butler), playful, serious, genz, tired, hype (coach), naija (Pidgin), "
+             "or auto (changes with the time of day, and goes tired after a busy day). Also by voice: "
+             "\"switch to playful mode\".", "live": "env"},
+    {"key": "JARVIS_PERSONALITY_SCHEDULE", "label": "Auto personality: times", "kind": "text",
+     "default": "05:00 hype, 11:00 playful, 17:00 classic, 21:00 tired",
+     "help": "Only used when Personality is auto: from each time on, that personality.", "live": "env"},
+    {"key": "JARVIS_PERSONALITY_TIRED_AFTER", "label": "Auto personality: tired after N commands a day", "kind": "number",
+     "default": "60", "help": "Only used when Personality is auto. 0 = never tired from a busy day.", "live": "env"},
     {"key": "JARVIS_DAILY_BUDGET_USD", "label": "Daily API budget alert ($)", "kind": "number", "default": "5",
      "help": "One heads-up a day when today's estimated spend passes this. 0 = off.", "live": "env"},
     {"key": "JARVIS_MEETING_HEADSUP_MIN", "label": "Meeting heads-up (minutes before)", "kind": "number",

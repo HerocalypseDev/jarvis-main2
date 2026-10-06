@@ -1815,7 +1815,8 @@ row there each phase rather than only stating the total in chat.
 | 151 (start lines: each skill/job/routine stores a line about its task, one-off commands get one from the owner's words, scheduled runs speak it only when they talk anyway (quiet ones show it on the dashboard), existing skills backfilled; 24 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 152 (foreign words in speech: Japanese/Korean/Russian/Greek and other scripts said in Latin letters by the same voice, bracketed pronunciation from the AI used first, tables for kana/Hangul/Cyrillic/Greek, tiny cached model call for the rest; 14 new tests) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
 | 153 (Watches: keep checking something the user names and speak up once per stage by their own rule, asks again when details are missing, Toolbox panel; save_skill reads cron/word schedules; 36 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
-| **Running total (final)** | | **~4664 min** | **~$315.85–$444.25** |
+| 154 (personalities: Classic + Playful/Serious/Gen Z/Tired/Hype/Naija + Auto by time of day and workload, Settings + voice switch, fixed openers around code-built lines; conftest isolation; found and fixed a quick-answer branch bug; 24 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
+| **Running total (final)** | | **~4704 min** | **~$319.35–$449.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2731,6 +2732,34 @@ Tests: `test_watches.py` (36). Rules to keep:
   automatic or email-started run (its text becomes instructions for later unattended runs).
 - `save_skill` now understands a schedule given as words or cron (shared parser) and says when one couldn't be read.
 - Not verified live on the PC: a real check against the owner's timetable PDF/Google Calendar and the spoken result.
+
+## Personalities (2026-10-06, owner request)
+
+Owner's choices (asked first): Classic (default) + Playful, Serious, Gen Z, Tired, plus two Jarvis suggested (Hype coach,
+Naija Pidgin); "confident swagger" ego (attitude and light bragging, but it always does the task, straight away);
+everywhere Jarvis talks to the owner; switch in Settings and by voice; and (same day) an **Auto** mode: a different
+character by time of day (default 05:00 hype, 11:00 playful, 17:00 classic, 21:00 tired) and Tired after a busy day.
+Code: `jarvis_personality.py` (pure), wiring in jarvis.py (`_personality_now`, `_personality_reply`,
+`_flavored_quick_reply`), intent `personality` in `jarvis_latency.py`, settings `JARVIS_PERSONALITY` /
+`JARVIS_PERSONALITY_SCHEDULE` / `JARVIS_PERSONALITY_TIRED_AFTER` (live). Tests: `test_personality.py` (24). Rules to keep:
+- How Jarvis TALKS, never what it does. AI-written text (replies, scheduled skills, watches, the speech summary) gets
+  `prompt_line()` in the **volatile** block (never the cached stable one) and the reply-cache/summary-cache keys include the
+  personality. The line says: never refuse/stall/argue because of the attitude, never change a fact for style, say warnings/
+  errors/a dangerous action needing a yes plainly first, no emojis, and text for other people (emails, messages, documents,
+  code) stays in a normal register. The email auto-reply and Sleep Mode family replies never get it.
+- Lines the code builds itself (reminders, timers, quick no-AI answers, the wake-up recap, start lines, the "On it." lead-ins)
+  use FIXED per-personality openers/closers/lead words (`flavor`, `flavor_start`, `ack_phrases`) around the SAME words: no
+  AI call, no delay, a reminder's text can't be lost or changed. Not flavoured: repeat, shorter, hush, the switch itself.
+- Auto: `pick()` = Tired once today's owner commands (voice/typed/dashboard/phone sessions, not Jarvis's own runs; counted
+  once a minute) reach `JARVIS_PERSONALITY_TIRED_AFTER` (60, 0 = off), else the schedule slot (before the first slot = last
+  night's). A voice switch to a named personality leaves Auto; "switch to auto mode" goes back.
+- Voice switching is whole utterances only ("switch to playful mode", "be serious", "talk in pidgin", "go back to normal",
+  "what's your personality"); "a serious problem..." or "play something fun" never switch anything.
+- `conftest.py` (new) clears the personality settings for every test, so a personality in the owner's real .env can't
+  change the wording other tests check.
+- Found while building: a misplaced flavour step broke the quick-answer branch and sent "stop talking"/"repeat" to the AI;
+  fixed and pinned by a test.
+- Not verified live on the PC: how each personality actually sounds through the voice (Naija through an English voice).
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 
