@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1791273278.7021801,
-    "seen": 1791273300.901004,
-    "ast_hash": "9f614bd948eb64383297392c6e4172d9",
+    "mtime": 1791293174.3273978,
+    "seen": 1791293304.2815309,
+    "ast_hash": "c40ece36021ca2d95c8a87b8636105ac",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1791273278.69418,
-    "seen": 1791273300.9012651,
-    "ast_hash": "61f8a96ecf4b917e7a1a7158ec1be6e7",
+    "mtime": 1791293284.4826632,
+    "seen": 1791293304.2817702,
+    "ast_hash": "ed505f0006edb50546b6b6810a9a3e93",
     "semantic_hash": ""
   },
   "README.md": {
@@ -594,9 +594,9 @@
     "semantic_hash": ""
   },
   "jarvis_latency.py": {
-    "mtime": 1791185496.270122,
-    "seen": 1791185692.6311321,
-    "ast_hash": "68aef614dd7d773fb123b8874fa1f994",
+    "mtime": 1791293150.666655,
+    "seen": 1791293304.2815895,
+    "ast_hash": "cac14fc790cbbfb81db3d062fd387c60",
     "semantic_hash": ""
   },
   "jarvis_stt_deepgram.py": {
@@ -642,9 +642,9 @@
     "semantic_hash": ""
   },
   "jarvis_settings.py": {
-    "mtime": 1791185497.9357347,
-    "seen": 1791185692.6311736,
-    "ast_hash": "62fe6deeed163d69c07e1c18c71b7ade",
+    "mtime": 1791293150.670868,
+    "seen": 1791293304.2816153,
+    "ast_hash": "f08c36356a096ac26f73d7e4521da610",
     "semantic_hash": ""
   },
   "jarvis_weather.py": {
@@ -1332,9 +1332,9 @@
     "semantic_hash": ""
   },
   "public/README.md": {
-    "mtime": 1791273278.7021801,
-    "seen": 1791273300.901289,
-    "ast_hash": "185140afa7d5ba8711f74e0479b33acb",
+    "mtime": 1791293284.4851305,
+    "seen": 1791293304.2817948,
+    "ast_hash": "965424177400c4a9d9c103a1c8da29f0",
     "semantic_hash": ""
   },
   "public/examples/skills/README.md": {
@@ -1731,6 +1731,24 @@
     "mtime": 1791273339.6233325,
     "seen": 1791273378.2933095,
     "ast_hash": "d5e6393e985570428fd6d1a9f4fa3f69",
+    "semantic_hash": ""
+  },
+  "conftest.py": {
+    "mtime": 1791293025.8346477,
+    "seen": 1791293304.2815027,
+    "ast_hash": "eef4d758aa9ab41489c1ef3f66771be5",
+    "semantic_hash": ""
+  },
+  "jarvis_personality.py": {
+    "mtime": 1791292902.2389293,
+    "seen": 1791293304.2816043,
+    "ast_hash": "47fd270448ca48e410b7305a5a63b563",
+    "semantic_hash": ""
+  },
+  "test_personality.py": {
+    "mtime": 1791293186.7146573,
+    "seen": 1791293304.2817373,
+    "ast_hash": "19f093293c4f8f6ffe7847b66eb6a3be",
     "semantic_hash": ""
   }
 }

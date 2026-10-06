@@ -25,6 +25,8 @@ Nothing is shared with anyone except the AI/voice services you choose to configu
   for; everything else waits for "what did I miss?" and the dashboard Home card.
 - **Daily life:** reminders, named timers, morning briefing, weather, "what's urgent?", sleep mode
   with a wake-up recap, media and volume control, window control.
+- **Personalities:** Classic, Playful, Serious, Gen Z, Tired, Hype coach, Naija (Pidgin), or Auto (energetic in
+  the morning, tired at night or after a busy day). Settings, or say "switch to playful mode".
 - **Watches:** "watch my exam timetable and tell me when an exam is coming up": Jarvis keeps checking
   what you named and speaks up when something matches your rule (once when it notices, about two weeks
   before, three days before, the day before and on the day). If you leave out a detail it asks you.

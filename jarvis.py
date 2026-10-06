@@ -134,6 +134,7 @@ import jarvis_browser_tabs as browser_tabs
 import jarvis_context as reqctx
 import jarvis_missed as missed
 import jarvis_watches as watches_mod
+import jarvis_personality as personality
 import jarvis_quickfacts as quickfacts
 import jarvis_mail_reply as mail_reply
 
@@ -3952,6 +3953,59 @@ def _wants_full_speech(transcript: str) -> bool:
     return bool(_FULL_SPEECH_RE.search((transcript or "").split(SELECTION_TAG)[0].split(APPSHOT_TAG)[0]))
 
 
+# --- Personality (2026-10-06, owner request; jarvis_personality.py) ------------------------------------------------
+_personality_busy = {"at": 0.0, "count": 0}
+
+
+def _commands_today() -> int:
+    """How many things the owner asked today (voice/typed/dashboard/phone): Auto turns Tired after a busy day.
+    Counted at most once a minute."""
+    now = time.time()
+    if now - _personality_busy["at"] < 60:
+        return _personality_busy["count"]
+    count = 0
+    try:
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM dashboard_sessions WHERE started_at >= ? AND source IN "
+                    "('voice', 'text', 'dashboard', 'phone')",
+                    (datetime.now().strftime("%Y-%m-%d"),)).fetchone()[0]
+            finally:
+                conn.close()
+    except Exception:
+        count = _personality_busy["count"]
+    _personality_busy.update(at=now, count=int(count or 0))
+    return _personality_busy["count"]
+
+
+def _personality_now() -> tuple[str, str]:
+    """(personality, why) right now: the Settings choice, or what Auto picks for this time of day and workload."""
+    setting = os.environ.get("JARVIS_PERSONALITY") or personality.DEFAULT
+    if personality.setting_value(setting) != personality.AUTO:
+        return personality.normalize(setting), "chosen in Settings"
+    tired_after = env_int("JARVIS_PERSONALITY_TIRED_AFTER", personality.DEFAULT_TIRED_AFTER)
+    return personality.pick(setting, datetime.now(), _commands_today() if tired_after > 0 else 0, tired_after,
+                            os.environ.get("JARVIS_PERSONALITY_SCHEDULE") or personality.DEFAULT_SCHEDULE)
+
+
+def _personality_name() -> str:
+    try:
+        return _personality_now()[0]
+    except Exception:
+        return personality.DEFAULT
+
+
+def _personality_reply(transcript: str) -> str:
+    choice = personality.parse_switch(transcript)
+    if choice in (None, "status"):
+        name, why = _personality_now()
+        return personality.status_reply(os.environ.get("JARVIS_PERSONALITY"), name, why)
+    settings.set_setting("JARVIS_PERSONALITY", choice)
+    return personality.switched_reply(choice, _personality_name())
+
+
 def _summarize_for_speech(text: str) -> str:
     """Shortens a reply for Piper to speak — the dashboard still shows `text` in full via
     action_audit/dashboard_sessions, this only affects what comes out of the speakers. Skipped
@@ -3964,7 +4018,7 @@ def _summarize_for_speech(text: str) -> str:
     # survives restarts (JARVIS_SUMMARY_CACHE=0 disables).
     summary_key = None
     if cache.enabled("summary"):
-        summary_key = cache.stable_hash(CLAUDE_MODEL, text[:4000])
+        summary_key = cache.stable_hash(CLAUDE_MODEL, text[:4000], _personality_name())
         cached_summary = _speech_summary_kv().get(summary_key, SPEECH_SUMMARY_CACHE_MAX_AGE_S)
         cache.record("summary", cached_summary is not None)
         if cached_summary:
@@ -3979,6 +4033,7 @@ def _summarize_for_speech(text: str) -> str:
             "refer to a file or folder by name only, not its full location. Words in another writing "
             "system (Japanese, Chinese, Korean, Arabic, Russian...) are written only as their pronunciation in "
             "Latin letters (e.g. 'ai shiteru'), never in the original script."
+            + personality.speech_hint(_personality_name())
         ),
         "messages": [{"role": "user", "content": text[:4000]}],
     }
@@ -5203,7 +5258,7 @@ def _sleep_wake_digest(started_at: str, ended_at: str, kind: str = "sleep") -> N
             digest = _build_sleep_digest(items, nap=(kind == "nap"))
             digest += _missed_since_line(started_at)
             sleep_mode.save_digest(started_at, digest)
-            speak_text(_collapse_paths_for_speech(digest))
+            speak_text(_collapse_paths_for_speech(personality.flavor(digest, _personality_name())))
         except Exception as e:
             log.warning("Could not deliver Sleep Mode wake digest: %s", e)
 
@@ -5850,7 +5905,8 @@ def _check_due_reminders(now: datetime) -> None:
                 send_windows_toast("Jarvis Reminder", text)
             # A reminder the user set must fire on time; only unprompted messages wait out the busy gate.
             queue_or_deliver_notification(
-                f"Reminder{_late_note(due_at, now)}: {text}", urgent=bool(urgent), bypass_busy_gate=True, is_reminder=True
+                personality.flavor(f"Reminder{_late_note(due_at, now)}: {text}", _personality_name()),
+                urgent=bool(urgent), bypass_busy_gate=True, is_reminder=True
             )
             record_recent_task(f"reminder delivered: {text}")
         except Exception as e:
@@ -6371,7 +6427,7 @@ def _say_start_line(line: str) -> bool:
     if not line or not _ack_enabled() or _start_line_held():
         return False
     try:
-        speak_text(line)
+        speak_text(personality.flavor_start(line, _personality_name()))
         return True
     except Exception as e:
         log.debug("start line not spoken: %s", e)
@@ -8609,7 +8665,8 @@ def _deferred_tick(now: datetime) -> None:
     for job in deferred.claim_due(_deferred_store, now, still_running=set(_deferred_running)):
         if job["kind"] != "execute_jarvis":
             deferred.finish(_deferred_store, job["id"], True, "notified", job["attempts"])
-            queue_or_deliver_notification(f"Reminder: {job['instruction']}", bypass_busy_gate=True, is_reminder=True)
+            queue_or_deliver_notification(personality.flavor(f"Reminder: {job['instruction']}", _personality_name()),
+                                          bypass_busy_gate=True, is_reminder=True)
             continue
         if autonomy.dry_run():
             res = f"(dry run) would run: {job['instruction']}"
@@ -9920,6 +9977,7 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
         + _recent_actions_line()
         + _missed_line()
         + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
+        + personality.prompt_line(_personality_name())
         + _relevant_memory_line(query)
         + _lessons_line(query)
         + _relevant_skills_line(query)
@@ -14003,7 +14061,8 @@ def _ack_kind(transcript: str) -> str | None:
 
 
 def _pick_ack(kind: str) -> str:
-    pool = [p for p in (ACK_LOOKUP if kind == "lookup" else ACK_ACTION) if p != _ack_last["phrase"]]
+    own = personality.ack_phrases(_personality_name())  # the personality's own lead-ins replace the stock ones
+    pool = [p for p in (own or (ACK_LOOKUP if kind == "lookup" else ACK_ACTION)) if p != _ack_last["phrase"]]
     phrase = random.choice(pool or list(ACK_PHRASES))
     _ack_last["phrase"] = phrase
     return phrase
@@ -14119,6 +14178,8 @@ def _start_announcement(line: str) -> bool:
     _command_ctx.ack_started = True  # the generic filler must not follow a specific announcement
     previous = getattr(_command_ctx, "ack_thread", None)
 
+    line = personality.flavor_start(line, _personality_name())
+
     def _run() -> None:
         _command_ctx.started = started
         if previous is not None:
@@ -14225,7 +14286,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             cache.normalize_text(transcript),
             sleep_mode.system_prompt_context_line() + face.system_prompt_context_line()
             + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
-            + f"|self{selfaware.revision()}",
+            + f"|self{selfaware.revision()}|p{_personality_name()}",
         )
         cached_reply = _reply_cache.get(reply_key)
         cache.record("reply", cached_reply is not cache.MISS, repr(transcript[:40]))
@@ -14809,7 +14870,8 @@ def _timer_fired(tid: int) -> None:
         t = _timers.pop(tid, None)
     if t:
         _timers_db("UPDATE timers SET status = 'done' WHERE id = ?", (tid,))
-        queue_or_deliver_notification(f"Your {t['label']} timer is done.", urgent=True)
+        queue_or_deliver_notification(personality.flavor(f"Your {t['label']} timer is done.", _personality_name()),
+                                      urgent=True)
 
 
 def _restore_timers() -> None:
@@ -15039,6 +15101,15 @@ def _volume_reply(transcript: str) -> str | None:
 # that line to finish, because speech streaming in would compete with the test for the connection.
 SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
 _SLOW_INTENTS = {"speedtest", "update"}
+# Quick answers that keep their exact wording: a replay, a rewrite, silence, the switch itself (already in the new voice).
+_UNFLAVORED_INTENTS = {"repeat", "shorter", "hush", "personality"}
+
+
+def _flavored_quick_reply(intent: str, reply):
+    """A no-AI answer said in the chosen personality: same words, the personality's opener/closer around them."""
+    if not reply or intent in _UNFLAVORED_INTENTS:
+        return reply
+    return personality.flavor(reply, _personality_name())
 
 
 # "Update time" (2026-10-03 debug report: a self-made macro for it called a tool wrongly and said "Done" without doing
@@ -15166,6 +15237,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return _media_reply(transcript)
     if intent == "volume":
         return _volume_reply(transcript)
+    if intent == "personality":
+        return _personality_reply(transcript)
     if intent == "reply_style":
         style = chief.parse_reply_style(transcript) or "normal"
         settings.set_setting("JARVIS_REPLY_STYLE", style)
@@ -15362,10 +15435,10 @@ def _handle_text_command_impl(
     )
     speaks_here = reply_sink is None or source == "dashboard"
     if deterministic_reply is not None:
-        reply = deterministic_reply
+        reply = _flavored_quick_reply(intent, deterministic_reply)
     elif slow_intent:
         try:
-            reply = _deterministic_intent_reply(intent, transcript)
+            reply = _flavored_quick_reply(intent, _deterministic_intent_reply(intent, transcript))
         except Exception:
             dashboard.end_session(session_id, "failed", None)
             dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": "failed"}})

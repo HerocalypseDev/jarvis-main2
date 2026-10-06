@@ -18,6 +18,8 @@ import threading
 import time
 from collections import deque
 
+import jarvis_personality as _personality
+
 log = logging.getLogger("jarvis")
 
 MAX_HISTORY = 200
@@ -115,6 +117,8 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     # Second wave (2026-09-23): "stop talking" says nothing back; a standing reply-length choice.
     ("hush", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:stop talking|stop|shut up|be quiet|quiet|hush|enough|silence|that's enough)"
                         r"(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
+    # Personalities (2026-10-06): "switch to playful mode", "be serious", "auto mode", "what's your personality".
+    ("personality", _personality.INTENT_RE),
     ("reply_style", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:please\s+)?(?:(?:be|keep (?:it|answers|replies|them))\s+(?:brief|short|concise|terse)"
                                r"|(?:give me |use )?(?:shorter|brief|short|concise|longer|detailed|more detailed|normal|regular|default) (?:answers|replies)"
                                r"|be more (?:detailed|thorough)|go back to normal (?:answers|replies|length))"
