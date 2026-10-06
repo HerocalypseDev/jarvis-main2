@@ -53,7 +53,7 @@ def test_a_daily_watch_is_due_once_after_its_time_and_retries_a_failed_check():
 
 def test_each_item_is_said_once_per_stage():
     today = date(2026, 10, 6)
-    exam = {"item": "Post-UTME exam", "date": "2026-10-16", "say": "Hero, your Post-UTME exam is in 10 days."}
+    exam = {"item": "Maths final exam", "date": "2026-10-16", "say": "Hero, your maths final is in 10 days."}
     told: list[dict] = []
 
     def run(day, alerts):
@@ -64,13 +64,13 @@ def test_each_item_is_said_once_per_stage():
         return [a["stage"] for a in new]
 
     assert run(today, [exam]) == ["2 weeks"]
-    assert run(today + timedelta(days=1), [dict(exam, item="Post UTME examination")]) == []  # reworded, same stage
+    assert run(today + timedelta(days=1), [dict(exam, item="Maths final examination")]) == []  # reworded, same stage
     assert run(date(2026, 10, 13), [exam]) == ["3 days"]
     assert run(date(2026, 10, 14), [exam]) == []
     assert run(date(2026, 10, 15), [exam]) == ["tomorrow"]
     assert run(date(2026, 10, 16), [exam]) == ["today"]
     assert run(date(2026, 10, 30), [exam]) == []  # long past: stale
-    other = {"item": "Post-UTME exam paper 2", "date": "2026-10-20", "say": "Paper two is on the 20th."}
+    other = {"item": "Maths final exam paper 2", "date": "2026-10-20", "say": "Paper two is on the 20th."}
     assert run(date(2026, 10, 15), [other]) == ["2 weeks"]  # a different date is a different item
 
 
@@ -142,7 +142,7 @@ def test_an_automatic_run_cannot_make_or_change_a_watch(J, monkeypatch):
 def test_a_check_speaks_only_new_alerts_and_remembers_them(J, monkeypatch):
     _make(J)
     soon = (datetime.now().date() + timedelta(days=2)).isoformat()
-    answer = json.dumps({"alerts": [{"item": "Post-UTME exam", "date": soon, "say": "Hero, your exam is in two days. "
+    answer = json.dumps({"alerts": [{"item": "Maths final exam", "date": soon, "say": "Hero, your exam is in two days. "
                                                                                      "How are you feeling about it?"}]})
     prompts, spoken = [], []
     monkeypatch.setattr(J, "run_agent_loop", lambda prompt, **k: prompts.append(prompt) or answer)
@@ -156,7 +156,7 @@ def test_a_check_speaks_only_new_alerts_and_remembers_them(J, monkeypatch):
                        {"important": True, "bypass_busy_gate": True})]
     assert "exams coming up and results being released" in prompts[0]
     J._run_watch(J._watches().all()[0])          # the next scheduled check: same stage, nothing said
-    assert len(spoken) == 1 and "Post-UTME exam" in prompts[1]
+    assert len(spoken) == 1 and "Maths final exam" in prompts[1]
     J._run_watch(J._watches().all()[0], True)    # "check my exam watch" now: said again
     assert len(spoken) == 2
     w_now = J._watches().all()[0]

@@ -234,8 +234,8 @@ def _words(text: str) -> set[str]:
 
 
 def same_item(a: str, a_date: str | None, b: str, b_date: str | None) -> bool:
-    """Is a newly reported item the one told before? The model rewords names between checks ("Post-UTME exam" /
-    "Post UTME examination"), so it is matched by shared words; two different dates make it a different item."""
+    """Is a newly reported item the one told before? The model rewords names between checks ("Maths final exam" /
+    "Maths final examination"), so it is matched by shared words; two different dates make it a different item."""
     if a_date and b_date and abs((_d(a_date) - _d(b_date)).days) > 1:
         return False
     wa, wb = _words(a), _words(b)
@@ -325,7 +325,7 @@ def check_prompt(watch: dict, told: list[dict], now: datetime, user_name: str = 
         f"{told_lines}\n"
         "Use your tools to actually look (read the file, calendar, page or mail the 'what to check' names). Never invent "
         "a date or an event: list only what you really read. Then reply with ONLY a JSON object, nothing else:\n"
-        '{"alerts": [{"item": "a short name that stays the same between checks, e.g. Post-UTME exam", '
+        '{"alerts": [{"item": "a short name that stays the same between checks, e.g. Maths final exam", '
         '"date": "YYYY-MM-DD of the event, or empty if it has no date", '
         f'"say": "what to tell {who} out loud: one or two short, warm sentences'
         f'{", starting with their name" if user_name else ""}"}}]}}\n'
