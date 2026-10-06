@@ -28,6 +28,7 @@ import os
 
 from jarvis_env import env_float, env_int
 import threading
+import urllib.parse
 import urllib.request
 import wave
 
@@ -75,11 +76,21 @@ def _urlopen_bounded(req: urllib.request.Request, timeout: float) -> bytes:
     return outcome.get("data", b"")
 
 
-def synthesize(text: str, timeout_s: float | None = None) -> tuple[bytes, int]:
+def voice_query(model: str | None = None, speed: float | None = None) -> str:
+    """'model=...' plus '&speed=...' (Aura-2, English/Spanish, 0.7-1.5) when it isn't normal speed. Personalities
+    (2026-10-06) pick their own voice and speed; None = the configured voice at normal speed."""
+    q = f"model={urllib.parse.quote(model or DEEPGRAM_TTS_MODEL, safe='-_.')}"
+    if speed and abs(float(speed) - 1.0) > 0.005:
+        q += f"&speed={min(1.5, max(0.7, float(speed))):.2f}"
+    return q
+
+
+def synthesize(text: str, timeout_s: float | None = None, model: str | None = None,
+               speed: float | None = None) -> tuple[bytes, int]:
     if not DEEPGRAM_API_KEY:
         raise RuntimeError("DEEPGRAM_API_KEY is not set")
     url = (
-        f"{_SPEAK_URL}?model={DEEPGRAM_TTS_MODEL}&encoding=linear16"
+        f"{_SPEAK_URL}?{voice_query(model, speed)}&encoding=linear16"
         f"&sample_rate={DEEPGRAM_TTS_SAMPLE_RATE}&container=wav"
     )
     req = urllib.request.Request(
@@ -120,8 +131,10 @@ class StreamingSynthesis:
     mid-stream failure is accepted as a truncated sentence, not silently replayed elsewhere).
     """
 
-    def __init__(self, text: str, sample_rate: int = DEEPGRAM_TTS_SAMPLE_RATE, timeout_s: float | None = None):
+    def __init__(self, text: str, sample_rate: int = DEEPGRAM_TTS_SAMPLE_RATE, timeout_s: float | None = None,
+                 model: str | None = None, speed: float | None = None):
         self.text = text
+        self.model, self.speed = model, speed
         self.sample_rate = sample_rate
         self.timeout_s = timeout_s or STREAM_CONNECT_TIMEOUT_S
         self._ws = None
@@ -129,7 +142,7 @@ class StreamingSynthesis:
     def connect(self) -> bool:
         if not DEEPGRAM_API_KEY or _websocket_lib is None:
             return False
-        url = f"{_SPEAK_WS_URL}?model={DEEPGRAM_TTS_MODEL}&encoding=linear16&sample_rate={self.sample_rate}"
+        url = f"{_SPEAK_WS_URL}?{voice_query(self.model, self.speed)}&encoding=linear16&sample_rate={self.sample_rate}"
         try:
             self._ws = _websocket_lib.create_connection(
                 url,

@@ -1817,7 +1817,8 @@ row there each phase rather than only stating the total in chat.
 | 153 (Watches: keep checking something the user names and speak up once per stage by their own rule, asks again when details are missing, Toolbox panel; save_skill reads cron/word schedules; 36 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
 | 154 (personalities: Classic + Playful/Serious/Gen Z/Tired/Hype/Naija + Auto by time of day and workload, Settings + voice switch, fixed openers around code-built lines; conftest isolation; found and fixed a quick-answer branch bug; 24 new tests) | Opus 5.5 | ~40 min | ~$3.50–$4.90 |
 | 155 (personalities: 28 fixed phrases each (min 25), no-repeat random picks, varied opener/closer shape, full stop before a closer; 4 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~4719 min** | **~$320.55–$450.85** |
+| 156 (personality voices: a Deepgram voice + speed per personality, Naija on a Fish Audio Pidgin voice with Deepgram fallback, slang said in words, no sigh/yawn, Classic unchanged incl. its cache; 11 new tests) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~4754 min** | **~$323.55–$455.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2764,6 +2765,20 @@ Code: `jarvis_personality.py` (pure), wiring in jarvis.py (`_personality_now`, `
   lead-ins, 3 start words, 2 switch lines), pinned by `test_every_personality_but_classic_has_at_least_25_fixed_phrases`.
   "More random": `_choose` never repeats a phrase until two thirds of its list had a turn, the shape varies (opener only
   ~40%, both ~35%, closer only ~25%; a long line gets an opener only), and start words/switch lines are random too.
+- **Voices (owner, same day: "mix to fit each", suggested speeds, Naija on Fish, spoken-friendly Tired words)**: setting
+  `JARVIS_VOICE_<NAME>` = "<voice> <speed>" (`personality.parse_voice`): a Deepgram Aura-2 short name (`aurora`) or full
+  model, or `fish:<voice id>`, then 0.7-1.5. Defaults: Classic "" (the voice set up before), Playful aurora 1.05, Serious
+  odysseus 0.95, Gen Z delia 1.05, Tired pluto 0.85, Hype atlas 1.15, Naija `fish:7223183d489044b1a4cb9c31ea18b296` (Fish
+  Audio community "Ajeh", Nigerian Pidgin). `_voice_profile()` feeds `_synthesize_and_cache` (Naija: Fish first, then the
+  usual Deepgram voice; no live Deepgram stream while Fish goes first), `_speak_streamed` and the cache keys
+  (`_deepgram_cache_key`: voice + speed). Deepgram speed is the `/v1/speak` `speed` query parameter (GA for Aura-2 English
+  per Deepgram's docs, REST and WebSocket; `tts_deepgram.voice_query`). **Classic calls the engines exactly as before
+  (`_voice_kwargs` passes nothing) and keeps the exact old cache keys**, so its cached audio is still used. Sleep Mode's
+  calmer Fish prosody wins over a personality's speed.
+- **Pronunciation** (`personality.spoken`, applied in `speak_text` for every personality): chat abbreviations are said in
+  words (rn, fr, ngl, tbh, idk, lol -> "haha"...; not u/ur/np/bc/ty, which mean other things; never inside a web address
+  like fr.wikipedia.org or "U.S."), stage directions like *sigh* / (laughs) are dropped; the screen keeps the original.
+  Tired has no "Sigh."/"Yawn." any more ("Oh man.", "Hmm, fine."), and every personality's prompt line forbids sound effects.
 - Not verified live on the PC: how each personality actually sounds through the voice (Naija through an English voice).
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
