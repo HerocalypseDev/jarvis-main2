@@ -1820,7 +1820,8 @@ row there each phase rather than only stating the total in chat.
 | 156 (personality voices: a Deepgram voice + speed per personality, Naija on a Fish Audio Pidgin voice with Deepgram fallback, slang said in words, no sigh/yawn, Classic unchanged incl. its cache; 11 new tests) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
 | 157 (open Settings page updates live when a setting changes by voice/phone/AI, voice-type phrasings switch the personality, personality tool for the AI; headless check; 14 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 158 (debug report of 2026-10-07: false cleared/looked-up claims caught, autonomy origin lookup, document backup before script edits, force-close asks, fake checks and login-file hunts refused, time-zone questions, homework error reason, startup stagger, self-check note; 27 new tests) | Sonnet 5.5 | ~45 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~4819 min** | **~$328.15–$461.55** |
+| 159 ("Jarvis keeps closing": the microphone loop had no safety net, so a device hiccup or any error in it ended the program; now supervised: reopens the mic with backoff, crash log + native-crash dump, spoken "Microphone reconnected."; 11 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~4844 min** | **~$329.95–$464.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2844,6 +2845,26 @@ Found in an hour of real use (tests: `test_debug_oct7.py`, 27). Owner chose all 
   mode NONE; Ollama: tools left out) and `STEPS_USED_UP_NOTE` added to the last tool results, so the model answers from what it
   gathered and says what's left. Each step is one model request, so raising the limit spends more of a free Gemini daily quota.
   Not verified live against the real document.
+
+## Jarvis closing by itself (2026-10-07, owner report)
+
+"Jarvis keeps closing anyhow": `main()` ran the microphone loop inside one `try` that only caught Ctrl+C and
+`sd.PortAudioError` (and the latter returned 1, ending the program). A device change (headphones/Bluetooth, PC waking
+from sleep, Windows audio restart) or ANY exception inside the loop (wake word, key poll, follow-up capture) ended Jarvis.
+Owner's choices: self-healing loop + crash log, and **speak** the recovery. Code: `jarvis_resilience.py` (pure), tests
+`test_resilience.py` (11). Rules to keep:
+- `main()` runs `_listen_session` (one mic session; all per-session state lives inside it) under
+  `jarvis_resilience.supervise`: any exception ends only that session, then PortAudio is re-initialised, the input device is
+  re-picked and a new session starts after a backoff of 2/4/8/16/30 s (never gives up; a session that ran 60 s resets the count).
+  Only Ctrl+C / SystemExit stop it. Don't catch errors inside the loop body instead: one handler at session level reopens the
+  device, which is the usual cause.
+- `jarvis_crash.log` (gitignored `*.log`, 256 KB cap): every failed session with its traceback, an error escaping a background
+  thread (`threading.excepthook`), `faulthandler` stack dumps on a native crash, and "Jarvis ended on X" if `main()` itself raises.
+  `jarvis_standalone.log` also gets "Jarvis is exiting (code N)". If it closes again, read these first.
+- "Microphone reconnected." is spoken via `queue_or_deliver_notification(important=True)` once per outage and at most once per
+  10 minutes (`Announcer`), so a flapping device can't chatter. Journalled in self-awareness as `system/mic_loop_failed`.
+- Not covered: the process being killed from outside (Task Manager, `stop_jarvis.ps1`, Windows shutdown) and a hard hang; a
+  watchdog that relaunches a dead process was offered and not built. Not verified live on the PC (unplugging a real device).
 
 ## Hand-off guard (2026-09-25)
 
