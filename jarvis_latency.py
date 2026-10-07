@@ -166,7 +166,11 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     # after 5 seconds" must reach the agent loop, not set or cancel a real timer.
     ("timer", re.compile(r"\A(?=(?:\S+\s+){0,11}\S+\s*\Z)(?!.*\b(?:how (?:do|to|does|can|would)|code|python|"
                          r"script|function|program|write|explain)\b).*\b(?:timers?|stopwatch)\b", re.I)),
-    ("time", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?time\b|\bcurrent time\b", re.I)),
+    # Only a plain "what time is it": "9 PM GMT+8 is what time in my area" is a time-zone question for the agent
+    # (debug report 2026-10-07: it answered with the current time).
+    ("time", re.compile(r"\A(?!.*(?:\d|\bgmt\b|\butc\b|\bin\s+\w)"
+                        r"|.*\b(?:zone|convert|premiere|release|episode|airs?|starts?|meeting|flight|ends?)\b)"
+                        r".*(?:\bwhat(?:'s| is)?\s+(?:the\s+)?time\b|\bcurrent time\b)", re.I | re.S)),
     ("date", re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?date\b|\bwhat day is it\b", re.I)),
     ("volume", re.compile(r"\bvolume\b|\b(?:mute|unmute)\b|\bturn (?:it |the sound )?(?:up|down)\b", re.I)),
     ("open_app", re.compile(r"^\s*open\s+\S", re.I)),

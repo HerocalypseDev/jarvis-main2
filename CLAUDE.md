@@ -1819,7 +1819,8 @@ row there each phase rather than only stating the total in chat.
 | 155 (personalities: 28 fixed phrases each (min 25), no-repeat random picks, varied opener/closer shape, full stop before a closer; 4 new tests) | Opus 5.5 | ~15 min | ~$1.20–$1.70 |
 | 156 (personality voices: a Deepgram voice + speed per personality, Naija on a Fish Audio Pidgin voice with Deepgram fallback, slang said in words, no sigh/yawn, Classic unchanged incl. its cache; 11 new tests) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
 | 157 (open Settings page updates live when a setting changes by voice/phone/AI, voice-type phrasings switch the personality, personality tool for the AI; headless check; 14 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
-| **Running total (final)** | | **~4774 min** | **~$325.15–$457.35** |
+| 158 (debug report of 2026-10-07: false cleared/looked-up claims caught, autonomy origin lookup, document backup before script edits, force-close asks, fake checks and login-file hunts refused, time-zone questions, homework error reason, startup stagger, self-check note; 27 new tests) | Sonnet 5.5 | ~45 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~4819 min** | **~$328.15–$461.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2787,6 +2788,38 @@ Code: `jarvis_personality.py` (pure), wiring in jarvis.py (`_personality_now`, `
   like fr.wikipedia.org or "U.S."), stage directions like *sigh* / (laughs) are dropped; the screen keeps the original.
   Tired has no "Sigh."/"Yawn." any more ("Oh man.", "Hmm, fine."), and every personality's prompt line forbids sound effects.
 - Not verified live on the PC: how each personality actually sounds through the voice (Naija through an English voice).
+
+## Debug report 2026-10-07: false "done" claims, made-up sources, edited documents (owner: "check for errors")
+
+Found in an hour of real use (tests: `test_debug_oct7.py`, 27). Owner chose all four fix groups. Rules to keep:
+- **Claim checker**: new entries "clear that" ("I have gone ahead and cleared it", "that task is completely wiped out") and
+  "look that up" ("I tracked down the exact premiere times", "I searched ... found the real times"). A look-up claim is backed by
+  `web_search`/`http_request`/browser/fetch/MCP/`dashboard_data` only (NOT quick_search/memory_search: local lookups are not
+  "the real times online"); the doer-only rule still holds for every other claim.
+- **Where did that come from?** `autonomy` action `origin` (query) reads the commitments of any status with when they were
+  made, the source type (email/message/file/conversation/you) and the triggering words, or says plainly that there is no record
+  (then check reminders/calendar/jobs). The stable prompt forbids inventing a source ("an automated parse" was made up for
+  a deadline autonomy had created from an email) and forbids saying cleared/cancelled/fixed before the tool succeeded.
+- **Documents**: a run_python/run_shell script that WRITES (`.save(`, open for write, move/delete...) first copies every existing
+  Word/Excel/PowerPoint/PDF/CSV file it names into `.jarvis-previous/` beside it (newest 10 per file), attended or not
+  (`_backup_documents_before_script`, `_keep_previous_version(always=True)`); the reply says it. The report's script had saved
+  invented times into Anime.docx with no way back.
+- **Force-closing a program needs a yes** (gate pattern: `taskkill ... /f`, `Stop-Process ... -Force`, `kill -9`, `pskill`,
+  `wmic ... terminate`): Jarvis ran `taskkill /f /im WINWORD.EXE` to get at a locked file. A polite `taskkill /im x` is fine.
+  (`test_audit2` no longer lists `taskkill /f /im chrome.exe` as an ordinary command.)
+- **Fake checks refused** (`_fake_check_problem`): code that only prints a fixed message ("all systems operational",
+  `print('hello')`) is not run; it was used to claim "fixed" and "all clean". Hunting folders for login/credential files
+  (token.pickle, credentials.json, cookies, keys) is refused (`_LOGIN_FILE_HUNT_RE` + a folder walk).
+- **Time**: only a plain "what time is it" takes the clock path; a time-zone/conversion question ("9 PM GMT+8 is what time in my
+  area", "what time is it in Lagos", "what time is the meeting") goes to the agent.
+- **Homework app errors** say why (no internet/DNS, timed out, blocked/reset, SSL) and that the app is hosted online, so the
+  model stops looking for a local server; the address and token never appear.
+- **Self-check** no longer lists the quiet developer note ("Tool arguments") as one of the owner's problems.
+- **Startup stagger**: at most one scheduled AI run (skill or watch) starts per `JARVIS_SCHEDULE_STAGGER_S` (45, 0 = off);
+  the rest stay due and start on later ticks (Gemini's free tier is 15 requests a minute and the briefing, Gmail check and a
+  watch all started in the same second). `conftest.py` sets it to 0 for tests.
+- Not fixed (needs the owner): the Anime.docx times (restore from OneDrive version history), the "Michael" name the briefing
+  invented (a model slip; the owner's name is "Hero"), Gmail re-sign-in confirmation, the Claude credit balance.
 
 ## Hourly mail check repeating itself (2026-10-02, debug report)
 

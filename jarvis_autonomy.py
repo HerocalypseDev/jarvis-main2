@@ -2648,6 +2648,36 @@ def explain(query: str) -> str:
     return "\n".join(out)
 
 
+def origin(query: str) -> str:
+    """'Where did that deadline/task come from?' (debug report 2026-10-07: Jarvis made up "an automated data parse" for a
+    deadline it had created itself). Matching commitments of ANY status with when they were made, what kind of source made
+    them (the user, an email, a message, a file, a conversation...) and the words that triggered them."""
+    words = [w for w in re.findall(r"[a-z0-9]{3,}", (query or "").lower())
+             if w not in {"the", "and", "that", "this", "what", "when", "where", "from", "source", "task", "deadline",
+                          "came", "come", "about", "have", "for", "with", "are", "was", "got", "into", "briefing",
+                          "did", "does", "how", "who", "why", "put", "tell", "say", "know"}]
+    if not words:
+        return "Say which deadline or task (a few of its words), and I'll look up where it came from."
+    rows = _rows("SELECT id, description, status, deadline_iso, source_type, source_quote, who_is_responsible, created_at "
+                 "FROM commitments ORDER BY id DESC LIMIT 400")
+    hits = [r for r in rows if sum(w in f"{r['description']} {r['source_quote'] or ''}".lower() for w in words)
+            >= max(1, min(2, len(words)))][:4]
+    if not hits:
+        return (f"I have no autonomy record of a commitment matching {query!r}. It may be a reminder, a calendar event or a "
+                "scheduled job instead: check those before guessing a source.")
+    out = []
+    for r in hits:
+        who = {"conversation": "something said in a conversation", "email": "an email", "message": "a message",
+               "file": "a file that appeared", "user": "you"}.get((r["source_type"] or "").lower(),
+                                                                   r["source_type"] or "an unknown source")
+        out.append(f"#{r['id']} \"{(r['description'] or '')[:100]}\" ({r['status']}"
+                   + (f", due {r['deadline_iso'][:16].replace('T', ' ')}" if r['deadline_iso'] else "")
+                   + f"): created {str(r['created_at'])[:16].replace('T', ' ')} by autonomy from {who}"
+                   + (f", triggered by: \"{neutralize_injection(str(r['source_quote']))[:160]}\"" if r["source_quote"] else "")
+                   + ".")
+    return "\n".join(out)
+
+
 def speak_log(hours: float = 24) -> str:
     """Speaks the summary (shortened for speech by jarvis.py's _speak_shaped) and returns it."""
     text = log_summary(hours)
@@ -2703,6 +2733,8 @@ def handle_tool(inp: dict, source: str | None) -> str:
         return log_summary(float(inp.get("hours") or 24))
     if action == "why":
         return explain(str(inp.get("query") or inp.get("description") or ""))
+    if action in ("origin", "source", "where_from"):
+        return origin(str(inp.get("query") or inp.get("description") or ""))
     if action == "speak_log":
         return speak_log(float(inp.get("hours") or 24))
     if action == "disable":

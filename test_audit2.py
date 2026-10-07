@@ -391,7 +391,7 @@ def test_backup_deletion_system_folder_wipes_and_critical_kills_are_staged(J, cm
 
 
 @pytest.mark.parametrize("cmd", [
-    "vssadmin list shadows", "taskkill /f /im chrome.exe", "Stop-Process -Name notepad",
+    "vssadmin list shadows", "taskkill /im chrome.exe", "Stop-Process -Name notepad",  # a force-kill now asks (2026-10-07)
     "Remove-Item C:\\Windows\\Temp\\old.log", "Remove-Item C:\\Users\\x\\Documents\\temp -Recurse",
     "Get-ChildItem 'C:\\Program Files' -Recurse -Filter *.exe", "wbadmin get versions", "Get-Service",
 ])
