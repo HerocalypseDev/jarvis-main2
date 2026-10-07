@@ -96,8 +96,20 @@ def _request(method: str, body: dict | None, timeout: float):
         raise
     except urllib.error.HTTPError as e:
         status, raw = e.code, e.read() if hasattr(e, "read") else b""
-    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
-        raise HomeworkApiError("Can't reach the homework app right now.") from None
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
+        # Debug report 2026-10-07: the bare message sent the model hunting for a local server. The app is hosted online;
+        # say what failed (without the address or any token) so the owner is told the real reason.
+        reason = e.reason if isinstance(e, urllib.error.URLError) else e
+        text = f"{type(reason).__name__} {reason}".lower()
+        why = ("this PC has no internet or can't look up the address (DNS)" if "getaddrinfo" in text or "11001" in text
+               or "11002" in text or "name or service" in text else
+               "the connection timed out" if "timed out" in text or isinstance(e, TimeoutError) else
+               "the connection was blocked or reset (a firewall, VPN or proxy?)" if "10054" in text or "refused" in text
+               or "reset" in text or "forcibly" in text else
+               "a secure connection (SSL) problem" if "ssl" in text or "certificate" in text else
+               f"{type(reason).__name__}")
+        raise HomeworkApiError("Can't reach the homework app right now: " + why + ". The app is hosted online (not on this PC), "
+                               "so don't look for a local server; tell the user this reason.") from None
     try:
         payload = json.loads(raw.decode("utf-8") or "{}")
     except (ValueError, UnicodeDecodeError):

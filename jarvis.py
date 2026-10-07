@@ -358,6 +358,13 @@ _CATASTROPHIC_PATTERNS: tuple[tuple["re.Pattern[str]", str], ...] = (
 
 # Extra shutdown/disk/system-damage variants the first tier missed (shutdown /p /h /l -r, WMI, suspend,
 # Format-Volume, boot config, secure wipe, registry hive delete).
+# Force-closing a program loses whatever is unsaved in it (debug report 2026-10-07: "taskkill /f /im WINWORD.EXE" was run to get
+# at a locked document). It now needs the owner's yes like the other irreversible things. Jarvis's own helpers
+# (restart, WhatsApp restart) don't go through the tools, so they are unaffected.
+_CATASTROPHIC_PATTERNS = _CATASTROPHIC_PATTERNS + (
+    (re.compile(r"\btaskkill\b[^\n]*/f\b|\bstop-process\b[^\n]*-force\b|\bkill\s+-9\b|\bpskill\b|\bwmic\b[^\n]*\bterminate\b", re.I),
+     "force-close a running program (anything unsaved in it would be lost)"),
+)
 _CATASTROPHIC_PATTERNS = _CATASTROPHIC_PATTERNS + (
     (
         re.compile(
@@ -1688,6 +1695,13 @@ ran, autonomy, settings, memory, routines, and every Toolbox feature); page=capa
 do. Never say you keep no record of something, or can't do something, before checking there. You also remember: \
 recent exchanges are in this conversation, your own action log is in the volatile context, and anything older is \
 in memory_search or dashboard_data page=audit.
+
+Never say where something came from, or that you did something, without checking: when asked where a deadline, task or \
+reminder came from, look it up (autonomy action=origin for deadlines/commitments, the calendar for events, list_reminders, \
+scheduled_jobs) and say what the record shows; if you find nothing, say you couldn't find it, never invent a source such as \
+"an automated parse". Say a deadline or task is cleared, cancelled or fixed only after the tool that does it ran and \
+succeeded. When you edit the owner's document, files are backed up first; when asked to put real figures (times, dates, \
+prices) into something, search for each one, write only what the search actually found, and say which ones you couldn't find.
 
 You have named tools for the common, well-understood things: opening apps/URLs, clicking, typing, \
 reading the screen or clipboard, web search, scanning for large files, and more — use \
@@ -3095,7 +3109,8 @@ AUTONOMY_TOOLS = [
             "list_suggestions, approve/dismiss/never (id), list_commitments, complete_commitment/"
             "cancel_commitment/accept_commitment (id), add_project (project, goal, risk_level), add_action "
             "(project, description, scheduled_for), approve_campaign (project, approved), list_policies, "
-            "run_tick. Use it for 'what did autonomy do today', 'why did you do X', 'turn off autonomy'. "
+            "run_tick, origin (query) = where a deadline/commitment came from and when it was made. Use it for 'what did "
+            "autonomy do today', 'why did you do X', 'where did that deadline come from', 'turn off autonomy'. "
             "Turning autonomy ON, writing policy rules and leaving dry-run are settings changed from the "
             "dashboard's Autonomy tab only; tell the user to use it."
         ),
@@ -6789,15 +6804,33 @@ def _scheduler_steps(now: datetime) -> list:
     ]
 
 
+_sched_stagger = {"last": 0.0}
+
+
+def _stagger_ok() -> bool:
+    """Debug report 2026-10-07: at start-up the morning briefing, the Gmail check and a watch all became due in the same
+    minute and hit Gemini's free 15-requests-a-minute limit together. At most one scheduled AI run (skill or watch) starts
+    per JARVIS_SCHEDULE_STAGGER_S (default 45 s); the others stay due and start on a later tick. 0 = off."""
+    gap = env_int("JARVIS_SCHEDULE_STAGGER_S", 45)
+    return gap <= 0 or time.monotonic() - _sched_stagger["last"] >= gap or _sched_stagger["last"] == 0.0
+
+
+def _stagger_note_started() -> None:
+    _sched_stagger["last"] = time.monotonic()
+
+
 def _start_due_skills(now: datetime) -> None:
     off = _skills_off()
     for skill in _load_skills():
         if skill["name"].lower() in off:
             continue  # turned off by the user ("cancel my billing monitoring")
         if _skill_is_due(skill, now):
+            if not _stagger_ok():
+                return  # the rest stay due: they start on a later tick, a minute apart
             # A scheduled skill is a full agent loop (often 30-120 s): run it on its own thread, one run per
             # skill at a time, so reminders/timers/deferred jobs on this thread aren't held up behind it.
-            _run_single_flight(f"skill:{skill['name']}", _run_scheduled_skill, skill)
+            if _run_single_flight(f"skill:{skill['name']}", _run_scheduled_skill, skill):
+                _stagger_note_started()
 
 
 def _scheduler_tick(now: datetime) -> None:
@@ -7727,7 +7760,10 @@ def _watches_tool(inp: dict) -> str:
 def _start_due_watches(now: datetime) -> None:
     for w in _watches().all():
         if watches_mod.is_due(w, now):
-            _run_single_flight(f"watch:{w['id']}", _run_watch, w)
+            if not _stagger_ok():
+                return
+            if _run_single_flight(f"watch:{w['id']}", _run_watch, w):
+                _stagger_note_started()
 
 
 def _run_watch(watch: dict, manual: bool = False) -> None:
@@ -11651,12 +11687,12 @@ def _write_docx(p: Path, content: str, append: bool) -> None:
 KEEP_PREVIOUS_VERSIONS = 10
 
 
-def _keep_previous_version(p: Path) -> str:
+def _keep_previous_version(p: Path, always: bool = False) -> str:
     """In a run nobody is watching (autonomy, a scheduled skill or job, a task from someone's email), overwriting an
     existing file first keeps the old one in .jarvis-previous/ beside it (audit 2026-10-04: an overwrite was
     unrecoverable). The owner's own commands overwrite as asked."""
     watched = (_attended() or _current_command_source() == "phone") and not getattr(_command_ctx, "untrusted_origin", False)
-    if watched:
+    if watched and not always:
         return ""
     try:
         if not p.is_file() or p.stat().st_size == 0:
@@ -11677,6 +11713,38 @@ def _keep_previous_version(p: Path) -> str:
     except OSError as e:
         log.warning("Couldn't keep the previous version of %s: %s", p, e)
         return ""
+
+
+_DOC_PATH_RE = re.compile(
+    r"/(?:[^/\s\"'<>|:*?]+/)*[^/\s\"'<>|:*?]+\.(?:docx?|xlsx?|pptx?|pdf|odt|csv)\b|"
+    r"[A-Za-z]:\\{1,2}(?:[^\\/:*?\"'<>|\r\n]+\\{1,2})*[^\\/:*?\"'<>|\r\n]+?\.(?:docx?|xlsx?|pptx?|pdf|odt|csv)\b", re.I)
+_SCRIPT_WRITES_RE = re.compile(
+    r"\.save\(|\bopen\([^)]*[\"']\s*[wa]b?\+?\s*[\"']|shutil\.(?:move|copy|copyfile)|os\.(?:remove|replace|rename)|\.unlink\(|"
+    r"\.write\(|set-content|out-file|move-item|remove-item|\bdel\s|\bmove\s|\bren(?:ame)?\s", re.I)
+
+
+def _backup_documents_before_script(code: str) -> str:
+    """Debug report 2026-10-07: a script saved invented times into the owner's Word document, and there was no way back.
+    Before a run_python/run_shell script that WRITES, every existing Word/Excel/PowerPoint/PDF/CSV file it names is copied
+    into .jarvis-previous/ beside it (newest 10 per file), whoever asked. The reply says where the copies are."""
+    if not _SCRIPT_WRITES_RE.search(code or ""):
+        return ""
+    kept = []
+    seen = set()
+    for raw in _DOC_PATH_RE.findall(code or ""):
+        path = Path(raw.replace("\\\\", "\\"))
+        key = str(path).lower()
+        if key in seen or ".jarvis-previous" in key or len(seen) >= 5:
+            continue
+        seen.add(key)
+        try:
+            if path.is_file() and path.stat().st_size < 60 * 1024 * 1024:
+                note = _keep_previous_version(path, always=True)
+                if note:
+                    kept.append(note.strip(" ()").replace("The previous version is kept at ", ""))
+        except OSError:
+            continue
+    return (" (Backed up before the script ran: " + "; ".join(kept) + ")") if kept else ""
 
 
 def _write_file_tool(path: str, content: str, append: bool) -> str:
@@ -12593,6 +12661,19 @@ _ACTION_CLAIMS = [
                 r"|\b(?:reminders?|deadlines?|commitments?|overdue items?)\b (?:have been |has been |were |was |are |is )?"
                 r"(?:cleared|removed|deleted|cancelled|canceled|closed)\b", re.I),
      re.compile(r"cancel|complete|delete|remove|clear|autonomy|forget|dismiss|skills|macros|job|agents", re.I)),
+    # Debug report 2026-10-07: "I have gone ahead and cleared it straight out of your deadlines list" / "That task is
+    # completely wiped out" were said after only look-ups ran, and slipped past the wording above.
+    ("clear that",
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:gone ahead and |already |successfully |now )*(?:cleared|removed|deleted|"
+                r"cancelled|canceled|wiped|dismissed)\b[^.!?]{0,40}\b(?:it|that|those|this|them)\b"
+                r"|\b(?:it|that|this|those|task|deadline|commitment|reminder|coffee \w+)\b[^.!?]{0,25}\b(?:is|are|has been|have been)\s+"
+                r"(?:now |all )?(?:completely |fully |totally )?(?:wiped out|gone|cleared|cancelled|canceled|removed|deleted)\b", re.I),
+     re.compile(r"cancel|complete|delete|remove|clear|autonomy|forget|dismiss|skills|macros|job|agents|reminder", re.I)),
+    ("look that up",  # said it searched / used the real figures when no search ran (the invented anime times)
+     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:gone back into [^.!?,]{0,40}[, ]+(?:and )?)?(?:searched|looked up|looked online|checked online|"
+                r"tracked down|researched|found)\b[^.!?]{0,60}\b(?:real|actual|exact|premiere|release|broadcast|air(?:ing)?|online|"
+                r"web|internet|times?|dates?|schedule)\b", re.I),
+     re.compile(r"web_search|http_request|browser|fetch|^mcp_|dashboard_data", re.I)),  # not quick_search/memory_search
     ("close that",  # audit 2026-10-04: "I've closed the YouTube tab" with no tab/window tool behind it
      re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:closed|shut)\b[^.!?]{0,40}\b(?:tabs?|windows?)\b"
                 r"|\b(?:tabs?|windows?)\b (?:have been |has been |were |was |are |is )?closed\b", re.I),
@@ -12631,12 +12712,16 @@ def _unbacked_claims(reply_text: str, used_tool_names: list[str]) -> list[str]:
     doers = [n for n in used_tool_names if n and not _READ_ONLY_NAME_RE.search(n)
              and n not in READONLY_TOOL_TTLS and n not in _NEVER_BACKS_CLAIMS]
     out = []
+    asked = [n for n in used_tool_names if n]  # a "looked it up" claim IS backed by a look-up tool
     for sentence in re.split(r"(?<=[.!?])\s+", reply_text or ""):
         if sentence.rstrip().endswith("?") or re.search(r"\b(?:want me to|shall i|should i|can i|could i|would you like)\b", sentence, re.I):
             continue
         for what, claim, backing in _ACTION_CLAIMS:
-            if what not in out and claim.search(sentence) and not any(backing.search(n) for n in doers):
+            tools = asked if what == "look that up" else doers
+            if what not in out and claim.search(sentence) and not any(backing.search(n) for n in tools):
                 out.append(what)
+    if "clear those" in out and "clear that" in out:
+        out.remove("clear that")  # one claim, reported once
     if _confirmation_imitated(reply_text):
         out.append(_CONFIRMATION_IMITATION)
     return out
@@ -12888,7 +12973,42 @@ _SECRET_FILE_REFUSAL = (
 
 
 def _secret_file_problem(code: str) -> str | None:
-    return _SECRET_FILE_REFUSAL if _SECRET_FILE_RE.search(code or "") else None
+    if _SECRET_FILE_RE.search(code or ""):
+        return _SECRET_FILE_REFUSAL
+    if _LOGIN_FILE_HUNT_RE.search(code or "") and _WALKS_FOLDERS_RE.search(code or ""):
+        return _LOGIN_FILE_HUNT_REFUSAL
+    return None
+
+
+# Debug report 2026-10-07: to answer "tell her I've seen it" Jarvis walked the owner's whole user folder looking for
+# token.pickle (a Google login file). Searching a profile for login/credential files is never refused-to-be-needed.
+_LOGIN_FILE_HUNT_RE = re.compile(
+    r"token\.pickle|\bcredentials?\.json\b|client_secrets?\.json|\bid_rsa\b|\.pem\b|\bcookies?\b|login data|"
+    r"\bpasswords?\.(?:txt|csv|json|db)|\bsecrets?\.(?:json|txt|yaml|yml)|\bkeychain\b|wallet\.dat", re.I)
+_WALKS_FOLDERS_RE = re.compile(r"os\.walk|glob\.glob\([^)]*\*\*|rglob|-recurse|\bdir\b[^\n]*\s/s\b|\bfind\s+[~/.]|"
+                               r"\bwhere\b[^\n]*\s/r\b|everything", re.I)
+_LOGIN_FILE_HUNT_REFUSAL = (
+    "Refused: that code searches folders for login or credential files (tokens, cookies, keys, passwords). Jarvis never "
+    "hunts for those. If a tool needs signing in again, say so and ask the user to do the sign-in.")
+
+
+# A "check" that only prints a fixed message checks nothing (debug report 2026-10-07: `print('hello')` and
+# `print("Python tool argument check: all systems operational.")` were run, then reported as "fixed" and "all clean").
+_FAKE_CHECK_RE = re.compile(
+    r"\A\s*(?:import [\w ,.]+\s*;?\s*)*(?:print\(\s*(?:f?[\"'][^\"'\n]{0,160}[\"'])\s*\)\s*;?\s*)+\Z", re.I)
+_FAKE_CHECK_WORDS_RE = re.compile(
+    r"\b(?:hello|operational|all (?:good|clear|ok|fine|systems|checks?)|ok\b|success|passed|clean|fixed|working|done|no (?:issues|errors|problems))\b",
+    re.I)
+
+
+def _fake_check_problem(code: str) -> str | None:
+    c = (code or "").strip()
+    c = re.sub(r"^python(?:\.exe)?\s+-c\s+[\"']|[\"']\s*$", "", c) if c.lower().startswith("python") else c
+    if _FAKE_CHECK_RE.match(c) and _FAKE_CHECK_WORDS_RE.search(c):
+        return ("Not run: that code only prints a fixed message, so it checks nothing. Run the real check (the tool or "
+                "command that tests the thing) and report its actual result; never say something is fixed or clean because "
+                "a message you wrote said so.")
+    return None
 
 
 # Found live 2026-10-03 (debug report): asked to "send me a message on Telegram", the model ran
@@ -13360,6 +13480,8 @@ def _execute_tool_impl(
                 result = _ui_script_problem(command)
             elif _secret_file_problem(command):
                 result = _secret_file_problem(command)
+            elif _fake_check_problem(command):
+                result = _fake_check_problem(command)
             elif _placeholder_code_problem(command):
                 result = _placeholder_code_problem(command)
             elif _file_search_via_shell_problem(command):
@@ -13375,7 +13497,8 @@ def _execute_tool_impl(
                     else:
                         result = "Another confirmation is already pending; ignoring this one."
                 else:
-                    result = _run_shell_command(command)
+                    saved = _backup_documents_before_script(command)
+                    result = _run_shell_command(command) + saved
         elif tool_name == "run_python":
             # "command" too: the model called run_python with {"command": ...} a dozen times in one live run and
             # got "No code given." each time (debug report 2026-09-29).
@@ -13386,6 +13509,8 @@ def _execute_tool_impl(
                 result = _ui_script_problem(code)
             elif _secret_file_problem(code):
                 result = _secret_file_problem(code)
+            elif _fake_check_problem(code):
+                result = _fake_check_problem(code)
             elif _placeholder_code_problem(code):
                 result = _placeholder_code_problem(code)
             else:
@@ -13399,7 +13524,8 @@ def _execute_tool_impl(
                     else:
                         result = "Another confirmation is already pending; ignoring this one."
                 else:
-                    result = _run_python_code(code)
+                    saved = _backup_documents_before_script(code)
+                    result = _run_python_code(code) + saved
         elif tool_name == "read_file":
             result = _read_file_tool(str(inp.get("path") or ""))
         elif tool_name == "write_file":
@@ -14879,6 +15005,8 @@ def self_check_report() -> str:
         fine.append(f"automatic Gemini failover is on (last reason: {_llm_failover['last_reason']})")
     try:
         for c in doctor.problems():
+            if c.get("quiet"):  # a developer note (Tool arguments): in the doctor report and Home card, not "your problems"
+                continue
             problems.append(f"{c['name']}: {c['detail']}" + (f" (fix: {c['fix']})" if c["fix"] else ""))
     except Exception as e:
         log.debug("doctor checks skipped: %s", e)
