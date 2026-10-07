@@ -96,6 +96,7 @@ import jarvis_followup
 import jarvis_toolargs as toolargs
 import jarvis_doctor as doctor
 import jarvis_selfaware as selfaware
+import jarvis_resilience
 import jarvis_wakeword
 import jarvis_weather as weather
 import jarvis_briefing as briefing
@@ -16100,6 +16101,31 @@ def _cleanup_old_logs(folder: Path | None = None, days: int = LOG_RETENTION_DAYS
     return removed
 
 
+_crash_fault_file = None
+
+
+def _enable_crash_diagnostics(crash_log: Path) -> None:
+    """Leave a reason behind when Jarvis dies without a Python error: faulthandler dumps the stack of every
+    thread into the crash log on a native crash (access violation in an audio/ONNX library), and an error
+    that escapes a background thread is written there too."""
+    global _crash_fault_file
+    try:
+        import faulthandler
+        _crash_fault_file = open(crash_log, "a", encoding="utf-8")
+        faulthandler.enable(file=_crash_fault_file, all_threads=True)
+    except Exception:
+        pass
+    previous = threading.excepthook
+
+    def _hook(args) -> None:
+        try:
+            jarvis_resilience.write_crash(crash_log, f"error in thread {getattr(args.thread, 'name', '?')}", args.exc_value)
+        finally:
+            previous(args)
+
+    threading.excepthook = _hook
+
+
 def main() -> int:
     if not _acquire_single_instance_lock():
         log.error(
@@ -16108,10 +16134,6 @@ def main() -> int:
         )
         return 1
     blocksize = block_samples()
-    hold: dict | None = None  # set while a hold-mode key (selection/appshot/dictation) is held
-    ptt_active = False
-    ptt_buffer: list[np.ndarray] = []
-    stream_session: "stt_deepgram.StreamingSession | None" = None
 
     if FOCUS_EXISTING_CURSOR_WINDOW:
         log.info(
@@ -16289,11 +16311,20 @@ def main() -> int:
     )
 
     input_idx = _choose_input_device(blocksize)
-    wake_listener = None  # created lazily when JARVIS_WAKE_WORD is switched on
-    hf_stream = None  # live transcription for a hands-free (wake word / follow-up) capture
-    wake_gate_ts, wake_gate_ok = 0.0, False
+    crash_log = Path(__file__).resolve().parent / "jarvis_crash.log"
+    _enable_crash_diagnostics(crash_log)
+    mic_back = jarvis_resilience.Announcer()
 
-    try:
+    def _listen_session(started) -> None:
+        """One microphone session. It normally never returns; an error here ends only THIS session and
+        `jarvis_resilience.supervise` opens a new one (all per-session state lives here)."""
+        hold: dict | None = None  # set while a hold-mode key (selection/appshot/dictation) is held
+        ptt_active = False
+        ptt_buffer: list[np.ndarray] = []
+        stream_session: "stt_deepgram.StreamingSession | None" = None
+        wake_listener = None  # created lazily when JARVIS_WAKE_WORD is switched on
+        hf_stream = None  # live transcription for a hands-free (wake word / follow-up) capture
+        wake_gate_ts, wake_gate_ok = 0.0, False
         with sd.InputStream(
             device=input_idx,
             samplerate=SAMPLE_RATE,
@@ -16301,6 +16332,7 @@ def main() -> int:
             dtype="float32",
             blocksize=blocksize,
         ) as stream:
+            started()
             while True:
                 data, overflowed = stream.read(blocksize)
                 if overflowed:
@@ -16413,16 +16445,41 @@ def main() -> int:
                             stream_session = None
                             hold = None
 
-    except KeyboardInterrupt:
-        log.info("Stopped.")
-        return 0
-    except sd.PortAudioError as e:
-        log.error("Audio error: %s", e)
-        log.error("If PortAudio fails, install/repair drivers or try another SAMPLE_RATE.")
-        return 1
+    def _session_failed(exc: BaseException, failures: int, wait_s: float) -> None:
+        nonlocal input_idx
+        log.error("Microphone loop stopped (%s: %s); Jarvis keeps running and will reopen it in %.0f s "
+                  "(failure %d in a row). Details in %s.", type(exc).__name__, exc, wait_s, failures, crash_log.name)
+        jarvis_resilience.write_crash(crash_log, f"microphone loop failed (failure {failures} in a row)", exc)
+        try:
+            selfaware.record("system", "mic_loop_failed", f"The microphone loop stopped ({type(exc).__name__}); reopening it.")
+        except Exception:
+            pass
+        jarvis_resilience.reset_portaudio()  # re-read the device list: the one that failed may be gone
+        try:
+            input_idx = _choose_input_device(blocksize)
+        except BaseException as e2:  # SystemExit when no input device exists at all: wait and try again
+            log.warning("No usable microphone yet (%s); will try again.", e2)
 
-    return 0
+    def _session_recovered(failures: int) -> None:
+        log.info("Microphone is back after %d failed attempt(s).", failures)
+        if mic_back.should_speak():
+            threading.Thread(
+                target=lambda: queue_or_deliver_notification("Microphone reconnected.", important=True),
+                daemon=True,
+            ).start()
+
+    code = jarvis_resilience.supervise(_listen_session, on_failure=_session_failed, on_recovered=_session_recovered)
+    log.info("Stopped.")
+    return code
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        _code = main()
+    except BaseException as _e:  # noqa: BLE001 - leave the reason behind before the process ends
+        jarvis_resilience.write_crash(
+            Path(__file__).resolve().parent / "jarvis_crash.log",
+            f"Jarvis ended on {type(_e).__name__}", _e)
+        raise
+    log.info("Jarvis is exiting (code %s).", _code)
+    sys.exit(_code)
