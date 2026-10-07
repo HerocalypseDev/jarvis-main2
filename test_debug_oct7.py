@@ -122,22 +122,6 @@ def test_the_developer_note_is_not_listed_as_the_owners_problem(J, monkeypatch):
     assert "Gmail sign-in" in text and "Tool arguments" not in text
 
 
-def test_the_homework_error_says_why_and_that_the_app_is_online(monkeypatch):
-    import urllib.error
-    import homework_api as h
-    monkeypatch.setattr(h, "_token", lambda: "t")
-    monkeypatch.setattr(h, "_endpoint", lambda: "https://example.invalid/api/jarvis")
-
-    class Boom:
-        def open(self, *a, **k):
-            raise urllib.error.URLError(OSError(11001, "getaddrinfo failed"))
-    monkeypatch.setattr(h, "_api_opener", Boom())
-    with pytest.raises(h.HomeworkApiError) as e:
-        h.call("get_overview")
-    msg = str(e.value)
-    assert "internet" in msg and "hosted online" in msg and "example.invalid" not in msg
-
-
 # --- D: startup checks one a minute -----------------------------------------------------------------------------------
 def test_scheduled_ai_runs_that_are_due_together_start_one_per_gap(J, monkeypatch):
     monkeypatch.setenv("JARVIS_SCHEDULE_STAGGER_S", "45")

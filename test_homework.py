@@ -944,3 +944,20 @@ def test_an_app_error_never_carries_a_signed_link(monkeypatch):
     with pytest.raises(homework_api.HomeworkApiError) as e:
         homework_api.call("get_submission", {})
     assert "SECRET123" not in e.value.message and "[link hidden]" in e.value.message
+
+
+# --- debug report 2026-10-07: say WHY the app can't be reached --------------------------------------------------------
+def test_the_homework_error_says_why_and_that_the_app_is_online(monkeypatch):
+    import urllib.error
+    import homework_api as h
+    monkeypatch.setattr(h, "_token", lambda: "t")
+    monkeypatch.setattr(h, "_endpoint", lambda: "https://example.invalid/api/jarvis")
+
+    class Boom:
+        def open(self, *a, **k):
+            raise urllib.error.URLError(OSError(11001, "getaddrinfo failed"))
+    monkeypatch.setattr(h, "_api_opener", Boom())
+    with pytest.raises(h.HomeworkApiError) as e:
+        h.call("get_overview")
+    msg = str(e.value)
+    assert "internet" in msg and "hosted online" in msg and "example.invalid" not in msg
