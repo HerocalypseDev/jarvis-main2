@@ -6540,15 +6540,14 @@ def _say_start_line(line: str) -> bool:
 
 def _run_scheduled_skill(skill: dict) -> None:
     log.info("Running scheduled skill %r.", skill["name"])
-    # Start line (owner 2026-10-05): spoken only when this skill speaks anyway ("announce"); a quiet one shows it on
-    # the dashboard as this run's session, so the owner can still see what ran and what it found.
+    # Start line (owner 2026-10-05): quiet assistant - spoken only for skills marked "announce" (the morning briefing)
+    # and for replies starting with "URGENT:". All other scheduled skill output goes to "what did I miss".
     line = _skill_start_line(skill)
     log.info("Skill %r start line: %s", skill["name"], line)
     session_id = dashboard.start_session("scheduled", f"{skill['name']}: {line}")
     dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "scheduled",
                                                         "transcript": f"{skill['name']}: {line}"}})
-    if skill.get("announce"):
-        _say_start_line(line)
+    # Note: No longer speaking start line unless skill has "announce" set (the morning briefing only)
     reply = None
     # Session context: mark a scheduled task as in-flight so anything checking
     # "is the user free right now" (e.g. queue_or_deliver_notification) can see it, and
@@ -6574,7 +6573,7 @@ def _run_scheduled_skill(skill: dict) -> None:
             # URGENT: is spoken; the rest waits in "what did I miss".
             text, urgent_now = _skill_reply_urgency(reply)
             if text:
-                queue_or_deliver_notification(text, urgent=urgent_now, important=bool(skill.get("announce")))
+                queue_or_deliver_notification(text, urgent=urgent_now)
         if reply != _llm_unavailable_reply():  # the brain answered: what it saw counts as checked
             _remember_skill_mail(skill["name"], _command_ctx.mail_shown)
     except Exception as e:
@@ -6605,13 +6604,16 @@ def _run_queued_task(description: str, instructions: str) -> None:
         f"(This is a scheduled, proactive run of a queued task: \"{description}\" — the user "
         f"didn't just ask for this out loud, act on it now.) {instructions}"
     )
-    if not untrusted:  # its result is said too (important), so its start is
-        _say_start_line(startline.from_text(description, description))
+    # queued/background tasks: never speak unless URGENT
     try:
         reply = run_agent_loop(synthetic_transcript)
         if reply:
             # a task the user queued is something they're waiting for; one from outside text stays quiet
-            queue_or_deliver_notification(reply, important=not _command_ctx.untrusted_origin)
+            text, urgent_now = _skill_reply_urgency(reply)
+            if urgent_now:
+                queue_or_deliver_notification(reply, urgent=True, bypass_busy_gate=True)
+            else:
+                _add_missed(text)
     finally:
         _command_ctx.untrusted_origin = prev_untrusted
         _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
