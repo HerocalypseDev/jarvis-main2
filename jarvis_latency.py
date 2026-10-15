@@ -117,6 +117,8 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     # Second wave (2026-09-23): "stop talking" says nothing back; a standing reply-length choice.
     ("hush", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:stop talking|stop|shut up|be quiet|quiet|hush|enough|silence|that's enough)"
                         r"(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
+    # Temporary silence / mute timer (2026-10-15): "shut up for 10 minutes", "mute for 5 minutes", etc.
+    ("mute", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:(?:shut up|be quiet|quiet|mute)\s+for(?:\s+the\s+next)?\s+\d+\s*(?:minute|minutes)?(?:,?\s*(?:please|jarvis))?\W*\Z|(?:\shush\b)\s+for\s+\d+\s*(?:minute|minutes)?\W*\Z)", re.I)),
     # Personalities (2026-10-06): "switch to playful mode", "be serious", "auto mode", "what's your personality".
     ("personality", _personality.INTENT_RE),
     ("reply_style", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:please\s+)?(?:(?:be|keep (?:it|answers|replies|them))\s+(?:brief|short|concise|terse)"
