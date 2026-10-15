@@ -99,17 +99,17 @@ def _run_skill(J, monkeypatch, skill):
     return spoken, sessions
 
 
-def test_a_scheduled_skill_says_its_line_only_when_it_speaks_anyway(J, monkeypatch):
-    loud = {"name": "morning_briefing", "description": "d", "instructions": "i", "announce": True,
-            "start_line": "Getting your morning briefing ready."}
-    spoken, sessions = _run_skill(J, monkeypatch, loud)
-    assert spoken == ["Getting your morning briefing ready."]
-    quiet = {"name": "gmail_watch", "description": "d", "instructions": "i",
-             "start_line": "Checking your Gmail for anything new."}
-    spoken, sessions = _run_skill(J, monkeypatch, quiet)
-    assert spoken == []  # the quiet rule holds; the line is on the dashboard instead
-    assert sessions[0] == ("scheduled", "gmail_watch: Checking your Gmail for anything new.")
-    assert sessions[-1] == ("end", "done")
+def test_a_scheduled_skill_never_says_its_line(J, monkeypatch):
+    """Owner 2026-10-15: scheduled skills are silent unless the reply is URGENT:, so the start line is never spoken
+    (it was for "announce" skills); it is the run's dashboard session instead."""
+    for skill in ({"name": "morning_briefing", "description": "d", "instructions": "i", "announce": True,
+                   "start_line": "Getting your morning briefing ready."},
+                  {"name": "gmail_watch", "description": "d", "instructions": "i",
+                   "start_line": "Checking your Gmail for anything new."}):
+        spoken, sessions = _run_skill(J, monkeypatch, skill)
+        assert spoken == []
+        assert sessions[0] == ("scheduled", f"{skill['name']}: {skill['start_line']}")
+        assert sessions[-1] == ("end", "done")
 
 
 def test_a_held_moment_drops_the_line(J, monkeypatch):

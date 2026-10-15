@@ -21,11 +21,11 @@ TOKEN = "tok-THE-SECRET-123"
 
 
 @pytest.fixture(autouse=True)
-def env(monkeypatch):
+def env(monkeypatch, tmp_path):
     monkeypatch.setenv("HOMEWORK_APP_URL", "https://learn.example.app/")
     monkeypatch.setenv("HOMEWORK_API_TOKEN", TOKEN)
     monkeypatch.delenv("HOMEWORK_MARKING_MODEL", raising=False)
-    monkeypatch.delenv("JARVIS_MEMORY_DB_PATH", raising=False)
+    monkeypatch.setenv("JARVIS_MEMORY_DB_PATH", str(tmp_path / "homework.db"))  # never the real memory
 
 
 def png(size=(40, 30), color=(200, 30, 30)) -> bytes:

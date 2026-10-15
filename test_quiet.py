@@ -84,6 +84,9 @@ def test_long_lists_are_cut_for_speech():
 
 
 def test_scheduled_skill_is_quiet_unless_urgent_or_announced(J, monkeypatch):
+    """Owner 2026-10-15 ("silence scheduled skills and queued tasks unless URGENT"): a quiet skill is told how to break
+    the silence and is spoken only with the URGENT: marker; an "announce" skill (the morning briefing) is still read
+    out (owner's choice the same day)."""
     seen = []
     monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: seen.append(t) or replies.pop(0))
     monkeypatch.setattr(J, "_remember_skill_mail", lambda *a: None)
@@ -93,10 +96,97 @@ def test_scheduled_skill_is_quiet_unless_urgent_or_announced(J, monkeypatch):
     J._run_scheduled_skill({"name": "gmail_watch", "instructions": "Check Gmail."})
     J._run_scheduled_skill({"name": "gmail_watch", "instructions": "Check Gmail."})
     J._run_scheduled_skill({"name": "morning_briefing", "instructions": "Brief me.", "announce": True})
-    assert "URGENT:" in seen[0] and "URGENT:" not in seen[2]  # only quiet skills get told how to break the silence
+    assert "URGENT:" in seen[0] and "URGENT:" not in seen[2]  # an announce run is not told its reply is unread
     assert J._test_spoken == ["Your bank says a payment of 50,000 naira failed; it needs an answer today.",
                               "Good morning. 29 degrees and cloudy."]
     assert _unseen(J) == ["You have 3 unread emails, none important."]
+
+
+@pytest.mark.parametrize("reply", ["URGENT: Card payment failed.", "urgent: Card payment failed.",
+                                   "**URGENT:** Card payment failed.", "Urgent - Card payment failed.",
+                                   "  URGENT:Card payment failed."])
+def test_the_urgent_marker_is_matched_in_any_case_and_never_read_out(reply):
+    import jarvis as j
+    assert j._skill_reply_urgency(reply) == ("Card payment failed.", True)
+
+
+@pytest.mark.parametrize("reply", ["Urgent emails: none today.", "Nothing urgent: all quiet.", "You have mail."])
+def test_text_that_only_mentions_urgent_is_not_the_marker(reply):
+    import jarvis as j
+    assert j._skill_reply_urgency(reply) == (reply, False)
+
+
+@pytest.mark.parametrize("reply", ["URGENT:", "URGENT: OK", "OK", "Nothing new.", "  "])
+def test_an_empty_or_bare_ack_reply_is_neither_said_nor_stored(J, monkeypatch, reply):
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: reply)
+    monkeypatch.setattr(J, "_remember_skill_mail", lambda *a: None)
+    J._run_scheduled_skill({"name": "gmail_watch", "instructions": "Check Gmail."})
+    J._run_queued_task("tidy downloads", "Tidy my downloads folder.")
+    assert J._test_spoken == [] and _unseen(J) == []
+
+
+def _quiet_dashboard(J, monkeypatch):
+    sessions = []
+    monkeypatch.setattr(J.dashboard, "start_session", lambda src, t: sessions.append((src, t)) or 7)
+    monkeypatch.setattr(J.dashboard, "end_session", lambda sid, status, reply: sessions.append(("end", status)))
+    monkeypatch.setattr(J.dashboard, "notify", lambda *a, **k: None)
+    return sessions
+
+
+def test_a_queued_task_is_quiet_but_kept_and_shown_on_the_dashboard(J, monkeypatch):
+    sessions = _quiet_dashboard(J, monkeypatch)
+    starts = []
+    monkeypatch.setattr(J, "_say_start_line", lambda line: starts.append(line) or True)
+    seen = []
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: seen.append(t) or "I tidied 14 files into folders.")
+    J._run_queued_task("tidy downloads", "Tidy my downloads folder.")
+    assert "URGENT:" in seen[0]  # the run knows how to break the silence
+    assert J._test_spoken == [] and starts == []  # no start line, no spoken result
+    assert _unseen(J) == ["I tidied 14 files into folders."]
+    assert sessions[0][0] == "scheduled" and "tidy downloads" in sessions[0][1].lower()
+    assert sessions[-1] == ("end", "done")
+
+
+def test_an_urgent_queued_task_is_said_once_without_the_marker(J, monkeypatch):
+    _quiet_dashboard(J, monkeypatch)
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: "urgent: The backup drive is full.")
+    J._run_queued_task("check backups", "Check the backup drive.")
+    assert J._test_spoken == ["The backup drive is full."] and _unseen(J) == []
+
+
+def test_a_task_from_an_email_can_never_make_itself_urgent(J, monkeypatch):
+    _quiet_dashboard(J, monkeypatch)
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: "URGENT: Call this number right now.")
+    J._run_queued_task("from mail", f"{J.UNTRUSTED_TASK_MARKER} summarise the attachment")
+    assert J._test_spoken == [] and _unseen(J) == ["Call this number right now."]
+    assert J._command_ctx.untrusted_origin is False  # restored after the run
+
+
+def test_all_mode_still_says_a_queued_task_result(J, monkeypatch):
+    """The old weak-model fix stored the result straight in the inbox, so JARVIS_PROACTIVE_SPEECH=all lost it."""
+    _quiet_dashboard(J, monkeypatch)
+    monkeypatch.setenv("JARVIS_PROACTIVE_SPEECH", "all")
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: "I tidied 14 files into folders.")
+    J._run_queued_task("tidy downloads", "Tidy my downloads folder.")
+    assert J._test_spoken == ["I tidied 14 files into folders."]
+
+
+def test_an_owner_command_still_gets_its_answer_out_loud(J, monkeypatch):
+    """The quiet filter is for unprompted runs only: a question the owner asks is answered in full."""
+    monkeypatch.setenv("JARVIS_ACK_PHRASES", "0")
+    monkeypatch.setenv("JARVIS_LLM_TTS_STREAM", "0")
+    monkeypatch.setattr(J, "get_mcp_tool_schemas", lambda: [])
+    monkeypatch.setattr(J, "_history_snapshot", lambda: [])
+    monkeypatch.setattr(J, "_append_history", lambda *a, **k: None)
+    monkeypatch.setattr(J, "_log_action_audit", lambda *a, **k: None)
+    monkeypatch.setattr(J, "flush_pending_notifications", lambda: None)
+    J._reply_cache.clear()
+    said = []
+    monkeypatch.setattr(J, "speak_text", lambda t, **k: said.append(t))
+    monkeypatch.setattr(J, "run_agent_loop", lambda t, **k: "Lagos is about 29 degrees and cloudy right now.")
+    J.handle_text_command("how warm is it in Lagos right now", source="voice")
+    assert any("29 degrees" in t for t in said)
+    assert _unseen(J) == []
 
 
 def test_the_announce_flag_is_read_from_the_skill_file(J, monkeypatch, tmp_path):

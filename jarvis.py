@@ -6201,7 +6201,7 @@ def _read_skills_from_disk() -> list[dict]:
                 skill: dict = {"name": name, "description": description, "instructions": instructions}
                 if isinstance(schedule, dict):
                     skill["schedule"] = schedule
-                if data.get("announce") is True:  # a scheduled run's reply is said out loud (else: "what did I miss")
+                if data.get("announce") is True:  # a scheduled run's reply is said out loud (else: URGENT: only)
                     skill["announce"] = True
                 skills.append(skill)
             else:
@@ -6491,14 +6491,25 @@ SKILL_QUIET_NOTE = (
     "a security alert, a payment problem, an email that needs an answer today, something starting within the hour - "
     "start your reply with 'URGENT:' and it will be said out loud. If nothing new or important came up, reply with "
     "just 'OK'.)")
-_URGENT_PREFIX_RE = re.compile(r"\A\W*urgent\s*[:\-]\s*", re.I)
+QUEUED_TASK_QUIET_NOTE = (
+    " (Your reply is NOT read out: it goes to the user's 'what did I miss' list, so say plainly what you did and what "
+    "you found. Only if something truly can't wait - a security alert, a payment problem, something starting within "
+    "the hour - start your reply with 'URGENT:' and it will be said out loud.)")
+# One normalization rule (recovery audit 2026-10-15): "URGENT:" at the very start, any case, optionally wrapped in
+# markdown ("**URGENT:**") or written with a dash; the prefix and its wrapping are removed so it is never read out.
+# "Urgent emails: none" is not a marker (the word must be followed straight away by the colon/dash).
+_URGENT_PREFIX_RE = re.compile(r"\A[\W_]*urgent[\s*_]*[:\-\u2013\u2014]+[\s*_]*", re.I)
 
 
 def _skill_reply_urgency(reply: str) -> tuple[str, bool]:
+    """(text to deliver, urgent) for an unprompted run's reply: urgent only when it starts with the URGENT: marker,
+    which is stripped. A bare acknowledgement ("OK", "Nothing new", even after the marker) comes back as "" so it is
+    neither spoken nor stored."""
     m = _URGENT_PREFIX_RE.match(reply or "")
-    if m:
-        return reply[m.end():].strip(), True
-    return (reply or "").strip(), False
+    text, urgent = ((reply or "")[m.end():].strip(), True) if m else ((reply or "").strip(), False)
+    if not text or _BARE_ACK_RE.match(text):
+        return "", urgent
+    return text, urgent
 
 
 def _skill_start_line(skill: dict) -> str:
@@ -6549,14 +6560,14 @@ def _say_start_line(line: str) -> bool:
 
 def _run_scheduled_skill(skill: dict) -> None:
     log.info("Running scheduled skill %r.", skill["name"])
-    # Start line (owner 2026-10-05): quiet assistant - spoken only for skills marked "announce" (the morning briefing)
-    # and for replies starting with "URGENT:". All other scheduled skill output goes to "what did I miss".
+    # Quiet (owner 2026-10-15, "silence scheduled skills ... unless URGENT"): the start line is never spoken, it is
+    # this run's session on the dashboard; the reply is spoken only when it starts with "URGENT:". Exception the owner
+    # chose the same day: an "announce" skill (morning_briefing, homework_watch) still has its reply read out.
     line = _skill_start_line(skill)
     log.info("Skill %r start line: %s", skill["name"], line)
     session_id = dashboard.start_session("scheduled", f"{skill['name']}: {line}")
     dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "scheduled",
                                                         "transcript": f"{skill['name']}: {line}"}})
-    # Note: No longer speaking start line unless skill has "announce" set (the morning briefing only)
     reply = None
     # Session context: mark a scheduled task as in-flight so anything checking
     # "is the user free right now" (e.g. queue_or_deliver_notification) can see it, and
@@ -6567,22 +6578,22 @@ def _run_scheduled_skill(skill: dict) -> None:
         f"(This is a scheduled, proactive run of your \"{skill['name']}\" skill — the user "
         f"didn't just ask for this out loud, act on the schedule instead.) {skill['instructions']}"
     )
-    if not skill.get("announce"):
-        synthetic_transcript += SKILL_QUIET_NOTE
+    announce = bool(skill.get("announce"))
+    if not announce:
+        synthetic_transcript += SKILL_QUIET_NOTE  # how a quiet run can still break the silence
     _command_ctx.scheduled_skill, _command_ctx.mail_shown = skill["name"], set()
     _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
     try:
         # An unprompted run must stay quiet when the model gives no text: never fall back to the
         # last tool's result (e.g. a remember_fact ack), and treat a bare "OK"/"Done." as silence.
         reply = run_agent_loop(synthetic_transcript, tool_result_fallback=False)
-        if reply and not _BARE_ACK_RE.match(reply):
-            # Route through the interrupt gate instead of speaking immediately — a scheduled
-            # skill is exactly the kind of unprompted interrupt session context exists for.
-            # Quiet assistant: only a skill marked "announce" (the morning briefing) or a reply that starts with
-            # URGENT: is spoken; the rest waits in "what did I miss".
+        if reply:
+            # Through the interrupt gate, never speak_text: URGENT: or an announce skill is spoken (Sleep/Focus/
+            # visitor rules still apply); anything else lands in "what did I miss" (said in
+            # JARVIS_PROACTIVE_SPEECH=all mode).
             text, urgent_now = _skill_reply_urgency(reply)
             if text:
-                queue_or_deliver_notification(text, urgent=urgent_now)
+                queue_or_deliver_notification(text, urgent=urgent_now, important=announce)
         if reply != _llm_unavailable_reply():  # the brain answered: what it saw counts as checked
             _remember_skill_mail(skill["name"], _command_ctx.mail_shown)
     except Exception as e:
@@ -6598,13 +6609,18 @@ def _run_scheduled_skill(skill: dict) -> None:
 
 
 def _run_queued_task(description: str, instructions: str) -> None:
-    """task_scheduler's run_callback — same shape as _run_scheduled_skill above, so a queued
-    task with instructions is executed exactly like a scheduled skill (full tool access,
-    reply delivered through the interrupt gate)."""
+    """task_scheduler's run_callback: a queued task with instructions runs like a scheduled skill (full tool access,
+    reply through the interrupt gate). Quiet (owner 2026-10-15): no spoken start line (it is this run's dashboard
+    session instead) and the result is spoken only when it starts with "URGENT:"; anything else goes to "what did I
+    miss". A task that came from outside text (an email) can never make itself urgent."""
     log.info("Running queued task %r.", description)
     untrusted = UNTRUSTED_TASK_MARKER in (instructions or "")
     instructions = (instructions or "").replace(UNTRUSTED_TASK_MARKER, "").strip()
     prev_untrusted = getattr(_command_ctx, "untrusted_origin", False)
+    line = startline.from_text(description, description)
+    session_id = dashboard.start_session("scheduled", f"queued task: {line}")
+    dashboard.notify({"type": "session_start", "data": {"id": session_id, "source": "scheduled",
+                                                        "transcript": f"queued task: {line}"}})
     _command_ctx.untrusted_origin = untrusted
     _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
     _set_scheduled_task_running(True)
@@ -6612,18 +6628,20 @@ def _run_queued_task(description: str, instructions: str) -> None:
     synthetic_transcript = (
         f"(This is a scheduled, proactive run of a queued task: \"{description}\" — the user "
         f"didn't just ask for this out loud, act on it now.) {instructions}"
-    )
-    # queued/background tasks: never speak unless URGENT
+    ) + QUEUED_TASK_QUIET_NOTE
+    reply = None
     try:
         reply = run_agent_loop(synthetic_transcript)
         if reply:
-            # a task the user queued is something they're waiting for; one from outside text stays quiet
             text, urgent_now = _skill_reply_urgency(reply)
-            if urgent_now:
-                queue_or_deliver_notification(reply, urgent=True, bypass_busy_gate=True)
-            else:
-                _add_missed(text)
+            if text:
+                # Not `important`: a non-urgent result waits in "what did I miss" (said in
+                # JARVIS_PROACTIVE_SPEECH=all mode). Outside text never gets to interrupt.
+                queue_or_deliver_notification(text, urgent=urgent_now and not untrusted)
     finally:
+        status = "failed" if reply is None or reply == _llm_unavailable_reply() else "done"
+        dashboard.end_session(session_id, status, reply or "(nothing to report)")
+        dashboard.notify({"type": "session_end", "data": {"id": session_id, "status": status, "reply": reply}})
         _command_ctx.untrusted_origin = prev_untrusted
         _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
         _set_scheduled_task_running(False)

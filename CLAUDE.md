@@ -1820,6 +1820,7 @@ row there each phase rather than only stating the total in chat.
 | 156 (personality voices: a Deepgram voice + speed per personality, Naija on a Fish Audio Pidgin voice with Deepgram fallback, slang said in words, no sigh/yawn, Classic unchanged incl. its cache; 11 new tests) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
 | 157 (open Settings page updates live when a setting changes by voice/phone/AI, voice-type phrasings switch the personality, personality tool for the AI; headless check; 14 new tests) | Opus 5.5 | ~20 min | ~$1.60–$2.30 |
 | 158 (debug report of 2026-10-07: false cleared/looked-up claims caught, autonomy origin lookup, document backup before script edits, force-close asks, fake checks and login-file hunts refused, time-zone questions, homework error reason, startup stagger, self-check note; 27 new tests) | Sonnet 5.5 | ~45 min | ~$3.00–$4.20 |
+| 160 (recovery audit of the 2026-10-15 "silence scheduled skills and queued tasks unless URGENT" commit: announce skills silenced (restored at the owner's choice), queued URGENT read out with its prefix, outside-text tasks could make themselves urgent, inbox bypassed `all` mode, bare "OK" stored, no dashboard session for queued runs, 2 tests left failing; tests no longer write the repo's jarvis_memory.db; 22 new/updated tests) | Opus 5.5 | ~60 min | ~$4.00–$5.50 |
 | 159 ("Jarvis keeps closing": the microphone loop had no safety net, so a device hiccup or any error in it ended the program; now supervised: reopens the mic with backoff, crash log + native-crash dump, spoken "Microphone reconnected."; 11 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | **Running total (final)** | | **~4844 min** | **~$329.95–$464.05** |
 
@@ -2510,10 +2511,10 @@ anyone the owner has emailed), strangers get a polite reply with nothing persona
   **"what did I miss?" inbox** (`jarvis_missed.py`, table `missed_items`, 7 days / 300 rows, a repeat unseen message is
   stored once). Setting `JARVIS_PROACTIVE_SPEECH` important (default) | all (old behaviour). Sleep's urgent recording, Focus/
   Sleep/safe-mode/meeting/visitor holds are unchanged for what still speaks. Marked `important`: meeting heads-up, "I started
-  meeting notes" (recording: must be said), interrupted-plans notice, a task the user queued (not untrusted-origin), a
-  user-scheduled job's result or failure. Now silent (inbox): scheduled skills unless the skill JSON has `"announce": true`
-  (morning_briefing, homework_watch) or the reply starts with `URGENT:` (quiet runs are told so via `SKILL_QUIET_NOTE`;
-  the prefix is stripped and the line is spoken as urgent), health tips, doctor findings, Google re-sign-in, budget alert,
+  meeting notes" (recording: must be said), interrupted-plans notice, a
+  user-scheduled job's result or failure, a scheduled skill with `"announce": true` (morning_briefing, homework_watch).
+  Now silent (inbox): other scheduled skills and queued tasks unless the reply starts with `URGENT:` (changed
+  2026-10-15: "a task the user queued" no longer speaks; see "Quiet scheduled skills and queued tasks" below), health tips, doctor findings, Google re-sign-in, budget alert,
   low battery (critical still urgent), network new/joined/left (the toast still shows; the owner asked for join/leave
   announcements on 2026-09-30, set `all` to hear them again), autonomy notes, background agents, daily review, file watcher.
   "What did I miss?" (intent `missed`: "did I miss anything", "anything new", "what's new", "catch me up", "any updates",
@@ -2683,10 +2684,9 @@ Code: `jarvis_startline.py` (pure), tests `test_startline.py` (24). Rules to kee
   question -> None, <= 90 chars). It replaces "On it." + the per-tool line ("Sure, I'll run that on your PC now") for that
   command; the per-tool lines stay as the fallback. **Never for anything dangerous**: shut down/format/wipe/delete/remove/
   uninstall/kill/restart the PC, or text `_catastrophic_reason` flags, keep the generic lead-in (no promise before the gate).
-- **Scheduled runs**: a skill speaks its line only if it has `"announce": true` (it talks anyway); a quiet one (hourly Gmail
-  check) shows it on the dashboard as that run's session (source `scheduled`, ended with the reply). A deferred job of
-  origin user/conversation speaks it (its result is said too); an autonomy-made one stays quiet; a queued task the owner
-  queued speaks it. `_say_start_line` speaks right away or not at all (dropped in Sleep/Focus/safe mode, meeting hold,
+- **Scheduled runs**: a scheduled skill or queued task never speaks its line (since 2026-10-15); it is that run's
+  dashboard session (source `scheduled`, ended with the reply). A deferred job of origin user/conversation speaks it (its
+  result is said too); an autonomy-made one stays quiet. `_say_start_line` speaks right away or not at all (dropped in Sleep/Focus/safe mode, meeting hold,
   visitor, critical battery: a stale "starting..." later is useless), never a phone push.
 - The palette's recent commands now list only things the owner said (voice/text/dashboard/phone), not scheduled/autonomy
   sessions. Instant macros (no AI, finish in milliseconds) still just say their results, no start line.
@@ -2878,3 +2878,24 @@ Owner's choices: self-healing loop + crash log, and **speak** the recovery. Code
 - The reply cache no longer stores turns that used `list_background_tasks` or mention James
   (a cached "James is working on it" was replayed after the task list said nothing ran).
 - Tests: 3 in `test_cache.py`. Not verified live against Gemini.
+
+## Quiet scheduled skills and queued tasks (2026-10-15, owner commit + recovery audit)
+
+Owner's commit 21c142e ("silence scheduled skills and queued tasks unless URGENT", written with a weaker model) left holes;
+the audit the same day fixed them. Rules to keep (tests: `test_quiet.py`, `test_startline.py`):
+- `_run_scheduled_skill` and `_run_queued_task` never speak a start line (it is the run's dashboard session, source
+  `scheduled`) and speak the reply only when it starts with the URGENT marker. **Owner's choice (2026-10-15): a skill
+  with `"announce": true` (morning_briefing, homework_watch) still has its reply read out** (`important`); the commit
+  had silenced it (and as written it could never even be urgent). Quiet runs get the note that explains the marker
+  (`SKILL_QUIET_NOTE`, or `QUEUED_TASK_QUIET_NOTE`, which asks for a plain result instead of "OK").
+- One marker rule, `_skill_reply_urgency`: "URGENT:" at the very start, any case, optional markdown/dash
+  ("**URGENT:**", "Urgent -"); stripped before speaking. "Urgent emails: none" is not a marker. An empty or bare-ack
+  reply ("OK", "URGENT: OK") is dropped, neither said nor stored.
+- Non-urgent results go through `queue_or_deliver_notification` (not `important`), never straight to `_add_missed`: the
+  direct call skipped `JARVIS_PROACTIVE_SPEECH=all` and the phone push. A queued task that came from outside text
+  (`UNTRUSTED_TASK_MARKER`) can never make itself urgent.
+- Owner-attended commands, the owner's reminders, watches, deferred jobs the owner asked for and `important` notices are
+  unchanged. Tests now always run on a temp `JARVIS_MEMORY_DB_PATH` (`conftest.py`): 9 test files used to write the
+  repo's real `jarvis_memory.db`.
+- Not verified live on the PC: hear the 8 AM morning_briefing read out with no start line before it; hear an URGENT skill reply
+  and a queued task land in the Home card on the real scheduler and TTS.
