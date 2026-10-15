@@ -320,6 +320,9 @@ _CONFIRM_YES_WORDS = (
 _pending_action_lock = threading.Lock()
 _pending_action: dict | None = None
 
+# epoch seconds when temporary mute expires ("shut up for 10 minutes")
+_muted_until: float = 0.0
+
 # Best-effort text patterns over a shell command or Python snippet's *source text* — not a
 # sandbox, just a tripwire — for the one class of damage that's both irreversible and
 # plausibly triggered by a misheard Whisper transcription or injected screen/clipboard text:
@@ -1501,6 +1504,8 @@ def speak_text(text: str) -> None:
     t = _sanitize_for_speech(personality.spoken(speech_script.for_speech(text, _pronounce_with_model)))
     if not t:
         return
+    if _is_muted():
+        return  # "shut up for the next 10 minutes": every spoken reply is skipped until it expires
     _await_ack()  # a spoken lead-in ("On it.") started for this command finishes before anything else
 
     lat = latency.current()
@@ -15454,8 +15459,23 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
     """Zero-LLM-call answers for the handful of intents that are pure local computation — no
     network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
     None for every other intent (caller falls through to the normal agent loop)."""
+    global _muted_until
     if intent in ("briefing", "urgent"):
         return briefing_report("morning" if intent == "briefing" else "urgent")["speech"]
+    if intent == "mute":
+        low = (transcript or "").lower()
+        m = re.search(r"\bfor (\d+)\b", low)
+        if m:
+            minutes = int(m.group(1))
+            if 1 <= minutes <= 1440:
+                _muted_until = time.monotonic() + minutes * 60
+                return f"Okay, I'll be quiet for {minutes} minute{'s' if minutes > 1 else ''}."
+            return f"Minutes must be between 1 and 1440, got {minutes}."
+        # talk again / cancel mute
+        if any(kw in low for kw in ["talk again", "unmute", "start talking", "speak again"]):
+            _muted_until = 0.0
+            return "Mute cancelled. Jarvis will speak normally again."
+        return None
     if intent == "hush":
         _interrupt_speech()  # stop whatever is still playing, and say nothing back
         return ""
