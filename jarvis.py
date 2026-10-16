@@ -138,6 +138,7 @@ import jarvis_watches as watches_mod
 import jarvis_caretaker as caretaker
 import jarvis_caretaker_probe as caretaker_probe
 import jarvis_caretaker_fix as caretaker_fix
+import jarvis_caretaker_windows as caretaker_win
 import jarvis_personality as personality
 import jarvis_quickfacts as quickfacts
 import jarvis_mail_reply as mail_reply
@@ -9279,7 +9280,7 @@ def _caretaker_fix_storage(issue: dict) -> str | None:
 CARETAKER_RERUNS_PER_PASS = 2   # a brain outage fails every skill at once: re-run only a couple per pass
 
 
-def _caretaker_self_gave_up(issue: dict, reason: str, announce: bool = True) -> None:
+def _caretaker_gave_up(issue: dict, reason: str, announce: bool = True) -> None:
     """Stop trying: the cause isn't fixable from here. Said once, quietly (the "what did I miss" inbox), with what
     the owner can do about it; the Caretaker page keeps it visible."""
     key = issue["key"]
@@ -9311,7 +9312,7 @@ def _caretaker_fix_self(issue: dict) -> str | None:
     plan = caretaker.plan_self_fix(issue, _caretaker_store.last_action(key, action) if action else None)
     do = plan["do"]
     if do == "give_up":
-        _caretaker_self_gave_up(issue, plan["why"])
+        _caretaker_gave_up(issue, plan["why"])
         return None
     if do in ("none", "wait"):
         return None
@@ -9328,7 +9329,7 @@ def _caretaker_fix_self(issue: dict) -> str | None:
         n = _caretaker_store.note_attempt(key, "reconnecting it didn't work")
         if n >= caretaker.MAX_ATTEMPTS:
             cmd = doctor.REAUTH.get(name, "")
-            _caretaker_self_gave_up(
+            _caretaker_gave_up(
                 issue, "It stays down after three reconnects. "
                 + (f"If its Google sign-in expired, run {cmd} on your PC. " if cmd else "")
                 + "Otherwise check that its program is installed and the network is up, then restart Jarvis.")
@@ -9337,13 +9338,13 @@ def _caretaker_fix_self(issue: dict) -> str | None:
         if plan["count_failed"]:   # the last re-run ran and it still fails: that attempt didn't help
             n = _caretaker_store.note_attempt(key, "running it again didn't fix it")
             if n >= caretaker.MAX_ATTEMPTS:
-                _caretaker_self_gave_up(issue, "It kept failing when I ran it again, so it needs a look from you.")
+                _caretaker_gave_up(issue, "It kept failing when I ran it again, so it needs a look from you.")
                 return None
         if _caretaker_state.get("reruns", 0) >= CARETAKER_RERUNS_PER_PASS:
             return None
         skill = next((s for s in _load_skills() if s["name"].lower() == name.lower()), None)
         if skill is None or skill["name"].lower() in _skills_off():
-            _caretaker_self_gave_up(issue, "That skill is switched off or gone, so there is nothing to run.",
+            _caretaker_gave_up(issue, "That skill is switched off or gone, so there is nothing to run.",
                                     announce=False)
             return None
         started = _run_single_flight(f"skill:{skill['name']}", _run_scheduled_skill, skill)
@@ -9357,13 +9358,114 @@ def _caretaker_fix_self(issue: dict) -> str | None:
     return None
 
 
+def _caretaker_tell_once(key: str, text: str) -> None:
+    """One quiet line (the "what did I miss" inbox, not spoken) per issue per run."""
+    if key in _caretaker_state["announced"]:
+        return
+    _caretaker_state["announced"].add(key)
+    queue_or_deliver_notification(text)
+
+
+def _minutes_ago(iso: str | None) -> float | None:
+    try:
+        return (datetime.now() - datetime.fromisoformat(iso)).total_seconds() / 60
+    except (TypeError, ValueError):
+        return None
+
+
+def _caretaker_fix_process(issue: dict) -> str | None:
+    """A CPU hog: lower its priority (undoable) so it can't slow the user's other apps. Never closes it (it may be
+    a render or an encode), never touches the app the user is working in or a Windows/security process."""
+    key, ev = issue["key"], issue.get("evidence") or {}
+    name = str(ev.get("name") or "")
+    front = _caretaker_front_process()
+    if not name or ev.get("in_front") or (front and front.lower() == name.lower()):
+        return None
+    last = _caretaker_store.last_action(key, "lower_priority")
+    if last and (_minutes_ago(last["ts"]) or 0) < 24 * 60:
+        return None   # done already; it stays on the page until the CPU use stops
+    if caretaker.budget_blocked(_caretaker_store):
+        return None
+    r = caretaker_win.lower_priority(name)
+    if not r["changed"]:
+        if r["protected"]:
+            _caretaker_gave_up(issue, r["reason"])
+        elif r["skipped"]:
+            _caretaker_tell_once(key, f"{issue['title']} It is already at a low priority. Close it if you don't need it.")
+        return None
+    _caretaker_store.log_action(key, caretaker.GREEN, "lower_priority",
+                                f"{name}: {len(r['changed'])} process(es) set to below-normal priority", "done",
+                                undo={"kind": "priority", "name": name, "items": r["changed"]})
+    selfaware.record("system", "caretaker_fix", f"lowered the priority of {name} (using {ev.get('cpu_percent', 0):.0f}% CPU)")
+    _caretaker_tell_once(key, f"{issue['title']} I lowered its priority so it won't slow your other apps. "
+                              f"Close it yourself if you don't need it.")
+    return f"lowered the priority of {name}"
+
+
+def _caretaker_fix_network(issue: dict) -> str | None:
+    """No internet / DNS failing: look again, flush the DNS cache, reconnect Wi-Fi. Anything that needs
+    administrator rights is left for the admin helper (phase 6) and said so."""
+    key, ev = issue["key"], issue.get("evidence") or {}
+    last = _caretaker_store.last_action(key, "fix_network")
+    if last and (_minutes_ago(last["ts"]) or 99) < 5:
+        return None
+    if caretaker.budget_blocked(_caretaker_store):
+        return None
+    r = caretaker_win.fix_network(str(ev.get("detail") or ""), recheck=lambda: not caretaker_probe.probe_network())
+    said = "; ".join(r["steps"]) or "looked again"
+    _caretaker_store.log_action(key, caretaker.GREEN, "fix_network", said, "back online" if r["cleared"] else "still down")
+    if r["cleared"]:
+        _caretaker_store.set_status(key, "fixed")
+        selfaware.record("system", "caretaker_fix", f"network: {said}")
+        return f"network: {said}"
+    n = _caretaker_store.note_attempt(key, said if r["steps"] else "looked again, still down")
+    if r["needs_admin"]:
+        _caretaker_state.setdefault("needs_admin", {})[key] = r["needs_admin"]
+    if n >= caretaker.MAX_ATTEMPTS:
+        _caretaker_gave_up(issue, "I tried " + (said if r["steps"] else "checking again") + " and it is still down. "
+                           + (ev.get("advice") or "") + (" Some fixes need administrator rights, which I don't have yet."
+                                                       if r["needs_admin"] else ""))
+    return None
+
+
+def _caretaker_fix_crash(issue: dict) -> str | None:
+    """An app that keeps crashing: clear its own caches once a day, only while it isn't running, then say what
+    usually helps. Apps without a known cache folder just get the advice."""
+    key, ev = issue["key"], issue.get("evidence") or {}
+    app = str(ev.get("app") or "")
+    last = _caretaker_store.last_action(key, "clear_app_cache")
+    if last and (_minutes_ago(last["ts"]) or 0) < 24 * 60:
+        return None
+    r = caretaker_win.clear_app_cache(app)
+    if r["why_not"] == "it is running right now":
+        return None   # look again next pass: a running browser's cache is not touched
+    if r["why_not"]:
+        _caretaker_tell_once(key, f"{issue['title']} {ev.get('advice', '')}".strip())
+        return None
+    if caretaker.budget_blocked(_caretaker_store):
+        return None
+    _caretaker_store.log_action(key, caretaker.GREEN, "clear_app_cache", f"cleared {app}'s cache folders",
+                                f"{r['files']} file(s)", freed_bytes=r["freed"])
+    selfaware.record("system", "caretaker_fix", f"cleared the cache of {app} after {ev.get('count_today', 0)} crashes today")
+    _caretaker_tell_once(key, f"{issue['title']} I cleared its cache. {ev.get('advice', '')}".strip())
+    return f"cleared {app}'s cache"
+
+
 def _caretaker_fix_issue(issue: dict) -> str | None:
-    """Run the playbook for one issue; returns a sentence about what was done (None = nothing). Storage and
-    Jarvis's own failures so far; the Windows playbooks arrive in later phases."""
-    if issue["category"] == "storage":
+    """Run the playbook for one issue; returns a sentence about what was done (None = nothing). Disk health and
+    Windows Update have no playbook here on purpose: a failing disk is only reported, and the update fixes need the
+    admin helper (phase 6)."""
+    cat = issue["category"]
+    if cat == "storage":
         return _caretaker_fix_storage(issue)
-    if issue["category"].startswith("self_"):
+    if cat.startswith("self_"):
         return _caretaker_fix_self(issue)
+    if cat == "process":
+        return _caretaker_fix_process(issue)
+    if cat == "network":
+        return _caretaker_fix_network(issue)
+    if cat == "crash":
+        return _caretaker_fix_crash(issue)
     return None
 
 
@@ -9488,7 +9590,10 @@ def _caretaker_undo(action_id=None) -> str:
     if not acts:
         return "Tool failed: nothing to undo (it was already undone, or its holding period is over)."
     a = acts[0]
-    msg = caretaker_fix.undo(a["undo"])
+    if (a["undo"] or {}).get("kind") == "priority":
+        msg = caretaker_win.restore_priority(a["undo"])
+    else:
+        msg = caretaker_fix.undo(a["undo"])
     if msg.startswith("Put"):
         _caretaker_store.mark_undone(a["id"])
         selfaware.record("system", "caretaker_undo", f"undid '{a['action']}': {msg}")

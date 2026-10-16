@@ -140,7 +140,7 @@ document.getElementById("ct-issues")?.addEventListener("click", async (e) => {
 document.getElementById("ct-actions")?.addEventListener("click", async (e) => {
   const id = e.target.dataset.ctUndo;
   if (!id) return;
-  if (!confirm("Undo this fix? Files Jarvis moved go back where they were.")) return;
+  if (!confirm("Undo this fix? What Jarvis changed goes back the way it was.")) return;
   let msg;
   try {
     const r = await ctPost("undo", { id: Number(id) });

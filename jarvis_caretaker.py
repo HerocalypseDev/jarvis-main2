@@ -107,7 +107,20 @@ def process_finding(name: str, cpu_percent: float, sustained_min: float,
                    severity="high" if cpu_percent >= 70 else "warn",
                    title=f"{name} has been using {cpu_percent:.0f}% CPU for {sustained_min:.0f} minutes.",
                    evidence={"name": name, "cpu_percent": cpu_percent, "sustained_min": sustained_min,
-                             "in_front": bool(in_front), "pid": pid})
+                             "in_front": bool(in_front), "pid": pid,
+                             "advice": "When it isn't what you're working in, I lower its priority so it can't slow "
+                                       "your other apps. I never close it for you, because it might be doing "
+                                       "real work. Close it yourself if you don't need it."})
+
+
+_GRAPHICS_MODULE_RE = re.compile(r"nv|amd|atig|atidx|igd|intel|d3d|dxgi|opengl|vulkan|gpu", re.I)
+
+
+def crash_advice(module: str = "") -> str:
+    """What usually helps when an app keeps crashing, from the module Windows blames (a hint, not a diagnosis)."""
+    if module and _GRAPHICS_MODULE_RE.search(module):
+        return "A graphics driver is involved. Updating the graphics driver usually stops this."
+    return "If it keeps crashing after I clear its cache, update or reinstall the app."
 
 
 def crash_finding(app: str, count_today: int, module: str = "") -> Finding | None:
@@ -117,7 +130,8 @@ def crash_finding(app: str, count_today: int, module: str = "") -> Finding | Non
     if module:
         t += f" (faulting module {module})"
     return Finding(key=f"crash:{app.lower()}", category="crash", severity="warn",
-                   title=t + ".", evidence={"app": app, "count_today": count_today, "module": module})
+                   title=t + ".", evidence={"app": app, "count_today": count_today, "module": module,
+                                            "advice": crash_advice(module)})
 
 
 def disk_health_finding(drive: str, status: str) -> Finding | None:
@@ -127,7 +141,9 @@ def disk_health_finding(drive: str, status: str) -> Finding | None:
         return None
     return Finding(key=f"diskhealth:{drive}", category="disk_health", severity="critical",
                    title=f"The disk reports '{status}' health. Back up important files now.",
-                   evidence={"drive": drive, "status": status})
+                   evidence={"drive": drive, "status": status,
+                             "advice": "I can't repair a failing disk and I won't try. Copy your important files "
+                                       "somewhere else first, then check the drive's warranty."})
 
 
 def update_finding(failed_count: int, defender_defs_age_days: int | None = None) -> Finding | None:
@@ -154,7 +170,9 @@ def network_finding(gateway_ok: bool, dns_ok: bool, adapter_up: bool) -> Finding
         title, detail = "Online, but name lookups (DNS) are failing.", "dns_failing"
     return Finding(key="network:lan", category="network", severity="warn",
                    title=title, evidence={"detail": detail, "gateway_ok": gateway_ok,
-                                          "dns_ok": dns_ok, "adapter_up": adapter_up})
+                                          "dns_ok": dns_ok, "adapter_up": adapter_up,
+                                          "advice": "If it doesn't come back, restart the router; the fault is "
+                                                    "usually the router or the provider, not this PC."})
 
 
 def battery_finding(design_fraction: float | None) -> Finding | None:

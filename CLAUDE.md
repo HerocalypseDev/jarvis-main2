@@ -1826,7 +1826,8 @@ row there each phase rather than only stating the total in chat.
 | 162 (Caretaker phase 1: sensors for storage/CPU hogs/crashes/disk health/updates/network/battery/Jarvis's own failures, issue tracker, Caretaker dashboard page + tool; headless check at 1440/390 px; 28 new tests) | Opus 5.5 | ~30 min | ~$2.50–$3.50 |
 | 163 (Caretaker phase 2: storage playbook (caches, old Recycle Bin items, old installers to a 7-day holding folder), undo, budgets, issues close themselves, fix/undo/holding tool actions, Fix now + Undo on the page; caught a held-bytes-counted-as-freed lie and hidden gave-up issues; 34 new tests, 2 mutation checks) | Opus 5.5 | ~45 min | ~$3.50–$4.80 |
 | 164 (Caretaker phase 3: Jarvis repairs its own failures: classified causes with plain advice, failing skills re-run with limits, down tool servers reconnected, sign-in/credit/wrong-tool causes explained once and quietly, jobs never re-run, new agent sensor; 31 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~4969 min** | **~$339.75–$477.65** |
+| 165 (Caretaker phase 4: Windows playbooks without admin rights: CPU hog priority lowered (undoable, never closed, never the front app), network re-check/DNS flush/Wi-Fi reconnect, crash-loop cache clear, advice on every finding, undo for priority changes; 27 new tests, 3 mutation checks, headless page check) | Sonnet 5.5 | ~30 min | ~$2.20–$3.00 |
+| **Running total (final)** | | **~4999 min** | **~$341.95–$480.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2966,4 +2967,19 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
   crashes and unknown kinds are page-only. A gave-up self issue is said ONCE, quietly (the "what did I miss" inbox, never spoken)
   with the reason; `give_up` keeps the attempt count, so the page says "needs you" instead of "gave up after 3 tries" when no
   attempt was made. A skill that is switched off or gone is dropped without a word. Nothing edits a skill file (phase 5).
+- **Phase 4 (Windows playbooks, `jarvis_caretaker_windows.py`, `test_caretaker_windows.py`)**: no administrator rights, every OS
+  call goes through an injected psutil/runner/recheck so the tests use fakes. (1) **CPU hog** -> `lower_priority`: below-normal
+  for every instance of that program owned by the current user, undoable (`undo.kind == "priority"`, put back only when the pid
+  still belongs to the same program); never the app in front (re-checked at fix time), never `PROTECTED_PROCESSES` (shell,
+  security stack, svchost, terminals, python, Jarvis). **It is never closed**: a windowless process can be a render or build,
+  so the owner is told once (inbox) and closes it themselves; force-close still needs the yes. (2) **Network** -> wait 15 s and
+  re-check, then `ipconfig /flushdns` (dns) or a Wi-Fi disconnect/reconnect of the current profile (gateway/adapter; the profile
+  name is one argv item and refused if it holds a quote or control character); a step Windows refuses is recorded in
+  `_caretaker_state["needs_admin"]` for the phase-6 helper; 3 failed passes (5 min apart) -> gave up, said once, quietly.
+  (3) **Crash loop** -> clear that app's own cache folders (fixed list: Opera GX, Chrome, Edge, Discord, Teams) once a day,
+  only while the app isn't running, plus a plain hint from the faulting module (graphics driver vs reinstall); unknown apps
+  get the hint only. (4) **Failing disk** and **Windows Update/Defender**: no automatic fix on purpose (a disk is only
+  reported; the update fixes need admin). Findings carry `evidence.advice`, shown on the page. Mutation checks confirmed the
+  tests fail without the front-app re-check, the protected list or the own-user check. Not verified on a real PC: `netsh wlan`
+  output parsing, `ipconfig /flushdns` needing admin, psutil priority classes, the real cache folder layout.
 
