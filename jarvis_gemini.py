@@ -729,6 +729,12 @@ def _merge_chunks(chunks: list[dict]) -> dict:
             "usageMetadata": usage}
 
 
+class _RaceDone:
+    """A normal (non-streamed) call started next to a quiet stream has finished; `result` may be None."""
+    def __init__(self, result) -> None:
+        self.result = result
+
+
 class _HttpFail(Exception):
     def __init__(self, code: int, detail: str) -> None:
         super().__init__(f"HTTP {code}: {detail[:200]}")
@@ -736,7 +742,7 @@ class _HttpFail(Exception):
 
 
 def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on_first_token=None,
-                 opener=None, _retry: bool = True) -> dict | None:
+                 opener=None, _retry: bool = True, race=None) -> dict | None:
     """One Gemini round trip over streamGenerateContent (SSE). on_text(delta) is called for every piece
     of answer text that arrives BEFORE the first function call of the message (the same rule the Claude
     stream follows: text next to a tool call is narration, spoken as it comes); on_text_done() fires once
@@ -746,7 +752,14 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
     Returns the same Anthropic-shaped dict `call` returns, or None on any failure so the caller can run
     the ordinary non-streaming call for this round. If the stream breaks AFTER something was already
     handed to on_text, what arrived is returned as the answer instead of None: retrying would speak it
-    twice, and a truncated sentence beats repeating the whole reply. Never raises."""
+    twice, and a truncated sentence beats repeating the whole reply. Never raises.
+
+    race (2026-10-16, debug report: a "write a file" command took 1.5-3 minutes): Gemini sends a function
+    call only once its arguments are complete, so a round that writes a whole document into write_file's
+    `content` sends nothing for 10-20 s. The old rule gave up after first_token_timeout_s and re-sent the same
+    request, throwing away the work already done. With `race` (a no-argument callable doing the ordinary
+    call), a quiet stream is kept open and `race()` is started next to it; whichever answers first is
+    returned (the race's own dict, so the caller can tell). Without `race` the old give-up rule applies."""
     key = api_key()
     if not key or not stream_enabled():
         return None
@@ -830,12 +843,48 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
             except Exception as e:
                 log.warning("Gemini stream text-done hook failed: %s", e)
 
+    race_state = {"started": False, "failed": False}
+
+    def _start_race() -> None:
+        race_state["started"] = True
+
+        def _runner() -> None:
+            try:
+                r = race()
+            except Exception as e:  # never let the side call kill the round
+                log.warning("Gemini side call raised: %s", e)
+                r = None
+            lines.put(_RaceDone(r))
+
+        threading.Thread(target=_runner, daemon=True).start()
+
+    def _await_race() -> dict | None:
+        """The stream is over without an answer: wait (inside the round's budget) for the side call."""
+        while not race_state["failed"]:
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                return None
+            try:
+                item = lines.get(timeout=budget)
+            except queue.Empty:
+                return None
+            if isinstance(item, _RaceDone):
+                if item.result is None:
+                    race_state["failed"] = True
+                    return None
+                log.info("Gemini side call answered after the stream gave up.")
+                return item.result
+        return None
+
     def _partial_or_none(reason: str):
         stop.set()
         if handed_text and chunks:
             log.warning("Gemini stream broke after speech had started (%s); using what arrived.", reason)
             _finish_leading_text()
             return from_response(_merge_chunks(chunks), model)
+        if race_state["started"]:
+            log.warning("Gemini stream failed (%s); waiting for the normal call already running.", reason)
+            return _await_race()
         log.warning("Gemini stream failed (%s); falling back to a normal call.", reason)
         return None
 
@@ -844,11 +893,26 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
             budget = deadline - time.monotonic()
             if budget <= 0:
                 return _partial_or_none("timed out")
-            wait = min(budget, first_wait if not first_fired else max(first_wait, 15.0))
+            if race_state["started"] and not first_fired:
+                wait = budget  # a side call is running: wait for whichever comes first, up to the deadline
+            else:
+                wait = min(budget, first_wait if not first_fired else max(first_wait, 15.0))
             try:
                 item = lines.get(timeout=wait)
             except queue.Empty:
+                if race is not None and not race_state["started"] and not first_fired:
+                    log.info("Gemini stream quiet for %.0fs (probably writing a long tool call); keeping it open "
+                             "and starting a normal call alongside it.", wait)
+                    _start_race()
+                    continue
                 return _partial_or_none("no data for %.0fs" % wait)
+            if isinstance(item, _RaceDone):
+                if item.result is not None and not handed_text:
+                    stop.set()
+                    log.info("Gemini normal call answered before the stream did.")
+                    return item.result
+                race_state["failed"] = item.result is None
+                continue
             if item is None:
                 break
             if (isinstance(item, _HttpFail) and item.code == 429 and _retry and not handed_text
@@ -863,7 +927,7 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
                     log.warning("Gemini rate limit on the stream; waiting %.0fs and retrying once.", delay)
                     time.sleep(delay + 0.5)
                     return stream_round(body, max(5.0, budget - delay - 0.5), on_text, on_text_done, on_first_token,
-                                        opener, _retry=False)
+                                        opener, _retry=False, race=race)
             if isinstance(item, Exception):
                 if isinstance(item, _HttpFail):
                     _note_error(reason_from_http(item.code, item.detail, model))
@@ -904,6 +968,9 @@ def stream_round(body: dict, timeout: float, on_text=None, on_text_done=None, on
         stop.set()
     _finish_leading_text()
     if not chunks:
+        if race_state["started"]:
+            log.warning("Gemini stream returned no data; waiting for the normal call already running.")
+            return _await_race()
         log.warning("Gemini stream returned no data; falling back to a normal call.")
         return None
     result = from_response(_merge_chunks(chunks), model)

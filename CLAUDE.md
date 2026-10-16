@@ -1823,7 +1823,8 @@ row there each phase rather than only stating the total in chat.
 | 160 (recovery audit of the 2026-10-15 "silence scheduled skills and queued tasks unless URGENT" commit: announce skills silenced (restored at the owner's choice), queued URGENT read out with its prefix, outside-text tasks could make themselves urgent, inbox bypassed `all` mode, bare "OK" stored, no dashboard session for queued runs, 2 tests left failing; tests no longer write the repo's jarvis_memory.db; 22 new/updated tests) | Opus 5.5 | ~60 min | ~$4.00–$5.50 |
 | 159 ("Jarvis keeps closing": the microphone loop had no safety net, so a device hiccup or any error in it ended the program; now supervised: reopens the mic with backoff, crash log + native-crash dump, spoken "Microphone reconnected."; 11 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | 161 (self-scheduling, "All but email": Jarvis's own runs may make jobs, background agents, watches and campaign steps; email/web-started runs still can't; self-made jobs capped at 20; 9 new tests, 3 updated) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~4869 min** | **~$331.95–$466.85** |
+| 162 (slow file saves: quiet Gemini stream kept open while the normal call races it, unusable workspace setting falls back to the default folder + doctor check; 9 new tests) | Opus 5.5 | ~35 min | ~$2.50–$3.50 |
+| **Running total (final)** | | **~4904 min** | **~$334.45–$470.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2914,3 +2915,20 @@ Owner asked for Jarvis to be able to create and schedule work by itself. Tests: 
 - `SELF_JOBS_MAX_PENDING` (20) caps Jarvis-made jobs waiting at once. The catastrophic gate is unchanged.
 - Not verified live: how often the real model actually schedules things on its own (check the audit trail).
 
+## Slow file saves (2026-10-16, debug report)
+
+"Write a file" took 1.5-3 minutes on Gemini. Causes from the report: every save to a plain file name failed with
+"Access is denied: C:\Users\you" (the owner's `JARVIS_WORKSPACE_DIR` held the public `.env.example` placeholder), each
+costing a whole extra round; Gemini sends a function call only once its arguments are complete, so a round writing a
+document into write_file sent nothing for 10-20 s and the 8 s first-token rule threw the stream away and re-sent the same
+request (5 times in two commands); plus Gemini 503 "high demand" and a weak connection. Tests: `test_speed_writes.py` (9).
+Rules to keep:
+- `gemini.stream_round(..., race=)`: a quiet stream is kept open and the ordinary call is started next to it; whichever
+  answers first wins. `_gemini_stream_round` hands a raced answer back through `_take_stream_side()` so the agent loop
+  neither repeats that call (also when it failed) nor treats its text as spoken live. Fakes of `stream_round` in tests
+  must accept `race=`.
+- `jarvis_workspace.root()`: a `JARVIS_WORKSPACE_DIR` that can't be created falls back to `DEFAULT_ROOT` (rechecked once a
+  minute); `root_problem()` says why, write_file's result adds a note, and the doctor shows a "Workspace folder" warning.
+- Not fixed in code: no backup model was set (`JARVIS_GEMINI_FALLBACK_MODEL`), so 503s were only retried; the owner's
+  `.env` line still needs fixing; lessons #91/#92 learned from the failures ("write to the current working directory")
+  are wrong and should be deleted. Not verified live on the PC.
