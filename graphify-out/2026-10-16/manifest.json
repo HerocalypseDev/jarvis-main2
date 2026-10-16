@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1792152969.1597724,
-    "seen": 1792153049.7830172,
-    "ast_hash": "54ab69b2421c2e69f665852adf07df32",
+    "mtime": 1792153488.7597606,
+    "seen": 1792153513.2190847,
+    "ast_hash": "96f5e45fcfc4059358a74907b4e7345c",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792152998.0837717,
-    "seen": 1792153049.7833617,
-    "ast_hash": "6403c01bdfe1b4c3fc447cd7ee940ea1",
+    "mtime": 1792153716.2474513,
+    "seen": 1792153740.6701894,
+    "ast_hash": "9028bd671eee746ac6174811af0b6d7f",
     "semantic_hash": ""
   },
   "README.md": {
@@ -1818,9 +1818,9 @@
     "semantic_hash": ""
   },
   "test_caretaker_self.py": {
-    "mtime": 1792149928.941054,
-    "seen": 1792150131.9953647,
-    "ast_hash": "f83ea7bd70467a720f730d25121e092f",
+    "mtime": 1792153488.7705193,
+    "seen": 1792153513.219437,
+    "ast_hash": "ae0b72dd7cebcf0b0dfe2d105c8d041e",
     "semantic_hash": ""
   },
   "jarvis_caretaker_windows.py": {
@@ -1842,9 +1842,9 @@
     "semantic_hash": ""
   },
   "test_caretaker_ai.py": {
-    "mtime": 1792151122.7815683,
-    "seen": 1792151344.5759451,
-    "ast_hash": "240ecd6997d00b5ba22dea4eddc59ba2",
+    "mtime": 1792153488.7696865,
+    "seen": 1792153513.2194319,
+    "ast_hash": "93372b1fce49b62818c073cd74cd75cf",
     "semantic_hash": ""
   },
   "jarvis_caretaker_admin.py": {
