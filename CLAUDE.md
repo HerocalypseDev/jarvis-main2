@@ -1832,7 +1832,8 @@ row there each phase rather than only stating the total in chat.
 | 168 (slow file saves: quiet Gemini stream kept open while the normal call races it, unusable workspace setting falls back to the default folder + doctor check; 9 new tests) | Opus 5.5 | ~35 min | ~$2.50–$3.50 |
 | 169 (merged the Caretaker work into main with main's slow-file-save change, one order-dependent test fixed, full suite equal to the env baseline; published to Jarvis4U after a clean privacy scan and a by-eye diff review, private skill name taken out of public-bound code) | Sonnet 5.5 | ~25 min | ~$1.50–$2.20 |
 | 170 (false "still monitoring" / "successfully created" claims: ongoing-work claims need a real job/watch/agent/reminder/scheduled skill, adverbs no longer hide a done claim, self-made jobs speak only when flagged URGENT; 12 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~5189 min** | **~$355.15–$499.05** |
+| 171 (Jarvis asks you: tool questions must reach the user, saved with the exact call and resumed by the answer, Home "Jarvis needs you" card, background runs say it; live-reading watches sent to scheduled work, unattended runs no longer read the chat, honest agent results, open Roblox; 13 new tests, headless card check) | Opus 5.5 | ~50 min | ~$4.00–$5.50 |
+| **Running total (final)** | | **~5239 min** | **~$359.15–$504.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3090,4 +3091,31 @@ run, and ~30 min later Jarvis said "I'm still monitoring it for you" with nothin
   Its run prompt says to use the marker only when a condition the user was waiting for was met.
 - Checked on main: such a job now re-schedules itself (PR #2), only the first (user-made) run speaks. Not verified live on
   the PC.
+
+## Jarvis asks you when a tool needs your answer (2026-10-16, debug report)
+
+The watch tool answered "NOT saved yet ... Ask the user these questions"; the model ran a speed test instead and said "I'll
+keep tracking that" (that run was on code from before the false-claims fix, which would have caught the line). Owner:
+"Jarvis should always check if the output needs my attention, and I should be able to answer and it knows exactly what to
+do". Code: `jarvis_asks.py` (pure), wiring in jarvis.py (`_asks_line`, `_handle_pending_asks`, `_close_shown_asks`,
+`@_feature("asks")`), Home card in `qol.js`. Tests: `test_asks.py` (13). Rules to keep:
+- `asks_mod.needs_user(result)` reads every tool result for explicit "ask the user / say which one / more than one X
+  matches" wording (never after don't/not/never) and returns the questions. Ordinary errors never count: a tool that
+  needs the user must say so in those words.
+- A user command whose reply doesn't ask gets one nudge round, then the questions are added to the reply in code. Each
+  question is saved (`jarvis_asks`: tool, exact input, request; 24 h) unless the run came from or read someone else's
+  text (its input could be steered). The next attended command's volatile prompt carries up to 3 (each shown at most 4
+  times) with "call that same tool again with the same input plus the answer"; the tool succeeding closes it.
+- Background runs (skills, jobs, watches, queued tasks) don't get the nudge: the question is said once (`important`,
+  held in Sleep/Focus; owner's choice "Say it + Home card") and waits on the Home "Jarvis needs you" card, whose answer box
+  sends `answer_command` (question + exact call + answer) as a dashboard command. The same open question isn't said twice.
+- A watch on a live reading (speed, battery, CPU, disk...) is refused with a pointer to `schedule_jarvis_task` (one job
+  that checks, acts + URGENT when met, else re-schedules itself): a watch says each thing once and has no actions.
+- Unattended runs (`record_history=False`: scheduled skills, queued tasks, watches, jobs, research) get no conversation
+  history: a scheduled Gmail check had read the chat about a speed monitor and tried to delete skills.
+- `background_agents` create says what each run really does ("no conditions, doesn't speak or open anything"); its
+  description and `schedule_jarvis_task`'s say which one "scheduled work" is. `open_app roblox`: Start menu shortcut, else
+  the Store app, else roblox.com in the browser, and the result says which.
+- Not verified live on the PC: a real model asking after the nudge, the card with real questions, the Roblox shortcut path.
+  Lessons #93/#94 learned from that report point at watches for this and should be deleted.
 

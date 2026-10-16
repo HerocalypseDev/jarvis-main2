@@ -1102,3 +1102,10 @@ p.consent-list { padding-left: 0; }
 .ct-issue-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #ct-issues .list-item { display: flex; align-items: flex-start; gap: var(--space-3); }
 #view-caretaker .view-actions { display: inline-flex; gap: var(--space-2); }
+
+/* Home "Jarvis needs you" (jarvis_asks): stands out, but isn't the red approval bar. */
+.home-asks { border-color: var(--color-warning); }
+.ask-item { display: flex; flex-direction: column; gap: var(--space-2); }
+.ask-questions { line-height: 1.5; }
+.ask-form { flex-wrap: wrap; }
+.ask-form .ask-input { flex: 1 1 200px; min-width: 0; }

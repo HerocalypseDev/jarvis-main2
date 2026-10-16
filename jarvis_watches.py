@@ -349,6 +349,30 @@ _VAGUE_RULE_RE = re.compile(
     re.I)
 
 
+# A live reading of the PC or the connection (2026-10-16 debug report): "watch my internet speed and tell me when it's
+# below 5 Mbps" made a watch-or-nothing loop (the watch asked "where should I look: a file, calendar, mail or website?",
+# which has no answer). A watch is for dated things found somewhere and says each one once, so a reading that is
+# checked again and again, with something to do when it crosses a line, is scheduled work instead.
+_LIVE_READING_RE = re.compile(
+    r"\b(?:speed ?tests?|(?:internet|network|wi-?fi|wifi|download|upload|connection|broadband|data) speeds?|"
+    r"mbps|megabits?|kbps|ping|latency|battery|cpu|ram|memory usage|disk space|free space|storage space|"
+    r"temperature|fps)\b", re.I)
+LIVE_READING_REDIRECT = (
+    "Tool failed: not saved, this isn't a watch. A watch is for dated things found in a file, the calendar, mail or a "
+    "web page, and it says each one only once. A live reading checked again and again (internet speed, battery, CPU, "
+    "disk...) with something to do when it crosses a line is scheduled work: call schedule_jarvis_task now with "
+    "due_in_minutes = the interval and an instruction that (1) runs the check (e.g. speed_test), (2) if the condition "
+    "is met does what the user asked (send_to_my_phone, open_app...) and starts its reply with URGENT: and what it "
+    "found, (3) otherwise schedules this same instruction again with schedule_jarvis_task in the same interval. If it "
+    "should keep running whatever the result, use save_skill with a schedule instead. You have everything you need for that: "
+    "no question for the user is needed.")
+
+
+def live_reading(what: str, rule: str = "") -> bool:
+    """True when the watch would be checking a live reading (speed, battery...), not dated things somewhere."""
+    return bool(_LIVE_READING_RE.search(f"{what or ''} {rule or ''}"))
+
+
 def _real_words(text: str) -> list[str]:
     return re.findall(r"[A-Za-z0-9]{2,}", text or "")
 

@@ -62,6 +62,11 @@
     <section id="view-home" class="view">
       <div class="view-head"><h1 class="view-title">Home</h1></div>
       <div id="home-alerts" class="home-alerts"></div>
+      <div id="home-asks-block" class="home-block home-asks" hidden>
+        <h3 class="block-title">Jarvis needs you <span id="home-asks-count" class="muted"></span></h3>
+        <p class="muted">A task stopped because it needs your answer. Type it here (or just tell Jarvis) and it carries on.</p>
+        <ul id="home-asks" class="list compact"></ul>
+      </div>
       <div class="home-block home-compose">
         <h3 class="block-title">Send a command</h3>
         <form id="home-compose-form" class="compose-form">

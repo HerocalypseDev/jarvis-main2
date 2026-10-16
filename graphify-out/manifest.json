@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1792153990.0387592,
-    "seen": 1792154019.393609,
-    "ast_hash": "5aa4ae88fad616659c02f47eca71abf1",
+    "mtime": 1792156129.8595548,
+    "seen": 1792156226.5543048,
+    "ast_hash": "35d0e7fd157da7ab351074628d2dea99",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792154003.5774357,
-    "seen": 1792154019.393945,
-    "ast_hash": "cfb135b1514f71f84039e14dff8d456b",
+    "mtime": 1792156210.298999,
+    "seen": 1792156226.5548892,
+    "ast_hash": "2cc3bc0463e226710e72084ea19d499a",
     "semantic_hash": ""
   },
   "README.md": {
@@ -114,9 +114,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/app.js": {
-    "mtime": 1792153591.0987356,
-    "seen": 1792154019.3935761,
-    "ast_hash": "c3c017bb2d2b8ebc824bc2b6ebbf21a7",
+    "mtime": 1792156129.8482404,
+    "seen": 1792156226.554261,
+    "ast_hash": "632946de03d0733cfc14f101c2916ad4",
     "semantic_hash": ""
   },
   "jarvis_dashboard.py": {
@@ -126,9 +126,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/index.html": {
-    "mtime": 1792153591.1027355,
-    "seen": 1792154019.3939672,
-    "ast_hash": "4b41df8a9a5a1f55fe9c11ae39e71355",
+    "mtime": 1792156129.8482404,
+    "seen": 1792156226.5549319,
+    "ast_hash": "25f4273d3fbf421a679ffe42e6cc81c4",
     "semantic_hash": ""
   },
   "test_dashboard.py": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/qol.js": {
-    "mtime": 1792091390.6524923,
-    "seen": 1792135163.054293,
-    "ast_hash": "fce27c4c638649806f25183c7c06cdc7",
+    "mtime": 1792156129.8515546,
+    "seen": 1792156226.5542765,
+    "ast_hash": "7ab51e051a508c214761f3849c1a757d",
     "semantic_hash": ""
   },
   "jarvis_followup.py": {
@@ -1722,9 +1722,9 @@
     "semantic_hash": ""
   },
   "jarvis_watches.py": {
-    "mtime": 1792091393.3081264,
-    "seen": 1792135163.0546389,
-    "ast_hash": "1b0fd1bd3a1d6e2747438039062f94e3",
+    "mtime": 1792156129.8595548,
+    "seen": 1792156226.5545352,
+    "ast_hash": "e594db77839fedf1a0a8cedb2626e4f3",
     "semantic_hash": ""
   },
   "test_watches.py": {
@@ -1869,6 +1869,18 @@
     "mtime": 1792153592.1107357,
     "seen": 1792154019.3938806,
     "ast_hash": "b61f1286ead6598353e40edb2234fb53",
+    "semantic_hash": ""
+  },
+  "jarvis_asks.py": {
+    "mtime": 1792156129.8751252,
+    "seen": 1792156226.5543149,
+    "ast_hash": "46b2288903e006a791809a7a45e84cca",
+    "semantic_hash": ""
+  },
+  "test_asks.py": {
+    "mtime": 1792156129.8751252,
+    "seen": 1792156226.5547197,
+    "ast_hash": "c9a3fa5216c1dea6bc78e8c8688a8aa4",
     "semantic_hash": ""
   }
 }
