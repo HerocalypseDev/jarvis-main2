@@ -3119,3 +3119,16 @@ do". Code: `jarvis_asks.py` (pure), wiring in jarvis.py (`_asks_line`, `_handle_
 - Not verified live on the PC: a real model asking after the nudge, the card with real questions, the Roblox shortcut path.
   Lessons #93/#94 learned from that report point at watches for this and should be deleted.
 
+
+## Jarvis manages what the owner manages (2026-10-16, owner: "make Jarvis able to see and manage everything I can do")
+
+Rundown: `/mnt/project-files/jarvis-visibility/rundown.md` (project folder). Reading was already complete (`dashboard_data`
+reads every page and Toolbox feature); the gaps were actions. PR 1 tests: `test_selfmanage.py`. Rules to keep:
+- **`settings` tool** (get/list/set, `jarvis_selfmanage.py`): the model may set only a curated Settings-page setting that is not
+  secret and not in `AI_DENIED` (program paths, addresses, camera, meeting auto-record); every other `.env` key is read-only to it.
+  Safe mode and personality are forwarded to their own code. Set needs the owner's own command (voice/text/dashboard/phone, not a
+  hands-free capture without the wake word), never an email-started or outside-text-tainted run (`_UNTRUSTED_BLOCKED_TOOLS`,
+  `_TAINT_BLOCKED_TOOLS`). Secrets are shown as "(set)".
+- **`stop_background_task`**: same function as the dashboard Stop button (`_dashboard_kill_background_task`), same limits.
+- `dashboard_data` pages `pending` (the staged action) and `logs` (tail of `jarvis_crash.log`/`jarvis_standalone.log`, secrets masked).
+- Still the owner's alone: Approve/Reject of staged actions, autonomy cards, admin helper, license, autonomy on/off.

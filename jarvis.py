@@ -96,6 +96,7 @@ import jarvis_followup
 import jarvis_toolargs as toolargs
 import jarvis_doctor as doctor
 import jarvis_selfaware as selfaware
+import jarvis_selfmanage as selfmanage
 import jarvis_resilience
 import jarvis_wakeword
 import jarvis_weather as weather
@@ -3342,6 +3343,32 @@ if face.enabled():
 # Feature batch 2026-09-27 (FEATURES.md). One tool per feature with an `action`, to keep the cached
 # tool prefix small. Handlers: _BATCH_TOOL_HANDLERS, dispatched from _execute_tool_impl.
 BATCH_TOOLS = [
+    {
+        "name": "settings",
+        "description": (
+            "Read or change Jarvis's own settings, the same ones as the dashboard Settings page (wake word, follow-up "
+            "window, mail auto-reply, voices, budgets, hold keys, ...). action=get with query (words from the name, or "
+            "the exact name) shows matching settings with their value; action=list shows the curated ones; action=set "
+            "with name and value changes one and says whether it applies now or after a restart. Use this for ANY "
+            "request to turn a feature on or off or change a number or choice: never claim a setting changed without it. "
+            "Secrets, program paths, addresses, the camera and meeting recording are the owner's to change on the "
+            "Settings page; safe mode and personality go through their own tools (this one forwards them)."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["get", "list", "set"]},
+            "query": {"type": "string"},
+            "name": {"type": "string"},
+            "value": {"type": "string"}}, "required": ["action"]},
+    },
+    {
+        "name": "stop_background_task",
+        "description": (
+            "Stop a background task that is running right now (started with delegate_to_claude_code, "
+            "delegate_research, change_jarvis_code or set_plan), the same as the Stop button on the dashboard Tasks "
+            "page. task_id from list_background_tasks; with no id and exactly one task running it stops that one, "
+            "otherwise it lists them and says to ask which. It does not touch queued tasks (cancel_queued_task) or "
+            "scheduled jobs (scheduled_jobs)."),
+        "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}}},
+    },
     {
         "name": "caretaker",
         "description": (
@@ -9162,7 +9189,9 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             "update_project_status", "autonomy_skill",
                             # a message to the owner's own phone comes from their trusted bot: an injected email could
                             # use it to send them a phishing link (autonomy's own notices go through another path)
-                            "send_to_my_phone"}
+                            "send_to_my_phone",
+                            # 2026-10-16: changing settings or stopping work is the owner's call, not an email's
+                            "settings", "stop_background_task"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
@@ -9179,7 +9208,7 @@ _EMAIL_RUN_NO_FILES = {"read_file", "quick_search", "find_files", "code_search",
 _OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_tabs|download_image|read_screen)$")
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
-                        "delegate_research", "caretaker",
+                        "delegate_research", "caretaker", "settings", "stop_background_task",
                         # memory steers every later prompt: an instruction hidden in a mail must not be written there
                         "remember_fact", "remember_decision", "remember_code_pattern", "update_project_status"}
 
@@ -9279,6 +9308,34 @@ def _dashboard_page_sessions(query: str = "") -> dict:
         q = query.lower()
         state["sessions"] = [s for s in state.get("sessions") or [] if q in json.dumps(s, default=str).lower()]
     return state
+
+
+def _dashboard_page_pending() -> dict:
+    pending = _dashboard_get_pending()
+    return pending or {"pending": None, "note": "Nothing is staged: no action is waiting for a yes."}
+
+
+_LOG_FILES = {"crash": "jarvis_crash.log", "standalone": "jarvis_standalone.log"}
+
+
+def _dashboard_page_logs(query: str = "") -> dict:
+    """Last lines of Jarvis's own logs, secrets masked. query = crash or standalone (default: both)."""
+    q = (query or "").strip().lower()
+    base = Path(__file__).resolve().parent
+    out = {}
+    for name, fname in _LOG_FILES.items():
+        if q and q not in name:
+            continue
+        path = base / fname
+        try:
+            size = path.stat().st_size
+            with open(path, "rb") as f:
+                f.seek(max(0, size - 12000))
+                tail = f.read().decode("utf-8", "replace").splitlines()[-40:]
+            out[name] = [jarvis_untrusted.mask_secrets(line)[0][:300] for line in tail]
+        except OSError:
+            out[name] = "(no such log yet)"
+    return out
 
 
 def _dashboard_page_autonomy() -> dict:
@@ -10274,6 +10331,8 @@ def _dashboard_pages() -> dict:
         "identity": (lambda q="": _dashboard_page_identity(), note("identity")),
         "memory": (lambda q="": list_memory(), note("memory")),
         "settings": (lambda q="": _dashboard_page_settings(), note("settings")),
+        "pending": (lambda q="": _dashboard_page_pending(), "the staged action waiting for your yes/Approve"),
+        "logs": (lambda q="": _dashboard_page_logs(q), "the end of Jarvis's own log files (query: which log, e.g. crash)"),
     }
     for key, fn in list(dashboard.providers.items()):
         if key.startswith("feature:"):
@@ -10353,8 +10412,89 @@ def _send_to_my_phone_tool(inp: dict) -> str:
     return f"Sent to your {' and '.join(sent)}: {text[:120]}{'...' if len(text) > 120 else ''}{note}"
 
 
+
+
+# --- Jarvis managing what the owner can manage (2026-10-16, "see and manage everything I can") -------------------
+def _owner_here_problem(what: str) -> str | None:
+    """Changing settings / stopping work: only for the owner's own command, never an automatic or email-started run."""
+    if getattr(_command_ctx, "untrusted_origin", False) or getattr(_command_ctx, "outside_text_seen", False):
+        return (f"Refused: {what} can't be done from a task that came from or read someone else's message, email or "
+                "web page (it could be a hidden instruction). Ask me directly.")
+    if not _owner_request_now():
+        return f"Tool failed: {what} needs the owner's own request (voice, typed, dashboard or phone)."
+    if getattr(_command_ctx, "hands_free", False) and not getattr(_command_ctx, "wake", False):
+        return f"Tool failed: {what} isn't taken from the hands-free window; ask with push-to-talk or 'Hey Jarvis'."
+    return None
+
+
+def _settings_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "get").lower()
+    query = str(inp.get("query") or inp.get("name") or "").strip()
+    try:
+        listing = settings.list_settings()
+    except Exception as e:
+        return f"Tool failed: couldn't read the settings ({type(e).__name__})."
+    if action in ("get", "list"):
+        return selfmanage.listing_text(listing, "" if action == "list" else query)
+    if action != "set":
+        return "Tool failed: action must be get, list or set."
+    problem = _owner_here_problem("changing a setting")
+    if problem:
+        return problem
+    name = str(inp.get("name") or inp.get("query") or "").strip()
+    if "value" not in inp or inp.get("value") is None:
+        return "Tool failed: settings set needs 'value' (the new value). Ask the user what it should be."
+    value = str(inp.get("value")).strip()
+    matches = selfmanage.find(listing, name)
+    if not matches:
+        return f"Tool failed: no setting matches {name!r}. Use settings get with words from its name."
+    if len(matches) > 1:
+        return ("More than one setting matches " + repr(name) + "; ask the user which one: "
+                + "; ".join(r["key"] + (f" ({r['label']})" if r.get("label") else "") for r in matches))
+    row = matches[0]
+    key = row["key"]
+    if key == "JARVIS_SAFE_MODE":
+        return set_safe_mode(value.lower() in ("1", "true", "yes", "on"), _current_command_source())
+    if key == "JARVIS_PERSONALITY":
+        return _personality_tool({"action": "set", "name": value})
+    why = selfmanage.set_problem(row)
+    if why:
+        return f"Refused: {key} can't be changed by me, {why}."
+    before = row.get("value")
+    res = settings.set_setting(key, value)
+    if not res.get("ok"):
+        return f"Tool failed: {res.get('error')}"
+    return (f"{key} changed from {before if before not in (None, '') else '(empty)'} to {value or '(empty)'}; "
+            + ("it applies now." if res.get("applies") == "now" else "it applies after a restart (say 'restart yourself')."))
+
+
+def _stop_background_task_tool(inp: dict) -> str:
+    problem = _owner_here_problem("stopping a task")
+    if problem:
+        return problem
+    tid = inp.get("task_id")
+    with _background_tasks_lock:
+        live = sorted(_RUNNING_BACKGROUND_PROCS)
+    if tid in (None, ""):
+        if len(live) == 1:
+            tid = live[0]
+        elif not live:
+            return "Nothing is running that I can stop. " + list_background_tasks()
+        else:
+            return ("More than one task is running; ask the user which one to stop:\n" + list_background_tasks())
+    try:
+        tid = int(tid)
+    except (TypeError, ValueError):
+        return "Tool failed: task_id must be a number from list_background_tasks."
+    result = _dashboard_kill_background_task(tid)
+    if not result.startswith("Stopped"):
+        result = "Tool failed: " + result
+    return result
+
+
 _BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
-                             "watches": _watches_tool, "personality": _personality_tool})
+                             "watches": _watches_tool, "personality": _personality_tool,
+                             "settings": _settings_tool, "stop_background_task": _stop_background_task_tool})
 
 
 # --- The user's real browser tabs (2026-10-03, owner request) -----------------------------------------------------
@@ -14177,6 +14317,10 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core |= {"skills", "watches"}
     if _WATCH_RE.search(transcript or ""):
         core.add("watches")
+    if _SETTINGS_WORDS_RE.search(transcript or ""):
+        core.add("settings")
+    if _STOP_TASK_RE.search(transcript or ""):
+        core |= {"stop_background_task", "list_background_tasks"}
     if _SCHEDULED_WORK_RE.search(transcript or ""):
         core |= {"schedule_jarvis_task", "scheduled_jobs"}
     if re.search(r"\b(?:personality|personalities|voice type|vibe|attitude|gen ?z|pidgin|naija|playful|sarcastic|"
@@ -14184,6 +14328,13 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core.add("personality")
     return core
 
+
+_SETTINGS_WORDS_RE = re.compile(
+    r"\b(?:settings?|turn (?:on|off) (?:the )?[a-z ]{2,30}|enable|disable|switch (?:on|off)|wake word|follow[- ]?up|"
+    r"auto[- ]?reply|hotkey|push[- ]to[- ]talk|budget|notifications? (?:on|off))\b", re.I)
+_STOP_TASK_RE = re.compile(
+    r"\b(?:stop|cancel|kill|abort|end)\b.{0,40}\b(?:task|research|delegat\w*|background|plan|james|coding agent|"
+    r"that job|running)\b", re.I)
 
 # "set a scheduled work to check my speed every 5 mins", "check again in 10 minutes" (2026-10-16 debug report: the
 # model never saw schedule_jarvis_task under narrowing, tried watches/agents/skills and then claimed it was tracking).
