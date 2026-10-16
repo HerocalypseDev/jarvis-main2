@@ -3155,3 +3155,19 @@ Rules to keep:
 - Barge-in finding: the push-to-talk key only calls `_interrupt_speech` while Jarvis is speaking, so pressing it during the
   silent ~20 s of a speed test cut nothing; "cancel the speed test" or the strip's Cancel is the way.
 - Not verified live on the PC: the Home strip in a real browser, a real voice "cancel the speed test" mid-test.
+
+## Every dashboard button has a tool or a reason (2026-10-16, PR 3 of the visibility work)
+
+Tests: `test_coverage.py` (18). Audit write-up: `/mnt/project-files/jarvis-visibility/pr3-audit.md` (project folder). Rules to keep:
+- **`jarvis_coverage.COVERAGE`** lists every state-changing dashboard action (each `@_feature` action and each POST/DELETE route in
+  `jarvis_dashboard.py`) as `tool` (an agent tool does it), `owner` (with a written reason) or `command`/`input`. The test scans both
+  files with `ast` and fails on an unlisted button, a stale entry, or a tool/action that doesn't exist. **Adding a dashboard button
+  means adding its entry**: give it a tool action, or say why it stays the owner's.
+- New actions: `housekeeping` tool (`clear_missed`, `reset_notification_stats`, `clear_finished_sessions`, `dismiss_question`,
+  `profile_set`/`profile_delete` with the Memory page's 60/500 limits and no secrets), `meeting_notes delete`, `caretaker unignore`/
+  `forget_lesson`, and `macros enable/disable` also switching a Pro routine (`_pack_macro_toggle`, shared with the Toolbox switch; a
+  user's own macro of the same name wins). Each needs the owner's own request (`_owner_here_problem`); `housekeeping` is in both the
+  untrusted-origin and taint block lists. They call the functions the dashboard buttons call (`_reset_notification_stats` was pulled
+  out of the Toolbox handler to be shared).
+- Still the owner's alone (in the map as `owner`): Approve/Reject, autonomy on/dry-run/policies, dynamic-tool proposals and deletion,
+  licence, biometric picture erase. Autonomy card approvals stay attended-only through the existing `autonomy` tool.

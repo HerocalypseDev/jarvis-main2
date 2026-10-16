@@ -3385,13 +3385,32 @@ BATCH_TOOLS = [
             "query": {"type": "string"}}, "required": ["action"]},
     },
     {
+        "name": "housekeeping",
+        "description": (
+            "Small tidy-up actions the owner has buttons for on the dashboard, only on the owner's own request: "
+            "clear_missed marks everything in 'what you missed' as read; reset_notification_stats forgets what Jarvis "
+            "learned about which announcements you act on or dismiss; clear_finished_sessions removes finished "
+            "sessions from the Sessions page (running ones stay); dismiss_question (id) closes one open 'Jarvis needs "
+            "you' question without answering it; profile_set (key, value) stores a profile field such as name or "
+            "city; profile_delete (key) removes one. Never say any of these was done without calling it."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["clear_missed", "reset_notification_stats", "clear_finished_sessions",
+                                                  "dismiss_question", "profile_set", "profile_delete"]},
+            "id": {"type": "integer", "description": "question number, for dismiss_question"},
+            "key": {"type": "string", "description": "profile field name (up to 60 characters)"},
+            "value": {"type": "string", "description": "profile field value (up to 500 characters), for profile_set"}},
+            "required": ["action"]},
+    },
+    {
         "name": "caretaker",
         "description": (
             "What Jarvis has noticed is wrong with the laptop or with itself, and what it has fixed. "
             "action=status (open problems, newest first, with what was fixed in the last day); scan "
             "(check right now instead of waiting for the next pass); fix (run the fixes now); undo (id optional, "
             "newest undoable fix) puts back files Jarvis moved to the holding folder; holding (what is waiting "
-            "there and when it is removed); ignore (key) stops tracking one problem; diagnose looks at the PC "
+            "there and when it is removed); ignore (key) stops tracking one problem and unignore (key) starts "
+            "tracking it again; forget_lesson (sig) drops one learned fix so the AI diagnoses that kind of problem "
+            "afresh; diagnose looks at the PC "
             "right now (busiest programs, disk, network, recent errors) and returns the facts to explain - "
             "optionally what=top_processes|disk_usage|network_summary|service_status|recent_errors|updates_summary "
             "with by/name/log/hours/source; helper says whether the one-time admin helper is set up; "
@@ -3402,8 +3421,10 @@ BATCH_TOOLS = [
         ),
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["status", "issues", "scan", "fix", "undo", "holding", "ignore",
-                                                  "diagnose", "helper", "install_helper", "remove_helper"]},
-            "key": {"type": "string", "description": "issue key from the status list, for ignore"},
+                                                  "unignore", "forget_lesson", "diagnose", "helper", "install_helper",
+                                                  "remove_helper"]},
+            "key": {"type": "string", "description": "issue key from the status list, for ignore / unignore"},
+            "sig": {"type": "string", "description": "learned fix to drop (the name shown on the Caretaker page), for forget_lesson"},
             "id": {"type": "integer", "description": "action number to undo (default: the newest)"},
             "what": {"type": "string", "description": "for diagnose: one diagnostic name (default: a standard bundle)"},
             "by": {"type": "string", "enum": ["cpu", "memory"]},
@@ -3509,8 +3530,8 @@ BATCH_TOOLS = [
             "decides by itself: fixed steps run instantly with no AI call; anything that needs thinking (summarise, "
             "decide, write, 'tell me if') runs its instructions through the AI each time. Don't ask the user which. "
             "Also: list, run (name), delete/enable/disable (name), suggest (commands repeated with the same result), "
-            "accept (phrase). 'update time' / 'update yourself' is built in (git pull + restart): don't make one. "
-            "Changing routines only works from the PC."
+            "accept (phrase). enable/disable also switch a Pro-pack routine (the Toolbox on/off switch). 'update time' / "
+            "'update yourself' is built in (git pull + restart): don't make one. Changing routines only works from the PC."
         ),
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "run", "create", "delete", "enable", "disable", "suggest",
@@ -3527,10 +3548,11 @@ BATCH_TOOLS = [
         "description": (
             "Meeting notes: transcribes what a call plays through the speakers (other people), then writes a "
             "summary + action items. Only when the user asks: action=start ('start meeting notes', optional "
-            "title), stop, status, list (past meetings), get (id: summary + transcript)."
+            "title), stop, status, list (past meetings), get (id: summary + transcript), delete (id: removes that "
+            "meeting's notes and transcript for good, only on the owner's own request)."
         ),
         "input_schema": {"type": "object", "properties": {
-            "action": {"type": "string", "enum": ["start", "stop", "status", "list", "get"]},
+            "action": {"type": "string", "enum": ["start", "stop", "status", "list", "get", "delete"]},
             "title": {"type": "string"}, "id": {"type": "integer"}}, "required": ["action"]},
     },
     {
@@ -8018,8 +8040,32 @@ def _run_watch(watch: dict, manual: bool = False) -> None:
         _set_scheduled_task_running(False)
 
 
+def _pack_macro_toggle(name: str, on: bool | None = None) -> str:
+    """Switches one Pro routine off/on (flips it when `on` is None). Pro routines are read-only: this only edits the
+    setting that lists the ones switched off. Shared by the Toolbox switch and the macros tool."""
+    name = (name or "").strip()
+    known = {m["name"].lower(): m["name"] for m in _pack_macros()}
+    if name.lower() not in known:
+        return "No Pro routine by that name."
+    off = {n.strip().lower() for n in (os.environ.get(PRO_MACROS_OFF_KEY) or "").split(",") if n.strip()}
+    if on is None:
+        off.symmetric_difference_update({name.lower()})
+    elif on:
+        off.discard(name.lower())
+    else:
+        off.add(name.lower())
+    settings.set_setting(PRO_MACROS_OFF_KEY, ",".join(sorted(off)))
+    return f"Pro routine {known[name.lower()]!r} is now {'off' if name.lower() in off else 'on'}."
+
+
 def _macros_tool(inp: dict) -> str:
     transcript = f"(macro tool) {inp.get('name') or ''}"
+    action = str(inp.get("action") or "").lower()
+    if action in ("enable", "disable") and _attended():
+        name = str(inp.get("name") or "").strip()
+        own = {m["name"].lower() for m in macros.list_macros(_memory_db_connect, _memory_db_lock)}
+        if name and name.lower() not in own and name.lower() in {m["name"].lower() for m in _pack_macros()}:
+            return _pack_macro_toggle(name, action == "enable")  # a Pro routine: the same switch as the Toolbox
     return macros.handle_tool(_memory_db_connect, _memory_db_lock, inp, _macro_known_tools(), _attended(),
                               execute=lambda tool, i: _execute_tool(tool, i, transcript), staged=_looks_staged,
                               safe_tools=_macro_suggest_tools(), already_fast=_already_fast_path,
@@ -8413,14 +8459,7 @@ def _feature_macros(action: str, payload: dict):
                                               _macro_known_tools(), _already_fast_path)}
     if action == "pack_toggle":
         # Pro routines are read-only; switching one off/on only edits a setting (names, comma-separated).
-        name = str((payload or {}).get("name") or "").strip()
-        known = {m["name"].lower(): m["name"] for m in _pack_macros()}
-        if name.lower() not in known:
-            return {"result": "No Pro routine by that name."}
-        off = {n.strip().lower() for n in (os.environ.get(PRO_MACROS_OFF_KEY) or "").split(",") if n.strip()}
-        off.symmetric_difference_update({name.lower()})
-        settings.set_setting(PRO_MACROS_OFF_KEY, ",".join(sorted(off)))
-        return {"result": f"Pro routine {known[name.lower()]!r} is now {'off' if name.lower() in off else 'on'}."}
+        return {"result": _pack_macro_toggle(str((payload or {}).get("name") or ""))}
     inp = dict(payload or {}, action=action)
     res = _as_dashboard(_macros_tool, inp)
     _log_action_audit("macros", {k: v for k, v in inp.items() if k != "steps"}, "(dashboard)", res)
@@ -8497,6 +8536,18 @@ def _meeting_tool(inp: dict) -> str:
         return _meeting_start(str(inp.get("title") or ""))
     if action == "stop":
         return meeting.stop("user")
+    if action == "delete":
+        problem = _owner_here_problem("deleting meeting notes")
+        if problem:
+            return problem
+        try:
+            mid = int(inp.get("id"))
+        except (TypeError, ValueError):
+            return "Tool failed: say which meeting (id from the list)."
+        if not any(m["id"] == mid for m in meeting.list_meetings(_meeting_store, 500)):
+            return f"Tool failed: no meeting #{mid}."
+        meeting.delete_meeting(_meeting_store, mid)
+        return f"Deleted the notes and transcript of meeting #{mid}."
     if action == "status":
         a = meeting.active()
         return (f"Meeting notes running since {a['started_at'][11:16]}, {a['segments']} segment(s) so far."
@@ -8950,17 +9001,21 @@ def _feature_notifications(action: str, payload: dict):
                                   batched=notify_priority.should_batch(_memory_db_connect, _memory_db_lock, k))
                           for k, v in st.items()}, "digest": digest}
     if action == "reset":
-        with _memory_db_lock:
-            conn = _memory_db_connect()
-            try:
-                notify_priority.ensure(conn)
-                conn.execute("DELETE FROM notification_stats")
-                conn.commit()
-            finally:
-                conn.close()
+        _reset_notification_stats()
         _log_action_audit("notification_priority", {"action": "reset"}, "(dashboard)", "reset")
         return {"ok": True}
     return None
+
+
+def _reset_notification_stats() -> None:
+    with _memory_db_lock:
+        conn = _memory_db_connect()
+        try:
+            notify_priority.ensure(conn)
+            conn.execute("DELETE FROM notification_stats")
+            conn.commit()
+        finally:
+            conn.close()
 
 
 @_feature("graph")
@@ -9225,7 +9280,7 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             # use it to send them a phishing link (autonomy's own notices go through another path)
                             "send_to_my_phone",
                             # 2026-10-16: changing settings or stopping work is the owner's call, not an email's
-                            "settings", "stop_background_task", "running_now"}
+                            "settings", "stop_background_task", "running_now", "housekeeping"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
@@ -9243,6 +9298,7 @@ _OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_t
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
                         "delegate_research", "caretaker", "settings", "stop_background_task", "running_now",
+                        "housekeeping",
                         # memory steers every later prompt: an instruction hidden in a mail must not be written there
                         "remember_fact", "remember_decision", "remember_code_pattern", "update_project_status"}
 
@@ -10308,6 +10364,29 @@ def _caretaker_tool(inp: dict) -> str:
             return f"Tool failed: no issue called {key}."
         _caretaker_store.set_status(key, "ignored")
         return f"Leaving {key} alone from now on."
+    if action == "unignore":
+        problem = _owner_here_problem("tracking an ignored problem again")
+        if problem:
+            return problem
+        key = (inp.get("key") or "").strip()
+        row = _caretaker_store.get(key) if key else None
+        if not row:
+            return f"Tool failed: no issue called {key or '(none given)'}."
+        if row["status"] != "ignored":
+            return f"{key} isn't ignored (it is {row['status']})."
+        _caretaker_store.set_status(key, "open")
+        return f"I'll keep an eye on {key} again."
+    if action == "forget_lesson":
+        problem = _owner_here_problem("dropping a learned fix")
+        if problem:
+            return problem
+        sig = (inp.get("sig") or "").strip()
+        if not sig or not _caretaker_store.lesson_get(sig):
+            known = ", ".join(l["sig"] for l in _caretaker_store.lessons()[:8]) or "none learned yet"
+            return f"Tool failed: no learned fix called {sig or '(none given)'}. Learned fixes: {known}."
+        _caretaker_store.lesson_delete(sig)
+        selfaware.record("system", "caretaker_lesson", f"forgot the learned fix for '{sig}' (owner)")
+        return f"Forgot the learned fix for {sig}; I'll work that kind of problem out afresh next time."
     if action == "helper":
         return _caretaker_helper_text()
     if action in ("install_helper", "remove_helper"):
@@ -10600,10 +10679,66 @@ def _running_line() -> str:
     return running_mod.registry.prompt_line(exclude=getattr(_command_ctx, "run_id", None))
 
 
+PROFILE_KEY_MAX, PROFILE_VALUE_MAX = 60, 500  # same limits as the dashboard's Memory page
+
+
+def _housekeeping_tool(inp: dict) -> str:
+    """The small dashboard buttons as tool actions (PR 3 of "see and manage everything I can", 2026-10-16). Every
+    action is the owner's own request only; each calls the function the dashboard button calls."""
+    action = str(inp.get("action") or "").lower()
+    if action not in HOUSEKEEPING_ACTIONS:
+        return "Tool failed: action must be one of " + ", ".join(HOUSEKEEPING_ACTIONS) + "."
+    problem = _owner_here_problem(HOUSEKEEPING_ACTIONS[action])
+    if problem:
+        return problem
+    if action == "clear_missed":
+        return _missed_clear_reply()
+    if action == "reset_notification_stats":
+        _reset_notification_stats()
+        return "Forgot what I'd learned about which announcements you act on or dismiss."
+    if action == "clear_finished_sessions":
+        n = dashboard.clear_finished_sessions()
+        return f"Removed {n} finished session{'s' if n != 1 else ''} from the Sessions page." if n else \
+            "There were no finished sessions to remove."
+    if action == "dismiss_question":
+        try:
+            ask_id = int(inp.get("id"))
+        except (TypeError, ValueError):
+            return "Tool failed: say which question (id from the 'Jarvis needs you' list)."
+        row = asks_mod.get(_memory_db_connect, _memory_db_lock, ask_id)
+        if not row or row["status"] != "open":
+            return f"Tool failed: question #{ask_id} is no longer open."
+        asks_mod.close(_memory_db_connect, _memory_db_lock, ask_id, "dismissed")
+        return f"Dismissed question #{ask_id}."
+    key = str(inp.get("key") or "").strip()
+    if not key or len(key) > PROFILE_KEY_MAX:
+        return f"Tool failed: give a profile field name (up to {PROFILE_KEY_MAX} characters)."
+    if action == "profile_delete":
+        return f"Removed the profile field {key!r}." if delete_profile_field(key) else \
+            f"Tool failed: no profile field called {key!r}."
+    value = str(inp.get("value") or "").strip()
+    if not value or len(value) > PROFILE_VALUE_MAX:
+        return f"Tool failed: give a value (up to {PROFILE_VALUE_MAX} characters)."
+    if _is_secret_arg(key, value) or jarvis_untrusted.mask_secrets(value)[0] != value:
+        return "Refused: a profile field is shown in every prompt, so it can't hold a password, PIN or key."
+    set_user_profile_fact(key, value)
+    return f"Saved the profile field {key!r}."
+
+
+HOUSEKEEPING_ACTIONS = {
+    "clear_missed": "marking what you missed as read",
+    "reset_notification_stats": "resetting what I learned about announcements",
+    "clear_finished_sessions": "clearing finished sessions",
+    "dismiss_question": "dismissing a question",
+    "profile_set": "changing a profile field",
+    "profile_delete": "removing a profile field",
+}
+
+
 _BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
                              "watches": _watches_tool, "personality": _personality_tool,
                              "settings": _settings_tool, "stop_background_task": _stop_background_task_tool,
-                             "running_now": _running_now_tool})
+                             "running_now": _running_now_tool, "housekeeping": _housekeeping_tool})
 
 
 # --- The user's real browser tabs (2026-10-03, owner request) -----------------------------------------------------
@@ -14433,6 +14568,10 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core |= {"stop_background_task", "list_background_tasks"}
     if _RUNNING_NOW_RE.search(transcript or ""):
         core.add("running_now")
+    if _HOUSEKEEPING_RE.search(transcript or ""):
+        core.add("housekeeping")
+    if _MEETING_DELETE_RE.search(transcript or ""):
+        core.add("meeting_notes")
     if _SCHEDULED_WORK_RE.search(transcript or ""):
         core |= {"schedule_jarvis_task", "scheduled_jobs"}
     if re.search(r"\b(?:personality|personalities|voice type|vibe|attitude|gen ?z|pidgin|naija|playful|sarcastic|"
@@ -14444,6 +14583,12 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
 _SETTINGS_WORDS_RE = re.compile(
     r"\b(?:settings?|turn (?:on|off) (?:the )?[a-z ]{2,30}|enable|disable|switch (?:on|off)|wake word|follow[- ]?up|"
     r"auto[- ]?reply|hotkey|push[- ]to[- ]talk|budget|notifications? (?:on|off))\b", re.I)
+_HOUSEKEEPING_RE = re.compile(
+    r"\b(?:(?:clear|remove|delete|forget|reset|dismiss|mark)\b.{0,30}\b(?:missed|finished sessions?|old sessions?|"
+    r"notification (?:stats|learning)|announcement (?:stats|learning)|question|profile)|"
+    r"(?:set|change|update|save)\b.{0,20}\bmy (?:profile|name|city|birthday|nickname)|"
+    r"mark (?:it|them|everything) (?:as )?read)\b", re.I)
+_MEETING_DELETE_RE = re.compile(r"\b(?:delete|remove|erase)\b.{0,30}\b(?:meeting|call) (?:notes?|transcripts?)\b", re.I)
 _RUNNING_NOW_RE = re.compile(
     r"\b(?:what(?:'s| is| are) you (?:working on|doing|up to)|what(?:'s| is) (?:running|in progress|still going)|"
     r"(?:cancel|stop|abort|kill|forget)\b.{0,30}\b(?:test|check|search|lookup|that|it|everything|all)\b|"
@@ -14472,7 +14617,8 @@ _CARETAKER_RE = re.compile(
     r"\b(?:clean ?up|free up|clear)\b[^.!?]{0,30}\b(?:disk|storage|space|drive|pc|laptop|computer)\b|"
     r"\bwhat'?s wrong with (?:my|the) (?:pc|laptop|computer)\b|\bis anything (?:broken|wrong)\b|"
     r"\bwhat did you (?:fix|clean|clear)\b|\bundo (?:the|that|your) (?:cleanup|clean ?up|clean)\b|"
-    r"\bholding folder\b|\bcaretaker\b", re.I)
+    r"\bholding folder\b|\bcaretaker\b|\b(?:stop ignoring|unignore|ignoring)\b[^.!?]{0,30}\b(?:problem|issue)\b|"
+    r"\bforget\b[^.!?]{0,20}\blearned fix(?:es)?\b", re.I)
 _SKILL_MANAGE_RE = re.compile(
     r"\b(?:skills?|routines?|monitor(?:ing)?|watch(?:er)?|checks?|briefing)\b.*\b(?:cancel|stop|remove|delete|turn (?:it )?(?:off|on)|"
     r"disable|enable|pause|resume)\b|\b(?:cancel|stop|remove|delete|turn off|disable|pause|turn on|enable|resume)\b.*"
