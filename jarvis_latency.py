@@ -119,6 +119,9 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
                         r"(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
     # Temporary silence / mute timer (2026-10-15): "shut up for 10 minutes", "mute for 5 minutes", etc.
     ("mute", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:(?:shut up|be quiet|quiet|mute)\s+for(?:\s+the\s+next)?\s+\d+\s*(?:minute|minutes)?(?:,?\s*(?:please|jarvis))?\W*\Z|(?:\shush\b)\s+for\s+\d+\s*(?:minute|minutes)?\W*\Z)", re.I)),
+    # Ending a mute (2026-10-16): "unmute", "you can talk again" never reached the mute intent before.
+    ("mute", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:okay,?\s*|ok,?\s*)?(?:unmute(?: yourself)?|(?:you can\s+)?(?:talk|speak|start talking) again"
+                        r"|start talking)(?:,?\s*(?:now|please|jarvis))*\W*\Z", re.I)),
     # Personalities (2026-10-06): "switch to playful mode", "be serious", "auto mode", "what's your personality".
     ("personality", _personality.INTENT_RE),
     ("reply_style", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:please\s+)?(?:(?:be|keep (?:it|answers|replies|them))\s+(?:brief|short|concise|terse)"
