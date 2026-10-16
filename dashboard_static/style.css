@@ -1105,6 +1105,9 @@ p.consent-list { padding-left: 0; }
 
 /* Home "Jarvis needs you" (jarvis_asks): stands out, but isn't the red approval bar. */
 .home-asks { border-color: var(--color-warning); }
+.home-running { border-color: var(--color-accent); }
+.running-item { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.running-item .running-label { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
 .ask-item { display: flex; flex-direction: column; gap: var(--space-2); }
 .ask-questions { line-height: 1.5; }
 .ask-form { flex-wrap: wrap; }

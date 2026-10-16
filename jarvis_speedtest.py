@@ -101,6 +101,17 @@ def _ping(factory: Callable, count: int = PING_COUNT) -> tuple[float, float, str
         conn.close()
 
 
+# "Cancel the speed test" (2026-10-16): set by cancel(), checked by every worker, cleared when the next test starts.
+_abort = threading.Event()
+
+
+CANCELLED = "cancelled"
+
+
+def cancel() -> None:
+    _abort.set()
+
+
 class _Meter:
     """Bytes moved across all streams, with timestamps, shared by the worker threads."""
 
@@ -154,7 +165,7 @@ def _download(factory: Callable, seconds: float, cap: int, streams: int = STREAM
         conn = None
         try:
             conn = factory()
-            while time.perf_counter() < end_at and not meter.full():
+            while time.perf_counter() < end_at and not meter.full() and not _abort.is_set():
                 conn.request("GET", f"/__down?bytes={size}", headers={"Cache-Control": "no-store"})
                 resp = conn.getresponse()
                 if resp.status != 200:
@@ -164,7 +175,7 @@ def _download(factory: Callable, seconds: float, cap: int, streams: int = STREAM
                     if not chunk:
                         break
                     meter.add(len(chunk))
-                    if time.perf_counter() >= end_at or meter.full():
+                    if time.perf_counter() >= end_at or meter.full() or _abort.is_set():
                         return  # stop mid-file; the connection is closed below
                 size = min(size * 2, 25_000_000)
         except Exception as e:
@@ -196,14 +207,14 @@ def _upload(factory: Callable, seconds: float, cap: int, streams: int = STREAMS)
         conn = None
         try:
             conn = factory()
-            while time.perf_counter() < stop_new and meter.reserve(size):
+            while time.perf_counter() < stop_new and not _abort.is_set() and meter.reserve(size):
                 conn.putrequest("POST", "/__up")
                 conn.putheader("Content-Type", "application/octet-stream")
                 conn.putheader("Content-Length", str(size))
                 conn.endheaders()
                 for i in range(0, size, BLOCK):
-                    if time.perf_counter() >= hard_end:
-                        return  # far too slow to finish: the unfinished part is not counted
+                    if time.perf_counter() >= hard_end or _abort.is_set():
+                        return  # far too slow (or cancelled) to finish: the unfinished part is not counted
                     conn.send(payload[i:i + BLOCK] if i + BLOCK <= size else payload[i:size])
                 resp = conn.getresponse()
                 resp.read()
@@ -237,6 +248,7 @@ def run(factory: Callable | None = None, down_s: float = DOWN_SECONDS, up_s: flo
     cap = (cap_mb or max_mb()) * 1_000_000
     if not _running.acquire(blocking=False):
         return {"ok": False, "error": "busy"}
+    _abort.clear()
     t0 = time.perf_counter()
     try:
         try:
@@ -250,15 +262,21 @@ def run(factory: Callable | None = None, down_s: float = DOWN_SECONDS, up_s: flo
         except Exception as e:
             return {"ok": False, "error": f"couldn't reach the speed test server ({str(e)[:120] or type(e).__name__})"}
         result = {"ok": True, "ping_ms": round(ping, 1), "jitter_ms": round(jitter, 1), "server": colo}
+        if _abort.is_set():
+            return {"ok": False, "error": CANCELLED}
         try:
             down, down_bytes = _download(factory, down_s, cap)
         except Exception as e:
             return {"ok": False, "error": f"the download test failed ({str(e)[:120]})", **result}
+        if _abort.is_set():
+            return {"ok": False, "error": CANCELLED}
         try:
             up, up_bytes = _upload(factory, up_s, cap // 2)
         except Exception as e:
             up, up_bytes = None, 0
             result["upload_error"] = str(e)[:120]
+        if _abort.is_set():
+            return {"ok": False, "error": CANCELLED}
         result.update({
             "download_mbps": round(down, 2), "upload_mbps": None if up is None else round(up, 2),
             "data_mb": round((down_bytes + up_bytes) / 1e6, 1), "seconds": round(time.perf_counter() - t0, 1),
@@ -411,6 +429,8 @@ def history(connect: Callable[[], sqlite3.Connection], lock, n: int = 10) -> lis
 def measure_and_describe(connect, lock, runner: Callable[[], dict] | None = None, unit: str | None = None) -> str:
     previous = (history(connect, lock, 1) or [None])[0]
     r = (runner or run)()
+    if not r.get("ok") and r.get("error") == CANCELLED:
+        return "Okay, I stopped the speed test."  # nothing is saved: a half test would look like a slow line
     try:
         save(connect, lock, r)
     except Exception:
