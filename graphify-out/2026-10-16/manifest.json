@@ -1860,9 +1860,9 @@
     "semantic_hash": ""
   },
   "test_speed_writes.py": {
-    "mtime": 1792152969.1637723,
-    "seen": 1792153049.783346,
-    "ast_hash": "2d5539292acb5235703c278ee944db32",
+    "mtime": 1792153264.1360755,
+    "seen": 1792153295.2758715,
+    "ast_hash": "48ba5812816da59df5ac02353de7c594",
     "semantic_hash": ""
   }
 }

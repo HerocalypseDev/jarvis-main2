@@ -1723,7 +1723,10 @@ reminder came from, look it up (autonomy action=origin for deadlines/commitments
 scheduled_jobs) and say what the record shows; if you find nothing, say you couldn't find it, never invent a source such as \
 "an automated parse". Say a deadline or task is cleared, cancelled or fixed only after the tool that does it ran and \
 succeeded. When you edit the owner's document, files are backed up first; when asked to put real figures (times, dates, \
-prices) into something, search for each one, write only what the search actually found, and say which ones you couldn't find.
+prices) into something, search for each one, write only what the search actually found, and say which ones you couldn't find. \
+Never say you are monitoring, watching or still checking something, or that you'll check again or let the user know \
+later, unless a job, watch, background agent, reminder or scheduled skill for it really exists (scheduled_jobs, watches \
+and the related-things line show them) or you just created one and it succeeded. If scheduling it failed, say so plainly.
 
 You have named tools for the common, well-understood things: opening apps/URLs, clicking, typing, \
 reading the screen or clipboard, web search, scanning for large files, and more — use \
@@ -8925,7 +8928,9 @@ def _run_deferred_job(job: dict) -> None:
     try:
         reply = run_agent_loop(
             f"(Scheduled job #{job['id']}: "
-            + ("you scheduled this yourself earlier" if job.get("origin") == "jarvis"
+            + ("you scheduled this yourself earlier. Your reply is not said out loud unless it starts with "
+               "\"URGENT:\"; start with that only when the result is something the user asked to be told (a "
+               "condition they were waiting for was met), never for \"nothing changed yet\"" if job.get("origin") == "jarvis"
                else "the user asked earlier for this to be done at this time")
             + ". Do it now, "
             "fully, without asking them anything first; for a code change use change_jarvis_code (Jarvis's own "
@@ -8962,6 +8967,7 @@ def _finish_deferred_job(job: dict, ok: bool, reply: str, transient: bool, trans
     # Only an action this job staged (audit 2026-10-05: one the owner had staged earlier made every job that
     # finished afterwards say urgently that it needed their yes).
     staged_here = bool(pending) and (started is None or float(pending.get("queued_at") or 0) >= started)
+    flagged_text, flagged = _skill_reply_urgency(reply) if job.get("origin") == "jarvis" else ("", False)
     if "staged, not run" in (reply or "") or staged_here:
         _deferred_speech(f"Scheduled job needs your yes: {reply[:200]}", urgent=True)
     elif status == "failed":
@@ -8971,6 +8977,10 @@ def _finish_deferred_job(job: dict, ok: bool, reply: str, transient: bool, trans
         # Both come from the owner's own words (a direct request, or "Jarvis, at 5 do X" picked up from what they
         # said). Audit 2026-10-03: a "conversation" job finished in silence, not even in "what did I miss".
         _deferred_speech(f"As you asked earlier: {reply}", asked=True)
+    elif ok and flagged and flagged_text:
+        # Owner's choice 2026-10-16 ("speak when flagged"): a job Jarvis scheduled for itself (a self-rescheduling
+        # check) stays quiet, except when its run flags the result as something the owner asked to be told.
+        queue_or_deliver_notification(flagged_text, important=True, bypass_busy_gate=True)
     elif ok:
         _deferred_speech(f"Done: {job['instruction'][:80]}. {reply[:200]}")
 
@@ -13672,34 +13682,40 @@ _FAILED_RESULT_PREFIXES = ("couldn't", "could not", "no results", "unrecognized"
 # ("I've set a reminder", "I sent the email") when no tool that does that ran this turn gets one
 # extra round to actually do it; if it still doesn't, the reply says plainly that it didn't happen.
 # Each entry: (what it claims, claim regex, regex over the names of tools that would back it).
+# "I have successfully created the Word document" (debug report 2026-10-16) slipped past every claim below: an adverb
+# between "I have" and the verb broke the match, after two failed saves.
+_I_DID = (r"\b(?:i'?ve|i have|i just|i)\s+(?:(?:successfully|already|now|also|finally|just|actually|quickly|then|"
+          r"gone ahead and|went ahead and)\s+)*")
 _ACTION_CLAIMS = [
     ("set that reminder",
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:set|created|added|scheduled|made)\b[^.!?]{0,30}\breminders?\b"
+     re.compile(_I_DID + r"(?:set|created|added|scheduled|made)\b[^.!?]{0,30}\breminders?\b"
                 r"|\breminders?\b (?:is |has been |was )?(?:set|created|scheduled)\b|\bi'?ll remind you\b", re.I),
      re.compile(r"create_reminder|schedule_jarvis_task|queue_task|timer|alarm|background_agents", re.I)),
     ("send that",
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:sent|emailed|messaged|texted|replied|forwarded)\b"
+     re.compile(_I_DID + r"(?:sent|emailed|messaged|texted|replied|forwarded)\b"
                 r"|\b(?:email|message|reply|text)\b (?:has been |was |is )?sent\b", re.I),
      re.compile(r"send|forward|type|click|press|shortcut", re.I)),
     ("add that to your calendar",
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:added|put|scheduled|booked|created)\b[^.!?]{0,40}\b(?:calendar|event|meeting)\b"
+     re.compile(_I_DID + r"(?:added|put|scheduled|booked|created)\b[^.!?]{0,40}\b(?:calendar|event|meeting)\b"
                 r"|\b(?:event|meeting)\b (?:has been |was |is )?(?:created|added|scheduled|booked)\b", re.I),
      re.compile(r"(?:calendar|event).*(?:create|insert|add|update|quick)|(?:create|insert|add|update|quick).*(?:calendar|event)", re.I)),
     ("save that file",
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:saved|written|wrote|created)\b[^.!?]{0,40}"
-                r"\b(?:file|document|doc|docx|note|notes|folder|presentation|spreadsheet|pptx)\b", re.I),
+     re.compile(_I_DID + r"(?:saved|written|wrote|created)\b[^.!?]{0,40}"
+                r"\b(?:file|document|doc|docx|note|notes|folder|presentation|spreadsheet|pptx)\b"
+                r"|\b(?:file|document|docx|presentation|spreadsheet)\b (?:has been |was |is )(?:now )?(?:saved|created|written)\b",
+                re.I),
      re.compile(r"write|save|create|delegate|change_jarvis_code|move|copy|rename|organise|edit", re.I)),
     ("type that in",
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:[a-z ,]{0,40}\band\s+)?(?:typed|written|wrote|filled|entered|put|pasted|inserted)\b"
+     re.compile(_I_DID + r"(?:[a-z ,]{0,40}\band\s+)?(?:typed|written|wrote|filled|entered|put|pasted|inserted)\b"
                 r"[^.!?]{0,110}\b(?:form|fields?|box(?:es)?|space|answer boxes|browser|page|screen|text ?box|application|answers?)\b"
                 r"|\b(?:form|fields?|answers?) (?:has been |have been |was |were |is |are )?(?:filled|typed|written|entered)\b", re.I),
      re.compile(r"type|fill|multiedit|paste|write_file", re.I)),  # write_file: "I've written the answer down in a note"
     ("clear those",  # found live 2026-10-02: "I've cleared those old reminders" after only list_reminders ran
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:cleared|removed|deleted|cancelled|canceled|dismissed|closed|wiped)\b"
+     re.compile(_I_DID + r"(?:cleared|removed|deleted|cancelled|canceled|dismissed|closed|wiped)\b"
                 r"[^.!?]{0,40}\b(?:reminders?|deadlines?|overdue|commitments?|items?|tasks?|alerts?"
                 # audit 2026-10-04: "I've cancelled your billing monitoring / turned off that skill" was never checked
                 r"|skills?|monitor(?:ing|s)?|routines?|macros?|jobs?)\b"
-                r"|\b(?:i'?ve|i have|i just|i)\s+(?:turned off|switched off|disabled|stopped)\b[^.!?]{0,40}"
+                r"|" + _I_DID + r"(?:turned off|switched off|disabled|stopped)\b[^.!?]{0,40}"
                 r"\b(?:skills?|monitor(?:ing|s)?|routines?|macros?|jobs?|checks?)\b"
                 r"|\b(?:reminders?|deadlines?|commitments?|overdue items?)\b (?:have been |has been |were |was |are |is )?"
                 r"(?:cleared|removed|deleted|cancelled|canceled|closed)\b", re.I),
@@ -13707,18 +13723,18 @@ _ACTION_CLAIMS = [
     # Debug report 2026-10-07: "I have gone ahead and cleared it straight out of your deadlines list" / "That task is
     # completely wiped out" were said after only look-ups ran, and slipped past the wording above.
     ("clear that",
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:gone ahead and |already |successfully |now )*(?:cleared|removed|deleted|"
+     re.compile(_I_DID + r"(?:gone ahead and |already |successfully |now )*(?:cleared|removed|deleted|"
                 r"cancelled|canceled|wiped|dismissed)\b[^.!?]{0,40}\b(?:it|that|those|this|them)\b"
                 r"|\b(?:it|that|this|those|task|deadline|commitment|reminder|coffee \w+)\b[^.!?]{0,25}\b(?:is|are|has been|have been)\s+"
                 r"(?:now |all )?(?:completely |fully |totally )?(?:wiped out|gone|cleared|cancelled|canceled|removed|deleted)\b", re.I),
      re.compile(r"cancel|complete|delete|remove|clear|autonomy|forget|dismiss|skills|macros|job|agents|reminder", re.I)),
     ("look that up",  # said it searched / used the real figures when no search ran (the invented anime times)
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:gone back into [^.!?,]{0,40}[, ]+(?:and )?)?(?:searched|looked up|looked online|checked online|"
+     re.compile(_I_DID + r"(?:gone back into [^.!?,]{0,40}[, ]+(?:and )?)?(?:searched|looked up|looked online|checked online|"
                 r"tracked down|researched|found)\b[^.!?]{0,60}\b(?:real|actual|exact|premiere|release|broadcast|air(?:ing)?|online|"
                 r"web|internet|times?|dates?|schedule)\b", re.I),
      re.compile(r"web_search|http_request|browser|fetch|^mcp_|dashboard_data", re.I)),  # not quick_search/memory_search
     ("close that",  # audit 2026-10-04: "I've closed the YouTube tab" with no tab/window tool behind it
-     re.compile(r"\b(?:i'?ve|i have|i just|i)\s+(?:closed|shut)\b[^.!?]{0,40}\b(?:tabs?|windows?)\b"
+     re.compile(_I_DID + r"(?:closed|shut)\b[^.!?]{0,40}\b(?:tabs?|windows?)\b"
                 r"|\b(?:tabs?|windows?)\b (?:have been |has been |were |was |are |is )?closed\b", re.I),
      re.compile(r"browser_tabs|control_window|close", re.I)),
     ("remember that",
@@ -13747,7 +13763,7 @@ def _confirmation_imitated(reply_text: str) -> bool:
         return _pending_action is None
 
 
-def _unbacked_claims(reply_text: str, used_tool_names: list[str]) -> list[str]:
+def _unbacked_claims(reply_text: str, used_tool_names: list[str], transcript: str | None = None) -> list[str]:
     """What the reply claims to have done, past tense, with no tool of that kind run this turn.
     Questions and offers ("Shall I set a reminder?") are ignored."""
     # Only tools that DO something count as proof (audit 2026-09-28): list_reminders, read_file,
@@ -13765,6 +13781,8 @@ def _unbacked_claims(reply_text: str, used_tool_names: list[str]) -> list[str]:
                 out.append(what)
     if "clear those" in out and "clear that" in out:
         out.remove("clear that")  # one claim, reported once
+    if transcript is not None and _ongoing_claim_unbacked(reply_text, doers, transcript):
+        out.append(_ONGOING_UNBACKED)
     if _confirmation_imitated(reply_text):
         out.append(_CONFIRMATION_IMITATION)
     return out
@@ -13821,7 +13839,72 @@ def _recent_succeeded_tools(transcript: str, minutes: int = RECENT_BACKING_MINUT
     return out
 
 
+# Owner report 2026-10-16: a self-rescheduling speed check couldn't schedule its next run, and half an hour later
+# Jarvis still said "I'm still monitoring it for you". A claim of ONGOING work (monitoring, will check again, will let
+# you know when) needs something that really keeps running: a pending job, an enabled watch or background agent, a
+# scheduled skill, a reminder, a queued or running background task, or a scheduling tool that succeeded this turn.
+_ONGOING_CLAIM_RE = re.compile(
+    r"\b(?:i'?m|i am)\s+(?:still\s+|now\s+|currently\s+|already\s+|actively\s+)*(?:monitoring|watching|tracking|"
+    r"keeping (?:an )?eye on|keeping track of|keeping tabs on|checking on)\b"
+    r"|\b(?:i'?ll|i will)\s+(?:keep|continue)\s+(?:on\s+)?(?:monitoring|watching|tracking|checking|testing|"
+    r"an eye|tabs|track|trying|looking|running)"
+    r"|\b(?:i'?ll|i will)\s+(?:check|test|look|try|run)\b[^.!?]{0,40}\bagain\b[^.!?]{0,20}\b(?:in|every|after|later)\b"
+    r"|\b(?:i'?ll|i will)\s+(?:let you know|tell you|notify you|alert you|ping you|text you|message you)\b[^.!?]{0,50}"
+    r"\b(?:when|once|as soon as|the moment)\b"
+    r"|\b(?:monitoring|the (?:watch|check|job))\s+(?:is|are)\s+(?:still\s+)?(?:active|running|on|in place|set up)\b",
+    re.I)
+_SCHEDULING_TOOL_RE = re.compile(r"schedule|watch|agent|save_skill|reminder|queue|set_plan|delegate|change_jarvis_code"
+                                 r"|timer|macros", re.I)
+_ONGOING_FILLER = reqctx.content_words(
+    "monitoring monitor watching watch tracking track keeping keep eye tabs checking check still continue let know "
+    "notify alert ping update again minutes minute hours hour every later soon once moment active running set up "
+    "for you your currently actively")
+_ONGOING_UNBACKED = "set anything up to keep checking that: nothing is scheduled for it"
+
+
+def _active_scheduled_work() -> list[str]:
+    """Texts of everything that really keeps running for the owner right now (each a short description)."""
+    out: list[str] = []
+    for sql in ("SELECT instruction FROM autonomy_deferred_jobs WHERE status='pending'",
+                "SELECT name || ' ' || what || ' ' || rule FROM watches WHERE enabled=1",
+                "SELECT name || ' ' || steps FROM agents WHERE enabled=1",
+                "SELECT text FROM reminders WHERE delivered_at IS NULL AND cancelled_at IS NULL",
+                "SELECT description || ' ' || COALESCE(instructions, '') FROM task_queue "
+                "WHERE status IN ('pending','scheduled')",
+                "SELECT task FROM background_tasks WHERE status='running'"):
+        out += [str(r[0] or "") for r in _related_rows(sql)]
+    try:
+        out += [f"{sk.get('name', '')} {sk.get('description', '')} {sk.get('instructions', '')}"
+                for sk in _active_skills() if sk.get("schedule")]
+    except Exception as e:
+        log.debug("scheduled skills lookup skipped: %s", e)
+    return out
+
+
+def _ongoing_claim_unbacked(reply_text: str, doers: list[str], transcript: str) -> bool:
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", reply_text or "")
+                 if _ONGOING_CLAIM_RE.search(s) and not s.rstrip().endswith("?")
+                 and not re.search(r"\b(?:want me to|shall i|should i|can i|could i|would you like|if you want|"
+                                   r"if you'd like)\b", s, re.I)]
+    if not sentences:
+        return False
+    if any(_SCHEDULING_TOOL_RE.search(n) for n in doers):
+        return False  # it was set up just now (a failed call isn't in doers)
+    work = _active_scheduled_work()
+    if not work:
+        return True
+    topic = (reqctx.content_words(" ".join(sentences)) | reqctx.content_words(transcript or "")) - _ONGOING_FILLER
+    if not topic:
+        return False  # "I'm still on it" about nothing in particular, and something is scheduled
+    return not any(reqctx.related(w, topic) for w in work)
+
+
 def _claim_nudge(what: list[str]) -> str:
+    if _ONGOING_UNBACKED in what:
+        return ("[system check] Your reply says you are monitoring something or will check again / let the user know "
+                "later, but nothing is scheduled for it (no job, watch, background agent, reminder or scheduled skill), "
+                "so nothing will happen. If the user asked for it, set it up now (schedule_jarvis_task or watches). "
+                "Otherwise reply again and say plainly that nothing is running for it.")
     return ("[system check] Your reply says you did this: " + "; ".join(what) + ". But no tool that does "
             "that ran this turn, so it did NOT happen. If the user wants it, call the right tool now (use "
             "find_tools if you can't see one). If you can't do it, reply again and say so plainly, without "
@@ -15765,9 +15848,12 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 continue
             if handoff_nudged and not set(used_tool_names) & _DELEGATION_TOOLS and _HANDOFF_CLAIM_RE.search(claim):
                 reply_parts.append("Correction: I did not actually start a background task for that. Ask me again to start it.")
-            unbacked = _unbacked_claims(claim, succeeded_tool_names)
+            unbacked = _unbacked_claims(claim, succeeded_tool_names, transcript)
             if unbacked:
-                unbacked = _unbacked_claims(claim, succeeded_tool_names + _recent_succeeded_tools(transcript))
+                # Earlier commands can back "I sent it", never "I'm still monitoring it": a job scheduled half an hour
+                # ago may have run and stopped since (the ongoing check reads what is scheduled NOW instead).
+                ongoing = [u for u in unbacked if u == _ONGOING_UNBACKED]
+                unbacked = _unbacked_claims(claim, succeeded_tool_names + _recent_succeeded_tools(transcript)) + ongoing
             if unbacked and not claim_nudged and iteration < MAX_AGENT_ITERATIONS - 1:
                 claim_nudged = True
                 log.warning("Reply claims %s with no backing tool call; nudging: %r", unbacked, claim[:120])
