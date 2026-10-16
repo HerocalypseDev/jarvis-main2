@@ -1639,6 +1639,14 @@ Rules to keep:
   newest audit row; Ollama traffic never uses a proxy; lessons only from voice/text/dashboard/phone and never
   name an address/link/domain; the command path never fetches embeddings (cache-only + background fill);
   find_tools max 3 per command; daily plan retries at most every 30 min.
+- **Lessons didn't learn (2026-10-16, owner: "it still makes the same mistakes")**: three faults, tests at the end of
+  `test_smarter.py`. (1) A correction's lesson read "the previous answer" after this turn was already in history, so the
+  writer only saw the correction and Jarvis's new reply; now `_previous_exchange` reads the earlier request + answer before
+  the loop, the lesson is about that request (also its `trigger`, used for retrieval). (2) `lessons.is_correction` strips a
+  leading "hey Jarvis,"/"Jarvis," and knows more phrasings ("that is incorrect", "you did it wrong", "you made a mistake",
+  "try again", "not what I asked for", "I told you..."); a bare "no" still doesn't count (it answers questions). (3) A claim
+  the claim checker caught (nudged) now writes a lesson too, as a "(claim check)" step. A failed or refused lesson write is
+  logged at info. Tests that fake history must append before the lesson is written, or they hide fault 1.
 
 ### Cost reporting
 
@@ -1834,7 +1842,8 @@ row there each phase rather than only stating the total in chat.
 | 170 (false "still monitoring" / "successfully created" claims: ongoing-work claims need a real job/watch/agent/reminder/scheduled skill, adverbs no longer hide a done claim, self-made jobs speak only when flagged URGENT; 12 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 171 (Jarvis asks you: tool questions must reach the user, saved with the exact call and resumed by the answer, Home "Jarvis needs you" card, background runs say it; live-reading watches sent to scheduled work, unattended runs no longer read the chat, honest agent results, open Roblox; 13 new tests, headless card check) | Opus 5.5 | ~50 min | ~$4.00–$5.50 |
 | 172 (admin helper card showed every repair "off" with no reason and "waiting for the prompt" long after it was answered: unknown is now shown as "?" with why Windows couldn't be read, the setup says "checking" once the prompt is accepted, the hidden elevated window writes OK/FAIL+reason to a result file, a 90 s wall-clock deadline replaces the fixed polls; 12 new tests, headless check of five states) | Sonnet 5.5 | ~35 min | ~$2.20–$3.00 |
-| **Running total (final)** | | **~5274 min** | **~$361.35–$507.55** |
+| 173 (lessons didn't learn: corrections now see the original request + wrong answer, more correction phrasings incl. "Jarvis, ...", caught false claims write lessons, failed writes logged; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~5299 min** | **~$363.35–$510.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

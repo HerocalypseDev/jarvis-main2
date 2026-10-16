@@ -7730,12 +7730,30 @@ def _learn_lesson(transcript: str, steps: list, correction: str = "", previous_r
     digest = lessons.failure_digest(transcript, steps, correction, previous_reply)
     text = _sleep_mail_claude(lessons.LESSON_SYSTEM, digest, 120)
     if not text:
+        log.info("Lesson not written: the model call failed or returned nothing")
         return None
     rid = lessons.add(_memory_db_connect, _memory_db_lock, text, trigger=transcript,
                       source="correction" if correction else "failure")
     if rid:
         log.info("Learned lesson #%s: %r", rid, text[:120])
+    else:
+        log.info("Lesson not stored (empty, NONE, or about rules/addresses): %r", text[:120])
     return rid
+
+
+def _previous_exchange(history: list[dict]) -> tuple[str, str]:
+    """(user request, Jarvis's answer) of the newest complete exchange in history, or ("", "")."""
+    req = rep = ""
+    for m in reversed(history or []):
+        content = m.get("content")
+        if not isinstance(content, str):
+            continue
+        if m.get("role") == "assistant" and not rep and not req:
+            rep = content
+        elif m.get("role") == "user" and rep:
+            req = content
+            break
+    return req, rep
 
 
 def _spawn_lesson(*args) -> None:
@@ -16296,8 +16314,12 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         {"type": "text", "text": transcript}]
     # An unattended run (scheduled skill, queued task, watch, job: record_history=False) never sees the conversation:
     # found live 2026-10-16, a scheduled Gmail check read the user's chat about a speed monitor and acted on it.
-    history = reqctx.pick_history(_history_snapshot(), transcript) if record_history else []
+    full_history = _history_snapshot() if record_history else []
+    history = reqctx.pick_history(full_history, transcript) if record_history else []
     messages: list[dict] = history + [{"role": "user", "content": first}]
+    # Lessons memory: the exchange BEFORE this one (read now, before this turn is appended to history), so a
+    # correction's lesson sees the original request and the wrong answer (debug 2026-10-16: it only saw its own new reply).
+    prev_request, prev_reply = _previous_exchange(full_history)
     reply_parts: list[str] = []
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
     narrated = 0
@@ -16306,6 +16328,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     any_tool_failed = False
     handoff_nudged = False
     steps: list[tuple[str, str, str]] = []  # (tool, input, result) for lessons memory
+    false_claims: list[str] = []  # claims the claim checker caught (a mistake worth a lesson too)
     find_calls = 0
     # tools_override (Speed Upgrade cloud-latency pass, Phase D): a handful of simple intents
     # (see _reduced_tools_for_intent) pass a small hand-picked list here instead of the full
@@ -16490,6 +16513,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 unbacked = _unbacked_claims(claim, succeeded_tool_names + _recent_succeeded_tools(transcript)) + ongoing
             if unbacked and not claim_nudged and iteration < MAX_AGENT_ITERATIONS - 1:
                 claim_nudged = True
+                false_claims.append(claim[:200])
                 log.warning("Reply claims %s with no backing tool call; nudging: %r", unbacked, claim[:120])
                 del reply_parts[len(reply_parts) - len(texts):]
                 if streamed_this_round:
@@ -16597,15 +16621,16 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     # Lessons memory: learn from a failed tool or from the user correcting the previous answer.
     # Only for real user commands (not autonomy/scheduled runs), off the reply path.
     if _current_command_source() in ("voice", "text", "dashboard", "phone") and tools_override is None:
-        correction = transcript if (lessons.CORRECTION_RE.search(transcript) or (tone and tone.get("repeated"))) else ""
-        if any_tool_failed or correction:
-            prev = ""
-            for m in reversed(_history_snapshot()):
-                if m.get("role") == "assistant" and isinstance(m.get("content"), str):
-                    prev = m["content"]
-                    break
+        correction = transcript if (lessons.is_correction(transcript) or (tone and tone.get("repeated"))) else ""
+        if any_tool_failed or correction or false_claims:
+            lesson_steps = list(steps) + [("(claim check)", "", "Jarvis said it had done this but never called a tool "
+                                           f"that does it: {c}") for c in false_claims]
             try:
-                _spawn_lesson(transcript, steps, correction, prev)
+                if correction and prev_request:
+                    # The lesson is about the earlier request: what Jarvis did then, and what the user said was wrong.
+                    _spawn_lesson(prev_request, lesson_steps, correction, prev_reply)
+                else:
+                    _spawn_lesson(transcript, lesson_steps, correction, prev_reply if correction else "")
             except Exception as e:
                 log.debug("lesson spawn failed: %s", e)
     return reply
