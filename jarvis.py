@@ -9276,11 +9276,94 @@ def _caretaker_fix_storage(issue: dict) -> str | None:
     return "; ".join(r["steps"]) or None
 
 
+CARETAKER_RERUNS_PER_PASS = 2   # a brain outage fails every skill at once: re-run only a couple per pass
+
+
+def _caretaker_self_gave_up(issue: dict, reason: str, announce: bool = True) -> None:
+    """Stop trying: the cause isn't fixable from here. Said once, quietly (the "what did I miss" inbox), with what
+    the owner can do about it; the Caretaker page keeps it visible."""
+    key = issue["key"]
+    _caretaker_store.give_up(key, reason)
+    selfaware.record("system", "caretaker_gave_up", f"{issue['title']} {reason}")
+    if announce and key not in _caretaker_state["announced"]:
+        _caretaker_state["announced"].add(key)
+        queue_or_deliver_notification(f"I couldn't fix this on my own. {issue['title']} {reason}")
+
+
+def _caretaker_reconnect_mcp(name: str) -> bool:
+    """Reconnect one down tool server now instead of waiting for the 2-minute retry. True = it is connected."""
+    with _mcp_lock:
+        if name not in _mcp_failed_servers:
+            return True   # it came back by itself
+        _mcp_failed_servers[name]["last_attempt"] = datetime.now() - timedelta(seconds=MCP_RETRY_INTERVAL_S + 1)
+    _retry_failed_mcp_servers(datetime.now())
+    with _mcp_lock:
+        return name not in _mcp_failed_servers
+
+
+def _caretaker_fix_self(issue: dict) -> str | None:
+    """Jarvis's own repeated failures: run a failing skill again, reconnect a down tool server, or say what only the
+    owner can do (sign-in, credit, a wrong tool call). Nothing here edits a skill or touches a job."""
+    key, ev = issue["key"], issue.get("evidence") or {}
+    name = str(ev.get("name") or key.split(":", 1)[-1])
+    cat = issue["category"]
+    action = {"self_skill": "rerun_skill", "self_mcp": "reconnect_mcp"}.get(cat, "")
+    plan = caretaker.plan_self_fix(issue, _caretaker_store.last_action(key, action) if action else None)
+    do = plan["do"]
+    if do == "give_up":
+        _caretaker_self_gave_up(issue, plan["why"])
+        return None
+    if do in ("none", "wait"):
+        return None
+    if caretaker.budget_blocked(_caretaker_store):
+        return None
+    if do == "reconnect_mcp":
+        ok = _caretaker_reconnect_mcp(name)
+        _caretaker_store.log_action(key, caretaker.GREEN, "reconnect_mcp", f"reconnected {name}",
+                                    "connected" if ok else "still down")
+        if ok:
+            _caretaker_store.set_status(key, "fixed")
+            selfaware.record("system", "caretaker_fix", f"reconnected the {name} tool server")
+            return f"reconnected the {name} tool server"
+        n = _caretaker_store.note_attempt(key, "reconnecting it didn't work")
+        if n >= caretaker.MAX_ATTEMPTS:
+            cmd = doctor.REAUTH.get(name, "")
+            _caretaker_self_gave_up(
+                issue, "It stays down after three reconnects. "
+                + (f"If its Google sign-in expired, run {cmd} on your PC. " if cmd else "")
+                + "Otherwise check that its program is installed and the network is up, then restart Jarvis.")
+        return None
+    if do == "rerun_skill":
+        if plan["count_failed"]:   # the last re-run ran and it still fails: that attempt didn't help
+            n = _caretaker_store.note_attempt(key, "running it again didn't fix it")
+            if n >= caretaker.MAX_ATTEMPTS:
+                _caretaker_self_gave_up(issue, "It kept failing when I ran it again, so it needs a look from you.")
+                return None
+        if _caretaker_state.get("reruns", 0) >= CARETAKER_RERUNS_PER_PASS:
+            return None
+        skill = next((s for s in _load_skills() if s["name"].lower() == name.lower()), None)
+        if skill is None or skill["name"].lower() in _skills_off():
+            _caretaker_self_gave_up(issue, "That skill is switched off or gone, so there is nothing to run.",
+                                    announce=False)
+            return None
+        started = _run_single_flight(f"skill:{skill['name']}", _run_scheduled_skill, skill)
+        if not started:
+            return None   # it is running right now; look again next pass
+        _caretaker_state["reruns"] = _caretaker_state.get("reruns", 0) + 1
+        _caretaker_store.log_action(key, caretaker.GREEN, "rerun_skill", f"ran {skill['name']} again",
+                                    "started")
+        selfaware.record("system", "caretaker_fix", f"ran the {skill['name']} skill again after it failed")
+        return f"ran the {skill['name']} skill again"
+    return None
+
+
 def _caretaker_fix_issue(issue: dict) -> str | None:
-    """Run the playbook for one issue; returns a sentence about what was done (None = nothing). Phase 2 has
-    storage; the other families arrive in later phases."""
+    """Run the playbook for one issue; returns a sentence about what was done (None = nothing). Storage and
+    Jarvis's own failures so far; the Windows playbooks arrive in later phases."""
     if issue["category"] == "storage":
         return _caretaker_fix_storage(issue)
+    if issue["category"].startswith("self_"):
+        return _caretaker_fix_self(issue)
     return None
 
 
@@ -9289,6 +9372,7 @@ def _caretaker_fix_all() -> list[str]:
     if why:
         return []
     done = []
+    _caretaker_state["reruns"] = 0
     for issue in _caretaker_store.open_issues():
         try:
             line = _caretaker_fix_issue(issue)
@@ -9419,7 +9503,8 @@ def _caretaker_tool(inp: dict) -> str:
             last = (rep["last_scan"] or {}).get("at")
             return f"Nothing wrong that I can see{f' (last checked {last})' if last else ''}."
         lines = [f"{i['severity'].upper()}: {i['title']} [{i['key']}]"
-                 f"{' - gave up after ' + str(i['attempts']) + ' tries' if i['status'] == 'gave_up' else ''}"
+                 f"{(' - gave up after ' + str(i['attempts']) + ' tries') if i['status'] == 'gave_up' and i['attempts'] else (' - needs you' if i['status'] == 'gave_up' else '')}"
+                 f"{' - ' + i['evidence']['advice'] if i.get('evidence', {}).get('advice') and i['status'] == 'gave_up' else ''}"
                  for i in rep["issues"][:12]]
         s = rep["summary"]
         tail = (f"\nIn the last day: {s['fixed']} fixed, {s['actions']} actions, "

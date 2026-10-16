@@ -264,6 +264,19 @@ def probe_self(conn_factory, mcp_failed: dict | None = None, doctor_problems: li
                 conn.close()
             except Exception:
                 pass
+    if conn_factory is not None:
+        try:
+            c2 = conn_factory()
+            try:
+                # an agent whose last run failed (the agents module already says so once and then stays quiet)
+                for name, result in c2.execute("SELECT name,COALESCE(last_result,'') FROM background_agents "
+                                               "WHERE enabled=1 AND last_ok=0").fetchall():
+                    if f := ct.self_failure_finding("agent", name, result[:160] or "failed", 2):
+                        out.append(f)
+            finally:
+                c2.close()
+        except Exception:
+            pass   # no agents table yet, or the column set differs: not a problem to report
     for name, info in (mcp_failed or {}).items():
         if f := ct.self_failure_finding("mcp", name, "could not connect", 1):
             out.append(f)

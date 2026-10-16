@@ -50,13 +50,17 @@ function ctIssueRow(i) {
   const gaveUp = i.status === "gave_up";
   const tried = (i.tried || []).length
     ? `<div class="muted">Tried: ${(i.tried || []).map(esc).join("; ")}</div>` : "";
+  const advice = (i.evidence && i.evidence.advice)
+    ? `<div class="muted">${esc(i.evidence.advice)}</div>` : "";
   return `
     <li class="list-item ${CT_SEV_CLASS[i.severity] || ""}">
       <span class="src-badge">${esc(i.severity)}</span>
       <div class="ct-issue-body">
         <div>${esc(i.title)}</div>
         <div class="muted">${esc(i.category)} &middot; first seen ${ctWhen(i.first_seen)} &middot; last ${ctWhen(i.last_seen)}
-          ${gaveUp ? " &middot; <strong>gave up after " + esc(String(i.attempts)) + " tries</strong>" : ""}</div>
+          ${gaveUp ? (i.attempts > 0 ? " &middot; <strong>gave up after " + esc(String(i.attempts)) + " tries</strong>"
+                                     : " &middot; <strong>needs you</strong>") : ""}</div>
+        ${advice}
         ${tried}
       </div>
       <button class="btn btn-ghost" type="button" data-ct-ignore="${escAttr(i.key)}">Ignore</button>

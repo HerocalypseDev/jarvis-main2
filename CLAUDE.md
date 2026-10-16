@@ -1825,7 +1825,8 @@ row there each phase rather than only stating the total in chat.
 | 161 (self-scheduling, "All but email": Jarvis's own runs may make jobs, background agents, watches and campaign steps; email/web-started runs still can't; self-made jobs capped at 20; 9 new tests, 3 updated) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 162 (Caretaker phase 1: sensors for storage/CPU hogs/crashes/disk health/updates/network/battery/Jarvis's own failures, issue tracker, Caretaker dashboard page + tool; headless check at 1440/390 px; 28 new tests) | Opus 5.5 | ~30 min | ~$2.50–$3.50 |
 | 163 (Caretaker phase 2: storage playbook (caches, old Recycle Bin items, old installers to a 7-day holding folder), undo, budgets, issues close themselves, fix/undo/holding tool actions, Fix now + Undo on the page; caught a held-bytes-counted-as-freed lie and hidden gave-up issues; 34 new tests, 2 mutation checks) | Opus 5.5 | ~45 min | ~$3.50–$4.80 |
-| **Running total (final)** | | **~4944 min** | **~$337.95–$475.15** |
+| 164 (Caretaker phase 3: Jarvis repairs its own failures: classified causes with plain advice, failing skills re-run with limits, down tool servers reconnected, sign-in/credit/wrong-tool causes explained once and quietly, jobs never re-run, new agent sensor; 31 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~4969 min** | **~$339.75–$477.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2954,4 +2955,15 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
   `caretaker` tool (status/scan/fix/undo/holding/ignore) is blocked in untrusted-origin and tainted runs. Undo and Fix now are on
   the Caretaker page. Daily summary goes to the quiet "what did I miss" inbox, not spoken.
 - Not verified live on the PC: real cache folders, the Recycle Bin layout, Downloads on a real profile.
+- **Phase 3 (Jarvis repairs its own failures, `ct.plan_self_fix` + `_caretaker_fix_self`, `test_caretaker_self.py`)**: each
+  error is classified once (`explain_failure`: auth / credit / quota / network / tool / other) and the issue carries `cause` +
+  plain `advice` (shown on the page and in the tool status). What happens: a failing **skill** that failed for a network/unknown
+  reason is run again (at most every 30 min, 2 re-runs per pass so a brain outage doesn't fire every skill at once; a re-run that
+  still fails counts as an attempt, 3 -> gave up); sign-in / credit / wrong-tool-call causes give up straight away with what to
+  do; a daily-limit (quota) cause just waits. A down **tool server** is reconnected by hand (not every 2 min, max every 5), and
+  after 3 misses the message names the Google re-sign-in command. A failed **job** is NEVER run again by the caretaker (it may
+  already have sent or written something) and an **agent** runs on its own schedule: both are only explained. Doctor findings,
+  crashes and unknown kinds are page-only. A gave-up self issue is said ONCE, quietly (the "what did I miss" inbox, never spoken)
+  with the reason; `give_up` keeps the attempt count, so the page says "needs you" instead of "gave up after 3 tries" when no
+  attempt was made. A skill that is switched off or gone is dropped without a word. Nothing edits a skill file (phase 5).
 

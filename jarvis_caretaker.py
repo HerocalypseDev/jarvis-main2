@@ -23,6 +23,7 @@ as thin adapters, so every decision here is testable on any platform.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -164,6 +165,35 @@ def battery_finding(design_fraction: float | None) -> Finding | None:
                    evidence={"design_fraction": design_fraction})
 
 
+# What an error message means and what to do about it. Order matters: the first match wins.
+_FAILURE_KINDS = (
+    ("auth", re.compile(r"invalid_grant|token has been (?:expired|revoked)|expired or revoked|unauthori[sz]ed|\b401\b|"
+                        r"sign[- ]?in|re-?auth|invalid (?:credentials|api key)|access token|authentication", re.I),
+     "A sign-in has expired or a key is wrong, so retrying can't help. It needs you to sign in again."),
+    ("credit", re.compile(r"credit balance|insufficient (?:funds|credit|quota)|payment required|\b402\b|billing", re.I),
+     "The AI account is out of credit. Add credit, or switch Jarvis to another brain in Settings."),
+    ("quota", re.compile(r"\b429\b|rate[- ]?limit|quota|resource[_ ]exhausted|too many requests|daily limit", re.I),
+     "A daily or per-minute limit was hit. It clears on its own, so I'll wait rather than keep trying."),
+    ("network", re.compile(r"timed? ?out|timeout|connection (?:reset|refused|aborted|error)|getaddrinfo|\bdns\b|"
+                           r"unreachable|temporary failure|\bssl\b|\b50[234]\b|overloaded|unavailable|couldn'?t reach|"
+                           r"could not reach|econn|offline", re.I),
+     "The internet or a service blipped. This usually clears on its own, so I'll run it again."),
+    ("tool", re.compile(r"unknown tool|unrecognized tool|no such tool|not a (?:valid )?tool|needs '|missing (?:required|a )|"
+                        r"not connected|invalid argument|tool failed", re.I),
+     "It calls a tool that doesn't exist or with the wrong arguments, so it has to be rewritten."),
+)
+
+
+def explain_failure(error: str) -> dict:
+    """Classify an error message: {"kind", "advice", "retry"}. `retry` = worth running again as it is."""
+    text = error or ""
+    for kind, rx, advice in _FAILURE_KINDS:
+        if rx.search(text):
+            return {"kind": kind, "advice": advice, "retry": kind == "network"}
+    return {"kind": "other", "advice": "I couldn't tell why it failed, so I'll run it again a couple of times and then leave it for you.",
+            "retry": True}
+
+
 def self_failure_finding(kind: str, name: str, error: str, count: int) -> Finding | None:
     """Jarvis's own repeated failures. kind: skill|agent|job|mcp|doctor|crash. jarvis.py reads the count
     from its own tables (failed runs, down servers, doctor problems, crash log)."""
@@ -177,7 +207,59 @@ def self_failure_finding(kind: str, name: str, error: str, count: int) -> Findin
     sev = "high" if count >= 4 else "warn"
     return Finding(key=f"self_{kind}:{name.lower()}", category=f"self_{kind}", severity=sev,
                    title=f"Jarvis's {who} has been failing ({count}x): {error[:120].strip().rstrip('.')}.",
-                   evidence={"kind": kind, "name": name, "error": error, "count": count})
+                   evidence={"kind": kind, "name": name, "error": error, "count": count,
+                             "cause": (why := explain_failure(error))["kind"], "advice": why["advice"]})
+
+
+RERUN_GAP_MIN = 30              # a failing skill is run again at most this often
+MCP_RECONNECT_GAP_MIN = 5       # a down tool server is reconnected by hand at most this often
+FRESH_TRY_HOURS = 6             # an earlier try older than this belongs to an earlier episode: start counting afresh
+
+
+def _minutes_since(iso: str | None, now: datetime) -> float | None:
+    try:
+        return (now - datetime.fromisoformat(iso)).total_seconds() / 60
+    except (TypeError, ValueError):
+        return None
+
+
+def plan_self_fix(issue: dict, last_try: dict | None, now: datetime | None = None) -> dict:
+    """What to do about one of Jarvis's own failures. Pure: jarvis.py does the doing.
+    `last_try` is the newest rerun_skill / reconnect_mcp action for the issue (or None).
+    Returns {"do": none|wait|give_up|rerun_skill|reconnect_mcp, "why": str, "count_failed": bool}
+    - give_up: the cause can't be fixed from here (sign-in, credit, a wrong tool call, a job with side effects);
+      `why` says what the owner can do.
+    - wait: nothing to do yet (a limit that clears itself, or the last try was too recent).
+    - count_failed: the previous try ran and the problem is still here, so it counts as a failed attempt."""
+    now = now or datetime.now()
+    cat, ev = issue.get("category", ""), issue.get("evidence") or {}
+    why = explain_failure(ev.get("error", ""))
+    cause = ev.get("cause") or why["kind"]
+    advice = ev.get("advice") or why["advice"]
+    if cat == "self_job":
+        # A job may already have sent, written or changed something before it failed: never run it again by myself.
+        return {"do": "give_up", "why": advice + " A job may have done part of its work before it failed, "
+                                         "so I won't run it again without you.", "count_failed": False}
+    if cat == "self_agent":
+        # An agent runs again on its own schedule and its issue closes when a run passes.
+        if cause in ("auth", "credit", "tool"):
+            return {"do": "give_up", "why": advice, "count_failed": False}
+        return {"do": "none", "why": "", "count_failed": False}
+    age = _minutes_since((last_try or {}).get("ts"), now)
+    fresh = age is not None and age < FRESH_TRY_HOURS * 60
+    if cat == "self_mcp":
+        if fresh and age < MCP_RECONNECT_GAP_MIN:
+            return {"do": "wait", "why": "reconnected a moment ago", "count_failed": False}
+        return {"do": "reconnect_mcp", "why": "", "count_failed": False}
+    if cat == "self_skill":
+        if cause in ("auth", "credit", "tool"):
+            return {"do": "give_up", "why": advice, "count_failed": False}
+        if cause == "quota":
+            return {"do": "wait", "why": advice, "count_failed": False}
+        if fresh and age < RERUN_GAP_MIN:
+            return {"do": "wait", "why": "ran it again a moment ago", "count_failed": False}
+        return {"do": "rerun_skill", "why": "", "count_failed": fresh}
+    return {"do": "none", "why": "", "count_failed": False}   # doctor findings, crashes: the page explains them
 
 
 # --- issue tracker: the memory that stops Jarvis repeating itself -------------------------------
@@ -350,6 +432,20 @@ class Store:
                         "detail": r[5], "result": r[6], "freed_bytes": r[7], "undo": undo,
                         "undone": bool(r[9])})
         return out
+
+    def last_action(self, issue_key: str, action: str) -> dict | None:
+        with self._conn() as c:
+            r = c.execute("""SELECT id,ts,detail,result FROM caretaker_actions WHERE issue_key=? AND action=?
+                             ORDER BY id DESC LIMIT 1""", (issue_key, action)).fetchone()
+        return {"id": r[0], "ts": r[1], "detail": r[2], "result": r[3]} if r else None
+
+    def give_up(self, key: str, reason: str) -> None:
+        """Stop trying now (the cause can't be fixed from here), keep it visible with why."""
+        iss = self.get(key)
+        tried = (iss["tried"] if iss else []) + [reason]
+        with self._conn() as c:   # attempts stay as they are: "gave up after 0 tries" shows as "needs you"
+            c.execute("UPDATE caretaker_issues SET tried=?,status='gave_up',resolved_at=? WHERE key=?",
+                      (json.dumps(tried[-10:]), datetime.now().isoformat(timespec="seconds"), key))
 
     def mark_undone(self, action_id: int) -> None:
         with self._conn() as c:
