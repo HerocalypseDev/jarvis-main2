@@ -1831,7 +1831,8 @@ row there each phase rather than only stating the total in chat.
 | 167 (Caretaker phase 6: one-time admin helper = five fixed on-demand elevated tasks that take no input, tamper-checked before every run, hash-verified in-memory installer behind Windows' own prompt, wired into network/update/storage fixes and the AI menu only while verified, attended-only setup tool + page buttons; 73 new tests, 16 mutation checks, headless page check at 1440/390 px) | Sonnet 5.5 | ~60 min | ~$4.00–$5.50 |
 | 168 (slow file saves: quiet Gemini stream kept open while the normal call races it, unusable workspace setting falls back to the default folder + doctor check; 9 new tests) | Opus 5.5 | ~35 min | ~$2.50–$3.50 |
 | 169 (merged the Caretaker work into main with main's slow-file-save change, one order-dependent test fixed, full suite equal to the env baseline; published to Jarvis4U after a clean privacy scan and a by-eye diff review, private skill name taken out of public-bound code) | Sonnet 5.5 | ~25 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~5164 min** | **~$353.15–$496.25** |
+| 170 (false "still monitoring" / "successfully created" claims: ongoing-work claims need a real job/watch/agent/reminder/scheduled skill, adverbs no longer hide a done claim, self-made jobs speak only when flagged URGENT; 12 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~5189 min** | **~$355.15–$499.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3069,3 +3070,24 @@ Rules to keep:
 - Not fixed in code: no backup model was set (`JARVIS_GEMINI_FALLBACK_MODEL`), so 503s were only retried; the owner's
   `.env` line still needs fixing; lessons #91/#92 learned from the failures ("write to the current working directory")
   are wrong and should be deleted. Not verified live on the PC.
+
+## False "still monitoring" claims (2026-10-16, owner report)
+
+A self-rescheduling speed check ("test every 10 min, tell me and open Roblox above 10 Mbps") couldn't schedule its next
+run, and ~30 min later Jarvis said "I'm still monitoring it for you" with nothing scheduled. In the same day's debug report
+"I have successfully created the Word document" followed two failed saves. Tests: `test_false_claims.py` (12). Rules to keep:
+- **Ongoing-work claims** (`_ONGOING_CLAIM_RE`: "I'm (still) monitoring/watching/keeping an eye on", "I'll keep checking",
+  "I'll check again in...", "I'll let you know when/once...") are unbacked unless a scheduling tool succeeded this turn
+  (`_SCHEDULING_TOOL_RE`) or something that really keeps running exists now and shares a topic word with the claim or
+  request (`_active_scheduled_work`: PENDING jobs (a running job is the run itself), enabled watches and agents, active
+  reminders, pending/scheduled queued tasks, running background tasks, scheduled skills). Earlier commands' tools never
+  back it (`_recent_succeeded_tools` is only for past-tense claims): a job made half an hour ago may have stopped since.
+  Nudge, then "Correction: I didn't actually set anything up to keep checking that: nothing is scheduled for it."
+- `_I_DID` lets adverbs sit between "I have" and the verb ("successfully", "already", "went ahead and"...) in every
+  `_ACTION_CLAIMS` pattern; "the document has been saved" (passive) is a file claim too.
+- **Owner's choice "speak when flagged"**: a job Jarvis scheduled for itself (origin `jarvis`) stays quiet, but a reply
+  starting "URGENT:" (`_skill_reply_urgency`) is said (`important`, held in Sleep/Focus like other important notices).
+  Its run prompt says to use the marker only when a condition the user was waiting for was met.
+- Checked on main: such a job now re-schedules itself (PR #2), only the first (user-made) run speaks. Not verified live on
+  the PC.
+
