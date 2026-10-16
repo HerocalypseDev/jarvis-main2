@@ -44,7 +44,10 @@ def cache_roots() -> list[Path]:
     local = os.environ.get("LOCALAPPDATA")
     if local:
         L = Path(local)
-        roots += [L / "Temp", L / "npm-cache", L / "pip" / "Cache", L / "uv" / "cache",
+        # Not uv's cache: its archive-v0 folder holds the unpacked Python environments that `uvx` runs tools from
+        # (Windows-MCP, ...). Deleting single old files there leaves a half-package ("No module named
+        # 'windows_mcp.__main__'", 2026-10-16). Only `uv cache clean` may empty it.
+        roots += [L / "Temp", L / "npm-cache", L / "pip" / "Cache",
                   L / "CrashDumps", L / "Microsoft" / "Windows" / "INetCache",
                   L / "Opera Software" / "Opera GX Stable" / "Cache",
                   L / "Opera Software" / "Opera GX Stable" / "Code Cache",

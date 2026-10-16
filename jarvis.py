@@ -11268,16 +11268,54 @@ class _McpServerHandle:
         self.error: str | None = None
 
 
-async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle") -> None:
+def _mcp_error_text(e: BaseException) -> str:
+    """The real reason behind an MCP failure. anyio wraps it in an ExceptionGroup, so the log only said "unhandled
+    errors in a TaskGroup (1 sub-exception)" (2026-10-16, Windows-MCP failing with no visible cause)."""
+    seen = 0
+    while isinstance(e, BaseExceptionGroup) and e.exceptions and seen < 10:
+        e, seen = e.exceptions[0], seen + 1
+    text = str(e).strip()
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
+def _mcp_connection_closed(e: BaseException) -> bool:
+    code = getattr(e, "code", None)
+    if code is None:
+        code = getattr(getattr(e, "error", None), "code", None)
+    try:
+        from mcp.types import CONNECTION_CLOSED
+    except Exception:
+        CONNECTION_CLOSED = -32000
+    return code == CONNECTION_CLOSED or "connection closed" in str(e).lower()
+
+
+def _mcp_mark_down(server_name: str, cfg: dict, handle: "_McpServerHandle") -> None:
+    """A server that was connected and then stopped (crashed, killed, its uvx/npx process ended) goes on the retry
+    list. Before 2026-10-16 it stayed "connected" on the dashboard and every call answered "Connection closed" until
+    Jarvis was restarted: the Windows-MCP UI tools died that way."""
+    with _mcp_lock:
+        if _mcp_handles.get(server_name) is not handle:
+            return  # a newer connection already replaced it
+        # due at the next scheduler tick, not 2 minutes from now
+        _mcp_failed_servers[server_name] = {
+            "cfg": cfg, "last_attempt": datetime.now() - timedelta(seconds=MCP_RETRY_INTERVAL_S)}
+    log.warning("MCP server %r stopped (%s); reconnecting.", server_name, handle.error)
+
+
+async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle", server_name: str = "") -> None:
     """Owns one MCP server's stdio connection for the entire process lifetime. The
     ClientSession/stdio transport must stay open in the *same* still-running coroutine/task
     that created it — anyio's cancel scopes are bound to the task that entered them, so once
     that task returns, the connection is torn down even if Python objects referencing the
     session are kept alive elsewhere. Tool calls are therefore dispatched into this
-    long-running task via a queue instead of re-entering the session from a separate coroutine."""
+    long-running task via a queue instead of re-entering the session from a separate coroutine.
+
+    When the server process goes away the session only answers "Connection closed" to each call, so that error ends
+    this task: the handle is marked dead, waiting calls are failed and the server is put on the retry list."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
+    connected = marked = False
     try:
         params = StdioServerParameters(
             command=str(cfg.get("command") or ""),
@@ -11290,6 +11328,7 @@ async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle") -> None:
                 tools_result = await session.list_tools()
                 handle.tools = list(tools_result.tools)
                 handle.ready.set()
+                connected = True
                 while True:
                     tool_name, arguments, future = await handle.queue.get()
                     try:
@@ -11297,11 +11336,32 @@ async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle") -> None:
                         if not future.done():
                             future.set_result(result)
                     except Exception as e:
+                        closed = _mcp_connection_closed(e)
+                        if closed:
+                            # dead before the caller hears about it, so its next call already reconnects
+                            handle.error = _mcp_error_text(e)
+                            if server_name:
+                                _mcp_mark_down(server_name, cfg, handle)
+                                marked = True
                         if not future.done():
                             future.set_exception(e)
+                        if closed:
+                            raise
     except Exception as e:
-        handle.error = str(e)
+        handle.error = handle.error or _mcp_error_text(e)
+    finally:
+        # also reached on cancellation (BaseException): the handle must never look alive with nobody reading its queue
+        handle.error = handle.error or "the server stopped"
         handle.ready.set()  # unblock the connect-time waiter even on failure
+        while not handle.queue.empty():
+            try:
+                _tool, _args, future = handle.queue.get_nowait()
+            except Exception:
+                break
+            if not future.done():
+                future.set_exception(RuntimeError(f"MCP server stopped: {handle.error}"))
+        if connected and server_name and not marked:
+            _mcp_mark_down(server_name, cfg, handle)
 
 
 async def _mcp_connect_one(server_name: str, cfg: dict) -> bool:
@@ -11313,7 +11373,7 @@ async def _mcp_connect_one(server_name: str, cfg: dict) -> bool:
         return False
     handle = _McpServerHandle()
     _mcp_handles[server_name] = handle
-    asyncio.get_running_loop().create_task(_mcp_server_supervisor(cfg, handle))
+    asyncio.get_running_loop().create_task(_mcp_server_supervisor(cfg, handle, server_name))
     try:
         await asyncio.wait_for(handle.ready.wait(), timeout=MCP_STARTUP_TIMEOUT_S)
     except asyncio.TimeoutError:
@@ -11322,6 +11382,12 @@ async def _mcp_connect_one(server_name: str, cfg: dict) -> bool:
     if handle.error:
         log.warning("Failed to connect MCP server %r: %s", server_name, handle.error)
         return False
+    with _mcp_lock:
+        # a reconnect replaces that server's tools; leaving the old copies would send duplicate tool names
+        old = {n for n, (srv, _real) in _mcp_tool_index.items() if srv == server_name}
+        for n in old:
+            _mcp_tool_index.pop(n, None)
+        _mcp_tool_schemas[:] = [t for t in _mcp_tool_schemas if t.get("name") not in old]
     for tool in handle.tools:
         exposed_name = f"mcp_{server_name}_{tool.name}"[:128]
         _mcp_tool_index[exposed_name] = (server_name, tool.name)
@@ -11599,18 +11665,44 @@ def _mcp_auth_error_hint(server_name: str, text: str) -> str | None:
     )
 
 
+_mcp_reconnect_tried: dict[str, float] = {}
+MCP_CALL_RECONNECT_GAP_S = 20
+
+
+def _mcp_reconnect_if_down(server_name: str) -> None:
+    """A call to a server that already stopped reconnects it first instead of failing (at most once per
+    MCP_CALL_RECONNECT_GAP_S, so a server that won't start doesn't add a wait to every call). Only before the call:
+    a call that was cut off mid-way is never repeated (it may already have typed or clicked)."""
+    handle = _mcp_handles.get(server_name)
+    if handle is not None and handle.error is None:
+        return
+    now = time.monotonic()
+    if now - _mcp_reconnect_tried.get(server_name, -1e9) < MCP_CALL_RECONNECT_GAP_S:
+        return
+    _mcp_reconnect_tried[server_name] = now
+    with _mcp_lock:
+        info = _mcp_failed_servers.get(server_name)
+        if info is None:
+            return
+        info["last_attempt"] = datetime.now() - timedelta(seconds=MCP_RETRY_INTERVAL_S + 1)
+    _retry_failed_mcp_servers(datetime.now())
+
+
 def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
     entry = _mcp_tool_index.get(exposed_name)
     if not entry:
         return f"Unknown MCP tool: {exposed_name!r}"
     server_name, real_name = entry
+    _mcp_reconnect_if_down(server_name)
     try:
         result = _mcp_run_coro(
             _mcp_call_tool_async(server_name, real_name, tool_input or {}),
             timeout=MCP_TOOL_CALL_TIMEOUT_S,
         )
+    except TimeoutError:
+        return f"MCP tool call failed: the {server_name} server didn't answer within {MCP_TOOL_CALL_TIMEOUT_S} s."
     except Exception as e:
-        return f"MCP tool call failed: {e}"
+        return f"MCP tool call failed: {_mcp_error_text(e)}"
     parts = [b.text for b in (getattr(result, "content", None) or []) if getattr(b, "text", None)]
     text = " ".join(parts) or "(no output)"
     hint = _mcp_auth_error_hint(server_name, text)

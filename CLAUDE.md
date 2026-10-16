@@ -1843,7 +1843,8 @@ row there each phase rather than only stating the total in chat.
 | 171 (Jarvis asks you: tool questions must reach the user, saved with the exact call and resumed by the answer, Home "Jarvis needs you" card, background runs say it; live-reading watches sent to scheduled work, unattended runs no longer read the chat, honest agent results, open Roblox; 13 new tests, headless card check) | Opus 5.5 | ~50 min | ~$4.00–$5.50 |
 | 172 (admin helper card showed every repair "off" with no reason and "waiting for the prompt" long after it was answered: unknown is now shown as "?" with why Windows couldn't be read, the setup says "checking" once the prompt is accepted, the hidden elevated window writes OK/FAIL+reason to a result file, a 90 s wall-clock deadline replaces the fixed polls; 12 new tests, headless check of five states) | Sonnet 5.5 | ~35 min | ~$2.20–$3.00 |
 | 173 (lessons didn't learn: corrections now see the original request + wrong answer, more correction phrasings incl. "Jarvis, ...", caught false claims write lessons, failed writes logged; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~5299 min** | **~$363.35–$510.35** |
+| 174 (Windows MCP failing: a tool server that stops after connecting is now marked down, reconnected before the next call and shown failed on the dashboard; real error text instead of "unhandled errors in a TaskGroup"; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~5319 min** | **~$364.85–$512.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2886,6 +2887,23 @@ Owner's choices: self-healing loop + crash log, and **speak** the recovery. Code
   10 minutes (`Announcer`), so a flapping device can't chatter. Journalled in self-awareness as `system/mic_loop_failed`.
 - Not covered: the process being killed from outside (Task Manager, `stop_jarvis.ps1`, Windows shutdown) and a hard hang; a
   watchdog that relaunches a dead process was offered and not built. Not verified live on the PC (unplugging a real device).
+
+## Tool servers that stop after connecting (2026-10-16, "my Windows MCP has been failing")
+
+- Reproduced with a real stdio MCP server that exits: the session only answered "Connection closed" to each call, the
+  supervisor kept its loop, the dashboard said "connected" and nothing retried it, so Windows-MCP (or any server whose
+  uvx/npx process ended) stayed broken until Jarvis restarted. Now a connection-closed error ends `_mcp_server_supervisor`:
+  the handle is marked dead and the server goes on the retry list (`_mcp_mark_down`, due at the next tick), waiting calls
+  are failed, and `execute_mcp_tool` reconnects a dead server before a call (`_mcp_reconnect_if_down`, at most every 20 s).
+  A call cut off mid-way is never repeated (it may already have typed or clicked). A reconnect replaces that server's
+  tools (no duplicate tool names). Failure logs give the real cause (`_mcp_error_text` unwraps anyio's ExceptionGroup).
+  Tests: `test_mcp_reconnect.py` (3). Not verified against the real Windows-MCP on the PC: why it stopped is unknown.
+
+- **Root cause found in the owner's log (2026-10-16)**: the Caretaker's cache cleaner (`cache_roots`) included `%LOCALAPPDATA%\\uv\\cache`,
+  and deleting files older than 2 days from uv's `archive-v0` (the unpacked environments `uvx` runs tools from) left Windows-MCP
+  half-installed: `ModuleNotFoundError: No module named 'windows_mcp.__main__'` on every start from 17:11 (the day's cleanup
+  went from 3.3 GB to 7.6 GB freed). uv's cache is no longer a cache root (never list a folder that holds installed code);
+  repair on the PC with `uv cache clean`, then restart Jarvis. Test: `test_cache_roots_never_include_uvs_environment_cache`.
 
 ## Hand-off guard (2026-09-25)
 
