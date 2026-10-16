@@ -1,7 +1,7 @@
 # Graph Report - jarvis-main2  (2026-10-16)
 
 ## Corpus Check
-- 273 files · ~508,131 words
+- 273 files · ~508,148 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 14 file(s) not represented in the graph (top: .css 9, (none) 3, .vbs 1)
 

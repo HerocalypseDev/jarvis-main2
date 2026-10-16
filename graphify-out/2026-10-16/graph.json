@@ -8319,7 +8319,7 @@
       "file_type": "code",
       "norm_label": "test_agent_loop_does_not_repeat_a_raced_call_that_failed()",
       "source_file": "test_speed_writes.py",
-      "source_location": "L108"
+      "source_location": "L109"
     },
     {
       "id": "test_speed_writes_test_agent_loop_does_not_repeat_a_raced_call_that_failed_fake_stream",
@@ -8331,7 +8331,7 @@
       "file_type": "code",
       "norm_label": "fake_stream()",
       "source_file": "test_speed_writes.py",
-      "source_location": "L112"
+      "source_location": "L113"
     },
     {
       "id": "test_speed_writes_test_agent_loop_uses_the_raced_answer_and_does_not_mark_it_spoken",
@@ -8451,7 +8451,7 @@
       "file_type": "code",
       "norm_label": "test_write_file_saves_and_says_the_setting_is_wrong()",
       "source_file": "test_speed_writes.py",
-      "source_location": "L140"
+      "source_location": "L141"
     },
     {
       "id": "jarvis_tts_deepgram_streamingsynthesis_chunks",
@@ -51075,7 +51075,7 @@
       "file_type": "code",
       "norm_label": "test_good_workspace_setting_is_used_and_created()",
       "source_file": "test_speed_writes.py",
-      "source_location": "L133"
+      "source_location": "L134"
     },
     {
       "id": "test_speed_writes_test_unusable_workspace_setting_falls_back_to_the_default",
@@ -51087,7 +51087,7 @@
       "file_type": "code",
       "norm_label": "test_unusable_workspace_setting_falls_back_to_the_default()",
       "source_file": "test_speed_writes.py",
-      "source_location": "L121"
+      "source_location": "L122"
     },
     {
       "id": "test_workspace_test_absolute_honored_unless_strict",
@@ -164589,7 +164589,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "test_speed_writes.py",
-      "source_location": "L113",
+      "source_location": "L114",
       "weight": 1.0
     },
     {
@@ -164613,7 +164613,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "test_speed_writes.py",
-      "source_location": "L137",
+      "source_location": "L138",
       "weight": 1.0
     },
     {
@@ -164625,7 +164625,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "test_speed_writes.py",
-      "source_location": "L137",
+      "source_location": "L138",
       "weight": 1.0
     },
     {
@@ -164697,7 +164697,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "test_speed_writes.py",
-      "source_location": "L127",
+      "source_location": "L128",
       "weight": 1.0
     },
     {
@@ -164709,7 +164709,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "test_speed_writes.py",
-      "source_location": "L128",
+      "source_location": "L129",
       "weight": 1.0
     },
     {
@@ -164721,7 +164721,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "test_speed_writes.py",
-      "source_location": "L129",
+      "source_location": "L130",
       "weight": 1.0
     },
     {
@@ -228994,7 +228994,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "test_speed_writes.py",
-      "source_location": "L108",
+      "source_location": "L109",
       "weight": 1.0
     },
     {
@@ -229005,7 +229005,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "test_speed_writes.py",
-      "source_location": "L121",
+      "source_location": "L122",
       "weight": 1.0
     },
     {
@@ -229016,7 +229016,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "test_speed_writes.py",
-      "source_location": "L133",
+      "source_location": "L134",
       "weight": 1.0
     },
     {
@@ -229027,7 +229027,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "test_speed_writes.py",
-      "source_location": "L140",
+      "source_location": "L141",
       "weight": 1.0
     },
     {
@@ -254184,7 +254184,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "test_speed_writes.py",
-      "source_location": "L115",
+      "source_location": "L116",
       "weight": 1.0
     },
     {

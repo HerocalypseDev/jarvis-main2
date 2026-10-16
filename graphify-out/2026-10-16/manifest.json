@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1792152969.1597724,
-    "seen": 1792153049.7830172,
-    "ast_hash": "54ab69b2421c2e69f665852adf07df32",
+    "mtime": 1792153488.7597606,
+    "seen": 1792153513.2190847,
+    "ast_hash": "96f5e45fcfc4059358a74907b4e7345c",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -1818,9 +1818,9 @@
     "semantic_hash": ""
   },
   "test_caretaker_self.py": {
-    "mtime": 1792149928.941054,
-    "seen": 1792150131.9953647,
-    "ast_hash": "f83ea7bd70467a720f730d25121e092f",
+    "mtime": 1792153488.7705193,
+    "seen": 1792153513.219437,
+    "ast_hash": "ae0b72dd7cebcf0b0dfe2d105c8d041e",
     "semantic_hash": ""
   },
   "jarvis_caretaker_windows.py": {
@@ -1842,9 +1842,9 @@
     "semantic_hash": ""
   },
   "test_caretaker_ai.py": {
-    "mtime": 1792151122.7815683,
-    "seen": 1792151344.5759451,
-    "ast_hash": "240ecd6997d00b5ba22dea4eddc59ba2",
+    "mtime": 1792153488.7696865,
+    "seen": 1792153513.2194319,
+    "ast_hash": "93372b1fce49b62818c073cd74cd75cf",
     "semantic_hash": ""
   },
   "jarvis_caretaker_admin.py": {
@@ -1860,9 +1860,9 @@
     "semantic_hash": ""
   },
   "test_speed_writes.py": {
-    "mtime": 1792152969.1637723,
-    "seen": 1792153049.783346,
-    "ast_hash": "2d5539292acb5235703c278ee944db32",
+    "mtime": 1792153264.1360755,
+    "seen": 1792153295.2758715,
+    "ast_hash": "48ba5812816da59df5ac02353de7c594",
     "semantic_hash": ""
   }
 }

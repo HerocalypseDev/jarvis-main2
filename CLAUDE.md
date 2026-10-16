@@ -1829,7 +1829,9 @@ row there each phase rather than only stating the total in chat.
 | 165 (Caretaker phase 4: Windows playbooks without admin rights: CPU hog priority lowered (undoable, never closed, never the front app), network re-check/DNS flush/Wi-Fi reconnect, crash-loop cache clear, advice on every finding, undo for priority changes; 27 new tests, 3 mutation checks, headless page check) | Sonnet 5.5 | ~30 min | ~$2.20–$3.00 |
 | 166 (Caretaker phase 5: model diagnoses what the playbooks could not, behind a validator with fixed menus bound to the issue's own evidence; daily cap; learned playbooks promoted after 2 verified successes and demoted after 2 failures, Forget button on the page; 22 new tests, 8 mutation checks, headless page check) | Sonnet 5.5 | ~45 min | ~$3.20–$4.40 |
 | 167 (Caretaker phase 6: one-time admin helper = five fixed on-demand elevated tasks that take no input, tamper-checked before every run, hash-verified in-memory installer behind Windows' own prompt, wired into network/update/storage fixes and the AI menu only while verified, attended-only setup tool + page buttons; 73 new tests, 16 mutation checks, headless page check at 1440/390 px) | Sonnet 5.5 | ~60 min | ~$4.00–$5.50 |
-| **Running total (final)** | | **~5104 min** | **~$349.15–$490.55** |
+| 168 (slow file saves: quiet Gemini stream kept open while the normal call races it, unusable workspace setting falls back to the default folder + doctor check; 9 new tests) | Opus 5.5 | ~35 min | ~$2.50–$3.50 |
+| 169 (merged the Caretaker work into main with main's slow-file-save change, one order-dependent test fixed, full suite equal to the env baseline; published to Jarvis4U after a clean privacy scan and a by-eye diff review, private skill name taken out of public-bound code) | Sonnet 5.5 | ~25 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~5164 min** | **~$353.15–$496.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3049,3 +3051,21 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
   scripts, `Start-ScheduledTask` of a Highest task from a non-elevated Jarvis, `Get-ScheduledTaskInfo` fields, icacls, the UAC
   prompt flow and the install/remove round trip, a real Defender update and adapter restart. Do the first install with the page's
   button and watch the Caretaker page; `python -c "import jarvis_caretaker_admin as a; print(a.status())"` shows what Windows says.
+
+## Slow file saves (2026-10-16, debug report)
+
+"Write a file" took 1.5-3 minutes on Gemini. Causes from the report: every save to a plain file name failed with
+"Access is denied: C:\Users\you" (the owner's `JARVIS_WORKSPACE_DIR` held the public `.env.example` placeholder), each
+costing a whole extra round; Gemini sends a function call only once its arguments are complete, so a round writing a
+document into write_file sent nothing for 10-20 s and the 8 s first-token rule threw the stream away and re-sent the same
+request (5 times in two commands); plus Gemini 503 "high demand" and a weak connection. Tests: `test_speed_writes.py` (9).
+Rules to keep:
+- `gemini.stream_round(..., race=)`: a quiet stream is kept open and the ordinary call is started next to it; whichever
+  answers first wins. `_gemini_stream_round` hands a raced answer back through `_take_stream_side()` so the agent loop
+  neither repeats that call (also when it failed) nor treats its text as spoken live. Fakes of `stream_round` in tests
+  must accept `race=`.
+- `jarvis_workspace.root()`: a `JARVIS_WORKSPACE_DIR` that can't be created falls back to `DEFAULT_ROOT` (rechecked once a
+  minute); `root_problem()` says why, write_file's result adds a note, and the doctor shows a "Workspace folder" warning.
+- Not fixed in code: no backup model was set (`JARVIS_GEMINI_FALLBACK_MODEL`), so 503s were only retried; the owner's
+  `.env` line still needs fixing; lessons #91/#92 learned from the failures ("write to the current working directory")
+  are wrong and should be deleted. Not verified live on the PC.
