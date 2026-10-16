@@ -532,3 +532,66 @@ async function refreshNetwork() {
 window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshNetwork(); });
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshNetwork();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshNetwork(); }, 60000);
+
+// --- Home "Jarvis needs you": GET /api/feature/asks (jarvis_asks, 2026-10-16) -------------------------------------
+// A tool needed the user's answer (missing details, which one did you mean...). The answer box sends it back with the
+// question and the exact call, so Jarvis resumes that call. Hidden when nothing is waiting.
+async function refreshAsks() {
+  const block = document.getElementById("home-asks-block");
+  const list = document.getElementById("home-asks");
+  if (!block || !list) return;
+  if (list.contains(document.activeElement) && document.activeElement.value) return; // don't wipe a half-typed answer
+  try {
+    const res = await fetch("/api/feature/asks", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const items = (await res.json()).items || [];
+    block.hidden = !items.length;
+    document.getElementById("home-asks-count").textContent = items.length > 1 ? `(${items.length})` : "";
+    list.innerHTML = items.map((i) => {
+      const when = new Date(i.ts * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+      const qs = esc(i.questions).replace(/\n/g, "<br>");
+      return `<li class="list-item ask-item" data-id="${escAttr(String(i.id))}">
+        <div><span class="tool">${esc(i.tool)}</span> <span class="muted">${esc(when)}${i.request ? " · " + esc(i.request.slice(0, 120)) : ""}</span></div>
+        <div class="ask-questions">${qs}</div>
+        <form class="compose-form ask-form">
+          <input type="text" class="ask-input" placeholder="Your answer&hellip;" autocomplete="off" aria-label="Your answer" />
+          <button class="btn btn-primary btn-small" type="submit">Send</button>
+          <button class="btn btn-ghost btn-small ask-dismiss" type="button">Dismiss</button>
+        </form>
+        <p class="muted ask-status"></p>
+      </li>`;
+    }).join("");
+  } catch (e) {
+    block.hidden = false;
+    list.innerHTML = `<li class="muted">Couldn't load: ${esc(String(e))}</li>`;
+  }
+}
+window.refreshAsks = refreshAsks;
+async function postAsk(action, id, text) {
+  const res = await fetch(`/api/feature/asks/${action}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: Number(id), text }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || d.error) throw new Error(d.error || "HTTP " + res.status);
+  return d.result || "";
+}
+document.getElementById("home-asks")?.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const item = ev.target.closest(".ask-item");
+  const input = item.querySelector(".ask-input");
+  const status = item.querySelector(".ask-status");
+  if (!input.value.trim()) { status.textContent = "Type an answer first."; return; }
+  try {
+    status.textContent = await postAsk("answer", item.dataset.id, input.value.trim());
+    input.value = "";
+  } catch (e) { status.textContent = "Couldn't send: " + e.message; }
+});
+document.getElementById("home-asks")?.addEventListener("click", async (ev) => {
+  if (!ev.target.classList.contains("ask-dismiss")) return;
+  const item = ev.target.closest(".ask-item");
+  try { await postAsk("dismiss", item.dataset.id, ""); } catch (e) { /* the refresh shows the state */ }
+  refreshAsks();
+});
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshAsks(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshAsks();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshAsks(); }, 15000);

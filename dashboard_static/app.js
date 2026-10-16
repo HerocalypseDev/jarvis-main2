@@ -1017,6 +1017,7 @@ function connectWs() {
     if (event && event.type === "caretaker" && isRouteActive("caretaker") && window.refreshCaretaker) {
       window.refreshCaretaker();
     }
+    if (event && event.type === "asks_changed" && isRouteActive("home") && window.refreshAsks) window.refreshAsks();
     if (event && event.type === "settings_changed" && isRouteActive("settings") && window.applySettingChange) {
       window.applySettingChange(event.data || {});
     }

@@ -134,6 +134,7 @@ import jarvis_browser_bridge as browser_bridge
 import jarvis_browser_tabs as browser_tabs
 import jarvis_context as reqctx
 import jarvis_missed as missed
+import jarvis_asks as asks_mod
 import jarvis_watches as watches_mod
 import jarvis_caretaker as caretaker
 import jarvis_caretaker_probe as caretaker_probe
@@ -1651,7 +1652,8 @@ def _open_uri(uri: str) -> bool:
 # --- push-to-talk: Claude decides zero or more actions from a fixed, safe set ---------
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_API_VERSION = "2023-06-01"
-ALLOWED_APPS = ("cursor", "notepad", "calculator", "explorer", "browser", "opera", "firefox", "spotify", "whatsapp")
+ALLOWED_APPS = ("cursor", "notepad", "calculator", "explorer", "browser", "opera", "firefox", "spotify", "whatsapp",
+                "roblox")
 # "browser" = the main browser setting (JARVIS_BROWSER, Opera GX now); these names mean it too.
 APP_ALIASES = {"chrome": "browser", "google chrome": "browser", "edge": "browser", "web browser": "browser",
                "opera gx": "opera", "operagx": "opera", "mozilla": "firefox", "mozilla firefox": "firefox"}
@@ -1954,7 +1956,8 @@ AGENT_TOOLS = [
     {
         "name": "open_app",
         "description": ("Open or focus a known desktop application. browser = the user's main web browser (set in "
-                        "Settings; Opera GX now); opera / firefox open that browser by name."),
+                        "Settings; Opera GX now); opera / firefox open that browser by name; roblox = the Roblox "
+                        "app (roblox.com in the browser if the app isn't installed)."),
         "input_schema": {
             "type": "object",
             "properties": {"app": {"type": "string", "enum": list(ALLOWED_APPS)}},
@@ -3536,7 +3539,8 @@ BATCH_TOOLS = [
             "{at 'HH:MM', days 'mon,tue'} | mail_match {query: Gmail search} | file_event {ext, name_contains} | "
             "manual, steps [{tool, input}] using existing tools; {subject}/{sender}/{path} fill in from the "
             "trigger, only in create_reminder/search-type steps; max_runs_per_day; enabled=false saves a new agent switched "
-            "off). Changing agents only works from the PC."
+            "off). Changing agents only works from the PC. An agent runs its steps exactly as given every time: it has "
+            "no 'if', can't compare a result and doesn't speak. For a check with a condition use schedule_jarvis_task."
         ),
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "log", "run", "enable", "disable", "delete", "create"]},
@@ -3601,7 +3605,11 @@ BATCH_TOOLS = [
             "normal pipeline (tools, coding agent, email, research...). Use this whenever the user asks Jarvis to "
             "do something later ('in 30 minutes change the code in X', 'tonight send Sam the report', 'at 5 run "
             "the tests', 'in 10 minutes run a speed test'). Never use create_reminder for that: reminders only speak to the user. instruction = the "
-            "exact command in imperative form with all details (paths, names), never 'remind Jarvis to ...'."
+            "exact command in imperative form with all details (paths, names), never 'remind Jarvis to ...'. This is "
+            "what the user means by 'scheduled work' or 'a scheduled job'. For a repeated check ('every 10 minutes check "
+            "my speed; if it's above 10 tell me and open Roblox, else check again'), schedule ONE job: its instruction "
+            "runs the check, does the action and starts its reply with URGENT: when the condition is met, and otherwise "
+            "schedules this same instruction again in the same interval."
         ),
         "input_schema": {"type": "object", "properties": {
             "instruction": {"type": "string"}, "due_at": {"type": "string", "description": "local date/time"},
@@ -5276,6 +5284,77 @@ def _missed_since_line(started_at: str) -> str:
     return f" {n} other update{'s are' if n != 1 else ' is'} waiting: ask me what you missed."
 
 
+def _asks_line(query: str = "") -> str:
+    """Open questions Jarvis asked the user (jarvis_asks), for a command the user just gave. Remembers which ones were
+    shown, so the same tool succeeding in this command closes them."""
+    _command_ctx.shown_asks = []
+    if _current_command_source() not in asks_mod.ATTENDED or getattr(_command_ctx, "untrusted_origin", False):
+        return ""
+    try:
+        rows = asks_mod.open_asks(_memory_db_connect, _memory_db_lock)
+        m = re.match(r"Answer to your question #(\d+)\b", query or "")
+        named = [r for r in rows if m and r["id"] == int(m.group(1))]  # the Home card's answer box names its question
+        rows = named + [r for r in asks_mod.for_prompt(rows) if r not in named][:asks_mod.PROMPT_MAX - len(named)]
+        if not rows:
+            return ""
+        _command_ctx.shown_asks = [(r["id"], r["tool"]) for r in rows]
+        asks_mod.mark_shown(_memory_db_connect, _memory_db_lock, [r["id"] for r in rows])
+        return asks_mod.context_line(rows)
+    except Exception as e:
+        log.debug("open questions line skipped: %s", e)
+        return ""
+
+
+def _open_asks_waiting() -> bool:
+    try:
+        return bool(asks_mod.open_asks(_memory_db_connect, _memory_db_lock, limit=1))
+    except Exception:
+        return False
+
+
+def _close_shown_asks(tool: str, shown: list) -> None:
+    """A tool behind an open question (shown in this command's prompt) just went through: that question is answered."""
+    ids = [i for i, t in shown or () if t == tool]
+    if not ids:
+        return
+    try:
+        if asks_mod.close_for_tool(_memory_db_connect, _memory_db_lock, tool, ids):
+            dashboard.notify({"type": "asks_changed"})
+    except Exception as e:
+        log.debug("closing answered questions failed: %s", e)
+
+
+def _handle_pending_asks(transcript: str, reply: str, pending: list[dict]) -> str:
+    """End of a command whose tools need the user's answer (jarvis_asks). The user must hear the questions: a reply that
+    still doesn't ask gets them added in code. Each one is saved with the exact call, so the answer resumes it. A
+    background run says it out loud (held in Sleep/Focus) and it waits on the Home card (owner's choice 2026-10-16)."""
+    source = _current_command_source()
+    attended = source in asks_mod.ATTENDED
+    questions = " ".join(p["questions"] for p in pending)
+    if attended and not asks_mod.reply_asks(reply, questions):
+        reply = ((reply.strip() + "\n\n") if (reply or "").strip() else "") + asks_mod.fallback_text(pending)
+    if getattr(_command_ctx, "untrusted_origin", False) or (not attended and getattr(_command_ctx, "outside_text_seen", False)):
+        # The call's input may have been steered by someone else's text: never keep it for the user to "resume".
+        return reply
+    what = getattr(_command_ctx, "scheduled_skill", None)
+    what = f"your {str(what).replace('_', ' ')} skill" if what else "a background task"
+    for p in pending:
+        try:
+            _ask_id, new = asks_mod.save(_memory_db_connect, _memory_db_lock, tool=p["tool"], tool_input=p["input"],
+                                         questions=p["questions"], request=transcript if attended else what,
+                                         origin=source or "background")
+        except Exception as e:
+            log.warning("Couldn't save a question for the user: %s", e)
+            continue
+        if not attended and new:
+            queue_or_deliver_notification(asks_mod.spoken(p["questions"], what), important=True, bypass_busy_gate=True)
+    try:
+        dashboard.notify({"type": "asks_changed"})
+    except Exception:
+        pass
+    return reply
+
+
 def _missed_line() -> str:
     try:
         return missed.count_line(len(missed.unseen(_memory_db_connect, _memory_db_lock, limit=200)))
@@ -6632,7 +6711,7 @@ def _run_scheduled_skill(skill: dict) -> None:
     try:
         # An unprompted run must stay quiet when the model gives no text: never fall back to the
         # last tool's result (e.g. a remember_fact ack), and treat a bare "OK"/"Done." as silence.
-        reply = run_agent_loop(synthetic_transcript, tool_result_fallback=False)
+        reply = run_agent_loop(synthetic_transcript, tool_result_fallback=False, record_history=False)
         if reply:
             # Through the interrupt gate, never speak_text: URGENT: or an announce skill is spoken (Sleep/Focus/
             # visitor rules still apply); anything else lands in "what did I miss" (said in
@@ -6677,7 +6756,7 @@ def _run_queued_task(description: str, instructions: str) -> None:
     ) + QUEUED_TASK_QUIET_NOTE
     reply = None
     try:
-        reply = run_agent_loop(synthetic_transcript)
+        reply = run_agent_loop(synthetic_transcript, record_history=False)
         if reply:
             text, urgent_now = _skill_reply_urgency(reply)
             if text:
@@ -7767,6 +7846,8 @@ def _watches_tool(inp: dict) -> str:
         announce = watches_mod.clip(inp.get("announce"), 400)
         given = inp.get("schedule")
         schedule, note = watches_mod.parse_schedule(given) if given not in (None, "", {}) else (None, "")
+        if watches_mod.live_reading(what, rule):
+            return watches_mod.LIVE_READING_REDIRECT  # a repeated check of a reading is scheduled work, not a watch
         # Owner, 2026-10-06: a watch that isn't complete is never saved half-done; the user is asked again.
         asks = watches_mod.missing_parts(name, what, rule, given not in (None, "", {}), announce)
         if given not in (None, "", {}) and schedule is None:
@@ -7858,7 +7939,7 @@ def _run_watch(watch: dict, manual: bool = False) -> None:
     try:
         told = store.told(watch["id"])
         reply = run_agent_loop(watches_mod.check_prompt(watch, told, now, USER_NAME, manual=manual),
-                               tool_result_fallback=False)
+                               tool_result_fallback=False, record_history=False)
         alerts = None if reply is None or reply == _llm_unavailable_reply() else watches_mod.parse_alerts(reply)
         if reply is not None and reply != _llm_unavailable_reply() and alerts is None:
             status = "unreadable"
@@ -8217,6 +8298,39 @@ def _feature_missed(action: str, payload: dict):
     if action == "seen":
         n = missed.mark_seen(_memory_db_connect, _memory_db_lock)
         return {"result": f"Marked {n} as read."}
+    return None
+
+
+@_feature("asks")
+def _feature_asks(action: str, payload: dict):
+    """Home "Jarvis needs you" card (jarvis_asks, 2026-10-16): questions a tool needed the user to answer. Answering
+    runs a normal dashboard command carrying the question and the exact call, so Jarvis resumes that call."""
+    if action == "get":
+        rows = asks_mod.open_asks(_memory_db_connect, _memory_db_lock)
+        return {"items": [{"id": r["id"], "ts": r["ts"], "tool": r["tool"], "questions": r["questions"],
+                           "request": r.get("request") or "", "origin": r.get("origin") or ""} for r in rows]}
+    try:
+        ask_id = int((payload or {}).get("id"))
+    except (TypeError, ValueError):
+        return {"error": "say which question (id)"}
+    row = asks_mod.get(_memory_db_connect, _memory_db_lock, ask_id)
+    if not row or row["status"] != "open":
+        return {"error": "that question is no longer open"}
+    if action == "dismiss":
+        asks_mod.close(_memory_db_connect, _memory_db_lock, ask_id, "dismissed")
+        return {"result": "Dismissed."}
+    if action == "answer":
+        text = " ".join(str((payload or {}).get("text") or "").split())
+        if not text:
+            return {"error": "type an answer first"}
+        command = asks_mod.answer_command(row, text)
+
+        def _sink(reply: str) -> None:
+            dashboard.notify({"type": "command_reply", "data": {"text": command, "reply": reply}})
+
+        threading.Thread(target=lambda: handle_text_command(command, reply_sink=_sink, source="dashboard"),
+                         daemon=True, name=f"ask-answer-{ask_id}").start()
+        return {"result": "Sent. Jarvis is on it."}
     return None
 
 
@@ -8620,10 +8734,18 @@ def _background_agents_tool(inp: dict) -> str:
             return problem
     name = str(inp.get("name") or "").strip()
     if action == "create":
-        return agents.create(_agent_store, name, str(inp.get("trigger_type") or ""), inp.get("trigger_config") or {},
-                             inp.get("steps") or [], _agent_known_tools(), _AGENT_FORBIDDEN_TOOLS,
-                             inp.get("max_runs_per_day") or 24, enabled=inp.get("enabled", True) is not False,
-                             required=_agent_required_inputs())
+        result = agents.create(_agent_store, name, str(inp.get("trigger_type") or ""), inp.get("trigger_config") or {},
+                               inp.get("steps") or [], _agent_known_tools(), _AGENT_FORBIDDEN_TOOLS,
+                               inp.get("max_runs_per_day") or 24, enabled=inp.get("enabled", True) is not False,
+                               required=_agent_required_inputs())
+        if str(result).startswith("Agent "):
+            # 2026-10-16 debug report: an agent whose one step was speed_test was described as "notifying you on
+            # Telegram and opening Roblox when it goes above 10". Say what it really does, so the reply can't add more.
+            tools_run = ", ".join(str((st or {}).get("tool") or "?") for st in (inp.get("steps") or []) if isinstance(st, dict))
+            result += (f" Each run does only this: {tools_run or 'nothing'}. It has no conditions and doesn't speak, "
+                       "message or open anything unless one of those steps does. Tell the user exactly that; if they "
+                       "wanted 'only when X' or a message/app when something happens, use schedule_jarvis_task instead.")
+        return result
     a = _agent_store.get(name) if name else None
     if action in ("delete", "enable", "disable", "run", "log") and not a:
         return "No background agent by that name."
@@ -11148,6 +11270,7 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
         + _selfaware_line()
         + _recent_actions_line()
         + _missed_line()
+        + _asks_line(query)
         + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
         + personality.prompt_line(_personality_name())
         + _relevant_memory_line(query)
@@ -11346,6 +11469,36 @@ def _launch_app_browser(which: str | None = None) -> str:
     return browsers.launch(which)
 
 
+ROBLOX_STORE_PACKAGE = "ROBLOXCORPORATION.ROBLOX_55nskbnwh6f9e"
+
+
+def _launch_roblox() -> str:
+    """Open Roblox (2026-10-16: the user's speed check wanted "open Roblox" and Jarvis opened the browser, there was no
+    Roblox app). The installed player's Start menu shortcut, else the Microsoft Store app, else roblox.com in the main
+    browser. The result says which, so a reply can't claim more than happened."""
+    if sys.platform != "win32":
+        return "Opened roblox.com in the browser (the Roblox app is Windows-only here)." if _open_uri(
+            "https://www.roblox.com/home") is not False else "Tool failed: couldn't open roblox.com."
+    appdata, local = os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", "")
+    for lnk in (Path(appdata) / "Microsoft/Windows/Start Menu/Programs/Roblox/Roblox Player.lnk",
+                Path(os.environ.get("PROGRAMDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Roblox/Roblox Player.lnk"):
+        try:
+            if lnk.is_file():
+                os.startfile(str(lnk))
+                return "Opened the Roblox app."
+        except OSError as e:
+            log.warning("Roblox shortcut didn't open: %s", e)
+    try:
+        if local and (Path(local) / "Packages" / ROBLOX_STORE_PACKAGE).is_dir():
+            subprocess.Popen(["explorer.exe", rf"shell:AppsFolder\{ROBLOX_STORE_PACKAGE}!App"])
+            return "Opened the Roblox app."
+    except OSError as e:
+        log.warning("Roblox Store app didn't open: %s", e)
+    if _open_uri("https://www.roblox.com/home") is False:
+        return "Tool failed: Roblox isn't installed and roblox.com didn't open."
+    return "The Roblox app isn't installed, so I opened roblox.com in the browser instead."
+
+
 def _launch_app_spotify() -> None:
     try:
         if sys.platform == "win32":
@@ -11437,6 +11590,9 @@ def _launch_app(name: str) -> str | None:
     if name == "spotify":
         _launch_app_spotify()
         return None
+    if name == "roblox":
+        result = _launch_roblox()
+        return result[len("Tool failed: "):] if result.startswith("Tool failed: ") else None
     log.warning("Unknown app: %r", name)
     return f"{name!r} is not a known app"
 
@@ -13283,7 +13439,7 @@ def _delegate_research(task: str, output_path: str) -> str:
 
     def _run() -> None:
         try:
-            reply = run_agent_loop(synthetic_transcript)
+            reply = run_agent_loop(synthetic_transcript, record_history=False)
         except Exception as e:
             _finish_background_task(task_id, "failed", f"research task raised an error: {e}")
             return
@@ -13903,7 +14059,8 @@ def _claim_nudge(what: list[str]) -> str:
     if _ONGOING_UNBACKED in what:
         return ("[system check] Your reply says you are monitoring something or will check again / let the user know "
                 "later, but nothing is scheduled for it (no job, watch, background agent, reminder or scheduled skill), "
-                "so nothing will happen. If the user asked for it, set it up now (schedule_jarvis_task or watches). "
+                "so nothing will happen. If the user asked for it, set it up now (schedule_jarvis_task for a repeated "
+                "check of something, watches for dated things in a file/calendar/mail/page). "
                 "Otherwise reply again and say plainly that nothing is running for it.")
     return ("[system check] Your reply says you did this: " + "; ".join(what) + ". But no tool that does "
             "that ran this turn, so it did NOT happen. If the user wants it, call the right tool now (use "
@@ -14020,10 +14177,20 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core |= {"skills", "watches"}
     if _WATCH_RE.search(transcript or ""):
         core.add("watches")
+    if _SCHEDULED_WORK_RE.search(transcript or ""):
+        core |= {"schedule_jarvis_task", "scheduled_jobs"}
     if re.search(r"\b(?:personality|personalities|voice type|vibe|attitude|gen ?z|pidgin|naija|playful|sarcastic|"
                  r"hype|tired mode|serious mode|classic mode|auto mode)\b", transcript or "", re.I):
         core.add("personality")
     return core
+
+
+# "set a scheduled work to check my speed every 5 mins", "check again in 10 minutes" (2026-10-16 debug report: the
+# model never saw schedule_jarvis_task under narrowing, tried watches/agents/skills and then claimed it was tracking).
+_SCHEDULED_WORK_RE = re.compile(
+    r"\bschedul\w*\s+(?:a\s+|some\s+)?(?:work|job|task)s?\b|\b(?:background|scheduled) (?:work|job|task)\b|"
+    r"\bevery\s+\d+\s*(?:min|mins|minutes?|hours?|hrs?)\b|\b(?:check|test|try|run) (?:it )?again\b|"
+    r"\bin\s+\d+\s*(?:min|mins|minutes?|hours?|hrs?)\b|\blater (?:on|today|tonight)\b", re.I)
 
 
 # "monitor my timetable and tell me when exams are near", "keep an eye on X", "let me know when..." (2026-10-06)
@@ -14386,7 +14553,9 @@ def _execute_tool_impl(
         elif tool_name == "open_app":
             app = str(inp.get("app") or "").strip().lower()
             app = APP_ALIASES.get(app, app)
-            if app in ALLOWED_APPS:
+            if app == "roblox":
+                result = _launch_roblox()
+            elif app in ALLOWED_APPS:
                 problem = _launch_app(app)
                 result = (f"Tool failed: couldn't open {app}: {problem}." if problem else
                           f"Opened {browsers.label() if app == 'browser' else app}.")
@@ -15666,7 +15835,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     # Reply cache: only ever populated by turns that used read-only tools exclusively (see the
     # store below), so a hit can only replay an informational answer, never skip an action.
     reply_key = None
-    if record_history and not image and cache.enabled("reply") and cache.is_self_contained(transcript):
+    if (record_history and not image and cache.enabled("reply") and cache.is_self_contained(transcript)
+            and not _open_asks_waiting()):
         reply_key = cache.stable_hash(
             cache.normalize_text(transcript),
             sleep_mode.system_prompt_context_line() + face.system_prompt_context_line()
@@ -15682,7 +15852,10 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     first: str | list = transcript if not image else [
         {"type": "image", "source": {"type": "base64", "media_type": image_type, "data": image}},
         {"type": "text", "text": transcript}]
-    messages: list[dict] = reqctx.pick_history(_history_snapshot(), transcript) + [{"role": "user", "content": first}]
+    # An unattended run (scheduled skill, queued task, watch, job: record_history=False) never sees the conversation:
+    # found live 2026-10-16, a scheduled Gmail check read the user's chat about a speed monitor and acted on it.
+    history = reqctx.pick_history(_history_snapshot(), transcript) if record_history else []
+    messages: list[dict] = history + [{"role": "user", "content": first}]
     reply_parts: list[str] = []
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
     narrated = 0
@@ -15732,6 +15905,10 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         smart = _llm_provider() == "claude"  # Claude's smart model gets thinking from round one
         log.info("Repeated command: escalating to %s: %r", model, transcript[:80])
     claim_nudged = False
+    # Tool results that need the user's answer (jarvis_asks, 2026-10-16): tool name -> {tool, input, questions}.
+    pending_asks: dict[str, dict] = {}
+    asks_nudged = False
+    shown_asks = list(getattr(_command_ctx, "shown_asks", None) or [])  # set by build_system_blocks above
     for iteration in range(MAX_AGENT_ITERATIONS):
         request_body = {
             "model": model,
@@ -15848,6 +16025,18 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 continue
             if handoff_nudged and not set(used_tool_names) & _DELEGATION_TOOLS and _HANDOFF_CLAIM_RE.search(claim):
                 reply_parts.append("Correction: I did not actually start a background task for that. Ask me again to start it.")
+            if (pending_asks and not asks_nudged and iteration < MAX_AGENT_ITERATIONS - 1
+                    and _current_command_source() in asks_mod.ATTENDED  # a background run asks through the card
+                    and not asks_mod.reply_asks(claim, " ".join(p["questions"] for p in pending_asks.values()))):
+                # A tool said it needs the user's answer and the reply doesn't ask (found live 2026-10-16: the watch
+                # tool's questions were skipped and a speed test ran instead): one more round to ask them.
+                asks_nudged = True
+                log.warning("A tool needs the user's answer but the reply doesn't ask; nudging: %r", claim[:120])
+                del reply_parts[len(reply_parts) - len(texts):]
+                if streamed_this_round:
+                    _reset_reply_stream_spoken()
+                messages.append({"role": "user", "content": asks_mod.nudge(list(pending_asks.values()))})
+                continue
             unbacked = _unbacked_claims(claim, succeeded_tool_names, transcript)
             if unbacked:
                 # Earlier commands can back "I sent it", never "I'm still monitoring it": a job scheduled half an hour
@@ -15913,6 +16102,12 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             used_tool_names.append(tu.get("name", ""))
             if not _looks_failed(result_text) and not _looks_staged(result_text):
                 succeeded_tool_names.append(tu.get("name", ""))   # only these can back an "I did it" claim
+                pending_asks.pop(tu.get("name", ""), None)  # the same tool went through after all
+                _close_shown_asks(tu.get("name", ""), shown_asks)
+            question = asks_mod.needs_user(result_text)
+            if question:
+                pending_asks[tu.get("name", "")] = {"tool": tu.get("name", ""), "input": tu.get("input") or {},
+                                                    "questions": question}
             steps.append((tu.get("name", ""), json.dumps(tu.get("input") or {}, default=str)[:300], str(result_text)[:400]))
             any_tool_failed = any_tool_failed or _looks_failed(result_text)
         messages.append({"role": "user", "content": tool_results})
@@ -15940,6 +16135,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         and "james" not in reply.lower()
     ):
         _reply_cache.put(reply_key, reply, min(READONLY_TOOL_TTLS[n] for n in used_tool_names))
+    if pending_asks:
+        reply = _handle_pending_asks(transcript, reply, list(pending_asks.values()))
     if not reply and last_tool_result_text and tool_result_fallback:
         # Observed live: Claude sometimes ends a turn with only a tool call and no spoken text
         # at all — most consequentially for a staged catastrophic confirmation (run_shell/
