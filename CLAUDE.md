@@ -1833,7 +1833,8 @@ row there each phase rather than only stating the total in chat.
 | 169 (merged the Caretaker work into main with main's slow-file-save change, one order-dependent test fixed, full suite equal to the env baseline; published to Jarvis4U after a clean privacy scan and a by-eye diff review, private skill name taken out of public-bound code) | Sonnet 5.5 | ~25 min | ~$1.50–$2.20 |
 | 170 (false "still monitoring" / "successfully created" claims: ongoing-work claims need a real job/watch/agent/reminder/scheduled skill, adverbs no longer hide a done claim, self-made jobs speak only when flagged URGENT; 12 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 171 (Jarvis asks you: tool questions must reach the user, saved with the exact call and resumed by the answer, Home "Jarvis needs you" card, background runs say it; live-reading watches sent to scheduled work, unattended runs no longer read the chat, honest agent results, open Roblox; 13 new tests, headless card check) | Opus 5.5 | ~50 min | ~$4.00–$5.50 |
-| **Running total (final)** | | **~5239 min** | **~$359.15–$504.55** |
+| 172 (admin helper card showed every repair "off" with no reason and "waiting for the prompt" long after it was answered: unknown is now shown as "?" with why Windows couldn't be read, the setup says "checking" once the prompt is accepted, the hidden elevated window writes OK/FAIL+reason to a result file, a 90 s wall-clock deadline replaces the fixed polls; 12 new tests, headless check of five states) | Sonnet 5.5 | ~35 min | ~$2.20–$3.00 |
+| **Running total (final)** | | **~5274 min** | **~$361.35–$507.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3053,6 +3054,18 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
   scripts, `Start-ScheduledTask` of a Highest task from a non-elevated Jarvis, `Get-ScheduledTaskInfo` fields, icacls, the UAC
   prompt flow and the install/remove round trip, a real Defender update and adapter restart. Do the first install with the page's
   button and watch the Caretaker page; `python -c "import jarvis_caretaker_admin as a; print(a.status())"` shows what Windows says.
+
+- **Admin helper card said "off" for everything (2026-10-16, owner screenshot "why do they still show off")**: the card read
+  "Waiting for you to answer the Windows prompt..." with all five repairs badged "off" and no reason. Causes: (1) "off" with no reason
+  meant Jarvis had no successful read of Windows' task list yet (`known=False`, `actions` empty) but the page drew that as "off";
+  (2) the state stayed "waiting" through the whole post-prompt check (30 x (3 s + a status read of up to 25 s)); (3) a failure
+  inside the hidden elevated window was invisible. Fixes (tests in `test_caretaker_admin.py`, headless check of unknown/off/waiting/
+  checking/failed): `status()` carries `error` (why PowerShell couldn't be asked: no answer, error code, unreadable); the page shows
+  "?" + that reason when `known` is false and only says "off" after Windows answered; setup state `checking` after the prompt is
+  accepted; the elevated stub (when given a result file in the user's own `helper_setup` folder) writes `OK` or `FAIL: <message>`
+  (try/catch; hash check still comes first, `launcher_argv(..., result_file)`), read by `read_setup_result` and only ever shown as
+  cleaned text; the wait ends by wall clock (`HELPER_CHECK_WINDOW_S` 90 s); failures name the task that doesn't match; the waiting
+  text tells the owner to look for a flashing shield in the taskbar. Not verified on a real PC (Phase 6 never was).
 
 ## Slow file saves (2026-10-16, debug report)
 

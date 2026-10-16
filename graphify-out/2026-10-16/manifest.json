@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1792165632.4199371,
-    "seen": 1792165790.0148084,
-    "ast_hash": "7cf066a7e9fc47e4313e20bac676ee7a",
+    "mtime": 1792166481.3359177,
+    "seen": 1792166636.6904247,
+    "ast_hash": "b7592c58ed92d3f956c06c22f73bc76f",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792165696.587942,
-    "seen": 1792165790.0151463,
-    "ast_hash": "eff5d82a6bdf323a014fa33c86901780",
+    "mtime": 1792166606.9999146,
+    "seen": 1792166636.6908104,
+    "ast_hash": "2e6865f97687f7672c7cfb1da8d7de88",
     "semantic_hash": ""
   },
   "README.md": {
@@ -1905,6 +1905,18 @@
     "mtime": 1792165653.7755475,
     "seen": 1792165790.0151134,
     "ast_hash": "4db814b0c40c1b30bdbb154d74dfd8d8",
+    "semantic_hash": ""
+  },
+  "jarvis_coverage.py": {
+    "mtime": 1792166516.3079169,
+    "seen": 1792166636.6904762,
+    "ast_hash": "4ff7c17d3c8970a209471baf5043f28a",
+    "semantic_hash": ""
+  },
+  "test_coverage.py": {
+    "mtime": 1792166570.216165,
+    "seen": 1792166636.6906996,
+    "ast_hash": "4d4a1b4f805dac25a76ed36d765811f8",
     "semantic_hash": ""
   }
 }

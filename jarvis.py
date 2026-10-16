@@ -9888,7 +9888,7 @@ def _caretaker_admin_summary() -> dict:
     return {
         "enabled": _caretaker_admin_enabled(), "supported": bool(st.get("supported", sys.platform == "win32")),
         "known": bool(st.get("known")), "installed": bool(st.get("installed")), "changed": st.get("changed") or [],
-        "setup": _caretaker_state.get("helper_setup"),
+        "setup": _caretaker_state.get("helper_setup"), "error": st.get("error") or "",
         "actions": [dict(a, ok=bool((acts.get(a["name"]) or {}).get("ok")),
                          why=(acts.get(a["name"]) or {}).get("why"))
                     for a in caretaker_admin.describe()],
@@ -9896,6 +9896,7 @@ def _caretaker_admin_summary() -> dict:
 
 
 _helper_setup_lock = threading.Lock()
+HELPER_CHECK_WINDOW_S = 90.0      # how long to look for the result once the Windows prompt was accepted
 
 
 def _caretaker_helper_setup(kind: str) -> dict:
@@ -9914,10 +9915,15 @@ def _caretaker_helper_setup(kind: str) -> dict:
         return {"ok": False, "error": "A setup is already waiting for your answer to the Windows prompt."}
     base = os.environ.get("LOCALAPPDATA")
     folder = (Path(base) / "Jarvis" / "helper_setup") if base else (Path.home() / ".jarvis" / "helper_setup")
+    result_path = folder / f"{kind}_helper.result.txt"
     try:
         text = caretaker_admin.install_script(user) if kind == "install" else caretaker_admin.remove_script()
         path = caretaker_admin.stage_script(text, folder, f"{kind}_helper.ps1")
-        argv = caretaker_admin.launcher_argv(text, path)
+        try:
+            result_path.unlink()          # an answer left from an earlier try must not be mistaken for this one
+        except OSError:
+            pass
+        argv = caretaker_admin.launcher_argv(text, path, str(result_path))
     except Exception as e:
         _helper_setup_lock.release()
         return {"ok": False, "error": f"I couldn't prepare the setup ({e.__class__.__name__}). Nothing was changed."}
@@ -9931,23 +9937,43 @@ def _caretaker_helper_setup(kind: str) -> dict:
             if rc != 0:
                 state, detail = "declined", "The Windows prompt was declined (or closed), so nothing changed."
             else:
-                for _ in range(30):                              # the elevated script needs a few seconds
+                # The prompt was accepted: the hidden elevated window is running now. Say so (the page used to keep
+                # saying "waiting for the prompt" through the whole check) and stop after a fixed time, not a fixed
+                # number of tries (each Windows status read can itself take many seconds).
+                _caretaker_state["helper_setup"] = {"kind": kind, "state": "checking",
+                                                     "at": datetime.now().isoformat(timespec="seconds")}
+                deadline = time.monotonic() + HELPER_CHECK_WINDOW_S
+                state, detail = "failed", ("The setup was started, but nothing confirmed it in time. Check again in a "
+                                           "minute, or press the button again.")
+                while time.monotonic() < deadline:
                     time.sleep(3)
+                    verdict, why = caretaker_admin.read_setup_result(result_path)
+                    if verdict == "fail":
+                        state, detail = "failed", f"The setup ran with administrator rights but failed: {why}."
+                        break
                     st = _caretaker_admin_refresh()
                     if (kind == "install" and st.get("installed")) or (kind == "remove" and not st.get("ready")
                                                                        and st.get("known")):
                         state, detail = "done", ("The admin helper is set up." if kind == "install"
                                                  else "The admin helper was removed.")
                         break
-                else:
-                    detail = "The setup ran but I can't see the result yet. Check again in a minute."
+                    if verdict == "ok" and st.get("known"):
+                        # the installer says it finished, yet Windows' task list doesn't match what it should hold
+                        bad = next((f"{n.replace('_', ' ')}: {a.get('why')}" for n, a in (st.get("actions") or {}).items()
+                                    if not a.get("ok") and a.get("why")), "the tasks are not all there")
+                        state, detail = "failed", f"The setup finished, but I can't confirm it ({bad})."
+                        break
+                    if verdict == "ok" and not st.get("known"):
+                        detail = ("The setup finished, but I can't read Windows' task list to confirm it"
+                                  + (f" ({st.get('error')})" if st.get("error") else "") + ".")
         except Exception as e:
             log.warning("Admin helper setup crashed: %s", e)
         finally:
-            try:
-                Path(path).unlink()          # the staged installer goes first: nothing is left to tamper with
-            except OSError:
-                pass
+            for leftover in (path, str(result_path)):
+                try:
+                    Path(leftover).unlink()      # the staged installer goes first: nothing is left to tamper with
+                except OSError:
+                    pass
             _caretaker_state["helper_setup"] = {"kind": kind, "state": state, "detail": detail,
                                                  "at": datetime.now().isoformat(timespec="seconds")}
             selfaware.record("system", "caretaker_helper", f"admin helper {kind}: {state}")

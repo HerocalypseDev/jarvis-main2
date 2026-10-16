@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import time
+from pathlib import Path
 from datetime import datetime, timedelta
 
 import pytest
@@ -164,6 +165,46 @@ def test_the_elevated_launcher_runs_only_text_whose_hash_was_fixed_before_the_pr
     assert hashlib.sha256(other.encode("utf-8")).hexdigest() not in inner  # a different script has a different hash
 
 
+def _inner_stub(argv):
+    outer = adm.decode_ps_argv(argv)
+    return base64.b64decode(re.search(r"'-EncodedCommand', '([A-Za-z0-9+/=]+)'", outer).group(1)).decode("utf-16-le")
+
+
+def test_the_launcher_with_a_result_file_still_checks_the_hash_before_running_and_reports_either_way(tmp_path):
+    text = adm.install_script(ME, ENV)
+    path = adm.stage_script(text, tmp_path / "setup", "install_helper.ps1")
+    res = str(tmp_path / "setup" / "install_helper.result.txt")
+    inner = _inner_stub(adm.launcher_argv(text, path, res))
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() in inner
+    assert inner.index("exit 9") < inner.index("Invoke-Expression")      # nothing changes about compare-then-run
+    assert "catch" in inner and "'FAIL: ' + $_.Exception.Message" in inner and "'OK'" in inner
+    assert "FAIL: the setup file changed" in inner and res in inner
+    assert inner.index("Invoke-Expression") < inner.index("'OK'")          # OK is written only after the script ran
+
+
+def test_without_a_result_file_the_launcher_is_the_original_one(tmp_path):
+    text = adm.remove_script(ENV)
+    path = adm.stage_script(text, tmp_path / "setup", "remove_helper.ps1")
+    inner = _inner_stub(adm.launcher_argv(text, path))
+    assert "catch" not in inner and "WriteAllText" not in inner
+
+
+def test_reading_what_the_elevated_setup_wrote(tmp_path):
+    f = tmp_path / "r.txt"
+    assert adm.read_setup_result(f) == (None, "")                         # nothing yet
+    f.write_text("OK", encoding="utf-8")
+    assert adm.read_setup_result(f) == ("ok", "")
+    f.write_text("\ufeffOK\r\n", encoding="utf-8")
+    assert adm.read_setup_result(f) == ("ok", "")
+    f.write_text("FAIL: could not lock the helper folder", encoding="utf-8")
+    assert adm.read_setup_result(f) == ("fail", "could not lock the helper folder")
+    f.write_text("FAIL: bad\x00\x1b[31m thing\nsecond line " + "x" * 400, encoding="utf-8")
+    verdict, why = adm.read_setup_result(f)
+    assert verdict == "fail" and len(why) <= 160 and "\n" not in why and "\x1b" not in why
+    f.write_text("anything else", encoding="utf-8")
+    assert adm.read_setup_result(f) == (None, "")
+
+
 # --- reading what is installed --------------------------------------------------------------------
 def test_everything_as_installed_is_ready():
     w = FakeWin()
@@ -185,6 +226,20 @@ def test_windows_that_cannot_be_asked_is_unknown_not_ready():
     w.status_rc = 1
     st = _status(w)
     assert not st["known"] and st["ready"] == []
+
+
+def test_status_says_why_windows_could_not_be_asked():
+    w = FakeWin()
+    w.status_rc = 1
+    assert "code 1" in _status(w)["error"]
+    w.status_rc = -1
+    assert "didn't answer" in _status(w)["error"]
+    w2 = FakeWin()
+    orig = w2.run
+    w2.run = lambda argv, timeout=60: (0, "not json{") if "Get-ScheduledTask" in adm.decode_ps_argv(argv) else orig(argv, timeout)
+    st = adm.status(w2.run, env=w2.env, reader=w2.reader, me=w2.user)
+    assert not st["known"] and "couldn't read" in st["error"]
+    assert "error" not in _status(FakeWin())                              # a good read carries no error
 
 
 @pytest.mark.parametrize("change,why", [
@@ -585,7 +640,7 @@ def _setup_env(jv, monkeypatch, tmp_path, *, admin=True, rc=0, installed_after=T
 
 def _wait_setup(jv):
     for _ in range(500):
-        if (jv._caretaker_state.get("helper_setup") or {}).get("state") != "waiting":
+        if (jv._caretaker_state.get("helper_setup") or {}).get("state") not in ("waiting", "checking"):
             if jv._helper_setup_lock.acquire(timeout=2):        # the worker lets go of the lock right after the state
                 jv._helper_setup_lock.release()
             return jv._caretaker_state["helper_setup"]
@@ -608,6 +663,82 @@ def test_a_declined_prompt_changes_nothing(jv, monkeypatch, tmp_path):
     assert jv._caretaker_helper_setup("install")["ok"]
     s = _wait_setup(jv)
     assert s["state"] == "declined" and "nothing changed" in s["detail"]
+
+
+def _elevated_writes(jv, monkeypatch, text):
+    """Make the fake 'elevated window' write `text` into the result file (None = write nothing)."""
+    real = jv.caretaker_win.run_cmd
+
+    def run_cmd(argv, timeout=60):
+        rc, out = real(argv, timeout)
+        if text is not None:
+            m = re.search(r"\$r = '([^']+)'", _inner_stub(argv))
+            Path(m.group(1)).write_text(text, encoding="utf-8")
+        return rc, out
+    monkeypatch.setattr(jv.caretaker_win, "run_cmd", run_cmd)
+
+
+def test_after_the_prompt_is_accepted_the_page_says_it_is_checking_not_waiting(jv, monkeypatch, tmp_path):
+    _setup_env(jv, monkeypatch, tmp_path, installed_after=False)
+    states = []
+    real_refresh = jv._caretaker_admin_refresh
+    monkeypatch.setattr(jv, "_caretaker_admin_refresh",
+                        lambda: states.append(jv._caretaker_state["helper_setup"]["state"]) or real_refresh())
+    monkeypatch.setattr(jv, "HELPER_CHECK_WINDOW_S", 0.05)
+    assert jv._caretaker_helper_setup("install")["ok"]
+    _wait_setup(jv)
+    assert states and set(states) == {"checking"}
+
+
+def test_a_failure_inside_the_hidden_elevated_window_is_reported_with_its_reason(jv, monkeypatch, tmp_path):
+    _setup_env(jv, monkeypatch, tmp_path, installed_after=False)
+    _elevated_writes(jv, monkeypatch, "FAIL: could not lock the helper folder")
+    assert jv._caretaker_helper_setup("install")["ok"]
+    s = _wait_setup(jv)
+    assert s["state"] == "failed" and "could not lock the helper folder" in s["detail"]
+    assert list((tmp_path / "Jarvis" / "helper_setup").glob("*")) == []      # script and result file both cleaned up
+
+
+def test_finished_but_not_confirmed_names_the_task_that_does_not_match(jv, monkeypatch, tmp_path):
+    _setup_env(jv, monkeypatch, tmp_path, installed_after=False)
+    _elevated_writes(jv, monkeypatch, "OK")
+    monkeypatch.setattr(jv.caretaker_admin, "status", lambda *a, **k: {
+        "supported": True, "known": True, "installed": False, "ready": [], "changed": [],
+        "actions": {"flush_dns": {"ok": False, "why": "not set up"}}})
+    assert jv._caretaker_helper_setup("install")["ok"]
+    s = _wait_setup(jv)
+    assert s["state"] == "failed" and "can't confirm" in s["detail"] and "flush dns: not set up" in s["detail"]
+
+
+def test_finished_but_windows_cannot_be_read_says_so_with_the_reason(jv, monkeypatch, tmp_path):
+    _setup_env(jv, monkeypatch, tmp_path, installed_after=False)
+    _elevated_writes(jv, monkeypatch, "OK")
+    monkeypatch.setattr(jv.caretaker_admin, "status", lambda *a, **k: {
+        "supported": True, "known": False, "installed": False, "ready": [], "changed": [], "actions": {},
+        "error": "PowerShell didn't answer (it may have timed out or been blocked)"})
+    monkeypatch.setattr(jv, "HELPER_CHECK_WINDOW_S", 0.05)
+    assert jv._caretaker_helper_setup("install")["ok"]
+    s = _wait_setup(jv)
+    assert s["state"] == "failed" and "can't read Windows' task list" in s["detail"] and "didn't answer" in s["detail"]
+
+
+def test_the_wait_ends_by_the_clock_even_when_nothing_ever_answers(jv, monkeypatch, tmp_path):
+    _setup_env(jv, monkeypatch, tmp_path, installed_after=False)
+    monkeypatch.setattr(jv, "HELPER_CHECK_WINDOW_S", 0.05)
+    assert jv._caretaker_helper_setup("install")["ok"]
+    s = _wait_setup(jv)
+    assert s["state"] == "failed" and "nothing confirmed it in time" in s["detail"]
+
+
+def test_a_result_file_left_by_an_earlier_try_is_not_mistaken_for_this_one(jv, monkeypatch, tmp_path):
+    _setup_env(jv, monkeypatch, tmp_path, installed_after=False)
+    folder = tmp_path / "Jarvis" / "helper_setup"
+    folder.mkdir(parents=True)
+    (folder / "install_helper.result.txt").write_text("FAIL: old problem", encoding="utf-8")
+    monkeypatch.setattr(jv, "HELPER_CHECK_WINDOW_S", 0.05)
+    assert jv._caretaker_helper_setup("install")["ok"]
+    s = _wait_setup(jv)
+    assert "old problem" not in s["detail"]
 
 
 def test_a_standard_account_is_told_so_and_nothing_is_staged(jv, monkeypatch, tmp_path):
@@ -687,6 +818,7 @@ def test_the_page_route_carries_the_helper_state_and_the_setup_buttons(jv, monke
     h = rep["helper"]
     assert h["enabled"] and h["installed"] and [a["name"] for a in h["actions"]] == NAMES and all(a["ok"] for a in h["actions"])
     _setup_env(jv, monkeypatch, tmp_path)
+    monkeypatch.setattr(jv, "HELPER_CHECK_WINDOW_S", 0.2)      # the fake Windows never reports the removal
     res = jv._feature_caretaker("helper_install", {})
     assert res["ok"] and "helper" in res and "needs_admin" in res
     _wait_setup(jv)
@@ -730,3 +862,10 @@ def test_the_page_lists_the_helper_block_and_buttons():
     for ident in ("ct-helper-block", "ct-helper-status", "ct-helper-actions", "ct-helper-install", "ct-helper-remove"):
         assert f'id="{ident}"' in html and ident in js
     assert "helper_install" in js and "helper_remove" in js and "Windows will ask for permission" in js
+
+
+def test_the_summary_for_the_page_carries_why_windows_could_not_be_read(jv, monkeypatch):
+    monkeypatch.setitem(jv._caretaker_admin_cache, "status", {"supported": True, "known": False, "error": "PowerShell didn't answer"})
+    s = jv._caretaker_admin_summary()
+    assert s["known"] is False and s["error"] == "PowerShell didn't answer"
+    assert all(not a["ok"] for a in s["actions"])

@@ -99,11 +99,15 @@ function ctLessonRow(l) {
     </li>`;
 }
 
-function ctHelperRow(a) {
+function ctHelperRow(a, h) {
+  // "off" is only honest once Windows has answered. Before that (or when its task list can't be read) the state is unknown.
+  const unknown = !a.ok && !(h && h.known);
+  const badge = a.ok ? "ready" : (unknown ? "?" : "off");
+  const why = a.ok ? "" : (a.why || (unknown ? (h && h.error ? h.error : "not checked yet") : ""));
   return `
     <li class="list-item compact">
-      <span class="src-badge">${a.ok ? "ready" : "off"}</span>
-      <span>${esc(a.desc)}${!a.ok && a.why ? ` <span class="muted">&middot; ${esc(a.why)}</span>` : ""}</span>
+      <span class="src-badge">${badge}</span>
+      <span>${esc(a.desc)}${why ? ` <span class="muted">&middot; ${esc(why)}</span>` : ""}</span>
     </li>`;
 }
 
@@ -111,13 +115,18 @@ function ctHelperState(h) {
   const setup = h.setup || {};
   if (!h.enabled) return "The admin helper is switched off (JARVIS_CARETAKER_ADMIN=0).";
   if (!h.supported) return "The admin helper only works on Windows.";
-  if (setup.state === "waiting") return "Waiting for you to answer the Windows prompt...";
+  if (setup.state === "waiting")
+    return "Waiting for you to answer the Windows prompt... If you don't see it, look for a flashing shield in the taskbar.";
+  if (setup.state === "checking")
+    return "Windows prompt accepted. Setting up and checking the result (up to a minute and a half)...";
   if (h.changed && h.changed.length)
     return "Set up, but " + h.changed.map((n) => n.replace(/_/g, " ")).join(", ") +
       " no longer match what Jarvis installed, so they won't run. Remove it and set it up again if that was you.";
   if (h.installed) return setup.state === "done" && setup.detail ? setup.detail : "Set up. Jarvis can use these five repairs.";
   if (setup.state === "declined" || setup.state === "failed") return setup.detail || "Setup did not finish.";
-  return h.known ? "Not set up." : "Not set up (or Windows could not be asked yet).";
+  if (h.known) return "Not set up.";
+  return h.error ? "I couldn't read Windows' task list, so I don't know yet: " + h.error
+                 : "I haven't been able to check Windows yet, so I don't know whether it is set up.";
 }
 
 function ctRenderHelper(rep) {
@@ -128,8 +137,8 @@ function ctRenderHelper(rep) {
   if (!block) return;
   block.hidden = !h.supported || !h.enabled;
   document.getElementById("ct-helper-status").textContent = ctHelperState(h);
-  document.getElementById("ct-helper-actions").innerHTML = (h.actions || []).map(ctHelperRow).join("");
-  const waiting = (h.setup || {}).state === "waiting";
+  document.getElementById("ct-helper-actions").innerHTML = (h.actions || []).map((a) => ctHelperRow(a, h)).join("");
+  const waiting = ["waiting", "checking"].includes((h.setup || {}).state);
   const inst = document.getElementById("ct-helper-install");
   const rem = document.getElementById("ct-helper-remove");
   inst.disabled = waiting; rem.disabled = waiting;

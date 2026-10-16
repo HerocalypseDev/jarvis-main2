@@ -209,18 +209,40 @@ def remove_script(env=None) -> str:
         f"Remove-Item -LiteralPath {_psq(str(helper_dir(env)))} -Recurse -Force\n")
 
 
-def launcher_argv(script_text: str, script_file: str) -> list[str]:
+def launcher_argv(script_text: str, script_file: str, result_file: str | None = None) -> list[str]:
     """The command Jarvis (not elevated) runs to raise Windows' "allow this app to make changes?" prompt. The
     elevated side reads the script file ONCE into memory, checks its SHA-256 against the value fixed here, and only
-    then runs that text, so nothing written to the file after this point can run elevated."""
+    then runs that text, so nothing written to the file after this point can run elevated.
+
+    `result_file` (optional, in the user's own setup folder): the elevated side writes "OK" or "FAIL: <reason>" there
+    so a hidden elevated window that failed can still tell the owner why. It is only ever shown as text."""
     digest = hashlib.sha256(script_text.encode("utf-8")).hexdigest()
-    stub = (
-        f"$f = {_psq(script_file)}\n"
-        "$t = [IO.File]::ReadAllText($f)\n"
-        "$h = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash("
-        "[Text.Encoding]::UTF8.GetBytes($t))) -replace '-', '').ToLower()\n"
-        f"if ($h -ne {_psq(digest)}) {{ exit 9 }}\n"
-        "Invoke-Expression $t\n")
+    if result_file:
+        stub = (
+            f"$f = {_psq(script_file)}\n"
+            f"$r = {_psq(result_file)}\n"
+            "try {\n"
+            "  $t = [IO.File]::ReadAllText($f)\n"
+            "  $h = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash("
+            "[Text.Encoding]::UTF8.GetBytes($t))) -replace '-', '').ToLower()\n"
+            f"  if ($h -ne {_psq(digest)}) {{\n"
+            "    [IO.File]::WriteAllText($r, 'FAIL: the setup file changed before it could run')\n"
+            "    exit 9\n"
+            "  }\n"
+            "  Invoke-Expression $t\n"
+            "  [IO.File]::WriteAllText($r, 'OK')\n"
+            "} catch {\n"
+            "  [IO.File]::WriteAllText($r, 'FAIL: ' + $_.Exception.Message)\n"
+            "  exit 1\n"
+            "}\n")
+    else:
+        stub = (
+            f"$f = {_psq(script_file)}\n"
+            "$t = [IO.File]::ReadAllText($f)\n"
+            "$h = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash("
+            "[Text.Encoding]::UTF8.GetBytes($t))) -replace '-', '').ToLower()\n"
+            f"if ($h -ne {_psq(digest)}) {{ exit 9 }}\n"
+            "Invoke-Expression $t\n")
     launcher = (
         "$ErrorActionPreference = 'Stop'\n"
         "Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList @("
@@ -248,21 +270,52 @@ _STATUS_SCRIPT = (
     "ConvertTo-Json -InputObject $rows -Compress\n")
 
 
-def _read_tasks(runner: Callable) -> list[dict] | None:
-    """The tasks under \\Jarvis\\Caretaker\\ as dicts, or None when Windows can't be asked."""
+def clean_note(text: str, limit: int = 200) -> str:
+    """Text that came from Windows or a file, made safe to show: one line, no control characters, capped."""
+    one = re.sub(r"[\x00-\x1f\x7f]+", " ", str(text or "")).strip()
+    return (one[: limit - 1] + "…") if len(one) > limit else one
+
+
+def _read_tasks_why(runner: Callable) -> tuple[list[dict] | None, str]:
+    """(tasks, "") or (None, why Windows couldn't be asked)."""
     rc, out = runner(ps_argv(_STATUS_SCRIPT))
+    if rc == -1:
+        return None, "PowerShell didn't answer (it may have timed out or been blocked)"
     if rc != 0:
-        return None
+        first = clean_note((out or "").strip().splitlines()[0] if (out or "").strip() else "", 120)
+        return None, f"PowerShell reported an error (code {rc})" + (f": {first}" if first else "")
     out = (out or "").strip()
     if not out:
-        return []
+        return [], ""
     try:
         data = json.loads(out)
     except ValueError:
-        return None
+        return None, "Windows answered in a form I couldn't read"
     if isinstance(data, dict):
         data = [data]
-    return [r for r in data if isinstance(r, dict)] if isinstance(data, list) else None
+    if not isinstance(data, list):
+        return None, "Windows answered in a form I couldn't read"
+    return [r for r in data if isinstance(r, dict)], ""
+
+
+def _read_tasks(runner: Callable) -> list[dict] | None:
+    """The tasks under \\Jarvis\\Caretaker\\ as dicts, or None when Windows can't be asked."""
+    return _read_tasks_why(runner)[0]
+
+
+def read_setup_result(path: str | Path) -> tuple[str | None, str]:
+    """What the elevated installer wrote: ("ok", ""), ("fail", reason) or (None, "") while there is nothing yet.
+    Any local program could have written that file, so it is only ever shown, never acted on."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None, ""
+    text = text.lstrip("﻿").strip()
+    if text == "OK":
+        return "ok", ""
+    if text.startswith("FAIL"):
+        return "fail", clean_note(text[4:].lstrip(": "), 160) or "it stopped without saying why"
+    return None, ""
 
 
 def _user_key(u: str) -> str:
@@ -289,8 +342,9 @@ def status(runner: Callable = win.run_cmd, *, env=None, reader: Callable[[str], 
            "installed": False, "known": False}
     if not out["supported"]:
         return out
-    rows = _read_tasks(runner)
+    rows, why_not = _read_tasks_why(runner)
     if rows is None:
+        out["error"] = why_not
         return out
     out["known"] = True
     by_name = {r.get("name"): r for r in rows}
