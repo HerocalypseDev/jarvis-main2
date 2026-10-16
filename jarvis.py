@@ -324,6 +324,12 @@ _pending_action: dict | None = None
 _muted_until: float = 0.0
 
 
+# A bare "shut up" / "be quiet" (no "for N minutes") also mutes unprompted speech for this long (owner report
+# 2026-10-16: it only cut the current sentence, and the next folder-watch message was read out anyway).
+HUSH_MUTE_MIN = 10
+_HUSH_MUTE_RE = re.compile(r"\b(?:shut up|be quiet|quiet|silence|hush)\b", re.I)
+
+
 def _is_muted() -> bool:
     return time.monotonic() < _muted_until
 
@@ -1508,8 +1514,8 @@ def speak_text(text: str) -> None:
     t = _sanitize_for_speech(personality.spoken(speech_script.for_speech(text, _pronounce_with_model)))
     if not t:
         return
-    if _is_muted():
-        return  # "shut up for the next 10 minutes": every spoken reply is skipped until it expires
+    if _is_muted() and _current_command_source() not in ("voice", "text", "dashboard"):
+        return  # "shut up for 10 minutes": nothing unprompted is spoken until it expires; a reply to a new command still is
     _await_ack()  # a spoken lead-in ("On it.") started for this command finishes before anything else
 
     lat = latency.current()
@@ -4884,6 +4890,9 @@ def queue_or_deliver_notification(
         if quiet_asleep:
             log.info("Held for the wake-up recap (Sleep Mode active): %r", text)
             return
+    if _is_muted():
+        _add_missed(text)  # the owner said "shut up": kept for "what did I miss", never spoken while the mute lasts
+        return
     if not (urgent or is_reminder or bypass_busy_gate or important) and _quiet_assistant():
         _add_missed(text)
         return
@@ -15493,7 +15502,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
             minutes = int(m.group(1))
             if 1 <= minutes <= 1440:
                 _muted_until = time.monotonic() + minutes * 60
-                return f"Okay, I'll be quiet for {minutes} minute{'s' if minutes > 1 else ''}."
+                return (f"Okay, I'll be quiet for {minutes} minute{'s' if minutes > 1 else ''}. "
+                        "Anything that comes in waits in what you missed.")
             return f"Minutes must be between 1 and 1440, got {minutes}."
         # talk again / cancel mute
         if any(kw in low for kw in ["talk again", "unmute", "start talking", "speak again"]):
@@ -15502,6 +15512,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return None
     if intent == "hush":
         _interrupt_speech()  # stop whatever is still playing, and say nothing back
+        if _HUSH_MUTE_RE.search(transcript or ""):  # "shut up" also keeps unprompted speech quiet for a while; "stop" doesn't
+            _muted_until = max(_muted_until, time.monotonic() + HUSH_MUTE_MIN * 60)
         return ""
     if intent == "media":
         return _media_reply(transcript)
@@ -16344,7 +16356,8 @@ def main() -> int:
         )
     _start_health_monitor()
     filewatcher.start_watching(
-        notifier=lambda text, urgent: queue_or_deliver_notification(text, urgent=urgent)
+        # A large file is worth noting, not urgent: urgent=True skipped the quiet gate, Focus/safe mode and the mute
+        notifier=lambda text, urgent: queue_or_deliver_notification(text)
     )
     log.info("File watcher running (%s, poll every %ds).",
               ", ".join(filewatcher.watcher.list_paths()), filewatcher.watcher.poll_interval)
