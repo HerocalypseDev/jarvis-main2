@@ -63,7 +63,7 @@ def test_an_action_cannot_be_pointed_at_a_different_skill_or_app():
     iss = _issue(SKILL)
     ok = ai.validate({"steps": [{"action": "rerun_skill", "args": {"name": "GMAIL_WATCH"}}]}, iss)
     assert ok["steps"] == [{"action": "rerun_skill", "args": {"name": "gmail_watch"}}]    # evidence's own spelling
-    other = ai.validate({"steps": [{"action": "rerun_skill", "args": {"name": "homework_watch"}}]}, iss)
+    other = ai.validate({"steps": [{"action": "rerun_skill", "args": {"name": "weekly_report"}}]}, iss)
     assert other["steps"] == [] and other["rejected"]
     crash = _issue(ct.crash_finding("opera.exe", 4, "d3d.dll"))
     assert ai.validate({"steps": [{"action": "clear_app_cache", "args": {"app": "chrome.exe"}}]}, crash)["steps"] == []
@@ -129,8 +129,8 @@ def test_signatures_ignore_the_program_and_templates_fit_the_next_one():
     steps = ai.validate({"steps": [{"action": "rerun_skill", "args": {"name": "gmail_watch"}}]}, a)["steps"]
     tpl = ai.templatize(steps, a)
     assert tpl == [{"action": "rerun_skill", "args": {"name": "$name"}}]
-    b = _issue(ct.self_failure_finding("skill", "homework_watch", "(nothing to report)", 3))
-    assert ai.fill(tpl, b) == [{"action": "rerun_skill", "args": {"name": "homework_watch"}}]
+    b = _issue(ct.self_failure_finding("skill", "weekly_report", "(nothing to report)", 3))
+    assert ai.fill(tpl, b) == [{"action": "rerun_skill", "args": {"name": "weekly_report"}}]
     # a stored plan is validated like a model answer: it can't be bent onto another kind of issue
     assert ai.fill(tpl, _issue(NET)) == []
 

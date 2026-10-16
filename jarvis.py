@@ -6605,7 +6605,7 @@ def _run_scheduled_skill(skill: dict) -> None:
     log.info("Running scheduled skill %r.", skill["name"])
     # Quiet (owner 2026-10-15, "silence scheduled skills ... unless URGENT"): the start line is never spoken, it is
     # this run's session on the dashboard; the reply is spoken only when it starts with "URGENT:". Exception the owner
-    # chose the same day: an "announce" skill (morning_briefing, homework_watch) still has its reply read out.
+    # chose the same day: an "announce" skill (such as morning_briefing) still has its reply read out.
     line = _skill_start_line(skill)
     log.info("Skill %r start line: %s", skill["name"], line)
     session_id = dashboard.start_session("scheduled", f"{skill['name']}: {line}")

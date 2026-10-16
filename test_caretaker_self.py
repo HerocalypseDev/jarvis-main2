@@ -160,7 +160,7 @@ def _age_actions(jv, key, minutes):
 def skills(jv, monkeypatch):
     runs = []
     monkeypatch.setattr(jv, "_load_skills", lambda: [{"name": "gmail_watch", "instructions": "x"},
-                                                      {"name": "homework_watch", "instructions": "y"}])
+                                                      {"name": "weekly_report", "instructions": "y"}])
     monkeypatch.setattr(jv, "_skills_off", lambda: set())
     monkeypatch.setattr(jv, "_run_single_flight", lambda name, fn, *a: runs.append((name, a[0]["name"])) or True)
     return runs
