@@ -280,6 +280,16 @@ def plan_self_fix(issue: dict, last_try: dict | None, now: datetime | None = Non
     return {"do": "none", "why": "", "count_failed": False}   # doctor findings, crashes: the page explains them
 
 
+def _keep_ai_evidence(new: dict, old_json: str | None) -> dict:
+    """A fresh scan rewrites an issue's evidence; the AI diagnosis (ai_* keys) stays until the issue closes."""
+    try:
+        old = json.loads(old_json) if old_json else {}
+    except (ValueError, TypeError):
+        old = {}
+    kept = {k: v for k, v in old.items() if isinstance(k, str) and k.startswith("ai_")}
+    return {**new, **kept} if kept else new
+
+
 # --- issue tracker: the memory that stops Jarvis repeating itself -------------------------------
 class Store:
     """caretaker_issues (one row per problem, so 'this keeps failing' is a count) and
@@ -294,6 +304,9 @@ class Store:
             key TEXT PRIMARY KEY, category TEXT, severity TEXT, title TEXT, evidence TEXT,
             status TEXT DEFAULT 'open', attempts INTEGER DEFAULT 0, tried TEXT,
             first_seen TEXT, last_seen TEXT, resolved_at TEXT)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS caretaker_lessons (
+            sig TEXT PRIMARY KEY, plan TEXT, successes INTEGER DEFAULT 0, failures INTEGER DEFAULT 0,
+            promoted INTEGER DEFAULT 0, updated TEXT)""")
         c.execute("""CREATE TABLE IF NOT EXISTS caretaker_actions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, issue_key TEXT, ts TEXT, tier TEXT,
             action TEXT, detail TEXT, result TEXT, freed_bytes INTEGER DEFAULT 0,
@@ -306,7 +319,7 @@ class Store:
         now = datetime.now().isoformat(timespec="seconds")
         with self._conn() as c:
             for f in findings:
-                row = c.execute("SELECT status, first_seen FROM caretaker_issues WHERE key=?",
+                row = c.execute("SELECT status, first_seen, evidence FROM caretaker_issues WHERE key=?",
                                 (f.key,)).fetchone()
                 if row is None:
                     c.execute("""INSERT INTO caretaker_issues
@@ -315,10 +328,12 @@ class Store:
                               (f.key, f.category, f.severity, f.title,
                                json.dumps(f.evidence), now, now))
                     continue
-                status, first_seen = row
+                status, first_seen, old_ev = row
+                # an earlier episode's diagnosis doesn't carry over once the problem had been closed
+                f_ev = f.evidence if status in ("fixed", "resolved") else _keep_ai_evidence(f.evidence, old_ev)
                 if status == "ignored":
                     c.execute("UPDATE caretaker_issues SET last_seen=?,severity=?,title=?,evidence=? WHERE key=?",
-                              (now, f.severity, f.title, json.dumps(f.evidence), f.key))
+                              (now, f.severity, f.title, json.dumps(f_ev), f.key))
                     continue
                 if status == "gave_up":
                     gu = c.execute("SELECT resolved_at FROM caretaker_issues WHERE key=?", (f.key,)).fetchone()[0]
@@ -328,13 +343,13 @@ class Store:
                         retry = True
                     if not retry:   # still the same problem: keep it as gave_up, just refresh what it looks like
                         c.execute("UPDATE caretaker_issues SET severity=?,title=?,evidence=?,last_seen=? WHERE key=?",
-                                  (f.severity, f.title, json.dumps(f.evidence), now, f.key))
+                                  (f.severity, f.title, json.dumps(f_ev), now, f.key))
                         continue
                     c.execute("UPDATE caretaker_issues SET attempts=0,tried=NULL WHERE key=?", (f.key,))
                 new_status = "open" if status in ("fixed", "resolved", "gave_up") else status
                 c.execute("""UPDATE caretaker_issues SET severity=?,title=?,evidence=?,status=?,
                              last_seen=?,resolved_at=NULL WHERE key=?""",
-                          (f.severity, f.title, json.dumps(f.evidence), new_status, now, f.key))
+                          (f.severity, f.title, json.dumps(f_ev), new_status, now, f.key))
         return self.open_issues()
 
     def resolve_missing(self, current_keys: set, sensors_ok: set) -> list[str]:
@@ -464,6 +479,88 @@ class Store:
         with self._conn() as c:   # attempts stay as they are: "gave up after 0 tries" shows as "needs you"
             c.execute("UPDATE caretaker_issues SET tried=?,status='gave_up',resolved_at=? WHERE key=?",
                       (json.dumps(tried[-10:]), datetime.now().isoformat(timespec="seconds"), key))
+
+    def set_evidence(self, key: str, **extra) -> None:
+        """Add keys to an issue's evidence (the AI diagnosis uses ai_* names, which a rescan keeps)."""
+        iss = self.get(key)
+        if not iss:
+            return
+        with self._conn() as c:
+            c.execute("UPDATE caretaker_issues SET evidence=? WHERE key=?",
+                      (json.dumps({**iss["evidence"], **extra}), key))
+
+    def reopen(self, key: str) -> None:
+        """Back to 'open' with a clean slate (after the AI planned something new to try)."""
+        with self._conn() as c:
+            c.execute("UPDATE caretaker_issues SET status='open',attempts=0,resolved_at=NULL WHERE key=?", (key,))
+
+    def count_actions_since(self, action: str, hours: float) -> int:
+        cutoff = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
+        with self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM caretaker_actions WHERE action=? AND ts>=?",
+                             (action, cutoff)).fetchone()[0]
+
+    def set_action_result(self, action_id: int, result: str) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE caretaker_actions SET result=? WHERE id=?", (result, action_id))
+
+    # --- learned playbooks: a plan the AI made that verifiably worked, kept so it needs no model call next time
+    def lesson_get(self, sig: str) -> dict | None:
+        with self._conn() as c:
+            r = c.execute("SELECT sig,plan,successes,failures,promoted,updated FROM caretaker_lessons WHERE sig=?",
+                          (sig,)).fetchone()
+        return self._lesson(r) if r else None
+
+    def lessons(self) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute("SELECT sig,plan,successes,failures,promoted,updated FROM caretaker_lessons "
+                             "ORDER BY promoted DESC, successes DESC, updated DESC").fetchall()
+        return [self._lesson(r) for r in rows]
+
+    @staticmethod
+    def _lesson(r) -> dict:
+        try:
+            plan = json.loads(r[1]) if r[1] else []
+        except (ValueError, TypeError):
+            plan = []
+        return {"sig": r[0], "plan": plan, "successes": r[2], "failures": r[3], "promoted": bool(r[4]),
+                "updated": r[5]}
+
+    def lesson_save(self, sig: str, plan: list[dict]) -> None:
+        """Remember the plan the AI made for this kind of problem (replaces a different, unpromoted one)."""
+        now = datetime.now().isoformat(timespec="seconds")
+        cur = self.lesson_get(sig)
+        with self._conn() as c:
+            if cur is None:
+                c.execute("INSERT INTO caretaker_lessons (sig,plan,successes,failures,promoted,updated) "
+                          "VALUES (?,?,0,0,0,?)", (sig, json.dumps(plan), now))
+            elif not cur["promoted"] and cur["plan"] != plan:
+                c.execute("UPDATE caretaker_lessons SET plan=?,successes=0,failures=0,updated=? WHERE sig=?",
+                          (json.dumps(plan), now, sig))
+
+    def lesson_outcome(self, sig: str, ok: bool, *, promote_after: int, demote_after: int) -> dict | None:
+        """Count one verified success/failure of a plan. Promotes after `promote_after` successes; a promoted plan
+        that fails `demote_after` times is demoted (the model is asked again). Returns the lesson."""
+        cur = self.lesson_get(sig)
+        if cur is None:
+            return None
+        succ, fail, promoted = cur["successes"], cur["failures"], cur["promoted"]
+        if ok:
+            succ += 1
+            if succ >= promote_after:
+                promoted = True
+        else:
+            fail += 1
+            if promoted and fail >= demote_after:
+                promoted, succ, fail = False, 0, 0
+        with self._conn() as c:
+            c.execute("UPDATE caretaker_lessons SET successes=?,failures=?,promoted=?,updated=? WHERE sig=?",
+                      (succ, fail, 1 if promoted else 0, datetime.now().isoformat(timespec="seconds"), sig))
+        return self.lesson_get(sig)
+
+    def lesson_delete(self, sig: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM caretaker_lessons WHERE sig=?", (sig,))
 
     def mark_undone(self, action_id: int) -> None:
         with self._conn() as c:

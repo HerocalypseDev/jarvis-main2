@@ -50,8 +50,11 @@ function ctIssueRow(i) {
   const gaveUp = i.status === "gave_up";
   const tried = (i.tried || []).length
     ? `<div class="muted">Tried: ${(i.tried || []).map(esc).join("; ")}</div>` : "";
-  const advice = (i.evidence && i.evidence.advice)
-    ? `<div class="muted">${esc(i.evidence.advice)}</div>` : "";
+  const ev = i.evidence || {};
+  const advice = (ev.advice ? `<div class="muted">${esc(ev.advice)}</div>` : "") +
+    (ev.ai_cause || ev.ai_advice
+      ? `<div class="muted"><strong>${ev.ai_source === "learned" ? "From a learned fix" : "AI diagnosis"}:</strong> ` +
+        `${esc([ev.ai_cause, ev.ai_advice].filter(Boolean).join(" "))}</div>` : "");
   return `
     <li class="list-item ${CT_SEV_CLASS[i.severity] || ""}">
       <span class="src-badge">${esc(i.severity)}</span>
@@ -80,6 +83,17 @@ function ctActionRow(a) {
     </li>`;
 }
 
+function ctLessonRow(l) {
+  const steps = (l.plan || []).map((p) => p.action.replace(/_/g, " ")).join(", ") || "advice only";
+  return `
+    <li class="list-item compact">
+      <span class="src-badge">${l.promoted ? "learned" : "trying"}</span>
+      <span>${esc(l.sig.replace("|", " / "))}: ${esc(steps)}
+        <span class="muted">&middot; worked ${esc(String(l.successes))}x${l.failures ? ", failed " + esc(String(l.failures)) + "x" : ""}</span></span>
+      <button class="btn btn-ghost" type="button" data-ct-forget="${escAttr(l.sig)}">Forget</button>
+    </li>`;
+}
+
 async function refreshCaretaker(message) {
   const view = document.getElementById("view-caretaker");
   if (!view) return;
@@ -100,6 +114,12 @@ async function refreshCaretaker(message) {
   document.getElementById("ct-actions").innerHTML = actions.length
     ? actions.map(ctActionRow).join("")
     : `<li class="empty-state">No fixes yet.</li>`;
+  const lessons = rep.lessons || [];
+  const lblock = document.getElementById("ct-lessons-block");
+  if (lblock) {
+    lblock.hidden = !lessons.length;
+    document.getElementById("ct-lessons").innerHTML = lessons.map(ctLessonRow).join("");
+  }
   if (status) {
     const last = rep.last_scan && rep.last_scan.at;
     status.textContent = message ? message : !rep.enabled ? "The Caretaker is switched off in Settings (JARVIS_CARETAKER)."
@@ -147,6 +167,14 @@ document.getElementById("ct-actions")?.addEventListener("click", async (e) => {
     msg = r && r.result;
   } catch (err) { alert("Undo failed: " + err.message); }
   refreshCaretaker(msg);
+});
+
+document.getElementById("ct-lessons")?.addEventListener("click", async (e) => {
+  const sig = e.target.dataset.ctForget;
+  if (!sig) return;
+  if (!confirm("Forget this learned fix? Jarvis will ask the AI again next time.")) return;
+  try { await ctPost("forget_lesson", { sig }); } catch (err) { alert(err.message); }
+  refreshCaretaker();
 });
 
 // app.js routes before this file loads: a direct #/caretaker link must still fill the page.

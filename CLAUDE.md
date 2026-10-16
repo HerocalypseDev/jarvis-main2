@@ -1827,7 +1827,8 @@ row there each phase rather than only stating the total in chat.
 | 163 (Caretaker phase 2: storage playbook (caches, old Recycle Bin items, old installers to a 7-day holding folder), undo, budgets, issues close themselves, fix/undo/holding tool actions, Fix now + Undo on the page; caught a held-bytes-counted-as-freed lie and hidden gave-up issues; 34 new tests, 2 mutation checks) | Opus 5.5 | ~45 min | ~$3.50–$4.80 |
 | 164 (Caretaker phase 3: Jarvis repairs its own failures: classified causes with plain advice, failing skills re-run with limits, down tool servers reconnected, sign-in/credit/wrong-tool causes explained once and quietly, jobs never re-run, new agent sensor; 31 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | 165 (Caretaker phase 4: Windows playbooks without admin rights: CPU hog priority lowered (undoable, never closed, never the front app), network re-check/DNS flush/Wi-Fi reconnect, crash-loop cache clear, advice on every finding, undo for priority changes; 27 new tests, 3 mutation checks, headless page check) | Sonnet 5.5 | ~30 min | ~$2.20–$3.00 |
-| **Running total (final)** | | **~4999 min** | **~$341.95–$480.65** |
+| 166 (Caretaker phase 5: model diagnoses what the playbooks could not, behind a validator with fixed menus bound to the issue's own evidence; daily cap; learned playbooks promoted after 2 verified successes and demoted after 2 failures, Forget button on the page; 22 new tests, 8 mutation checks, headless page check) | Sonnet 5.5 | ~45 min | ~$3.20–$4.40 |
+| **Running total (final)** | | **~5044 min** | **~$345.15–$485.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2983,3 +2984,31 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
   tests fail without the front-app re-check, the protected list or the own-user check. Not verified on a real PC: `netsh wlan`
   output parsing, `ipconfig /flushdns` needing admin, psutil priority classes, the real cache folder layout.
 
+- **Phase 5 (AI fallback + learned playbooks, `jarvis_caretaker_ai.py`, `test_caretaker_ai.py`)**: when the fixed playbooks gave up,
+  or there is none (Windows Update/Defender), the active brain diagnoses the problem. **The model is a planner behind a validator,
+  never an executor**: it answers JSON and `validate()` keeps only what is on a fixed menu. DIAGNOSTICS are read-only
+  (top processes, disk usage, network summary, service status, recent errors, updates summary; PowerShell ones take only
+  validated values). ACTIONS are the existing playbook actions (`fix_network`, `lower_priority`, `clear_app_cache`, ...), each
+  bound to the issue's OWN evidence (`bind`): a step naming another skill/app/process, an off-menu action, extra arguments or a
+  free-text command is rejected and shown as rejected. `advise` is text for the owner, shown, never run. Mutation checks
+  confirmed the tests fail without the bind comparison, the extra-argument check, the menu check, the eligibility list, the
+  promote/demote thresholds and the daily cap. `register_action` is how phase 6 adds the admin actions: each needs `categories`,
+  `bind` and `desc`.
+- **Phase 5 limits**: eligible = gave up after an attempt (not sign-in/credit/quota causes, which are already explained; never
+  `disk_health`, `storage`, `self_doctor`, `battery`) or an update issue with no playbook; one diagnosis per issue per 24 h (2 h
+  retry after "unavailable"); at most `AI_CALLS_PER_DAY` (6) model calls a day and 2 per diagnosis (round 1 may ask for up to 3
+  diagnostics, round 2 is final); `JARVIS_CARETAKER_AI=0` turns it off, safe mode and `autonomy.hard_disabled()` stop it. Model
+  text is cleaned (`clean_text`: no links/addresses/control characters, secrets masked, injection neutralised) and logs are framed
+  as data in the prompt. `ai_*` evidence (cause/advice/source) survives rescans and shows on the page as "AI diagnosis".
+  **Data exposure**: the issue's facts and the diagnostics output go to the active brain (Gemini free tier may use them to
+  improve Google products).
+- **Learned playbooks**: a plan with at least one succeeded step is saved by problem kind (`signature`: `network|dns_failing`,
+  `crash|graphics`; steps stored as `$name/$app` templates and re-validated by `fill` every time, so a stored plan can never name
+  something the new issue doesn't own). It is credited when that issue closes within 48 h of the plan's `ai_diagnose` action
+  (`_caretaker_ai_credit_closed`), PROMOTED after `PROMOTE_AFTER` (2) verified successes (then it runs with NO model call), counted
+  as a failure if the issue is still open 24 h after a promoted plan ran, and demoted after `DEMOTE_AFTER` (2) failures (the model
+  is asked again). The page lists learned fixes with a Forget button (`forget_lesson`). The `caretaker` tool gained
+  `diagnose`; it re-checks the menu like everything else and is blocked in email-started and tainted runs.
+- Not verified on a real PC: the PowerShell diagnostics' real output, how often a live model gives a usable plan, and whether a
+  plan really clears a stuck issue (the tests script the model). The AI cannot run anything outside the phase 2-4 actions until
+  phase 6 registers admin ones. Priority lowering does not reduce CPU use, it only makes the program yield.

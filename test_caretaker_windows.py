@@ -298,7 +298,8 @@ def test_a_running_app_is_retried_later_and_an_unknown_app_only_gets_advice(jv, 
     assert jv._caretaker_fix_all() == [] and len(jv._said) == 1 and "reinstall" in jv._said[0][0]
 
 
-def test_a_failing_disk_and_windows_update_have_no_automatic_fix(jv):
+def test_a_failing_disk_and_windows_update_have_no_automatic_fix(jv, monkeypatch):
+    monkeypatch.setenv("JARVIS_CARETAKER_AI", "0")      # the AI fallback has its own tests
     _open(jv, ct.disk_health_finding("0", "Warning"))
     _open(jv, ct.update_finding(3, 9))
     assert jv._caretaker_fix_all() == [] and len(jv._caretaker_store.open_issues()) == 2

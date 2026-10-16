@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 import jarvis_caretaker as ct
+import jarvis_caretaker_ai as ct_ai
 
 IS_WIN = sys.platform == "win32"
 _cpu_since: dict[str, float] = {}   # process name -> monotonic time it first went above the CPU threshold
@@ -322,3 +323,89 @@ def disk_free_fraction(path: str | os.PathLike = ".") -> float:
         return u.free / u.total if u.total else 1.0
     except OSError:
         return 1.0
+
+
+# --- read-only diagnostics the AI fallback (and "why is my PC slow?") may ask for -----------------
+# Fixed menu (jarvis_caretaker_ai.DIAGNOSTICS). Arguments are re-checked here even though the caller already did:
+# the PowerShell below only ever receives an enum value, an int in range, or a name matching a strict pattern.
+def _diag_top_processes(by: str = "cpu") -> str:
+    try:
+        import psutil
+    except ImportError:
+        return ""
+    procs = list(psutil.process_iter(["name", "memory_info"]))
+    for p in procs:                       # the first cpu_percent() call only primes the counter
+        try:
+            p.cpu_percent(interval=None)
+        except (psutil.Error, OSError):
+            pass
+    time.sleep(0.5)
+    rows = []
+    for p in procs:
+        try:
+            cpu = p.cpu_percent(interval=None) / max(1, psutil.cpu_count() or 1)
+            mem = (p.info.get("memory_info").rss if p.info.get("memory_info") else 0) / 1024 ** 2
+            rows.append((p.info.get("name") or "?", cpu, mem))
+        except (psutil.Error, OSError):
+            continue
+    rows.sort(key=lambda r: r[1] if by == "cpu" else r[2], reverse=True)
+    return "\n".join(f"{n}: {c:.0f}% CPU, {m:.0f} MB" for n, c, m in rows[:8])
+
+
+def _diag_disk_usage() -> str:
+    try:
+        import psutil
+    except ImportError:
+        return ""
+    out = []
+    for part in psutil.disk_partitions(all=False):
+        try:
+            u = psutil.disk_usage(part.mountpoint)
+        except OSError:
+            continue
+        out.append(f"{part.device or part.mountpoint}: {u.percent:.0f}% used, {u.free / 1024 ** 3:.1f} GB free")
+    return "\n".join(out)
+
+
+def _diag_network_summary() -> str:
+    lines = []
+    try:
+        import psutil
+        up = [n for n, s in psutil.net_if_stats().items() if s.isup and "loopback" not in n.lower()]
+        lines.append("adapters up: " + (", ".join(up[:6]) or "none"))
+    except Exception:
+        pass
+    findings = probe_network()
+    lines.append("internet and DNS answer normally" if not findings else findings[0].title)
+    return "\n".join(lines)
+
+
+def diagnostic(name: str, args: dict | None = None) -> str:
+    """One read-only look at the machine as short plain text ('' on any failure or a bad request)."""
+    clean = ct_ai.check_diagnostic(name, args)
+    if clean is None:
+        return ""
+    try:
+        if name == "top_processes":
+            return _diag_top_processes(clean.get("by", "cpu"))
+        if name == "disk_usage":
+            return _diag_disk_usage()
+        if name == "network_summary":
+            return _diag_network_summary()
+        if name == "service_status":
+            return _ps(f"Get-Service -Name '{clean['name']}' -ErrorAction SilentlyContinue | "
+                       "ForEach-Object { $_.Name + ': ' + $_.Status + ', starts ' + $_.StartType }").strip()
+        if name == "recent_errors":
+            src = f";ProviderName='{clean['source']}'" if clean.get("source") else ""
+            return _ps(f"Get-WinEvent -FilterHashtable @{{LogName='{clean['log']}';Level=1,2;"
+                       f"StartTime=(Get-Date).AddHours(-{int(clean['hours'])}){src}}} -MaxEvents 8 "
+                       "-ErrorAction SilentlyContinue | ForEach-Object { $_.TimeCreated.ToString('HH:mm') + ' ' + "
+                       "$_.ProviderName + ' ' + $_.Id + ': ' + (($_.Message -split \"`n\")[0]) }").strip()
+        if name == "updates_summary":
+            hot = _ps("Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 3 | "
+                      "ForEach-Object { $_.HotFixID + ' installed ' + $_.InstalledOn.ToString('yyyy-MM-dd') }").strip()
+            age = _ps("((Get-Date) - (Get-MpComputerStatus).AntivirusSignatureLastUpdated).Days").strip()
+            return (hot + ("\n" if hot else "") + (f"antivirus definitions are {age} day(s) old" if age else "")).strip()
+    except Exception:
+        return ""
+    return ""
