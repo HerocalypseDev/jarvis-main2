@@ -1562,7 +1562,7 @@ accepted; only the catastrophic tier needs a yes.** Rules to keep (tests: `test_
   due time via `_deferred_tick` -> `run_agent_loop` with command source `autonomy_deferred` (so
   change_jarvis_code/delegate start; attended-only actions stay refused). Never turn it back into a spoken
   reminder. Claim is atomic; dedupe window 20 min; only transient failures retry.
-- Jobs come only from the user: `schedule_jarvis_task` (refused for autonomous/unattended/untrusted runs),
+- Jobs come from the user or (since 2026-10-16, see "Self-scheduling") Jarvis's own runs: `schedule_jarvis_task` (refused only for runs that came from or read outside text),
   `create_reminder("remind Jarvis to X")` from a user request, or extraction where `executor=jarvis` AND the
   quote is in the USER's own words from a `conversation` turn. Mail/messages/files never create jobs.
 - Reminders speak only their content (`_reminder_content`); turns where a scheduling tool ran are recorded
@@ -1822,7 +1822,8 @@ row there each phase rather than only stating the total in chat.
 | 158 (debug report of 2026-10-07: false cleared/looked-up claims caught, autonomy origin lookup, document backup before script edits, force-close asks, fake checks and login-file hunts refused, time-zone questions, homework error reason, startup stagger, self-check note; 27 new tests) | Sonnet 5.5 | ~45 min | ~$3.00–$4.20 |
 | 160 (recovery audit of the 2026-10-15 "silence scheduled skills and queued tasks unless URGENT" commit: announce skills silenced (restored at the owner's choice), queued URGENT read out with its prefix, outside-text tasks could make themselves urgent, inbox bypassed `all` mode, bare "OK" stored, no dashboard session for queued runs, 2 tests left failing; tests no longer write the repo's jarvis_memory.db; 22 new/updated tests) | Opus 5.5 | ~60 min | ~$4.00–$5.50 |
 | 159 ("Jarvis keeps closing": the microphone loop had no safety net, so a device hiccup or any error in it ended the program; now supervised: reopens the mic with backoff, crash log + native-crash dump, spoken "Microphone reconnected."; 11 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~4844 min** | **~$329.95–$464.05** |
+| 161 (self-scheduling, "All but email": Jarvis's own runs may make jobs, background agents, watches and campaign steps; email/web-started runs still can't; self-made jobs capped at 20; 9 new tests, 3 updated) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~4869 min** | **~$331.95–$466.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2899,3 +2900,17 @@ the audit the same day fixed them. Rules to keep (tests: `test_quiet.py`, `test_
   repo's real `jarvis_memory.db`.
 - Not verified live on the PC: hear the 8 AM morning_briefing read out with no start line before it; hear an URGENT skill reply
   and a queued task land in the Home card on the real scheduler and TTS.
+
+## Self-scheduling (2026-10-16, owner choice "All but email")
+
+Owner asked for Jarvis to be able to create and schedule work by itself. Tests: `test_self_scheduling.py` (9). Rules to keep:
+- Jarvis's own runs (scheduled skills, queued tasks, deferred jobs, the AI inside any command, phone included) may create
+  deferred jobs (`schedule_jarvis_task`, origin `jarvis`, run quietly like autonomy's), background agents (create/
+  delete/enable/disable), watches, skills, reminders, queued tasks and autonomy campaign steps (`add_project`/`add_action`/
+  `approve_campaign`, via `handle_tool(..., self_run=True)`).
+- One check, `_self_scheduling_problem`: a run that came from someone else's text (`untrusted_origin`: autonomy agent runs,
+  `[untrusted-origin]` tasks) or has read it (`outside_text_seen`) still can't. Never relax that: a planted job/agent runs
+  later with full tools. Approving/dismissing autonomy cards and changing commitments stay with a person at the PC.
+- `SELF_JOBS_MAX_PENDING` (20) caps Jarvis-made jobs waiting at once. The catastrophic gate is unchanged.
+- Not verified live: how often the real model actually schedules things on its own (check the audit trail).
+

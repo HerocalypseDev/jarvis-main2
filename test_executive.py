@@ -110,8 +110,13 @@ def test_live_tool_path_and_reminder_safety_net(J):
         J._command_ctx.source = None
     assert sorted(j["instruction"] for j in deferred.list_jobs(J._deferred_store)) == [
         "Change the code in C:/p/app.py to add logging", "Send Sam the report"]
-    # unattended / autonomous runs can't plant jobs
-    assert "Refused" in J._schedule_jarvis_task_tool({"instruction": "x", "due_in_minutes": 1})
+    # Jarvis's own unattended run may schedule (owner 2026-10-16); one that came from an email may not
+    assert "Scheduled job #" in J._schedule_jarvis_task_tool({"instruction": "x", "due_in_minutes": 1})
+    J._command_ctx.untrusted_origin = True
+    try:
+        assert "Refused" in J._schedule_jarvis_task_tool({"instruction": "y", "due_in_minutes": 1})
+    finally:
+        J._command_ctx.untrusted_origin = False
 
 
 def test_dedupe_one_request_one_job(J):

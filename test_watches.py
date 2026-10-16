@@ -130,12 +130,14 @@ def test_make_list_edit_and_delete_a_watch(J):
     assert "exam_timetable" not in J._watches_tool({"action": "list"})
 
 
-def test_an_automatic_run_cannot_make_or_change_a_watch(J, monkeypatch):
+def test_an_email_started_run_cannot_make_or_change_a_watch(J, monkeypatch):
+    # Owner 2026-10-16: Jarvis's own runs may make watches; a run that came from or read outside text may not
     _make(J)
     monkeypatch.setattr(J, "_current_command_source", lambda: None)
-    assert "can only be made or changed by the user" in J._watches_tool(
+    monkeypatch.setattr(J._command_ctx, "untrusted_origin", True, raising=False)
+    assert "can't be made or changed" in J._watches_tool(
         {"action": "create", "name": "x", "what": "y", "rule": "z"})
-    assert "can only be made or changed by the user" in J._watches_tool({"action": "delete", "name": "exam_timetable"})
+    assert "can't be made or changed" in J._watches_tool({"action": "delete", "name": "exam_timetable"})
     assert "exam_timetable" in J._watches_tool({"action": "list"})  # reading is fine
 
 

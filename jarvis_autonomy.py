@@ -206,6 +206,10 @@ _UNTRUSTED_TOOL_RE = re.compile(
 HUMAN_ONLY_ACTIONS = ("enable", "dry_run_off", "set_policy")
 ATTENDED_ONLY_ACTIONS = ("approve", "dismiss", "never", "add_action", "approve_campaign", "add_project",
                          "accept_commitment", "complete_commitment", "cancel_commitment")
+# Owner 2026-10-16 ("All but email"): Jarvis's own runs may plan campaign work too; jarvis.py passes self_run=True
+# only when the run neither came from nor read someone else's text. Approving/dismissing cards (often made from
+# mail) and changing commitments stay with a person at the PC.
+SELF_RUN_ACTIONS = ("add_action", "approve_campaign", "add_project")
 # Tools that already schedule something: a turn that used one is recorded, not re-actioned by extraction.
 # A commitment that is really "set a reminder ..." (the reminder itself fires on its own; nudging about it
 # too made Jarvis say "Heads up: Set a reminder for PPM tomorrow is overdue" on top of the reminder).
@@ -2709,7 +2713,7 @@ def _brief() -> str:
             f"{b['suggestions_today']}/{b['max_suggestions']} cards.")
 
 
-def handle_tool(inp: dict, source: str | None) -> str:
+def handle_tool(inp: dict, source: str | None, self_run: bool = False) -> str:
     """The model-facing `autonomy` tool. Under the full-permission model it can do everything except the
     settings changes in HUMAN_ONLY_ACTIONS (turn autonomy on, write/loosen policy rules, leave dry-run),
     which stay dashboard-only. Catastrophic actions are never decided here: they go through the normal
@@ -2724,7 +2728,7 @@ def handle_tool(inp: dict, source: str | None) -> str:
     # Audit H3: an agent run (e.g. one triggered by inbound mail) must not promote its own review
     # cards, dismiss/teach the policy loop, or schedule/approve campaign work. Those need a person at
     # the PC (voice/typed/dashboard). Disabling and dry-run-ON only make things safer, so stay open.
-    if action in ATTENDED_ONLY_ACTIONS and not attended:
+    if action in ATTENDED_ONLY_ACTIONS and not attended and not (self_run and action in SELF_RUN_ACTIONS):
         return (f"'{action}' changes what Jarvis will do on its own, so it is only accepted when you ask "
                 "from the PC (voice, typed or the dashboard), not from an unattended run or the phone.")
     if action == "status":
