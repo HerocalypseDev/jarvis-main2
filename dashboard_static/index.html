@@ -48,6 +48,7 @@
       <a href="#/daily" data-route="daily" class="nav-link"><span class="nav-icon">&#8635;</span><span class="nav-label">Daily</span></a>
       <a href="#/voice" data-route="voice" class="nav-link"><span class="nav-icon">&#127908;</span><span class="nav-label">Voice</span></a>
       <a href="#/memory" data-route="memory" class="nav-link"><span class="nav-icon">&#10070;</span><span class="nav-label">Memory</span></a>
+      <a href="#/caretaker" data-route="caretaker" class="nav-link"><span class="nav-icon">&#10010;</span><span class="nav-label">Caretaker</span></a>
       <a href="#/toolbox" data-route="toolbox" class="nav-link"><span class="nav-icon">&#9874;</span><span class="nav-label">Toolbox</span></a>
       <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></a>
     </nav>
@@ -254,6 +255,20 @@
       <ul id="victory-list" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
     </section>
 
+    <section id="view-caretaker" class="view">
+      <div class="view-head"><h1 class="view-title">Caretaker</h1>
+        <button id="ct-scan" class="btn btn-primary" type="button">Check now</button></div>
+      <p class="muted">What Jarvis noticed is wrong with this laptop or with itself, and what it fixed on its own.
+        Fixes that can be undone have an Undo button. Shutdown, format, wipe and force-closing a program still
+        wait for your yes.</p>
+      <p id="ct-status" class="muted"></p>
+      <div id="ct-cards" class="usage-cards"><div class="skeleton" aria-hidden="true" style="height:64px"></div></div>
+      <h3 class="block-title">Open problems</h3>
+      <ul id="ct-issues" class="list" aria-live="polite"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
+      <h3 class="block-title">What Jarvis did</h3>
+      <ul id="ct-actions" class="list compact"><li class="skeleton" aria-hidden="true"></li></ul>
+    </section>
+
     <section id="view-daily" class="view">
       <div class="view-head"><h1 class="view-title">Daily</h1></div>
       <ul id="daily-list" class="list compact"></ul>
@@ -451,5 +466,6 @@
 <script src="qol.js"></script>
 <script src="voice.js"></script>
 <script src="features.js"></script>
+<script src="caretaker.js"></script>
 </body>
 </html>

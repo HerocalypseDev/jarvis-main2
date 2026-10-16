@@ -1823,7 +1823,8 @@ row there each phase rather than only stating the total in chat.
 | 160 (recovery audit of the 2026-10-15 "silence scheduled skills and queued tasks unless URGENT" commit: announce skills silenced (restored at the owner's choice), queued URGENT read out with its prefix, outside-text tasks could make themselves urgent, inbox bypassed `all` mode, bare "OK" stored, no dashboard session for queued runs, 2 tests left failing; tests no longer write the repo's jarvis_memory.db; 22 new/updated tests) | Opus 5.5 | ~60 min | ~$4.00–$5.50 |
 | 159 ("Jarvis keeps closing": the microphone loop had no safety net, so a device hiccup or any error in it ended the program; now supervised: reopens the mic with backoff, crash log + native-crash dump, spoken "Microphone reconnected."; 11 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | 161 (self-scheduling, "All but email": Jarvis's own runs may make jobs, background agents, watches and campaign steps; email/web-started runs still can't; self-made jobs capped at 20; 9 new tests, 3 updated) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~4869 min** | **~$331.95–$466.85** |
+| 162 (Caretaker phase 1: sensors for storage/CPU hogs/crashes/disk health/updates/network/battery/Jarvis's own failures, issue tracker, Caretaker dashboard page + tool; headless check at 1440/390 px; 28 new tests) | Opus 5.5 | ~30 min | ~$2.50–$3.50 |
+| **Running total (final)** | | **~4899 min** | **~$334.45–$470.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2913,4 +2914,25 @@ Owner asked for Jarvis to be able to create and schedule work by itself. Tests: 
   later with full tools. Approving/dismissing autonomy cards and changing commitments stay with a person at the PC.
 - `SELF_JOBS_MAX_PENDING` (20) caps Jarvis-made jobs waiting at once. The catastrophic gate is unchanged.
 - Not verified live: how often the real model actually schedules things on its own (check the audit trail).
+
+## Caretaker: notice and fix problems on its own (2026-10-16, owner request: "do actual real stuff by itself")
+
+Research + plan: `/mnt/project-files/autonomy-research/caretaker-plan.md` (project folder, not the repo). Owner's choices:
+build all phases; the user's own files go to a holding folder (never deleted outright); **the yes stays** for shutdown/
+format/wipe/force-close (decision card, 2026-10-16). Admin: NOT a blanket elevated Jarvis; a small helper that runs only
+a fixed list of fixes (phase 6). Code: `jarvis_caretaker.py` (pure: findings, issue store, budgets; never imports
+jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), wiring in jarvis.py ("Caretaker" block),
+`dashboard_static/caretaker.js` (route `#/caretaker`). Tests: `test_caretaker.py`. Rules to keep:
+- **Phase 1 (sensors + tracker, notices only)**: scheduler step `caretaker` -> single-flight thread every
+  `JARVIS_CARETAKER_INTERVAL_S` (600). Sensors: storage (percent, growth today, reclaimable cache bytes), sustained CPU
+  hogs, app crashes today (event 1000), physical disk health, Windows Update failures + Defender definition age, network
+  (TCP to 1.1.1.1/8.8.8.8 + DNS, no admin/ICMP), battery wear, and Jarvis's OWN failures (a live streak of failed
+  scheduled-skill sessions: the newest run succeeding ends the streak; failed deferred jobs; down MCP servers; non-quiet
+  doctor problems). No model call. `JARVIS_CARETAKER=0` off, `JARVIS_CARETAKER_SKIP` (comma list) leaves sensors out.
+- `caretaker_issues` keeps one row per problem key: `ignored` stays ignored, `fixed`/`gave_up` reopen when seen again,
+  `MAX_ATTEMPTS` (3) failed tries -> `gave_up`. The page and tool show gave-up issues FIRST (`visible_issues`): those
+  need the owner most (a headless check found them hidden). `open_issues` is only "still to work on".
+- Quiet rule: only `critical` findings are spoken (once per key per run); everything else is the Caretaker page, the
+  `caretaker` tool (status/scan/ignore) and `dashboard_data(page="caretaker")`.
+- Not verified live on the PC: the PowerShell sensors (crash events, Get-PhysicalDisk, update events, battery WMI).
 

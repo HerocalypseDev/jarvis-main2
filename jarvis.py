@@ -135,6 +135,8 @@ import jarvis_browser_tabs as browser_tabs
 import jarvis_context as reqctx
 import jarvis_missed as missed
 import jarvis_watches as watches_mod
+import jarvis_caretaker as caretaker
+import jarvis_caretaker_probe as caretaker_probe
 import jarvis_personality as personality
 import jarvis_quickfacts as quickfacts
 import jarvis_mail_reply as mail_reply
@@ -3330,6 +3332,20 @@ if face.enabled():
 # Feature batch 2026-09-27 (FEATURES.md). One tool per feature with an `action`, to keep the cached
 # tool prefix small. Handlers: _BATCH_TOOL_HANDLERS, dispatched from _execute_tool_impl.
 BATCH_TOOLS = [
+    {
+        "name": "caretaker",
+        "description": (
+            "What Jarvis has noticed is wrong with the laptop or with itself, and what it has fixed. "
+            "action=status (open problems, newest first, with what was fixed in the last day); scan "
+            "(check right now instead of waiting for the next pass); ignore (key) to stop tracking one. "
+            "Use this for 'what's wrong with my PC', 'is anything broken', 'what did you fix', "
+            "'why is my disk full'. Read-only apart from ignore."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["status", "issues", "scan", "ignore"]},
+            "key": {"type": "string", "description": "issue key from the status list, for ignore"}},
+            "required": ["action"]},
+    },
     {
         "name": "clipboard_history",
         "description": (
@@ -6840,6 +6856,7 @@ def _scheduler_steps(now: datetime) -> list:
         ("cascades", _cascade_tick, ()),
         ("knowledge graph", _kg_sync_tick, ()),
         ("digest", _digest_tick, ()),
+        ("caretaker", _caretaker_tick, ()),
     ]
 
 
@@ -9152,6 +9169,133 @@ def _capabilities(query: str = "") -> str:
                    "briefing/what's urgent, speed test, self check, repeat/shorter, safe mode, stop talking.")
     text = "\n".join(out)
     return text if len(text) <= 9000 else text[:9000] + " ...(cut: ask with a query to narrow it)"
+
+
+# --- Caretaker (2026-10-16): notice what's wrong with the laptop and with Jarvis itself ------------
+# Phase 1 is sensors + the issue tracker only: it NOTICES and reports, it does not act yet. The sensors
+# are cheap (no model call) and each one is isolated, so a broken one can't blind the rest. Findings go
+# into caretaker_issues, so "this keeps failing" becomes a count instead of a guess, and nothing is
+# announced twice. jarvis_caretaker/-_probe never import this file: they get the DB connect callable and
+# what jarvis.py owns (down MCP servers, doctor problems) passed in.
+_caretaker_store = caretaker.Store(_memory_db_connect)
+_caretaker_state = {"check": 0.0, "running": False, "last": None, "announced": set()}
+
+
+def caretaker_enabled() -> bool:
+    return (os.environ.get("JARVIS_CARETAKER") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _caretaker_front_process() -> str:
+    """The foreground window's process name, so a fix never touches what the user is working in."""
+    try:
+        return str(_foreground_window().get("app") or "")
+    except Exception:
+        return ""
+
+
+def _caretaker_scan() -> list:
+    """One sensor pass -> the open issues. No model call, no changes to anything."""
+    findings = caretaker_probe.run_all(
+        conn_factory=_memory_db_connect,
+        mcp_failed=dict(_mcp_failed_servers),
+        doctor_problems=doctor.problems(),
+        front_process_name=_caretaker_front_process(),
+        skip=_caretaker_skipped_sensors(),
+    )
+    return _caretaker_store.ingest(findings)
+
+
+def _caretaker_skipped_sensors() -> set:
+    raw = (os.environ.get("JARVIS_CARETAKER_SKIP") or "").strip()
+    return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+
+def _caretaker_run() -> None:
+    try:
+        issues = _caretaker_scan()
+        _caretaker_state["last"] = {"at": datetime.now().isoformat(timespec="seconds"), "issues": len(issues)}
+        for iss in issues:
+            # Only the things that can't wait are spoken; everything else is read on the Caretaker page
+            # or in the daily line (the owner's quiet-assistant rule).
+            if iss["severity"] == "critical" and iss["key"] not in _caretaker_state["announced"]:
+                _caretaker_state["announced"].add(iss["key"])
+                queue_or_deliver_notification(iss["title"], important=True)
+                selfaware.record("system", "caretaker_critical", iss["title"])
+        dashboard.notify({"type": "caretaker", "data": {"issues": len(issues)}})
+    except Exception as e:
+        log.warning("Caretaker scan failed: %s", e)
+    finally:
+        _caretaker_state["running"] = False
+
+
+def _caretaker_tick() -> None:
+    if not caretaker_enabled():
+        return
+    every = env_float("JARVIS_CARETAKER_INTERVAL_S", 600)   # 10 min; sensors are cheap but not free
+    t = time.monotonic()
+    if every <= 0 or _caretaker_state["running"] or t - _caretaker_state["check"] < every:
+        return
+    _caretaker_state["check"] = t
+    _caretaker_state["running"] = True
+    threading.Thread(target=_caretaker_run, daemon=True, name="caretaker").start()
+
+
+def caretaker_report(include_fixed: bool = False) -> dict:
+    """What the Caretaker page and the `caretaker` tool both read."""
+    issues = _caretaker_store.all_issues(60) if include_fixed else _caretaker_store.visible_issues()
+    return {"enabled": caretaker_enabled(), "last_scan": _caretaker_state["last"], "issues": issues,
+            "actions": _caretaker_store.recent_actions(30),
+            "summary": _caretaker_store.summary_since(24)}
+
+
+@_feature("caretaker")
+def _feature_caretaker(action: str, payload: dict):
+    if action == "get":
+        return caretaker_report(bool((payload or {}).get("all")))
+    if action == "scan":
+        return {"issues": _caretaker_scan()}
+    if action == "ignore":
+        key = (payload or {}).get("key") or ""
+        if not key:
+            return {"ok": False, "error": "which issue?"}
+        _caretaker_store.set_status(key, "ignored")
+        return {"ok": True, **caretaker_report()}
+    if action == "unignore":
+        key = (payload or {}).get("key") or ""
+        _caretaker_store.set_status(key, "open")
+        return {"ok": True, **caretaker_report()}
+    return None
+
+
+def _caretaker_tool(inp: dict) -> str:
+    action = (inp.get("action") or "status").lower()
+    if action in ("status", "issues"):
+        rep = caretaker_report()
+        if not rep["issues"]:
+            last = (rep["last_scan"] or {}).get("at")
+            return f"Nothing wrong that I can see{f' (last checked {last})' if last else ''}."
+        lines = [f"{i['severity'].upper()}: {i['title']} [{i['key']}]"
+                 f"{' - gave up after ' + str(i['attempts']) + ' tries' if i['status'] == 'gave_up' else ''}"
+                 for i in rep["issues"][:12]]
+        s = rep["summary"]
+        tail = (f"\nIn the last day: {s['fixed']} fixed, {s['actions']} actions, "
+                f"{caretaker.human_bytes(s['freed_bytes'])} freed.") if s["actions"] else ""
+        return "\n".join(lines) + tail
+    if action == "scan":
+        issues = _caretaker_scan()
+        return f"Checked now: {len(issues)} open issue(s)." if issues else "Checked now: nothing wrong."
+    if action == "ignore":
+        key = (inp.get("key") or "").strip()
+        if not key:
+            return "Tool failed: say which issue key to ignore (see the status list)."
+        if not _caretaker_store.get(key):
+            return f"Tool failed: no issue called {key}."
+        _caretaker_store.set_status(key, "ignored")
+        return f"Leaving {key} alone from now on."
+    return f"Tool failed: unknown caretaker action {action!r}."
+
+
+_BATCH_TOOL_HANDLERS["caretaker"] = _caretaker_tool
 
 
 def _dashboard_pages() -> dict:

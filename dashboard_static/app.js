@@ -5,7 +5,7 @@ const state = { data: null, followedSessionId: null };
 // no history API, no nested routes — this is a supervision dashboard, not a SPA framework demo.
 const ROUTES = [
   "home", "sessions", "tasks", "autonomy", "identity", "sleep",
-  "usage", "activity", "audit", "victory", "daily", "voice", "memory", "toolbox", "settings",
+  "usage", "activity", "audit", "victory", "daily", "voice", "memory", "toolbox", "caretaker", "settings",
 ];
 // Routes that have somewhere to click *into* more detail — Autonomy/Identity/Sleep/Usage/
 // Victory/Daily each already show everything inline and want the full width instead (see
@@ -35,6 +35,7 @@ function onRouteActivated(route) {
   if (route === "memory" && window.refreshMemory) window.refreshMemory();
   if (route === "voice" && window.refreshVoice) window.refreshVoice();
   if (route === "toolbox" && window.refreshToolbox) window.refreshToolbox();
+  if (route === "caretaker" && window.refreshCaretaker) window.refreshCaretaker();
   syncContextVisibility();
 }
 
@@ -1013,6 +1014,9 @@ function connectWs() {
     if (isRouteActive("audit")) fetchAuditResults();
     if (event && event.type === "face_event" && isRouteActive("identity")) fetchIdentity();
     if (event && event.type === "autonomy_update" && window.refreshAutonomy) window.refreshAutonomy();
+    if (event && event.type === "caretaker" && isRouteActive("caretaker") && window.refreshCaretaker) {
+      window.refreshCaretaker();
+    }
     if (event && event.type === "settings_changed" && isRouteActive("settings") && window.applySettingChange) {
       window.applySettingChange(event.data || {});
     }

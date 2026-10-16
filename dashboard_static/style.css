@@ -1094,3 +1094,9 @@ p.consent-list { padding-left: 0; }
 .pro-col-head { font-weight: 600; text-transform: capitalize; margin-bottom: 6px; }
 .pro-card { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-sm, 6px);
   padding: 6px 8px; margin-top: 6px; font-size: 0.9rem; overflow-wrap: anywhere; }
+
+/* Caretaker route (2026-10-16) */
+#view-caretaker .view-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+#view-caretaker .block-title { margin-top: var(--space-4); }
+.ct-issue-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#ct-issues .list-item { display: flex; align-items: flex-start; gap: var(--space-3); }
