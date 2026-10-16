@@ -595,3 +595,48 @@ document.getElementById("home-asks")?.addEventListener("click", async (ev) => {
 window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshAsks(); });
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshAsks();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshAsks(); }, 15000);
+
+// --- Home "Running now": GET /api/feature/running (jarvis_running, 2026-10-16) ----------------------------------------
+// The commands Jarvis is working on this second (a speed test, a long lookup...). Cancel stops one: a speed test is
+// aborted, a lookup makes no more steps and its reply is never spoken. Hidden when nothing is running.
+function fmtAge(sec) {
+  const s = Math.max(0, Math.round(sec));
+  return s < 90 ? `${s}s` : `${Math.round(s / 60)} min`;
+}
+async function refreshRunning() {
+  const block = document.getElementById("home-running-block");
+  const list = document.getElementById("home-running");
+  if (!block || !list) return;
+  try {
+    const res = await fetch("/api/feature/running", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
+    const live = d.live || [];
+    const tasks = d.background_tasks || 0;
+    block.hidden = !live.length;
+    document.getElementById("home-running-count").textContent =
+      (live.length > 1 ? `(${live.length})` : "") + (tasks ? ` + ${tasks} background task${tasks > 1 ? "s" : ""}` : "");
+    list.innerHTML = live.map((i) => `<li class="list-item running-item" data-id="${escAttr(String(i.id))}">
+        <span class="running-label">${esc(i.label)}</span>
+        <span class="muted">${esc(i.source)} · ${esc(fmtAge(i.age_s))}</span>
+        <button class="btn btn-ghost btn-small running-cancel" type="button">Cancel</button>
+      </li>`).join("");
+  } catch (e) {
+    block.hidden = true;  // a failed poll hides the strip rather than showing a stale list
+  }
+}
+window.refreshRunning = refreshRunning;
+document.getElementById("home-running")?.addEventListener("click", async (ev) => {
+  if (!ev.target.classList.contains("running-cancel")) return;
+  const item = ev.target.closest(".running-item");
+  ev.target.disabled = true;
+  try {
+    await fetch("/api/feature/running/cancel", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: Number(item.dataset.id) }),
+    });
+  } catch (e) { /* the next refresh shows the state */ }
+  refreshRunning();
+});
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshRunning(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshRunning();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshRunning(); }, 3000);

@@ -97,6 +97,7 @@ import jarvis_toolargs as toolargs
 import jarvis_doctor as doctor
 import jarvis_selfaware as selfaware
 import jarvis_selfmanage as selfmanage
+import jarvis_running as running_mod
 import jarvis_resilience
 import jarvis_wakeword
 import jarvis_weather as weather
@@ -1530,12 +1531,12 @@ def speak_text(text: str) -> None:
     # Barge-in: a command's speech counts from when the command started, so an interrupt also
     # silences its later narration/final reply; other speech counts from this call.
     since = getattr(_command_ctx, "started", None) or time.monotonic()
-    if _speech_cancelled_since(since):
+    if _speech_cancelled_since(since) or _run_cancelled():
         return
     sentences = _split_sentences(t) if len(t) > SENTENCE_STREAM_MIN_CHARS else [t]
     pending: tuple[bytes, int, str] | None = None
     for i, sentence in enumerate(sentences):
-        if _speech_cancelled_since(since):
+        if _speech_cancelled_since(since) or _run_cancelled():
             return
         already_played = False
         if pending is not None:
@@ -3368,6 +3369,20 @@ BATCH_TOOLS = [
             "otherwise it lists them and says to ask which. It does not touch queued tasks (cancel_queued_task) or "
             "scheduled jobs (scheduled_jobs)."),
         "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}}},
+    },
+    {
+        "name": "running_now",
+        "description": (
+            "What Jarvis is working on right now: the commands still running (a speed test, a long lookup, ...) and the "
+            "background tasks, the same list as the dashboard Home 'Running now' strip. action=list answers 'what are you "
+            "working on?'. action=cancel with query (words from its name, like 'speed test'; 'all' for everything) stops "
+            "a running command: a speed test is aborted, a lookup makes no more steps, and its reply is never spoken. "
+            "With no query and exactly one running it cancels that one, otherwise it lists them and says to ask which. "
+            "A background task (delegation, research, plan) is stopped with stop_background_task. Never say something was "
+            "cancelled without this tool."),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "cancel"]},
+            "query": {"type": "string"}}, "required": ["action"]},
     },
     {
         "name": "caretaker",
@@ -8328,6 +8343,25 @@ def _feature_missed(action: str, payload: dict):
     return None
 
 
+@_feature("running")
+def _feature_running(action: str, payload: dict):
+    """Home "Running now" strip (jarvis_running, 2026-10-16): the commands being worked on this second."""
+    if action == "get":
+        snap = running_mod.registry.snapshot()
+        with _background_tasks_lock:
+            tasks = len(_RUNNING_BACKGROUND_PROCS)
+        return {"live": snap["live"], "recent": snap["recent"], "background_tasks": tasks}
+    if action == "cancel":
+        try:
+            rid = int((payload or {}).get("id"))
+        except (TypeError, ValueError):
+            return {"error": "say which command (id)"}
+        if not running_mod.registry.cancel(rid):
+            return {"error": "that command isn't running any more"}
+        return {"result": "Cancelled."}
+    return None
+
+
 @_feature("asks")
 def _feature_asks(action: str, payload: dict):
     """Home "Jarvis needs you" card (jarvis_asks, 2026-10-16): questions a tool needed the user to answer. Answering
@@ -9191,7 +9225,7 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             # use it to send them a phishing link (autonomy's own notices go through another path)
                             "send_to_my_phone",
                             # 2026-10-16: changing settings or stopping work is the owner's call, not an email's
-                            "settings", "stop_background_task"}
+                            "settings", "stop_background_task", "running_now"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
@@ -9208,7 +9242,7 @@ _EMAIL_RUN_NO_FILES = {"read_file", "quick_search", "find_files", "code_search",
 _OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_tabs|download_image|read_screen)$")
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
-                        "delegate_research", "caretaker", "settings", "stop_background_task",
+                        "delegate_research", "caretaker", "settings", "stop_background_task", "running_now",
                         # memory steers every later prompt: an instruction hidden in a mail must not be written there
                         "remember_fact", "remember_decision", "remember_code_pattern", "update_project_status"}
 
@@ -10492,9 +10526,84 @@ def _stop_background_task_tool(inp: dict) -> str:
     return result
 
 
+def _cancel_running(query: str, me: int | None, all_ok: bool = False) -> tuple[list[dict], str]:
+    """Cancels the live commands matching `query`. Returns (cancelled, ask) where ask is a question for the user
+    when several match and the request didn't say all of them."""
+    reg = running_mod.registry
+    matches = reg.find(query, exclude=me)
+    wants_all = all_ok or bool(re.search(r"\b(?:everything|all)\b", query or "", re.I))
+    if len(matches) > 1 and not wants_all:
+        names = "; ".join(f"#{m['id']} {m['label']}" for m in matches)
+        return [], "More than one thing is running; ask the user which one to cancel (or say all): " + names
+    done = [m for m in matches if reg.cancel(m["id"])]
+    return done, ""
+
+
+def _running_now_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "list").lower()
+    me = getattr(_command_ctx, "run_id", None)
+    if action == "list":
+        tasks = list_background_tasks()
+        tail = "No background tasks running." if tasks.startswith("No ") else "Background tasks:\n" + tasks
+        return running_mod.registry.describe(exclude=me) + "\n" + tail
+    if action != "cancel":
+        return "Tool failed: action must be list or cancel."
+    problem = _owner_here_problem("cancelling a running command")
+    if problem:
+        return problem
+    query = str(inp.get("query") or inp.get("name") or "").strip()
+    done, ask = _cancel_running(query, me)
+    if ask:
+        return ask
+    if not done:
+        hint = ""
+        if _RUNNING_BACKGROUND_PROCS:
+            hint = " A background task is running: stop it with stop_background_task."
+        return ("Nothing running matches " + (repr(query) if query else "that") + "." + hint + " "
+                + running_mod.registry.describe(exclude=me))
+    return "Cancelled: " + "; ".join(m["label"] for m in done) + "."
+
+
+def _running_speech() -> str:
+    """'What are you working on?' as a spoken line: the commands, then how many background tasks."""
+    me = getattr(_command_ctx, "run_id", None)
+    text = running_mod.registry.describe(exclude=me)
+    with _background_tasks_lock:
+        tasks = len(_RUNNING_BACKGROUND_PROCS)
+    if tasks:
+        s = "s" if tasks > 1 else ""
+        text = (text.rstrip(".") if not text.startswith("Nothing") else "No commands are running") + (
+            f", and {tasks} background task{s}. Ask 'list background tasks' for details." if tasks else "")
+    elif text.startswith("Nothing else"):
+        text = "Nothing right now. I'm not working on anything."
+    return text
+
+
+def _running_cancel_reply(transcript: str) -> str | None:
+    """'Cancel the speed test' answered with no model call, but only when something running matches; anything else
+    ('cancel my meeting') goes on to the agent as before."""
+    what = running_mod.parse_cancel(transcript)
+    if what is None:
+        return None
+    me = getattr(_command_ctx, "run_id", None)
+    if not running_mod.registry.find(what, exclude=me):
+        return None
+    done, ask = _cancel_running(what, me)
+    if ask:
+        return ask.replace("ask the user which one to cancel (or say all): ", "which one should I cancel? ")
+    if not done:
+        return None
+    return "Okay, I stopped " + " and ".join(m["label"] for m in done) + "."
+
+
+def _running_line() -> str:
+    return running_mod.registry.prompt_line(exclude=getattr(_command_ctx, "run_id", None))
+
+
 _BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
                              "watches": _watches_tool, "personality": _personality_tool,
-                             "settings": _settings_tool, "stop_background_task": _stop_background_task_tool})
+                             "settings": _settings_tool, "stop_background_task": _stop_background_task_tool,
+                             "running_now": _running_now_tool})
 
 
 # --- The user's real browser tabs (2026-10-03, owner request) -----------------------------------------------------
@@ -11411,6 +11520,7 @@ def build_system_blocks(tone_line: str = "", query: str = "") -> list[dict]:
         + _recent_actions_line()
         + _missed_line()
         + _asks_line(query)
+        + _running_line()
         + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
         + personality.prompt_line(_personality_name())
         + _relevant_memory_line(query)
@@ -14321,6 +14431,8 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core.add("settings")
     if _STOP_TASK_RE.search(transcript or ""):
         core |= {"stop_background_task", "list_background_tasks"}
+    if _RUNNING_NOW_RE.search(transcript or ""):
+        core.add("running_now")
     if _SCHEDULED_WORK_RE.search(transcript or ""):
         core |= {"schedule_jarvis_task", "scheduled_jobs"}
     if re.search(r"\b(?:personality|personalities|voice type|vibe|attitude|gen ?z|pidgin|naija|playful|sarcastic|"
@@ -14332,6 +14444,10 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
 _SETTINGS_WORDS_RE = re.compile(
     r"\b(?:settings?|turn (?:on|off) (?:the )?[a-z ]{2,30}|enable|disable|switch (?:on|off)|wake word|follow[- ]?up|"
     r"auto[- ]?reply|hotkey|push[- ]to[- ]talk|budget|notifications? (?:on|off))\b", re.I)
+_RUNNING_NOW_RE = re.compile(
+    r"\b(?:what(?:'s| is| are) you (?:working on|doing|up to)|what(?:'s| is) (?:running|in progress|still going)|"
+    r"(?:cancel|stop|abort|kill|forget)\b.{0,30}\b(?:test|check|search|lookup|that|it|everything|all)\b|"
+    r"still (?:running|working|going)|are you (?:busy|still))", re.I)
 _STOP_TASK_RE = re.compile(
     r"\b(?:stop|cancel|kill|abort|end)\b.{0,40}\b(?:task|research|delegat\w*|background|plan|james|coding agent|"
     r"that job|running)\b", re.I)
@@ -14750,7 +14866,10 @@ def _execute_tool_impl(
             result = _self_report_tool(inp)
         elif tool_name == "speed_test":
             if str(inp.get("action") or "run").lower() == "run":
+                running_mod.registry.add_hook(getattr(_command_ctx, "run_id", None), speedtest.cancel)
                 _await_ack(8.0)  # let the spoken lead-in finish first: speech downloading audio skews the result
+                if _run_cancelled():
+                    return "Okay, I stopped the speed test."
             result = speedtest.handle_tool(_memory_db_connect, _memory_db_lock, inp)
         elif tool_name == "weather":
             result = weather.weather_report(str(inp.get("place") or ""), inp.get("days") or 1)
@@ -16061,6 +16180,9 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     asks_nudged = False
     shown_asks = list(getattr(_command_ctx, "shown_asks", None) or [])  # set by build_system_blocks above
     for iteration in range(MAX_AGENT_ITERATIONS):
+        if _run_cancelled():  # "cancel that": no more rounds, no more tools
+            reply_parts.append("Okay, I stopped that.")
+            break
         request_body = {
             "model": model,
             "max_tokens": AGENT_MAX_TOKENS,
@@ -16242,6 +16364,8 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 continue
             if i in parallel:
                 result_text = parallel[i]  # already run alongside its siblings (results stay in the model's order)
+            elif _run_cancelled():
+                result_text = "Skipped: the user cancelled this command."
             elif i < MAX_TOOL_CALLS_PER_TURN:
                 result_text = _execute_tool(tu.get("name", ""), tu.get("input") or {}, transcript)
             else:
@@ -16403,23 +16527,52 @@ def _current_command_source() -> str | None:
     return getattr(_command_ctx, "source", None)
 
 
+def _run_cancelled() -> bool:
+    """True once the user cancelled the command this thread is running ("cancel the speed test", Home strip)."""
+    return running_mod.registry.cancelled(getattr(_command_ctx, "run_id", None))
+
+
+def _running_label(transcript: str) -> str:
+    """Short name of a command for the running list: a known intent's name, else its first words, sanitised."""
+    try:
+        intent = latency.classify_intent(transcript)
+    except Exception:
+        intent = None
+    label = running_mod.make_label(transcript, intent)
+    clean = jarvis_untrusted.mask_secrets(jarvis_untrusted.neutralize_injection(label)[0])[0]
+    return " ".join(clean.split())[:running_mod.MAX_LABEL + 3]
+
+
 def handle_text_command(
     transcript: str, reply_sink=None, tone: dict | None = None, source: str = "text"
 ) -> None:
     prev = getattr(_command_ctx, "source", None)
     prev_started = getattr(_command_ctx, "started", None)
+    prev_run = getattr(_command_ctx, "run_id", None)
     _command_ctx.source = source
     _command_ctx.started = time.monotonic()  # barge-in cutoff for this command's speech
     _command_ctx.ack_started = False  # at most one spoken lead-in per command
     _command_ctx.ack_thread = None
     _command_ctx.announced = False  # and at most one task-specific announcement
+    run_id = None
+    try:
+        run_id = running_mod.registry.start(_running_label(transcript), source)
+    except Exception as e:  # the list is bookkeeping: a failure here never stops the command
+        log.debug("running list start failed: %s", e)
+    _command_ctx.run_id = run_id
     _inflight_enter()
+    status = "done"
     try:
         _handle_text_command_impl(transcript, reply_sink, tone, source)
+    except BaseException:
+        status = "failed"
+        raise
     finally:
         _inflight_exit()
+        running_mod.registry.finish(run_id, status)
         _command_ctx.source = prev
         _command_ctx.started = prev_started
+        _command_ctx.run_id = prev_run
 
 
 # --- simple-intent fast path (cloud-latency pass, Phase D) -------------------------------------
@@ -16846,7 +16999,7 @@ def _volume_reply(transcript: str) -> str | None:
 SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
 _SLOW_INTENTS = {"speedtest", "update"}
 # Quick answers that keep their exact wording: a replay, a rewrite, silence, the switch itself (already in the new voice).
-_UNFLAVORED_INTENTS = {"repeat", "shorter", "hush", "personality"}
+_UNFLAVORED_INTENTS = {"repeat", "shorter", "hush", "personality", "running_cancel"}
 
 
 def _flavored_quick_reply(intent: str, reply):
@@ -16962,9 +17115,12 @@ def _announce_update_note() -> None:
 
 
 def _speed_test_reply(transcript: str = "") -> str:
+    running_mod.registry.add_hook(getattr(_command_ctx, "run_id", None), speedtest.cancel)
     if _current_command_source() != "phone":
         _start_announcement(SPEED_TEST_ANNOUNCEMENT)
         _await_ack(8.0)
+    if _run_cancelled():  # cancelled during the lead-in: the test never starts
+        return "Okay, I stopped the speed test."
     return speedtest.measure_and_describe(_memory_db_connect, _memory_db_lock, unit=speedtest.parse_unit(transcript))
 
 
@@ -17024,6 +17180,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return _speed_test_reply(transcript)
     if intent == "self_report":
         return _self_report_tool({})
+    if intent == "running":
+        return _running_speech()
     if intent == "repeat":
         return _last_reply["text"] or "I haven't said anything yet."
     if intent == "shorter":
@@ -17168,8 +17326,13 @@ def _handle_text_command_impl(
     else:
         macro_reply, routine = _macro_route(transcript)
     intent = "macro" if macro_reply is not None else ("complex" if tagged or routine else latency.classify_intent(transcript))
+    cancel_reply = None
+    if intent == "complex" and macro_reply is None and not tagged and not routine:
+        cancel_reply = _running_cancel_reply(transcript)  # "cancel the speed test": only when something running matches
+        if cancel_reply is not None:
+            intent = "running_cancel"
     slow_intent = macro_reply is None and intent in _SLOW_INTENTS  # answered locally, but only after the session starts
-    deterministic_reply = (macro_reply if macro_reply is not None
+    deterministic_reply = (macro_reply if macro_reply is not None else cancel_reply if cancel_reply is not None
                            else None if slow_intent else _deterministic_intent_reply(intent, transcript))
     if intent == "undo" and _newest_action_was_autonomy():
         try:  # an undo whose target is an autonomous action counts against that action type
@@ -17251,7 +17414,9 @@ def _handle_text_command_impl(
                 # summarizing it again would cut it to a sentence.
                 spoken = (reply if intent in ("briefing", "urgent", "missed") or _wants_full_speech(transcript)
                           else _summarize_for_speech(reply))
-                speak_text(_collapse_paths_for_speech(spoken))
+                # A late answer that arrived while other commands ran says which request it answers.
+                label = running_mod.spoken_prefix(running_mod.registry, getattr(_command_ctx, "run_id", None))
+                speak_text(label + _collapse_paths_for_speech(spoken))
 
 
 def _feed_hands_free_stream(session):

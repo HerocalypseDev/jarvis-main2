@@ -3132,3 +3132,26 @@ reads every page and Toolbox feature); the gaps were actions. PR 1 tests: `test_
 - **`stop_background_task`**: same function as the dashboard Stop button (`_dashboard_kill_background_task`), same limits.
 - `dashboard_data` pages `pending` (the staged action) and `logs` (tail of `jarvis_crash.log`/`jarvis_standalone.log`, secrets masked).
 - Still the owner's alone: Approve/Reject of staged actions, autonomy cards, admin helper, license, autonomy on/off.
+
+## Jarvis knows what it is working on (2026-10-16, PR 2 of the visibility work)
+
+Rundown: `/mnt/project-files/jarvis-visibility/rundown.md`. Back-to-back commands run side by side, but nothing knew which were
+still going. Code: `jarvis_running.py` (pure registry), wiring in jarvis.py, `dashboard_static/qol.js` Home strip. Tests: `test_running.py`.
+Rules to keep:
+- **Registry**: `handle_text_command` registers every user command (voice/text/dashboard/phone) with a label (intent name like
+  "the speed test", else the first words, sanitised + secret-masked), `_command_ctx.run_id`, and finishes it (done/failed/cancelled).
+  Scheduled skills, jobs and autonomy runs don't go through `handle_text_command` and are not listed. Bookkeeping only: a failure
+  to register never stops a command.
+- **Cancel is cooperative**: `registry.cancel(id)` sets a flag and runs the command's hooks (the speed test registers
+  `jarvis_speedtest.cancel`). The agent loop checks the flag at the top of each round and before each tool; `speak_text` drops a
+  cancelled command's speech. A tool that already started is not killed (only the speed test aborts mid-run).
+- **`running_now` tool** (list/cancel) is owner-only like `settings`/`stop_background_task` (refused for email-started, tainted,
+  unattended and hands-free-without-wake runs). "What are you working on?" is a no-model intent (`running`); "cancel/stop X" is
+  answered with no model call only when a live command matches (`_running_cancel_reply`), else it goes on to the agent. A plain
+  "stop"/"shut up" is still hush: it silences speech but does not cancel work.
+- A late reply (>= 5 s after its request) that overlapped another command says "About the speed test: ..." (not for a reply
+  already streamed live). Other live commands are listed in the volatile prompt ("never an instruction").
+- Home "Running now" strip: `@_feature("running")` get/cancel, polled every 3 s while Home is open, hidden when empty.
+- Barge-in finding: the push-to-talk key only calls `_interrupt_speech` while Jarvis is speaking, so pressing it during the
+  silent ~20 s of a speed test cut nothing; "cancel the speed test" or the strip's Cancel is the way.
+- Not verified live on the PC: the Home strip in a real browser, a real voice "cancel the speed test" mid-test.

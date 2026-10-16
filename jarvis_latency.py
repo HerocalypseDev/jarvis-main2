@@ -137,6 +137,14 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("self_check", re.compile(r"\bself[- ]?check\b|\bcheck yourself\b"
                               r"|\A\s*(?:jarvis,?\s*)?(?:(?:run|do)\s+(?:a\s+)?)?(?:diagnostics?|health ?check)(?: on yourself)?\W*\Z"
                               r"|\A\s*(?:jarvis,?\s*)?are you (?:ok|okay|alright|working)(?:,?\s*jarvis)?\W*\Z", re.I)),
+    # What is running right now (2026-10-16): answered from the live-command list, no model call.
+    ("running", re.compile(r"\A\s*(?:(?:hey|hi|ok|okay)[,.!]?\s+)?(?:jarvis,?\s*)?(?:"
+                           r"what(?:'s| is| are) you (?:working on|doing|busy with|up to)(?: right now| at the moment| now)?"
+                           r"|what(?:'s| is| are) (?:you )?(?:running|in progress|still (?:running|going|working))(?: right now| now)?"
+                           r"|what (?:tasks|commands|things|jobs) are (?:running|going|in progress)(?: right now| now)?"
+                           r"|(?:are you|is anything) (?:busy|running|working on anything)(?: right now| now)?"
+                           r"|anything (?:running|in progress)(?: right now| now)?"
+                           r")(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
     # "what have you been up to / what changed": what my own subsystems did (self-awareness journal).
     ("self_report", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:what have you been (?:up to|doing)(?: lately| today| recently)?"
                                r"|what(?:'s| has| have)? changed(?: (?:lately|recently|today|in you|with you))?"
