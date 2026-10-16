@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792169221.2311018,
-    "seen": 1792169799.2354314,
-    "ast_hash": "3d5f86948f78132152959e7454083c1e",
+    "mtime": 1792170023.8511517,
+    "seen": 1792170040.45265,
+    "ast_hash": "3c2c2dd0fbb1f31b18a734339ee3d056",
     "semantic_hash": ""
   },
   "README.md": {
@@ -1794,9 +1794,9 @@
     "semantic_hash": ""
   },
   "jarvis_caretaker_probe.py": {
-    "mtime": 1792169221.5631018,
-    "seen": 1792169799.234777,
-    "ast_hash": "bdae9f36651648d6a2b7d92d2e509df8",
+    "mtime": 1792169999.8019426,
+    "seen": 1792170040.4522865,
+    "ast_hash": "7919e40e9605ecc6aba440a680b889b3",
     "semantic_hash": ""
   },
   "test_caretaker.py": {
@@ -1812,9 +1812,9 @@
     "semantic_hash": ""
   },
   "test_caretaker_fix.py": {
-    "mtime": 1792169221.5671017,
-    "seen": 1792169799.2352643,
-    "ast_hash": "648ce65a2f517e59244801c8871bf7f6",
+    "mtime": 1792170006.8030837,
+    "seen": 1792170040.4525104,
+    "ast_hash": "092807fc110530ba4e66f357e07b2d00",
     "semantic_hash": ""
   },
   "test_caretaker_self.py": {

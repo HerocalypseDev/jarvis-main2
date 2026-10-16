@@ -2890,6 +2890,12 @@ Owner's choices: self-healing loop + crash log, and **speak** the recovery. Code
   tools (no duplicate tool names). Failure logs give the real cause (`_mcp_error_text` unwraps anyio's ExceptionGroup).
   Tests: `test_mcp_reconnect.py` (3). Not verified against the real Windows-MCP on the PC: why it stopped is unknown.
 
+- **Root cause found in the owner's log (2026-10-16)**: the Caretaker's cache cleaner (`cache_roots`) included `%LOCALAPPDATA%\\uv\\cache`,
+  and deleting files older than 2 days from uv's `archive-v0` (the unpacked environments `uvx` runs tools from) left Windows-MCP
+  half-installed: `ModuleNotFoundError: No module named 'windows_mcp.__main__'` on every start from 17:11 (the day's cleanup
+  went from 3.3 GB to 7.6 GB freed). uv's cache is no longer a cache root (never list a folder that holds installed code);
+  repair on the PC with `uv cache clean`, then restart Jarvis. Test: `test_cache_roots_never_include_uvs_environment_cache`.
+
 ## Hand-off guard (2026-09-25)
 
 - **Found live**: on Gemini flash-lite, Jarvis replied "I'll hand that off to James" four times
