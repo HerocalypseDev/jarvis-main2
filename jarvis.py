@@ -140,6 +140,7 @@ import jarvis_caretaker_probe as caretaker_probe
 import jarvis_caretaker_fix as caretaker_fix
 import jarvis_caretaker_windows as caretaker_win
 import jarvis_caretaker_ai as caretaker_ai
+import jarvis_caretaker_admin as caretaker_admin
 import jarvis_personality as personality
 import jarvis_quickfacts as quickfacts
 import jarvis_mail_reply as mail_reply
@@ -3345,13 +3346,15 @@ BATCH_TOOLS = [
             "there and when it is removed); ignore (key) stops tracking one problem; diagnose looks at the PC "
             "right now (busiest programs, disk, network, recent errors) and returns the facts to explain - "
             "optionally what=top_processes|disk_usage|network_summary|service_status|recent_errors|updates_summary "
-            "with by/name/log/hours/source. Use this for 'what's wrong "
+            "with by/name/log/hours/source; helper says whether the one-time admin helper is set up; "
+            "install_helper / remove_helper set it up or take it away (the user answers a Windows prompt). Use this "
+            "for 'what's wrong "
             "with my PC', 'is anything broken', 'what did you fix', 'why is my disk full', 'clean up my disk', "
             "'undo the cleanup', 'why is my laptop slow'."
         ),
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["status", "issues", "scan", "fix", "undo", "holding", "ignore",
-                                                  "diagnose"]},
+                                                  "diagnose", "helper", "install_helper", "remove_helper"]},
             "key": {"type": "string", "description": "issue key from the status list, for ignore"},
             "id": {"type": "integer", "description": "action number to undo (default: the newest)"},
             "what": {"type": "string", "description": "for diagnose: one diagnostic name (default: a standard bundle)"},
@@ -9271,6 +9274,12 @@ def _caretaker_fix_storage(issue: dict) -> str | None:
     key, ev = issue["key"], issue.get("evidence") or {}
     mount = ev.get("mount") or (str(ev.get("drive", "")).rstrip("\\") + "\\")
     r = caretaker_fix.fix_storage(_caretaker_store, key, _caretaker_storage_env(mount))
+    if not r["reached"] and not r["blocked"]:
+        # The user-level cleanup wasn't enough: the admin helper (if set up) can clear Windows' own old temp files.
+        ar = _caretaker_admin_run(key, "clear_windows_temp", mount=mount)
+        if ar["ok"] and ar.get("freed", 0) > 0:
+            r["steps"].append(f"cleared old Windows temp files ({caretaker.human_bytes(ar['freed'])})")
+            r["reached"] = _caretaker_storage_env(mount).free_fraction() >= caretaker.DISK_FREE_TARGET
     if r["steps"]:
         selfaware.record("system", "caretaker_fix", f"{ev.get('drive', 'disk')}: " + "; ".join(r["steps"]))
     if r["reached"]:
@@ -9426,19 +9435,29 @@ def _caretaker_fix_network(issue: dict) -> str | None:
     if caretaker.budget_blocked(_caretaker_store):
         return None
     r = caretaker_win.fix_network(str(ev.get("detail") or ""), recheck=lambda: not caretaker_probe.probe_network())
+    if not r["cleared"] and r["needs_admin"]:
+        r = _caretaker_network_admin_steps(key, r)       # phase 6: the steps Windows keeps for administrators
     said = "; ".join(r["steps"]) or "looked again"
     _caretaker_store.log_action(key, caretaker.GREEN, "fix_network", said, "back online" if r["cleared"] else "still down")
     if r["cleared"]:
+        _caretaker_state.get("needs_admin", {}).pop(key, None)
         _caretaker_store.set_status(key, "fixed")
         selfaware.record("system", "caretaker_fix", f"network: {said}")
         return f"network: {said}"
     n = _caretaker_store.note_attempt(key, said if r["steps"] else "looked again, still down")
     if r["needs_admin"]:
         _caretaker_state.setdefault("needs_admin", {})[key] = r["needs_admin"]
+    else:
+        _caretaker_state.get("needs_admin", {}).pop(key, None)
     if n >= caretaker.MAX_ATTEMPTS:
+        extra = ""
+        if r["needs_admin"]:
+            extra = (" Some fixes need administrator rights and the admin helper couldn't do them just now."
+                     if _caretaker_admin_ready(r["needs_admin"][0]) else
+                     " Setting up the admin helper (on the Caretaker page) lets me try the fixes that need "
+                     "administrator rights.")
         _caretaker_gave_up(issue, "I tried " + (said if r["steps"] else "checking again") + " and it is still down. "
-                           + (ev.get("advice") or "") + (" Some fixes need administrator rights, which I don't have yet."
-                                                       if r["needs_admin"] else ""))
+                           + (ev.get("advice") or "") + extra)
     return None
 
 
@@ -9463,6 +9482,200 @@ def _caretaker_fix_crash(issue: dict) -> str | None:
     selfaware.record("system", "caretaker_fix", f"cleared the cache of {app} after {ev.get('count_today', 0)} crashes today")
     _caretaker_tell_once(key, f"{issue['title']} I cleared its cache. {ev.get('advice', '')}".strip())
     return f"cleared {app}'s cache"
+
+
+# --- Phase 6: the admin helper -------------------------------------------------------------------
+# A few repairs need administrator rights (flush DNS, restart the network adapter, update the virus definitions, reset a
+# stuck Windows Update, clear the Windows temp folder). They run through five FIXED Windows tasks
+# (jarvis_caretaker_admin) that the owner sets up ONCE by accepting Windows' own prompt. A task takes no input, Jarvis
+# re-checks the task and its script before every run, and nothing else about Jarvis runs elevated. Shutdown, format,
+# wiping and force-closing keep their yes. Switch: JARVIS_CARETAKER_ADMIN=0.
+for _n, _cats in caretaker_admin.AI_CATEGORIES.items():   # on the model's menu only while the helper is verified
+    caretaker_ai.register_action(_n, {"desc": caretaker_admin.ADMIN_ACTIONS[_n]["desc"], "categories": _cats,
+                                      "bind": {}, "admin": True})
+_caretaker_admin_cache = {"at": 0.0, "status": None}
+CARETAKER_ADMIN_SETTLE_S = 8.0          # a restarted adapter needs a moment before the network can be re-checked
+CARETAKER_ADMIN_FAIL_RETRY_MIN = 60      # after a failed run, wait this long before trying the same repair again
+
+
+def _caretaker_admin_enabled() -> bool:
+    return (os.environ.get("JARVIS_CARETAKER_ADMIN") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _caretaker_admin_refresh() -> dict:
+    """Ask Windows what is installed (a PowerShell call, so never on every page load) and remember the answer."""
+    st = caretaker_admin.status()
+    _caretaker_admin_cache.update(at=time.time(), status=st)
+    return st
+
+
+def _caretaker_admin_status(max_age_s: float = 120.0) -> dict:
+    st = _caretaker_admin_cache["status"]
+    if st is None or time.time() - _caretaker_admin_cache["at"] > max_age_s:
+        st = _caretaker_admin_refresh()
+    return st
+
+
+def _caretaker_admin_ready(name: str) -> bool:
+    if not _caretaker_admin_enabled():
+        return False
+    try:
+        return name in _caretaker_admin_status()["ready"]
+    except Exception:
+        return False
+
+
+def _free_bytes(mount: str | None) -> int | None:
+    try:
+        import psutil
+        return int(psutil.disk_usage(mount).free) if mount else None
+    except Exception:
+        return None
+
+
+def _caretaker_admin_run(key: str, name: str, *, mount: str | None = None) -> dict:
+    """Run one admin-helper repair if it is set up, allowed right now and not done recently.
+    {"ok", "skipped", "detail", "freed"}; never raises. `skipped` = it did not run (or chose not to), no failure."""
+    def skip(why: str) -> dict:
+        return {"ok": False, "skipped": True, "detail": why, "freed": 0}
+
+    spec = caretaker_admin.ADMIN_ACTIONS.get(name)
+    if spec is None:
+        return skip("that isn't one of my admin actions")
+    if not _caretaker_admin_enabled():
+        return skip("the admin helper is switched off")
+    why = _caretaker_why_not_act()
+    if why:
+        return skip(why)
+    if not _caretaker_admin_ready(name):
+        return skip("the admin helper isn't set up")
+    if _caretaker_store.count_actions_since(f"admin:{name}", spec["gap_min"] / 60):
+        return skip("I did that recently")
+    if _caretaker_store.count_actions_since(f"admin_failed:{name}", CARETAKER_ADMIN_FAIL_RETRY_MIN / 60):
+        return skip("it just failed, so I'm waiting before trying again")
+    blocked = caretaker.budget_blocked(_caretaker_store)
+    if blocked:
+        return skip(blocked)
+    before = _free_bytes(mount)
+    try:
+        res = caretaker_admin.run_action(name)
+    except Exception as e:
+        log.warning("Admin helper call %s crashed: %s", name, e)
+        res = {"ok": False, "skipped": False, "detail": f"the helper call crashed ({e.__class__.__name__})"}
+    if res.get("skipped"):
+        return skip(res["detail"])           # e.g. an update is installing: not logged, tried again on a later pass
+    freed = max(0, (_free_bytes(mount) or 0) - before) if res["ok"] and before is not None else 0
+    _caretaker_store.log_action(key, spec["tier"], f"admin:{name}" if res["ok"] else f"admin_failed:{name}",
+                                res["detail"], "done" if res["ok"] else "failed", freed_bytes=freed)
+    selfaware.record("system", "caretaker_fix", f"admin helper: {res['detail']}" if res["ok"]
+                     else f"admin helper failed: {name}: {res['detail']}")
+    _caretaker_admin_cache["at"] = 0.0       # the task's last-run time changed: read it again next time
+    return {"ok": res["ok"], "skipped": False, "detail": res["detail"], "freed": freed}
+
+
+def _caretaker_network_admin_steps(key: str, r: dict) -> dict:
+    """The network playbook reached a step Windows keeps for administrators: do it through the helper if it is set up."""
+    left = []
+    for name in r["needs_admin"]:
+        res = _caretaker_admin_run(key, name)
+        if not res["ok"]:
+            left.append(name)
+            continue
+        r["steps"].append(res["detail"])
+        time.sleep(CARETAKER_ADMIN_SETTLE_S)
+        if not caretaker_probe.probe_network():
+            r["cleared"] = True
+            left = []
+            break
+    r["needs_admin"] = left
+    return r
+
+
+def _caretaker_fix_update(issue: dict) -> str | None:
+    """Old virus definitions: update them through the helper. A Windows Update that keeps failing is left to the AI
+    fallback, whose menu then includes the reset (reset_windows_update)."""
+    key, ev = issue["key"], issue.get("evidence") or {}
+    age = ev.get("defs_age_days")
+    if not (isinstance(age, int) and age >= 7):
+        return None
+    res = _caretaker_admin_run(key, "update_defender")
+    return caretaker_admin.ADMIN_ACTIONS["update_defender"]["did"] if res["ok"] else None
+
+
+def _caretaker_admin_summary() -> dict:
+    """What the page shows about the helper. Reads the cache only: never starts PowerShell."""
+    st = _caretaker_admin_cache["status"] or {}
+    acts = st.get("actions") or {}
+    return {
+        "enabled": _caretaker_admin_enabled(), "supported": bool(st.get("supported", sys.platform == "win32")),
+        "known": bool(st.get("known")), "installed": bool(st.get("installed")), "changed": st.get("changed") or [],
+        "setup": _caretaker_state.get("helper_setup"),
+        "actions": [dict(a, ok=bool((acts.get(a["name"]) or {}).get("ok")),
+                         why=(acts.get(a["name"]) or {}).get("why"))
+                    for a in caretaker_admin.describe()],
+    }
+
+
+_helper_setup_lock = threading.Lock()
+
+
+def _caretaker_helper_setup(kind: str) -> dict:
+    """Set the helper up (kind="install") or take it away ("remove"). Windows shows its own "allow this app to make
+    changes?" prompt; Jarvis cannot answer it. Returns at once; the outcome appears in `_caretaker_state["helper_setup"]`
+    (state waiting -> done | declined | failed) and on the Caretaker page."""
+    if sys.platform != "win32" and not os.environ.get("PYTEST_CURRENT_TEST"):
+        return {"ok": False, "error": "The admin helper only works on Windows."}
+    if kind == "install" and caretaker_admin.is_admin_account() is False:
+        return {"ok": False, "error": "This Windows account isn't an administrator, so the helper couldn't do "
+                                      "anything with administrator rights. Nothing was installed."}
+    user = caretaker_admin.current_user()
+    if kind == "install" and not caretaker_admin.valid_user(user):
+        return {"ok": False, "error": "I couldn't read your Windows user name safely. Nothing was installed."}
+    if not _helper_setup_lock.acquire(blocking=False):
+        return {"ok": False, "error": "A setup is already waiting for your answer to the Windows prompt."}
+    base = os.environ.get("LOCALAPPDATA")
+    folder = (Path(base) / "Jarvis" / "helper_setup") if base else (Path.home() / ".jarvis" / "helper_setup")
+    try:
+        text = caretaker_admin.install_script(user) if kind == "install" else caretaker_admin.remove_script()
+        path = caretaker_admin.stage_script(text, folder, f"{kind}_helper.ps1")
+        argv = caretaker_admin.launcher_argv(text, path)
+    except Exception as e:
+        _helper_setup_lock.release()
+        return {"ok": False, "error": f"I couldn't prepare the setup ({e.__class__.__name__}). Nothing was changed."}
+    _caretaker_state["helper_setup"] = {"kind": kind, "state": "waiting",
+                                         "at": datetime.now().isoformat(timespec="seconds")}
+
+    def work() -> None:
+        state, detail = "failed", "Windows didn't start the setup."
+        try:
+            rc, _ = caretaker_win.run_cmd(argv, timeout=300)    # returns once the prompt was answered
+            if rc != 0:
+                state, detail = "declined", "The Windows prompt was declined (or closed), so nothing changed."
+            else:
+                for _ in range(30):                              # the elevated script needs a few seconds
+                    time.sleep(3)
+                    st = _caretaker_admin_refresh()
+                    if (kind == "install" and st.get("installed")) or (kind == "remove" and not st.get("ready")
+                                                                       and st.get("known")):
+                        state, detail = "done", ("The admin helper is set up." if kind == "install"
+                                                 else "The admin helper was removed.")
+                        break
+                else:
+                    detail = "The setup ran but I can't see the result yet. Check again in a minute."
+        except Exception as e:
+            log.warning("Admin helper setup crashed: %s", e)
+        finally:
+            try:
+                Path(path).unlink()          # the staged installer goes first: nothing is left to tamper with
+            except OSError:
+                pass
+            _caretaker_state["helper_setup"] = {"kind": kind, "state": state, "detail": detail,
+                                                 "at": datetime.now().isoformat(timespec="seconds")}
+            selfaware.record("system", "caretaker_helper", f"admin helper {kind}: {state}")
+            _helper_setup_lock.release()
+
+    threading.Thread(target=work, daemon=True, name="caretaker-helper").start()
+    return {"ok": True, "message": "Windows is asking you to allow the change. Say yes on that prompt."}
 
 
 # --- Phase 5: the AI fallback -------------------------------------------------------------------
@@ -9527,6 +9740,9 @@ def _caretaker_ai_execute(issue: dict, step: dict) -> dict:
     if act == "fix_network":
         r = caretaker_win.fix_network(str(ev.get("detail") or ""), recheck=lambda: not caretaker_probe.probe_network())
         return {"ok": r["cleared"], "detail": "; ".join(r["steps"]) or "looked again"}
+    if act in caretaker_admin.ADMIN_ACTIONS:
+        res = _caretaker_admin_run(issue["key"], act)
+        return {"ok": res["ok"], "detail": res["detail"], "freed": int(res.get("freed") or 0)}
     return {"ok": False, "detail": f"no executor for {act}"}
 
 
@@ -9544,6 +9760,11 @@ def _caretaker_ai_settle(issue: dict, last: dict) -> None:
 
 def _caretaker_ai_diagnose(issue: dict) -> str | None:
     key = issue["key"]
+    try:   # the admin repairs join the model's menu only while the helper is installed and verified
+        caretaker_ai.set_admin_ready(
+            _caretaker_admin_status().get("ready") if _caretaker_admin_enabled() else ())
+    except Exception:
+        caretaker_ai.set_admin_ready(())
     last = _caretaker_store.last_action(key, "ai_diagnose")
     if last:
         gap = 120 if (last.get("result") or "") == "unavailable" else caretaker_ai.DIAGNOSE_GAP_H * 60
@@ -9626,8 +9847,8 @@ def _caretaker_ai_credit_closed(closed: list[str]) -> None:
 
 def _caretaker_fix_issue(issue: dict) -> str | None:
     """Run the playbook for one issue; returns a sentence about what was done (None = nothing). Disk health and
-    Windows Update have no playbook here on purpose: a failing disk is only reported, and the update fixes need the
-    admin helper (phase 6)."""
+    Windows Update: old virus definitions are updated through the admin helper (phase 6); a Windows Update that keeps
+    failing goes to the AI fallback. A failing disk is only reported, on purpose."""
     cat = issue["category"]
     if cat == "storage":
         return _caretaker_fix_storage(issue)
@@ -9639,6 +9860,8 @@ def _caretaker_fix_issue(issue: dict) -> str | None:
         return _caretaker_fix_network(issue)
     if cat == "crash":
         return _caretaker_fix_crash(issue)
+    if cat == "update":
+        return _caretaker_fix_update(issue)
     return None
 
 
@@ -9687,6 +9910,11 @@ def _caretaker_housekeeping() -> None:
 
 def _caretaker_run() -> None:
     try:
+        if _caretaker_admin_enabled():
+            try:
+                _caretaker_admin_refresh()   # one PowerShell call per scan: is the helper still what I installed?
+            except Exception as e:
+                log.debug("Admin helper status check failed: %s", e)
         issues = _caretaker_scan()
         _caretaker_state["last"] = {"at": datetime.now().isoformat(timespec="seconds"), "issues": len(issues)}
         for iss in issues:
@@ -9726,7 +9954,9 @@ def caretaker_report(include_fixed: bool = False) -> dict:
     return {"enabled": caretaker_enabled(), "last_scan": _caretaker_state["last"], "issues": issues,
             "actions": _caretaker_store.recent_actions(30),
             "summary": _caretaker_store.summary_since(24),
-            "lessons": _caretaker_store.lessons()}
+            "lessons": _caretaker_store.lessons(),
+            "helper": _caretaker_admin_summary(),
+            "needs_admin": {k: list(v) for k, v in (_caretaker_state.get("needs_admin") or {}).items()}}
 
 
 @_feature("caretaker")
@@ -9755,6 +9985,14 @@ def _feature_caretaker(action: str, payload: dict):
         sig = str((payload or {}).get("sig") or "")
         _caretaker_store.lesson_delete(sig)
         selfaware.record("system", "caretaker_lesson", f"forgot the learned fix for '{sig}' (owner)")
+        return {"ok": True, **caretaker_report()}
+    if action in ("helper_install", "helper_remove"):
+        # The owner's click on the Caretaker page (the page asks "Windows will ask for permission" first).
+        res = _caretaker_helper_setup("install" if action == "helper_install" else "remove")
+        return {**res, **caretaker_report()}
+    if action == "helper_refresh":
+        if _caretaker_admin_enabled():
+            _caretaker_admin_refresh()
         return {"ok": True, **caretaker_report()}
     return None
 
@@ -9847,7 +10085,36 @@ def _caretaker_tool(inp: dict) -> str:
             return f"Tool failed: no issue called {key}."
         _caretaker_store.set_status(key, "ignored")
         return f"Leaving {key} alone from now on."
+    if action == "helper":
+        return _caretaker_helper_text()
+    if action in ("install_helper", "remove_helper"):
+        if not _attended():
+            return "Tool failed: the admin helper can only be set up or removed by you at the PC, not from here."
+        res = _caretaker_helper_setup("install" if action == "install_helper" else "remove")
+        return res["message"] if res["ok"] else f"Tool failed: {res['error']}"
     return f"Tool failed: unknown caretaker action {action!r}."
+
+
+def _caretaker_helper_text() -> str:
+    """Plain-words state of the admin helper for the voice/typed tool."""
+    if not _caretaker_admin_enabled():
+        return "The admin helper is switched off (JARVIS_CARETAKER_ADMIN=0)."
+    try:
+        st = _caretaker_admin_refresh()
+    except Exception:
+        return "I couldn't check the admin helper just now."
+    if not st.get("supported"):
+        return "The admin helper only works on Windows."
+    setup = _caretaker_state.get("helper_setup") or {}
+    if setup.get("state") == "waiting":
+        return "I'm waiting for you to answer the Windows prompt for the admin helper."
+    if st.get("changed"):
+        return ("The admin helper is set up but " + ", ".join(st["changed"]) + " no longer match what I installed, "
+                "so I won't run them. Remove and set it up again if that was you.")
+    if st.get("ready"):
+        return "The admin helper is set up. It can only do: " + "; ".join(
+            caretaker_admin.ADMIN_ACTIONS[n]["desc"] for n in st["ready"] if n in caretaker_admin.ADMIN_ACTIONS) + "."
+    return "The admin helper isn't set up. Say 'set up the admin helper' and allow the Windows prompt."
 
 
 _BATCH_TOOL_HANDLERS["caretaker"] = _caretaker_tool

@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1792151180.8050256,
-    "seen": 1792151344.5756679,
-    "ast_hash": "f8ec11c47c274cda43b5855ee749d421",
+    "mtime": 1792152492.0557833,
+    "seen": 1792152792.1320715,
+    "ast_hash": "dbc1c235c4451dca6d3abfd88f5d9ccf",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792151235.45714,
-    "seen": 1792151344.5760272,
-    "ast_hash": "35ec4106e3d35cb5614a1e46c49ab85d",
+    "mtime": 1792152673.8637793,
+    "seen": 1792152792.1324294,
+    "ast_hash": "6403c01bdfe1b4c3fc447cd7ee940ea1",
     "semantic_hash": ""
   },
   "README.md": {
@@ -126,9 +126,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/index.html": {
-    "mtime": 1792150968.100294,
-    "seen": 1792151344.5760555,
-    "ast_hash": "d75df50a7d84628ac24c45efe224dad1",
+    "mtime": 1792152225.3053942,
+    "seen": 1792152792.132453,
+    "ast_hash": "4b41df8a9a5a1f55fe9c11ae39e71355",
     "semantic_hash": ""
   },
   "test_dashboard.py": {
@@ -1782,9 +1782,9 @@
     "semantic_hash": ""
   },
   "dashboard_static/caretaker.js": {
-    "mtime": 1792150968.100873,
-    "seen": 1792151344.5756395,
-    "ast_hash": "a03a6d1503bcaa50503509ef89df061e",
+    "mtime": 1792152554.0671031,
+    "seen": 1792152792.1320386,
+    "ast_hash": "41287c2a7c2e7baae34a8a814cf1bf98",
     "semantic_hash": ""
   },
   "jarvis_caretaker.py": {
@@ -1836,15 +1836,27 @@
     "semantic_hash": ""
   },
   "jarvis_caretaker_ai.py": {
-    "mtime": 1792151159.7967196,
-    "seen": 1792151344.5756934,
-    "ast_hash": "cdb09dcffeccb15e66f00776c17e56d1",
+    "mtime": 1792152468.3357859,
+    "seen": 1792152792.1321082,
+    "ast_hash": "6ceb84028014825009e9b72e038d1da4",
     "semantic_hash": ""
   },
   "test_caretaker_ai.py": {
     "mtime": 1792151122.7815683,
     "seen": 1792151344.5759451,
     "ast_hash": "240ecd6997d00b5ba22dea4eddc59ba2",
+    "semantic_hash": ""
+  },
+  "jarvis_caretaker_admin.py": {
+    "mtime": 1792152468.918426,
+    "seen": 1792152792.1321046,
+    "ast_hash": "65232338dd1ad4be5ee6fdadb4334aeb",
+    "semantic_hash": ""
+  },
+  "test_caretaker_admin.py": {
+    "mtime": 1792152770.9283307,
+    "seen": 1792152792.132347,
+    "ast_hash": "96489e513a3ffaa3ec490c92f6e3e2e4",
     "semantic_hash": ""
   }
 }

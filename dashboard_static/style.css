@@ -672,6 +672,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.75); }
   text-decoration: none;
   transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
 }
+.btn[hidden] { display: none; }
 .btn:hover { border-color: var(--color-accent); background: var(--color-accent-soft); }
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }

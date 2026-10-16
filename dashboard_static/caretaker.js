@@ -55,6 +55,10 @@ function ctIssueRow(i) {
     (ev.ai_cause || ev.ai_advice
       ? `<div class="muted"><strong>${ev.ai_source === "learned" ? "From a learned fix" : "AI diagnosis"}:</strong> ` +
         `${esc([ev.ai_cause, ev.ai_advice].filter(Boolean).join(" "))}</div>` : "");
+  const needs = (window.__ctNeedsAdmin || {})[i.key];
+  const needsAdmin = needs && needs.length && !window.__ctHelperReady
+    ? `<div class="muted"><strong>Needs administrator rights:</strong> set up the admin helper below and I can try ` +
+      `${esc(needs.map((n) => n.replace(/_/g, " ")).join(", "))}.</div>` : "";
   return `
     <li class="list-item ${CT_SEV_CLASS[i.severity] || ""}">
       <span class="src-badge">${esc(i.severity)}</span>
@@ -64,6 +68,7 @@ function ctIssueRow(i) {
           ${gaveUp ? (i.attempts > 0 ? " &middot; <strong>gave up after " + esc(String(i.attempts)) + " tries</strong>"
                                      : " &middot; <strong>needs you</strong>") : ""}</div>
         ${advice}
+        ${needsAdmin}
         ${tried}
       </div>
       <button class="btn btn-ghost" type="button" data-ct-ignore="${escAttr(i.key)}">Ignore</button>
@@ -94,6 +99,46 @@ function ctLessonRow(l) {
     </li>`;
 }
 
+function ctHelperRow(a) {
+  return `
+    <li class="list-item compact">
+      <span class="src-badge">${a.ok ? "ready" : "off"}</span>
+      <span>${esc(a.desc)}${!a.ok && a.why ? ` <span class="muted">&middot; ${esc(a.why)}</span>` : ""}</span>
+    </li>`;
+}
+
+function ctHelperState(h) {
+  const setup = h.setup || {};
+  if (!h.enabled) return "The admin helper is switched off (JARVIS_CARETAKER_ADMIN=0).";
+  if (!h.supported) return "The admin helper only works on Windows.";
+  if (setup.state === "waiting") return "Waiting for you to answer the Windows prompt...";
+  if (h.changed && h.changed.length)
+    return "Set up, but " + h.changed.map((n) => n.replace(/_/g, " ")).join(", ") +
+      " no longer match what Jarvis installed, so they won't run. Remove it and set it up again if that was you.";
+  if (h.installed) return setup.state === "done" && setup.detail ? setup.detail : "Set up. Jarvis can use these five repairs.";
+  if (setup.state === "declined" || setup.state === "failed") return setup.detail || "Setup did not finish.";
+  return h.known ? "Not set up." : "Not set up (or Windows could not be asked yet).";
+}
+
+function ctRenderHelper(rep) {
+  const h = rep.helper || {};
+  window.__ctNeedsAdmin = rep.needs_admin || {};
+  window.__ctHelperReady = !!h.installed;
+  const block = document.getElementById("ct-helper-block");
+  if (!block) return;
+  block.hidden = !h.supported || !h.enabled;
+  document.getElementById("ct-helper-status").textContent = ctHelperState(h);
+  document.getElementById("ct-helper-actions").innerHTML = (h.actions || []).map(ctHelperRow).join("");
+  const waiting = (h.setup || {}).state === "waiting";
+  const inst = document.getElementById("ct-helper-install");
+  const rem = document.getElementById("ct-helper-remove");
+  inst.disabled = waiting; rem.disabled = waiting;
+  inst.hidden = !!h.installed; rem.hidden = !(h.installed || (h.changed && h.changed.length));
+  inst.textContent = h.changed && h.changed.length ? "Set it up again" : "Set up the admin helper";
+  clearTimeout(window.__ctHelperTimer);
+  if (waiting) window.__ctHelperTimer = setTimeout(() => refreshCaretaker(), 4000);   // follow the Windows prompt
+}
+
 async function refreshCaretaker(message) {
   const view = document.getElementById("view-caretaker");
   if (!view) return;
@@ -104,6 +149,11 @@ async function refreshCaretaker(message) {
   } catch (e) {
     if (status) status.textContent = "Couldn't load the Caretaker: " + e.message;
     return;
+  }
+  ctRenderHelper(rep);
+  if (!window.__ctHelperChecked) {   // Windows is asked about the helper once per page load, not on every refresh
+    window.__ctHelperChecked = true;
+    ctPost("helper_refresh", {}).then(() => refreshCaretaker()).catch(() => {});
   }
   document.getElementById("ct-cards").innerHTML = ctCards(rep);
   const issues = rep.issues || [];
@@ -148,6 +198,24 @@ document.getElementById("ct-fix")?.addEventListener("click", async (e) => {
   btn.disabled = false;
   refreshCaretaker(msg);
 });
+
+async function ctHelperSetup(action, question) {
+  if (!confirm(question)) return;
+  let msg;
+  try {
+    const r = await ctPost(action, {});
+    msg = r.ok ? r.message : (r.error || "That did not start.");
+  } catch (err) { alert(err.message); }
+  refreshCaretaker(msg);
+}
+
+document.getElementById("ct-helper-install")?.addEventListener("click", () => ctHelperSetup("helper_install",
+  "Set up the admin helper?\n\nWindows will ask for permission. After you allow it, Jarvis can run five fixed " +
+  "repairs with administrator rights (listed on this page), and nothing else."));
+
+document.getElementById("ct-helper-remove")?.addEventListener("click", () => ctHelperSetup("helper_remove",
+  "Remove the admin helper?\n\nWindows will ask for permission. Jarvis goes back to fixes that need no " +
+  "administrator rights."));
 
 document.getElementById("ct-issues")?.addEventListener("click", async (e) => {
   const key = e.target.dataset.ctIgnore;

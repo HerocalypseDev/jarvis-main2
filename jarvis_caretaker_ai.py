@@ -95,9 +95,20 @@ def check_diagnostic(name: str, args: dict | None) -> dict | None:
     return clean
 
 
+_ADMIN_READY: set[str] = set()      # admin-helper actions that are installed and verified right now
+
+
+def set_admin_ready(names) -> None:
+    """jarvis.py tells this module which admin-helper actions work right now. An action marked `admin` is on the menu
+    ONLY while it is in this set, so the model is never offered a repair that would just fail."""
+    _ADMIN_READY.clear()
+    _ADMIN_READY.update(str(n) for n in (names or ()))
+
+
 def actions_for(issue: dict) -> dict[str, dict]:
     cat = issue.get("category", "")
-    return {n: s for n, s in ACTIONS.items() if s["categories"] is None or cat in s["categories"]}
+    return {n: s for n, s in ACTIONS.items()
+            if (s["categories"] is None or cat in s["categories"]) and (not s.get("admin") or n in _ADMIN_READY)}
 
 
 # --- text hygiene --------------------------------------------------------------------------------

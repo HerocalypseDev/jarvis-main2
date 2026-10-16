@@ -1828,7 +1828,8 @@ row there each phase rather than only stating the total in chat.
 | 164 (Caretaker phase 3: Jarvis repairs its own failures: classified causes with plain advice, failing skills re-run with limits, down tool servers reconnected, sign-in/credit/wrong-tool causes explained once and quietly, jobs never re-run, new agent sensor; 31 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | 165 (Caretaker phase 4: Windows playbooks without admin rights: CPU hog priority lowered (undoable, never closed, never the front app), network re-check/DNS flush/Wi-Fi reconnect, crash-loop cache clear, advice on every finding, undo for priority changes; 27 new tests, 3 mutation checks, headless page check) | Sonnet 5.5 | ~30 min | ~$2.20–$3.00 |
 | 166 (Caretaker phase 5: model diagnoses what the playbooks could not, behind a validator with fixed menus bound to the issue's own evidence; daily cap; learned playbooks promoted after 2 verified successes and demoted after 2 failures, Forget button on the page; 22 new tests, 8 mutation checks, headless page check) | Sonnet 5.5 | ~45 min | ~$3.20–$4.40 |
-| **Running total (final)** | | **~5044 min** | **~$345.15–$485.05** |
+| 167 (Caretaker phase 6: one-time admin helper = five fixed on-demand elevated tasks that take no input, tamper-checked before every run, hash-verified in-memory installer behind Windows' own prompt, wired into network/update/storage fixes and the AI menu only while verified, attended-only setup tool + page buttons; 73 new tests, 16 mutation checks, headless page check at 1440/390 px) | Sonnet 5.5 | ~60 min | ~$4.00–$5.50 |
+| **Running total (final)** | | **~5104 min** | **~$349.15–$490.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3012,3 +3013,39 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
 - Not verified on a real PC: the PowerShell diagnostics' real output, how often a live model gives a usable plan, and whether a
   plan really clears a stuck issue (the tests script the model). The AI cannot run anything outside the phase 2-4 actions until
   phase 6 registers admin ones. Priority lowering does not reduce CPU use, it only makes the program yield.
+
+- **Phase 6 (the admin helper, `jarvis_caretaker_admin.py`, `test_caretaker_admin.py`; owner approved it on a decision card
+  2026-10-16, after asking for "full admin access like it's me")**: NOT a blanket elevated Jarvis. Five FIXED repairs that need
+  administrator rights run through five on-demand Windows Scheduled Tasks at `\\Jarvis\\Caretaker\\` (RunLevel Highest, the
+  registering user's own account, no trigger): `flush_dns`, `restart_adapter`, `update_defender`, `reset_windows_update` (renames
+  SoftwareDistribution to `SoftwareDistribution.jarvis-<stamp>`, kept 7 days, never while TiWorker runs), `clear_windows_temp`
+  (files older than 7 days; not recoverable, they are temp files). Each task runs ONE script `C:\\Program Files\\JarvisHelper\\<name>.ps1`
+  (folder locked with icacls: SYSTEM/Administrators full, Users read+execute). **A task takes no input**, so there is no channel for
+  AI, email or web text to steer it; the model can only pick a NAME from the menu. Everything else (shutdown, format, wipe,
+  force-close) keeps its yes and the existing gate; the helper adds no free-text path.
+- **Tamper checks (kept)**: before EVERY run `status()` re-reads each task's definition (exe, exactly one action, exact arguments,
+  RunLevel Highest, the same Windows user, not disabled) and the script text (BOM/CRLF tolerant) against the constants in the code,
+  and refuses on any mismatch ("changed"; the page and tool say so). Install/remove raise Windows' own UAC prompt that Jarvis
+  cannot answer; the installer is staged under `%LOCALAPPDATA%\\Jarvis\\helper_setup` and run through a stub that reads it ONCE into
+  memory, compares its SHA-256 with the digest fixed in the launcher, and only then runs that text (no re-read after the check,
+  and the staged file is deleted before the state says "done"). Install is refused when the Windows account is not in
+  Administrators (`whoami /groups`) or the user name is not plain (`valid_user`). Tool `install_helper`/`remove_helper` are
+  attended-only (voice/typed/dashboard, never phone/scheduled/autonomy); the page buttons confirm first.
+- **Wiring**: the network playbook (steps Windows refused: flush_dns / restart_adapter, then re-checks the network), old Defender
+  definitions (>= 7 days -> update_defender), the storage playbook (clear_windows_temp only after the user-level cleanup fell short,
+  and the target is re-measured) and the AI menu (`caretaker_ai.register_action(..., admin=True)`; an admin action is on the
+  model's menu ONLY while the helper is installed and verified; `clear_windows_temp` is never on it). Gaps: flush 10 min, adapter
+  30 min, definitions 12 h, update reset 7 days, temp 24 h; a failed run waits 60 min (`admin_failed:<name>`); the shared hourly
+  budget and safe mode / `autonomy.hard_disabled()` / `JARVIS_CARETAKER_ACT=0` apply. Actions are logged `admin:<name>` (tier green;
+  yellow for the update reset). A run skipped by the task itself (update installing = code 3, no adapter = 4) is not a failure and
+  is not logged. Switch: `JARVIS_CARETAKER_ADMIN=0` (default on; does nothing until the owner sets the helper up).
+  Windows is asked about the helper once per scan and once per page load, never per refresh.
+- **Risk review (double-check protocol)**: security - any local program running as this user can start the five tasks (they do
+  fixed harmless things) but cannot change what they run (files and task definitions are admin-only; Jarvis re-verifies);
+  cost - none; data exposure - none new (no data leaves); irreversibility - the Defender update and DNS flush are harmless, the
+  update reset keeps the old folder 7 days (no undo button), the temp clear deletes old temp files for good; performance - one
+  PowerShell status read per scan. A standard (non-admin) Windows account cannot use the helper.
+- **Not verified on a real PC** (no PowerShell here: scripts are only checked structurally and through a fake Windows): the five
+  scripts, `Start-ScheduledTask` of a Highest task from a non-elevated Jarvis, `Get-ScheduledTaskInfo` fields, icacls, the UAC
+  prompt flow and the install/remove round trip, a real Defender update and adapter restart. Do the first install with the page's
+  button and watch the Caretaker page; `python -c "import jarvis_caretaker_admin as a; print(a.status())"` shows what Windows says.
