@@ -3,7 +3,8 @@ Jarvis RUNS at that time, not a reminder it reads out.
 
 `autonomy_deferred_jobs` (jarvis_memory.db): due_at, kind (execute_jarvis | notify_user), instruction (a
 clean imperative for Jarvis), source_quote, origin (user = scheduled by a direct request through the
-schedule_jarvis_task tool; conversation = extracted by autonomy from the user's own words), status
+schedule_jarvis_task tool; conversation = extracted by autonomy from the user's own words; jarvis = scheduled by
+Jarvis's own run, e.g. a scheduled skill, since 2026-10-16), status
 (pending | running | done | failed | cancelled), result, attempts.
 
 jarvis.py's scheduler tick calls `claim_due()` (atomic pending->running, so a job never runs twice) and
@@ -11,9 +12,9 @@ runs each claimed execute_jarvis job through the normal agent loop on a worker t
 audited, the catastrophic confirmation gate intact (a shutdown/format/wipe still STAGES). A failed run is
 retried up to MAX_ATTEMPTS times, RETRY_MIN apart, then reported.
 
-Only the user's own requests create jobs: never mail, messages, web pages or files (enforced by the
-callers: the tool refuses unattended/autonomous sources, extraction only accepts quotes from the user's
-own words).
+Jobs come from the user's requests or Jarvis's own runs, never from mail, messages, web pages or files
+(enforced by the callers: the tool refuses a run that came from or read outside text, extraction only
+accepts quotes from the user's own words).
 """
 
 from __future__ import annotations

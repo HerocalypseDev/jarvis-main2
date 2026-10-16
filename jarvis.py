@@ -7683,10 +7683,9 @@ def _watches() -> watches_mod.Store:
 
 
 def _watch_changes_allowed() -> bool:
-    """The user makes and changes watches (PC or their own phone); an automatic run never does: what a watch says
-    to check becomes instructions for later unattended runs."""
-    return (_current_command_source() in ("voice", "text", "dashboard", "phone")
-            and not getattr(_command_ctx, "untrusted_origin", False))
+    """The user, or Jarvis's own runs (owner 2026-10-16), make and change watches; never a run that came from or
+    read someone else's text: what a watch says to check becomes instructions for later unattended runs."""
+    return _self_scheduling_problem("watches") is None
 
 
 def _watch_summary(w: dict) -> str:
@@ -7713,7 +7712,8 @@ def _watches_tool(inp: dict) -> str:
                  + f" [{t['stage']}]: {t['said']}" for t in told[-15:]]
         return _watch_summary(w) + "\nAlready told the user:\n" + ("\n".join(lines) or "- nothing yet")
     if not _watch_changes_allowed():
-        return "Tool failed: watches can only be made or changed by the user, not from an automatic run."
+        return ("Tool failed: watches can't be made or changed from a task that came from or read someone else's "
+                "message, email or web page.")
     if action == "create":
         name = watches_mod.clip(inp.get("name"), 60)
         what, rule = watches_mod.clip(inp.get("what")), watches_mod.clip(inp.get("rule"))
@@ -8567,8 +8567,10 @@ def _agents_on_file_event(event: dict) -> None:
 
 def _background_agents_tool(inp: dict) -> str:
     action = str(inp.get("action") or "list").lower()
-    if action in ("create", "delete", "enable", "disable") and not _attended():
-        return "Background agents can only be changed from the PC (voice, typed or dashboard)."
+    if action in ("create", "delete", "enable", "disable"):
+        problem = _self_scheduling_problem("background agents")
+        if problem:
+            return problem
     name = str(inp.get("name") or "").strip()
     if action == "create":
         return agents.create(_agent_store, name, str(inp.get("trigger_type") or ""), inp.get("trigger_config") or {},
@@ -8790,18 +8792,43 @@ def _parse_when(due_iso: str = "", in_minutes=None) -> datetime | None:
     return when
 
 
+# Self-scheduling (owner, 2026-10-16, "All but email"): Jarvis's own runs (a scheduled skill, a queued task, a job,
+# the AI inside any command) may create jobs, background agents, watches, skills and campaign steps by themselves.
+# A run that came from someone else's text (an email, a message, a web page: untrusted_origin) or has read it
+# (outside_text_seen) still can't: an injected instruction would otherwise plant work that runs later with full tools.
+SELF_JOBS_MAX_PENDING = 20  # Jarvis-made jobs waiting at once: a run that keeps re-scheduling itself can't pile up
+
+
+def _self_scheduling_problem(what: str) -> str | None:
+    if getattr(_command_ctx, "untrusted_origin", False) or getattr(_command_ctx, "outside_text_seen", False):
+        return (f"Refused: {what} can't be set up from a task that came from or read someone else's message, email "
+                "or web page (it could be a hidden instruction). Ask me directly if you want this.")
+    return None
+
+
+def _owner_request_now() -> bool:
+    return _current_command_source() in ("voice", "text", "dashboard", "phone") \
+        and not getattr(_command_ctx, "autonomous", False)
+
+
 def _schedule_jarvis_task_tool(inp: dict) -> str:
-    """The user asks Jarvis to DO something later. Only from a real user request (voice/typed/dashboard/phone):
-    an autonomous or unattended run (e.g. one acting on an email) can never plant work for later."""
-    src = _current_command_source()
-    if src not in ("voice", "text", "dashboard", "phone") or getattr(_command_ctx, "autonomous", False) \
-            or getattr(_command_ctx, "untrusted_origin", False):
-        return "Refused: only your own request can schedule work for Jarvis to do later."
+    """Work for Jarvis to DO later. From the owner's request (origin user) or, since 2026-10-16, from Jarvis's own
+    runs (origin jarvis); never from a run that came from or read outside text (_self_scheduling_problem)."""
+    problem = _self_scheduling_problem("work for later")
+    if problem:
+        return problem
+    origin = "user" if _owner_request_now() else "jarvis"
+    if origin == "jarvis":
+        waiting = _deferred_store.q("SELECT COUNT(*) AS n FROM autonomy_deferred_jobs WHERE origin='jarvis' "
+                                    "AND status IN ('pending','running')")
+        if waiting and waiting[0]["n"] >= SELF_JOBS_MAX_PENDING:
+            return (f"Tool failed: {SELF_JOBS_MAX_PENDING} jobs I scheduled myself are already waiting; cancel some "
+                    "with scheduled_jobs first.")
     when = _parse_when(str(inp.get("due_at") or ""), inp.get("due_in_minutes"))
     if when is None:
         return "When should I do it? Give a time or a number of minutes from now."
     jid, msg = deferred.schedule(_deferred_store, str(inp.get("instruction") or ""), when,
-                                 str(inp.get("source_quote") or ""), origin="user",
+                                 str(inp.get("source_quote") or ""), origin=origin,
                                  start_line=startline.clean(inp.get("start_line")))
     return msg
 
@@ -8853,7 +8880,10 @@ def _run_deferred_job(job: dict) -> None:
     ok, reply, transient = False, "", False
     try:
         reply = run_agent_loop(
-            f"(Scheduled job #{job['id']}: the user asked earlier for this to be done at this time. Do it now, "
+            f"(Scheduled job #{job['id']}: "
+            + ("you scheduled this yourself earlier" if job.get("origin") == "jarvis"
+               else "the user asked earlier for this to be done at this time")
+            + ". Do it now, "
             "fully, without asking them anything first; for a code change use change_jarvis_code (Jarvis's own "
             "code) or delegate_to_claude_code (any other project). Dangerous system actions still stage for "
             f"their yes as usual. Live state: {_state_line()}) {job['instruction']}",
@@ -13783,7 +13813,8 @@ def _execute_tool_impl(
         elif tool_name == "semantic_recall":
             result = memory_enhance.semantic_recall(str(inp.get("query") or ""))
         elif tool_name == "autonomy":
-            result = autonomy.handle_tool(inp, _current_command_source())
+            result = autonomy.handle_tool(inp, _current_command_source(),
+                                             self_run=_self_scheduling_problem("campaign work") is None)
         elif tool_name == "autonomy_skill":
             result = autonomy_skills.handle_tool(inp, _current_command_source())
         elif tool_name == "autonomy_organise":

@@ -113,11 +113,12 @@ def test_agents_tick_runs_through_execute_tool_and_respects_safe_mode(jarvis, mo
             break
         time.sleep(0.05)
     assert calls == [("open_app", "(background agent a1)")]
-    jarvis._command_ctx.source = "phone"
+    # Owner 2026-10-16: any of Jarvis's own runs may change agents; one started from someone's email may not
+    jarvis._command_ctx.untrusted_origin = True
     try:
-        assert "only be changed from the PC" in jarvis._background_agents_tool({"action": "create", "name": "z"})
+        assert jarvis._background_agents_tool({"action": "create", "name": "z"}).startswith("Refused")
     finally:
-        jarvis._command_ctx.source = None
+        jarvis._command_ctx.untrusted_origin = False
 
 
 # --- C2/C3 code --------------------------------------------------------------------------------
