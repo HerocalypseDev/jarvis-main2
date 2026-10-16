@@ -49,6 +49,15 @@ GREEN, YELLOW, RED = "green", "yellow", "red"
 SEVERITIES = ("info", "warn", "high", "critical")
 
 
+# A sensor "owns" these categories: when it ran fine and no longer reports one, that issue is resolved.
+SENSOR_CATEGORIES = {
+    "storage": {"storage"}, "processes": {"process"}, "crashes": {"crash"}, "disk_health": {"disk_health"},
+    "updates": {"update"}, "network": {"network"}, "battery": {"battery"},
+    "self": {"self_skill", "self_job", "self_agent", "self_mcp", "self_doctor", "self_crash", "self_other"},
+}
+GAVE_UP_RETRY_HOURS = 24        # an issue Jarvis gave up on is tried again after this long, with a clean slate
+
+
 # --- findings (what a sensor noticed) -----------------------------------------------------------
 @dataclass
 class Finding:
@@ -211,11 +220,42 @@ class Store:
                     c.execute("UPDATE caretaker_issues SET last_seen=?,severity=?,title=?,evidence=? WHERE key=?",
                               (now, f.severity, f.title, json.dumps(f.evidence), f.key))
                     continue
-                new_status = "open" if status in ("fixed", "gave_up") else status
+                if status == "gave_up":
+                    gu = c.execute("SELECT resolved_at FROM caretaker_issues WHERE key=?", (f.key,)).fetchone()[0]
+                    try:
+                        retry = datetime.now() - datetime.fromisoformat(gu) >= timedelta(hours=GAVE_UP_RETRY_HOURS)
+                    except (TypeError, ValueError):
+                        retry = True
+                    if not retry:   # still the same problem: keep it as gave_up, just refresh what it looks like
+                        c.execute("UPDATE caretaker_issues SET severity=?,title=?,evidence=?,last_seen=? WHERE key=?",
+                                  (f.severity, f.title, json.dumps(f.evidence), now, f.key))
+                        continue
+                    c.execute("UPDATE caretaker_issues SET attempts=0,tried=NULL WHERE key=?", (f.key,))
+                new_status = "open" if status in ("fixed", "resolved", "gave_up") else status
                 c.execute("""UPDATE caretaker_issues SET severity=?,title=?,evidence=?,status=?,
                              last_seen=?,resolved_at=NULL WHERE key=?""",
                           (f.severity, f.title, json.dumps(f.evidence), new_status, now, f.key))
         return self.open_issues()
+
+    def resolve_missing(self, current_keys: set, sensors_ok: set) -> list[str]:
+        """Close issues whose sensor ran fine and no longer reports them. 'fixed' when Jarvis acted on it,
+        'resolved' when it went away by itself. Ignored issues are left alone. Returns the keys closed."""
+        owned: set = set()
+        for name in sensors_ok:
+            owned |= SENSOR_CATEGORIES.get(name, set())
+        closed: list[str] = []
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._conn() as c:
+            rows = c.execute("""SELECT key,category FROM caretaker_issues
+                                WHERE status IN ('open','fixing','gave_up')""").fetchall()
+            for key, cat in rows:
+                if key in current_keys or cat not in owned:
+                    continue
+                acted = c.execute("SELECT 1 FROM caretaker_actions WHERE issue_key=? LIMIT 1", (key,)).fetchone()
+                c.execute("UPDATE caretaker_issues SET status=?,resolved_at=? WHERE key=?",
+                          ("fixed" if acted else "resolved", now, key))
+                closed.append(key)
+        return closed
 
     def open_issues(self) -> list[dict]:
         with self._conn() as c:
@@ -278,8 +318,9 @@ class Store:
         n = (iss["attempts"] if iss else 0) + 1
         status = "gave_up" if n >= MAX_ATTEMPTS else "open"
         with self._conn() as c:
-            c.execute("UPDATE caretaker_issues SET attempts=?,tried=?,status=? WHERE key=?",
-                      (n, json.dumps(tried[-10:]), status, key))
+            c.execute("UPDATE caretaker_issues SET attempts=?,tried=?,status=?,resolved_at=? WHERE key=?",
+                      (n, json.dumps(tried[-10:]), status,
+                       datetime.now().isoformat(timespec="seconds") if status == "gave_up" else None, key))
         return n
 
     def log_action(self, issue_key: str, tier: str, action: str, detail: str,
@@ -329,14 +370,19 @@ class Store:
     def summary_since(self, hours: int = 24) -> dict:
         cutoff = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
         with self._conn() as c:
-            freed = c.execute("SELECT COALESCE(SUM(freed_bytes),0) FROM caretaker_actions WHERE ts>=?",
-                              (cutoff,)).fetchone()[0]
+            # Yellow actions MOVE files to the holding folder: that frees nothing until the days are up, so it is
+            # reported as "held", never counted as freed space.
+            freed = c.execute("SELECT COALESCE(SUM(freed_bytes),0) FROM caretaker_actions WHERE ts>=? AND tier!=?",
+                              (cutoff, YELLOW)).fetchone()[0]
+            held = c.execute("""SELECT COALESCE(SUM(freed_bytes),0) FROM caretaker_actions
+                                WHERE ts>=? AND tier=? AND undo IS NOT NULL AND undone=0""",
+                             (cutoff, YELLOW)).fetchone()[0]
             fixed = c.execute("""SELECT COUNT(*) FROM caretaker_issues
                                  WHERE status='fixed' AND resolved_at>=?""", (cutoff,)).fetchone()[0]
             acted = c.execute("SELECT COUNT(*) FROM caretaker_actions WHERE ts>=?", (cutoff,)).fetchone()[0]
             gave_up = c.execute("""SELECT key,title FROM caretaker_issues
                                    WHERE status='gave_up' AND last_seen>=?""", (cutoff,)).fetchall()
-        return {"freed_bytes": int(freed or 0), "fixed": fixed, "actions": acted,
+        return {"freed_bytes": int(freed or 0), "held_bytes": int(held or 0), "fixed": fixed, "actions": acted,
                 "gave_up": [{"key": g[0], "title": g[1]} for g in gave_up]}
 
 

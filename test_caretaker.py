@@ -1,5 +1,6 @@
 """Caretaker core (jarvis_caretaker.py): classifiers, issue store, budgets. Pure: no OS, temp DB only."""
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -77,7 +78,8 @@ def test_actions_undo_and_summary(store):
     assert store.recent_actions(undoable_only=True) == []
     store.set_status("disk:C:", "fixed")
     s = store.summary_since(24)
-    assert s["fixed"] == 1 and s["actions"] == 2 and s["freed_bytes"] > 5 * 1024 ** 3
+    # the yellow action MOVED files (and was just undone): neither freed space nor still held
+    assert s["fixed"] == 1 and s["actions"] == 2 and s["freed_bytes"] == 5 * 1024 ** 3 and s["held_bytes"] == 0
     assert a != b
 
 
@@ -313,3 +315,148 @@ def test_report_and_tool_show_gave_up_issues(jv, monkeypatch):
 def test_failure_title_has_one_full_stop():
     f = ct.self_failure_finding("skill", "x", "Token has been expired or revoked.", 3)
     assert f.title.endswith("revoked.") and ".." not in f.title
+
+
+# --- resolving, retry window (phase 2) ------------------------------------------------------------
+def test_resolve_missing_closes_only_what_its_sensor_stopped_reporting(store):
+    store.ingest([ct.storage_finding("C:", 91, 8), ct.network_finding(True, False, True),
+                  ct.self_failure_finding("skill", "x", "e", 3)])
+    store.log_action("disk:C:", ct.GREEN, "clear_caches", "", "ok")          # Jarvis acted on the disk issue
+    # storage and network ran fine and now report nothing; the "self" sensor did NOT run this time
+    closed = store.resolve_missing(set(), {"storage", "network"})
+    assert sorted(closed) == ["disk:C:", "network:lan"]
+    assert store.get("disk:C:")["status"] == "fixed"        # Jarvis acted on it
+    assert store.get("network:lan")["status"] == "resolved"  # went away by itself
+    assert store.get("self_skill:x")["status"] == "open"    # its sensor didn't run: left alone
+
+
+def test_resolve_missing_leaves_ignored_and_still_reported_issues(store):
+    store.ingest([ct.storage_finding("C:", 91, 8), ct.network_finding(True, False, True)])
+    store.set_status("network:lan", "ignored")
+    assert store.resolve_missing({"disk:C:"}, {"storage", "network"}) == []
+    assert store.get("disk:C:")["status"] == "open" and store.get("network:lan")["status"] == "ignored"
+
+
+def test_gave_up_stays_gave_up_until_the_retry_window(store):
+    f = ct.network_finding(True, False, True)
+    store.ingest([f])
+    for i in range(ct.MAX_ATTEMPTS):
+        store.note_attempt("network:lan", f"t{i}")
+    store.ingest([f])                                         # seen again soon: still the same problem
+    assert store.get("network:lan")["status"] == "gave_up"
+    # pretend it gave up a day and an hour ago -> a fresh start
+    old = (datetime.now() - timedelta(hours=ct.GAVE_UP_RETRY_HOURS + 1)).isoformat(timespec="seconds")
+    c = store._conn(); c.execute("UPDATE caretaker_issues SET resolved_at=? WHERE key='network:lan'", (old,)); c.commit()
+    store.ingest([f])
+    iss = store.get("network:lan")
+    assert iss["status"] == "open" and iss["attempts"] == 0 and iss["tried"] == []
+
+
+# --- the fix path through jarvis.py ---------------------------------------------------------------
+def _env_for(jv, tmp_path, free):
+    home = tmp_path / "home"
+    (home / "Downloads").mkdir(parents=True, exist_ok=True)
+    env = jv.caretaker_fix.StorageEnv(cache_roots=[tmp_path / "cache"], bin_dirs=[], downloads=home / "Downloads",
+                                      holding_root=tmp_path / "hold", home=home, free_fraction=lambda: free[0])
+    return env, home
+
+
+def _old_file(path, size=100, days=9):
+    import os, time
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x" * size)
+    t = time.time() - days * 86400
+    os.utime(path, (t, t))
+    return path
+
+
+def test_a_storage_issue_is_fixed_on_its_own_and_then_closed(jv, monkeypatch, tmp_path):
+    free = [0.05]
+    env, home = _env_for(jv, tmp_path, free)
+    f = _old_file(tmp_path / "cache" / "junk.bin", 5000)
+    orig = jv.caretaker_fix.clear_caches
+    monkeypatch.setattr(jv.caretaker_fix, "clear_caches", lambda *a, **k: (free.__setitem__(0, 0.30), orig(*a, **k))[1])
+    monkeypatch.setattr(jv, "_caretaker_storage_env", lambda mount: env)
+    monkeypatch.setattr(jv.autonomy, "hard_disabled", lambda: False)
+    monkeypatch.setattr(jv.caretaker_probe, "run_all",
+                        lambda **k: (k["report"].__setitem__("ok", {"storage"}) or
+                                     [ct.storage_finding("C:", 95, 5.0)]))
+    jv._caretaker_run()
+    assert not f.exists()
+    assert jv._caretaker_store.get("disk:C:")["status"] == "fixed"
+    # next scan: the disk is fine, nothing reported -> stays closed, "fixed today" counts it
+    monkeypatch.setattr(jv.caretaker_probe, "run_all",
+                        lambda **k: (k["report"].__setitem__("ok", {"storage"}) or []))
+    jv._caretaker_run()
+    assert jv._caretaker_store.summary_since(24)["fixed"] == 1 and jv._caretaker_store.open_issues() == []
+
+
+def test_nothing_is_touched_in_safe_mode_or_with_fixes_switched_off(jv, monkeypatch, tmp_path):
+    env, _ = _env_for(jv, tmp_path, [0.05])
+    f = _old_file(tmp_path / "cache" / "junk.bin")
+    monkeypatch.setattr(jv, "_caretaker_storage_env", lambda mount: env)
+    monkeypatch.setattr(jv.caretaker_probe, "run_all",
+                        lambda **k: [ct.storage_finding("C:", 95, 5.0)])
+    monkeypatch.setenv("JARVIS_SAFE_MODE", "1")
+    jv._caretaker_run()
+    assert f.exists() and "safe mode" in jv._caretaker_why_not_act()
+    monkeypatch.delenv("JARVIS_SAFE_MODE")
+    monkeypatch.setenv("JARVIS_CARETAKER_ACT", "0")
+    jv._caretaker_run()
+    assert f.exists() and "switched off" in jv._caretaker_why_not_act()
+    assert jv._caretaker_tool({"action": "fix"}).startswith("Not fixing anything")
+
+
+def test_it_says_so_once_when_nothing_safe_is_left(jv, monkeypatch, tmp_path):
+    env, _ = _env_for(jv, tmp_path, [0.05])                  # nothing to clean, nothing to hold
+    said = []
+    monkeypatch.setattr(jv, "queue_or_deliver_notification", lambda t, **kw: said.append((t, kw)))
+    monkeypatch.setattr(jv, "_caretaker_storage_env", lambda mount: env)
+    monkeypatch.setattr(jv.autonomy, "hard_disabled", lambda: False)
+    monkeypatch.setattr(jv.caretaker_probe, "run_all", lambda **k: [ct.storage_finding("C:", 95, 5.0)])
+    for _ in range(6):
+        jv._caretaker_run()
+    assert jv._caretaker_store.get("disk:C:")["status"] == "gave_up"
+    msgs = [t for t, kw in said if "nothing left I can safely clear" in t]
+    assert len(msgs) == 1 and said[-1][1]["important"] is True
+
+
+def test_undo_tool_restores_held_files_and_marks_it_undone(jv, tmp_path, monkeypatch):
+    monkeypatch.setattr(jv, "_caretaker_holding_root", lambda: tmp_path / "hold")
+    env, home = _env_for(jv, tmp_path, [0.05])
+    inst = _old_file(home / "Downloads" / "setup.iso", 60 * 1024 * 1024, days=90)
+    r = jv.caretaker_fix.hold([str(inst)], env.holding_root, home=home)
+    aid = jv._caretaker_store.log_action("disk:C:", ct.YELLOW, "hold_files", "x", "held", 5,
+                                         undo={"kind": "hold", "manifest": r["manifest"]})
+    assert "setup.iso" in jv._caretaker_tool({"action": "holding"})
+    assert not inst.exists()
+    assert "Put 1 file" in jv._caretaker_tool({"action": "undo", "id": aid}) and inst.exists()
+    assert jv._caretaker_tool({"action": "undo"}).startswith("Tool failed")        # nothing left to undo
+    assert jv._caretaker_tool({"action": "undo", "id": "abc"}).startswith("Tool failed")
+
+
+def test_the_caretaker_tool_is_blocked_for_untrusted_runs(jv):
+    assert "caretaker" in jv._UNTRUSTED_BLOCKED_TOOLS and "caretaker" in jv._TAINT_BLOCKED_TOOLS
+
+
+def test_tool_narrowing_offers_the_caretaker_for_disk_and_cleanup_wording(jv):
+    for text in ("my disk is almost full", "clean up my laptop storage", "what's wrong with my PC",
+                 "undo the cleanup", "what did you fix today"):
+        assert jv._CARETAKER_RE.search(text), text
+    for text in ("play some music", "what's the weather", "open notepad"):
+        assert not jv._CARETAKER_RE.search(text), text
+
+
+def test_daily_housekeeping_removes_old_holding_batches_once(jv, monkeypatch, tmp_path):
+    from datetime import datetime as _dt, timedelta as _td
+    monkeypatch.setattr(jv, "_caretaker_holding_root", lambda: tmp_path / "hold")
+    env, home = _env_for(jv, tmp_path, [0.05])
+    inst = _old_file(home / "Downloads" / "a.zip", 1000, days=90)
+    jv.caretaker_fix.hold([str(inst)], tmp_path / "hold", home=home, now=_dt.now() - _td(days=ct.HOLDING_DAYS + 2))
+    monkeypatch.setattr(jv, "queue_or_deliver_notification", lambda *a, **k: None)
+    jv._caretaker_housekeeping()
+    assert not list((tmp_path / "hold").iterdir())
+    acts = jv._caretaker_store.recent_actions()
+    assert [a["action"] for a in acts] == ["purge_holding"]
+    jv._caretaker_housekeeping()                              # same day: does nothing more
+    assert len(jv._caretaker_store.recent_actions()) == 1

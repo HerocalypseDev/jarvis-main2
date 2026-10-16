@@ -1100,3 +1100,4 @@ p.consent-list { padding-left: 0; }
 #view-caretaker .block-title { margin-top: var(--space-4); }
 .ct-issue-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #ct-issues .list-item { display: flex; align-items: flex-start; gap: var(--space-3); }
+#view-caretaker .view-actions { display: inline-flex; gap: var(--space-2); }

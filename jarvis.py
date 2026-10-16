@@ -137,6 +137,7 @@ import jarvis_missed as missed
 import jarvis_watches as watches_mod
 import jarvis_caretaker as caretaker
 import jarvis_caretaker_probe as caretaker_probe
+import jarvis_caretaker_fix as caretaker_fix
 import jarvis_personality as personality
 import jarvis_quickfacts as quickfacts
 import jarvis_mail_reply as mail_reply
@@ -3337,13 +3338,16 @@ BATCH_TOOLS = [
         "description": (
             "What Jarvis has noticed is wrong with the laptop or with itself, and what it has fixed. "
             "action=status (open problems, newest first, with what was fixed in the last day); scan "
-            "(check right now instead of waiting for the next pass); ignore (key) to stop tracking one. "
-            "Use this for 'what's wrong with my PC', 'is anything broken', 'what did you fix', "
-            "'why is my disk full'. Read-only apart from ignore."
+            "(check right now instead of waiting for the next pass); fix (run the fixes now); undo (id optional, "
+            "newest undoable fix) puts back files Jarvis moved to the holding folder; holding (what is waiting "
+            "there and when it is removed); ignore (key) stops tracking one problem. Use this for 'what's wrong "
+            "with my PC', 'is anything broken', 'what did you fix', 'why is my disk full', 'clean up my disk', "
+            "'undo the cleanup'."
         ),
         "input_schema": {"type": "object", "properties": {
-            "action": {"type": "string", "enum": ["status", "issues", "scan", "ignore"]},
-            "key": {"type": "string", "description": "issue key from the status list, for ignore"}},
+            "action": {"type": "string", "enum": ["status", "issues", "scan", "fix", "undo", "holding", "ignore"]},
+            "key": {"type": "string", "description": "issue key from the status list, for ignore"},
+            "id": {"type": "integer", "description": "action number to undo (default: the newest)"}},
             "required": ["action"]},
     },
     {
@@ -8995,6 +8999,8 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             "dashboard_data", "memory_search", "recall_facts", "quick_recall", "semantic_recall",
                             "knowledge_graph", "clipboard_history", "read_clipboard", "refactor_clipboard_code",
                             "self_report", "lessons",
+                            # 2026-10-16: the caretaker deletes caches and moves files; text from outside must not drive it
+                            "caretaker",
                             # Audit 2026-10-04: the built-in screen tools did what the blocked mcp_windows_* ones do
                             # (read the screen, click, scroll, close windows), so an email could still drive the desktop.
                             "read_screen", "click_at", "scroll_screen", "control_window",
@@ -9027,7 +9033,7 @@ _EMAIL_RUN_NO_FILES = {"read_file", "quick_search", "find_files", "code_search",
 _OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_tabs|download_image|read_screen)$")
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
-                        "delegate_research",
+                        "delegate_research", "caretaker",
                         # memory steers every later prompt: an instruction hidden in a mail must not be written there
                         "remember_fact", "remember_decision", "remember_code_pattern", "update_project_status"}
 
@@ -9194,20 +9200,129 @@ def _caretaker_front_process() -> str:
 
 
 def _caretaker_scan() -> list:
-    """One sensor pass -> the open issues. No model call, no changes to anything."""
+    """One sensor pass -> the open issues. No model call, no changes to anything. A problem whose sensor ran fine
+    and no longer reports it is closed ('fixed' if Jarvis acted on it, 'resolved' if it went away by itself)."""
+    report: dict = {}
     findings = caretaker_probe.run_all(
         conn_factory=_memory_db_connect,
         mcp_failed=dict(_mcp_failed_servers),
         doctor_problems=doctor.problems(),
         front_process_name=_caretaker_front_process(),
         skip=_caretaker_skipped_sensors(),
+        report=report,
     )
-    return _caretaker_store.ingest(findings)
+    _caretaker_store.ingest(findings)
+    _caretaker_store.resolve_missing({f.key for f in findings}, report.get("ok", set()))
+    return _caretaker_store.open_issues()
 
 
 def _caretaker_skipped_sensors() -> set:
     raw = (os.environ.get("JARVIS_CARETAKER_SKIP") or "").strip()
     return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+
+def _caretaker_holding_root() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    return (Path(base) / "Jarvis" / "holding") if base else (Path.home() / ".jarvis" / "holding")
+
+
+def _caretaker_storage_env(mount: str) -> "caretaker_fix.StorageEnv":
+    def free_fraction() -> float:
+        try:
+            import psutil
+            u = psutil.disk_usage(mount)
+            return u.free / u.total if u.total else 1.0
+        except Exception:
+            return 1.0   # can't measure: claim nothing, touch nothing
+
+    return caretaker_fix.StorageEnv(
+        cache_roots=caretaker_probe.cache_roots(), bin_dirs=caretaker_fix.recycle_bin_dirs(),
+        downloads=Path.home() / "Downloads", holding_root=_caretaker_holding_root(), home=Path.home(),
+        free_fraction=free_fraction, code_dir=Path(__file__).resolve().parent)
+
+
+def _caretaker_why_not_act() -> str | None:
+    """Why the caretaker must not change anything right now (None = fine to act)."""
+    if not caretaker_enabled():
+        return "the Caretaker is switched off"
+    if (os.environ.get("JARVIS_CARETAKER_ACT") or "1").strip().lower() in ("0", "false", "no", "off"):
+        return "automatic fixes are switched off (JARVIS_CARETAKER_ACT=0)"
+    if autonomy.hard_disabled():
+        return "safe mode or the autonomy kill switch is on"
+    return None
+
+
+def _caretaker_fix_storage(issue: dict) -> str | None:
+    key, ev = issue["key"], issue.get("evidence") or {}
+    mount = ev.get("mount") or (str(ev.get("drive", "")).rstrip("\\") + "\\")
+    r = caretaker_fix.fix_storage(_caretaker_store, key, _caretaker_storage_env(mount))
+    if r["steps"]:
+        selfaware.record("system", "caretaker_fix", f"{ev.get('drive', 'disk')}: " + "; ".join(r["steps"]))
+    if r["reached"]:
+        if r["steps"]:
+            _caretaker_store.set_status(key, "fixed")   # the next scan reopens it if the disk is still too full
+        return "; ".join(r["steps"]) or None
+    if not r["steps"] and not r["blocked"]:
+        n = _caretaker_store.note_attempt(key, "nothing safe left to clean")
+        if n >= caretaker.MAX_ATTEMPTS and key not in _caretaker_state["announced"]:
+            _caretaker_state["announced"].add(key)
+            held = _caretaker_store.summary_since(72)["held_bytes"]
+            queue_or_deliver_notification(
+                f"{ev.get('drive', 'The disk')} is still {ev.get('percent', 0):.0f}% full and there's nothing "
+                f"left I can safely clear on my own."
+                + (f" {caretaker.human_bytes(held)} of old installers is in the holding folder and frees up "
+                   f"within {caretaker.HOLDING_DAYS} days." if held else "")
+                + " The rest is your own files: ask me for the biggest ones.", important=True)
+    return "; ".join(r["steps"]) or None
+
+
+def _caretaker_fix_issue(issue: dict) -> str | None:
+    """Run the playbook for one issue; returns a sentence about what was done (None = nothing). Phase 2 has
+    storage; the other families arrive in later phases."""
+    if issue["category"] == "storage":
+        return _caretaker_fix_storage(issue)
+    return None
+
+
+def _caretaker_fix_all() -> list[str]:
+    why = _caretaker_why_not_act()
+    if why:
+        return []
+    done = []
+    for issue in _caretaker_store.open_issues():
+        try:
+            line = _caretaker_fix_issue(issue)
+        except Exception as e:
+            log.warning("Caretaker fix for %s failed: %s", issue["key"], e)
+            _caretaker_store.note_attempt(issue["key"], f"the fix crashed ({e.__class__.__name__})")
+            continue
+        if line:
+            done.append(line)
+    return done
+
+
+def _caretaker_housekeeping() -> None:
+    """Once a day: really remove holding batches past their days, and leave one quiet line about the last 24 h."""
+    today = datetime.now().date().isoformat()
+    if _caretaker_state.get("housekeeping_on") == today:
+        return
+    _caretaker_state["housekeeping_on"] = today
+    r = caretaker_fix.purge_holding(_caretaker_holding_root())
+    if r["batches"]:
+        _caretaker_store.log_action("holding", caretaker.GREEN, "purge_holding",
+                                    f"{r['batches']} holding batch(es) older than {caretaker.HOLDING_DAYS} days",
+                                    "removed for good", freed_bytes=r["freed"])
+        selfaware.record("system", "caretaker_fix",
+                         f"removed {caretaker.human_bytes(r['freed'])} of files held more than "
+                         f"{caretaker.HOLDING_DAYS} days")
+    s = _caretaker_store.summary_since(24)
+    if s["actions"]:
+        line = f"Caretaker, last 24 hours: {s['actions']} action(s)"
+        if s["freed_bytes"]:
+            line += f", {caretaker.human_bytes(s['freed_bytes'])} freed"
+        if s["held_bytes"]:
+            line += f", {caretaker.human_bytes(s['held_bytes'])} held for {caretaker.HOLDING_DAYS} days (undo on the Caretaker page)"
+        queue_or_deliver_notification(line + ".")   # quiet: the "what did I miss" inbox, not spoken
 
 
 def _caretaker_run() -> None:
@@ -9221,6 +9336,11 @@ def _caretaker_run() -> None:
                 _caretaker_state["announced"].add(iss["key"])
                 queue_or_deliver_notification(iss["title"], important=True)
                 selfaware.record("system", "caretaker_critical", iss["title"])
+        if _caretaker_fix_all():
+            _caretaker_state["last"] = {"at": datetime.now().isoformat(timespec="seconds"),
+                                        "issues": len(_caretaker_store.open_issues())}
+        if not _caretaker_why_not_act():
+            _caretaker_housekeeping()
         dashboard.notify({"type": "caretaker", "data": {"issues": len(issues)}})
     except Exception as e:
         log.warning("Caretaker scan failed: %s", e)
@@ -9254,6 +9374,12 @@ def _feature_caretaker(action: str, payload: dict):
         return caretaker_report(bool((payload or {}).get("all")))
     if action == "scan":
         return {"issues": _caretaker_scan()}
+    if action == "fix":
+        why = _caretaker_why_not_act()
+        return {"ok": not why, "error": why, "done": [] if why else _caretaker_fix_all(), **caretaker_report()}
+    if action == "undo":
+        res = _caretaker_undo((payload or {}).get("id"))
+        return {"ok": not res.startswith("Tool failed"), "result": res, **caretaker_report()}
     if action == "ignore":
         key = (payload or {}).get("key") or ""
         if not key:
@@ -9265,6 +9391,24 @@ def _feature_caretaker(action: str, payload: dict):
         _caretaker_store.set_status(key, "open")
         return {"ok": True, **caretaker_report()}
     return None
+
+
+def _caretaker_undo(action_id=None) -> str:
+    """Undo one Caretaker action (the newest undoable one when no id is given)."""
+    acts = _caretaker_store.recent_actions(50, undoable_only=True)
+    if action_id not in (None, ""):
+        try:
+            acts = [a for a in acts if a["id"] == int(action_id)]
+        except (TypeError, ValueError):
+            return "Tool failed: that isn't an action number."
+    if not acts:
+        return "Tool failed: nothing to undo (it was already undone, or its holding period is over)."
+    a = acts[0]
+    msg = caretaker_fix.undo(a["undo"])
+    if msg.startswith("Put"):
+        _caretaker_store.mark_undone(a["id"])
+        selfaware.record("system", "caretaker_undo", f"undid '{a['action']}': {msg}")
+    return msg
 
 
 def _caretaker_tool(inp: dict) -> str:
@@ -9279,11 +9423,27 @@ def _caretaker_tool(inp: dict) -> str:
                  for i in rep["issues"][:12]]
         s = rep["summary"]
         tail = (f"\nIn the last day: {s['fixed']} fixed, {s['actions']} actions, "
-                f"{caretaker.human_bytes(s['freed_bytes'])} freed.") if s["actions"] else ""
+                f"{caretaker.human_bytes(s['freed_bytes'])} freed"
+                + (f", {caretaker.human_bytes(s['held_bytes'])} held for {caretaker.HOLDING_DAYS} days (undoable)"
+                   if s["held_bytes"] else "") + ".") if s["actions"] else ""
         return "\n".join(lines) + tail
     if action == "scan":
         issues = _caretaker_scan()
         return f"Checked now: {len(issues)} open issue(s)." if issues else "Checked now: nothing wrong."
+    if action == "fix":
+        why = _caretaker_why_not_act()
+        if why:
+            return f"Not fixing anything right now: {why}."
+        done = _caretaker_fix_all()
+        return ("Done: " + "; ".join(done) + ".") if done else "Nothing I can fix on my own right now."
+    if action == "undo":
+        return _caretaker_undo(inp.get("id"))
+    if action == "holding":
+        rows = caretaker_fix.holding_summary(_caretaker_holding_root())
+        if not rows:
+            return "The holding folder is empty."
+        return "\n".join(f"{r['files']} file(s), {caretaker.human_bytes(r['bytes'])} (e.g. {', '.join(r['names'][:3])}); "
+                         f"removed for good in {r['days_left']} days" for r in rows)
     if action == "ignore":
         key = (inp.get("key") or "").strip()
         if not key:
@@ -13101,6 +13261,8 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core.add("send_to_my_phone")
     if _BROWSER_TAB_RE.search(transcript or "") or _browser_in_front():
         core.add("browser_tabs")
+    if _CARETAKER_RE.search(transcript or ""):
+        core.add("caretaker")
     if _SKILL_MANAGE_RE.search(transcript or ""):
         core |= {"skills", "watches"}
     if _WATCH_RE.search(transcript or ""):
@@ -13118,6 +13280,12 @@ _WATCH_RE = re.compile(
 
 
 # "cancel my billing monitoring", "turn off the gmail check", "what skills do I have" (2026-10-03 debug report)
+_CARETAKER_RE = re.compile(
+    r"\b(?:disk|storage|drive|space)\b[^.!?]{0,40}\b(?:full|low|clean|free|clear|cleanup|running out)\b|"
+    r"\b(?:clean ?up|free up|clear)\b[^.!?]{0,30}\b(?:disk|storage|space|drive|pc|laptop|computer)\b|"
+    r"\bwhat'?s wrong with (?:my|the) (?:pc|laptop|computer)\b|\bis anything (?:broken|wrong)\b|"
+    r"\bwhat did you (?:fix|clean|clear)\b|\bundo (?:the|that|your) (?:cleanup|clean ?up|clean)\b|"
+    r"\bholding folder\b|\bcaretaker\b", re.I)
 _SKILL_MANAGE_RE = re.compile(
     r"\b(?:skills?|routines?|monitor(?:ing)?|watch(?:er)?|checks?|briefing)\b.*\b(?:cancel|stop|remove|delete|turn (?:it )?(?:off|on)|"
     r"disable|enable|pause|resume)\b|\b(?:cancel|stop|remove|delete|turn off|disable|pause|turn on|enable|resume)\b.*"

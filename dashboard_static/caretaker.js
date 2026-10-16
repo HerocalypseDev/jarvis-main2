@@ -42,7 +42,7 @@ function ctCards(rep) {
     card("Open problems", open, urgent ? "usage-card-danger" : open ? "" : "usage-card-good"),
     card("Fixed today", s.fixed || 0, s.fixed ? "usage-card-good" : ""),
     card("Space freed today", ctBytes(s.freed_bytes), s.freed_bytes ? "usage-card-good" : ""),
-    card("Actions today", s.actions || 0),
+    card("Held (undoable)", ctBytes(s.held_bytes), s.held_bytes ? "usage-card-good" : ""),
   ].join("");
 }
 
@@ -76,7 +76,7 @@ function ctActionRow(a) {
     </li>`;
 }
 
-async function refreshCaretaker() {
+async function refreshCaretaker(message) {
   const view = document.getElementById("view-caretaker");
   if (!view) return;
   const status = document.getElementById("ct-status");
@@ -98,7 +98,7 @@ async function refreshCaretaker() {
     : `<li class="empty-state">No fixes yet.</li>`;
   if (status) {
     const last = rep.last_scan && rep.last_scan.at;
-    status.textContent = !rep.enabled ? "The Caretaker is switched off in Settings (JARVIS_CARETAKER)."
+    status.textContent = message ? message : !rep.enabled ? "The Caretaker is switched off in Settings (JARVIS_CARETAKER)."
       : last ? `Last checked ${String(last).replace("T", " ").slice(0, 16)}.` : "Not checked yet since Jarvis started.";
   }
 }
@@ -110,6 +110,19 @@ document.getElementById("ct-scan")?.addEventListener("click", async (e) => {
   try { await ctPost("scan", {}); } catch (err) { alert("Check failed: " + err.message); }
   btn.disabled = false;
   refreshCaretaker();
+});
+
+document.getElementById("ct-fix")?.addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  let msg;
+  try {
+    const r = await ctPost("fix", {});
+    msg = r.error ? "Not fixing right now: " + r.error
+      : (r.done && r.done.length ? "Done: " + r.done.join("; ") + "." : "Nothing I can fix on my own right now.");
+  } catch (err) { alert("Fix failed: " + err.message); }
+  btn.disabled = false;
+  refreshCaretaker(msg);
 });
 
 document.getElementById("ct-issues")?.addEventListener("click", async (e) => {
@@ -124,11 +137,12 @@ document.getElementById("ct-actions")?.addEventListener("click", async (e) => {
   const id = e.target.dataset.ctUndo;
   if (!id) return;
   if (!confirm("Undo this fix? Files Jarvis moved go back where they were.")) return;
+  let msg;
   try {
     const r = await ctPost("undo", { id: Number(id) });
-    if (r && r.result) document.getElementById("ct-status").textContent = r.result;
+    msg = r && r.result;
   } catch (err) { alert("Undo failed: " + err.message); }
-  refreshCaretaker();
+  refreshCaretaker(msg);
 });
 
 // app.js routes before this file loads: a direct #/caretaker link must still fill the page.

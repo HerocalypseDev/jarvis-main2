@@ -1824,7 +1824,8 @@ row there each phase rather than only stating the total in chat.
 | 159 ("Jarvis keeps closing": the microphone loop had no safety net, so a device hiccup or any error in it ended the program; now supervised: reopens the mic with backoff, crash log + native-crash dump, spoken "Microphone reconnected."; 11 new tests) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
 | 161 (self-scheduling, "All but email": Jarvis's own runs may make jobs, background agents, watches and campaign steps; email/web-started runs still can't; self-made jobs capped at 20; 9 new tests, 3 updated) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 162 (Caretaker phase 1: sensors for storage/CPU hogs/crashes/disk health/updates/network/battery/Jarvis's own failures, issue tracker, Caretaker dashboard page + tool; headless check at 1440/390 px; 28 new tests) | Opus 5.5 | ~30 min | ~$2.50–$3.50 |
-| **Running total (final)** | | **~4899 min** | **~$334.45–$470.35** |
+| 163 (Caretaker phase 2: storage playbook (caches, old Recycle Bin items, old installers to a 7-day holding folder), undo, budgets, issues close themselves, fix/undo/holding tool actions, Fix now + Undo on the page; caught a held-bytes-counted-as-freed lie and hidden gave-up issues; 34 new tests, 2 mutation checks) | Opus 5.5 | ~45 min | ~$3.50–$4.80 |
+| **Running total (final)** | | **~4944 min** | **~$337.95–$475.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2935,4 +2936,22 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
 - Quiet rule: only `critical` findings are spoken (once per key per run); everything else is the Caretaker page, the
   `caretaker` tool (status/scan/ignore) and `dashboard_data(page="caretaker")`.
 - Not verified live on the PC: the PowerShell sensors (crash events, Get-PhysicalDisk, update events, battery WMI).
+- **Phase 2 (storage fixes, `jarvis_caretaker_fix.py`, `test_caretaker_fix.py`)**: when a storage issue is open the caretaker
+  acts on its own, safest first, stopping once 15% of the drive is free: (1) cache/temp files older than 2 days (fixed list
+  of cache folders, deleted outright), (2) Recycle Bin items deleted 30+ days ago, (3) installers/archives >= 50 MB in
+  Downloads untouched for 30 days are MOVED to `%LOCALAPPDATA%\\Jarvis\\holding\\<date>-<id>\\` with a manifest. Holding
+  frees nothing until `HOLDING_DAYS` (7) pass; a daily housekeeping step then removes batches for good (the only place the
+  owner's moved files are deleted). Undo puts files back and never overwrites (a new file at the old path -> "<name> (restored)").
+- `hold_problem` refuses: symlinks, Documents/Desktop/Pictures/Videos/Music/OneDrive*/source/repos/projects under the home
+  folder, anything in a `.git` project, `.ssh`/`.config`/AppData, Windows/Program Files, Jarvis's own code, credential-looking
+  files, and anything changed in the last 30 days. Two mutation checks confirmed the tests fail if the protected-folder or the
+  recent-use guard is removed. Budgets: 10 actions/hour, 25 GB of the owner's files moved/day.
+- Honesty rules found by checking: held files are reported as HELD, never as "freed" (summary `held_bytes`); an issue Jarvis
+  gave up on stays visible and is spoken ONCE (not per scan), retried with a clean slate after 24 h; an issue whose sensor ran
+  fine and stopped reporting it is closed ('fixed' if Jarvis acted on it, else 'resolved'); a skipped/crashed sensor resolves
+  nothing (`run_all(report=)`).
+- Switches: `JARVIS_CARETAKER_ACT=0` (look but don't touch), safe mode / autonomy kill switch (nothing changes). The
+  `caretaker` tool (status/scan/fix/undo/holding/ignore) is blocked in untrusted-origin and tainted runs. Undo and Fix now are on
+  the Caretaker page. Daily summary goes to the quiet "what did I miss" inbox, not spoken.
+- Not verified live on the PC: real cache folders, the Recycle Bin layout, Downloads on a real profile.
 

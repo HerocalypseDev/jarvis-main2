@@ -114,6 +114,7 @@ def probe_storage() -> list[ct.Finding]:
                                reclaimable_gb=reclaimable or 0.0,
                                grew_gb_today=max(0.0, used_gb - first[1]))
         if f:
+            f.evidence["mount"] = part.mountpoint
             out.append(f)
     return out
 
@@ -276,9 +277,11 @@ def probe_self(conn_factory, mcp_failed: dict | None = None, doctor_problems: li
 
 
 def run_all(*, conn_factory=None, mcp_failed=None, doctor_problems=None, front_process_name: str = "",
-            skip: set[str] | None = None) -> list[ct.Finding]:
-    """Every sensor, each isolated. `skip` names sensors to leave out (settings / tests)."""
+            skip: set[str] | None = None, report: dict | None = None) -> list[ct.Finding]:
+    """Every sensor, each isolated. `skip` names sensors to leave out (settings / tests). `report["ok"]` is filled
+    with the sensors that ran without error, so a skipped or crashed one never "resolves" its issues."""
     skip = skip or set()
+    ok: set[str] = set()
     sensors = [
         ("storage", probe_storage), ("processes", lambda: probe_processes(front_process_name)),
         ("crashes", probe_crashes), ("disk_health", probe_disk_health), ("updates", probe_updates),
@@ -291,8 +294,11 @@ def run_all(*, conn_factory=None, mcp_failed=None, doctor_problems=None, front_p
             continue
         try:
             out.extend(fn())
+            ok.add(name)
         except Exception:
             continue
+    if report is not None:
+        report["ok"] = ok
     return out
 
 
