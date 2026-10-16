@@ -828,3 +828,50 @@ def test_an_attached_picture_keeps_its_real_type(jarvis, monkeypatch):
     block = seen[0]["messages"][-1]["content"][0]
     assert block["type"] == "image" and block["source"]["media_type"] == "image/png"
     assert jarvis._command_ctx.attach_image is None and jarvis._command_ctx.attach_image_type is None
+
+
+# --- Lessons fix (2026-10-16 debug: "it still makes the same mistakes") ---------------------------------
+def test_lesson_from_a_correction_sees_the_original_request_and_wrong_answer(jarvis, monkeypatch):
+    # Real history this time: the old code read "the previous answer" AFTER this turn was appended, so the
+    # lesson writer only saw the correction and Jarvis's new reply, never what went wrong.
+    # In-memory history with the real ordering: this turn is appended before the lesson is written.
+    hist = []
+    monkeypatch.setattr(jarvis, "_history_snapshot", lambda *a: list(hist))
+    monkeypatch.setattr(jarvis, "_append_history", lambda u, r: hist.extend(
+        [{"role": "user", "content": u}, {"role": "assistant", "content": r}]))
+    monkeypatch.setattr(jarvis, "_current_command_source", lambda: "voice")
+    digests = []
+    monkeypatch.setattr(jarvis, "_sleep_mail_claude",
+                        lambda s, u, m: digests.append(u) or "Save school notes in Documents/School, not on the Desktop.")
+    monkeypatch.setattr(jarvis, "_spawn_lesson", lambda *a: jarvis._learn_lesson(*a))
+    _script(monkeypatch, jarvis, [_text("Saved your maths notes to the Desktop."), _text("Moved them to School.")])
+    jarvis.run_agent_loop("save my maths notes")
+    jarvis.run_agent_loop("Jarvis, that's wrong, I meant the School folder")
+    assert len(digests) == 1
+    d = digests[0]
+    assert "User command: save my maths notes" in d
+    assert "Jarvis's answer to it: Saved your maths notes to the Desktop." in d
+    assert "User's correction: Jarvis, that's wrong" in d
+    row = jarvis.lessons.all_lessons(jarvis._memory_db_connect, jarvis._memory_db_lock)[0]
+    assert row["trigger"] == "save my maths notes" and row["source"] == "correction"
+
+
+def test_more_natural_corrections_count_and_ordinary_commands_dont():
+    import jarvis_lessons as lessons
+    for t in ["Jarvis, that's wrong", "Hey Jarvis no that's not what I asked", "That is incorrect", "You did it wrong",
+              "not what I asked for", "try again", "you made a mistake", "I told you to use the School folder", "wrong file"]:
+        assert lessons.is_correction(t), t
+    for t in ["Nobody called", "Jarvis, open notepad", "I think it is wrong to skip school", "try the new cafe",
+              "knowledge is power", "Jarvis what time is it", "no"]:
+        assert not lessons.is_correction(t), t
+
+
+def test_a_caught_false_claim_teaches_a_lesson(jarvis, monkeypatch):
+    monkeypatch.setattr(jarvis, "_current_command_source", lambda: "voice")
+    learned = []
+    monkeypatch.setattr(jarvis, "_spawn_lesson", lambda *a: learned.append(a))
+    _script(monkeypatch, jarvis, [_text("I've set a reminder for 5pm."), _text("I've set a reminder for 5pm.")])
+    out = jarvis.run_agent_loop("remind me at 5pm to call dad")
+    assert "Correction: I didn't actually" in out
+    assert learned and learned[0][0] == "remind me at 5pm to call dad"
+    assert any(s[0] == "(claim check)" and "set a reminder" in s[2] for s in learned[0][1])
