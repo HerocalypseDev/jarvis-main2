@@ -7,9 +7,13 @@ outside the workspace. `..` can never climb out of the workspace.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
+import time
 from pathlib import Path
+
+log = logging.getLogger("jarvis")
 
 DEFAULT_ROOT = str(Path.home() / "OneDrive" / "Documents" / "01_Projects" / "Jarvis_Workspace")
 
@@ -91,9 +95,47 @@ _ROBLOX_RE = re.compile(r"roblox|luau|robux|rojo|roact", re.I)
 _TRACE_RE = re.compile(r"Traceback \(most recent call last\)|^\s*(Exception|Error):", re.M)
 
 
+# Speed fix (2026-10-16, debug report): JARVIS_WORKSPACE_DIR held the placeholder C:\Users\you\... from the public
+# .env.example, so every save to a plain file name failed with "Access is denied: C:\Users\you" and the model spent
+# whole extra rounds guessing other places. A workspace setting that can't be created now falls back to the default
+# folder (and says so), instead of failing every save. Checked at most once a minute per value.
+ROOT_RECHECK_S = 60.0
+_root_checked: dict[str, tuple[float, Path, str]] = {}
+
+
+def _root_and_problem() -> tuple[Path, str]:
+    raw = os.environ.get("JARVIS_WORKSPACE_DIR", "").strip().strip("'\"")
+    if not raw:
+        return Path(DEFAULT_ROOT), ""
+    hit = _root_checked.get(raw)
+    if hit and time.monotonic() - hit[0] < ROOT_RECHECK_S:
+        return hit[1], hit[2]
+    p = Path(raw).expanduser()
+    problem = ""
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        if not p.is_dir():
+            problem = "is not a folder"
+    except OSError as e:
+        problem = f"can't be used ({e.strerror or e})"
+    if problem:
+        out = (Path(DEFAULT_ROOT), f"the workspace setting JARVIS_WORKSPACE_DIR={raw} {problem}, so files go to "
+                                   f"{DEFAULT_ROOT} instead; fix or delete that line in .env (Settings)")
+        if not hit or hit[2] != out[1]:
+            log.warning("Workspace: %s", out[1])
+    else:
+        out = (p, "")
+    _root_checked[raw] = (time.monotonic(), out[0], out[1])
+    return out
+
+
 def root() -> Path:
-    raw = os.environ.get("JARVIS_WORKSPACE_DIR", "").strip()
-    return Path(raw).expanduser() if raw else Path(DEFAULT_ROOT)
+    return _root_and_problem()[0]
+
+
+def root_problem() -> str:
+    """Why the JARVIS_WORKSPACE_DIR setting isn't being used, or "" when it is (or isn't set)."""
+    return _root_and_problem()[1]
 
 
 def strict() -> bool:

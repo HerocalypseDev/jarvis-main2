@@ -12788,6 +12788,14 @@ def _write_file_tool(path: str, content: str, append: bool) -> str:
     p, refusal = jarvis_workspace.resolve_write_path(path, content or "")
     if p is None:
         return refusal
+    result = _write_file_resolved(p, path, content, append)
+    note = jarvis_workspace.root_problem()
+    if note and not result.startswith("Failed") and not Path(path).expanduser().is_absolute():
+        result += f" (Note: {note}.)"
+    return result
+
+
+def _write_file_resolved(p: Path, path: str, content: str, append: bool) -> str:
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         kept = _keep_previous_version(p) if not append else ""
@@ -15217,11 +15225,38 @@ def _gemini_stream_round(body: dict, timeout: int, speak_live, on_first_token=No
         if tail:
             _say(tail)
 
+    side: dict = {}
+
+    def _race() -> dict | None:
+        # The ordinary call for this round, started only if the stream goes quiet (a long tool call being
+        # written). It records its own usage. Its outcome is handed back through _stream_side so the agent
+        # loop neither repeats it nor treats its text as already spoken.
+        side["result"] = _claude_request(body, timeout=timeout)
+        side["done"] = True
+        return side["result"]
+
     result = gemini.stream_round(body, timeout, on_text=_on_text, on_text_done=_on_done,
-                                 on_first_token=on_first_token)
+                                 on_first_token=on_first_token, race=_race)
+    if result is not None and result is side.get("result"):
+        _stream_side.outcome = ("answered", result)  # nothing was spoken live: not a streamed round
+        return None
+    if result is None and side.get("done"):
+        _stream_side.outcome = ("answered", side.get("result"))  # the ordinary call already ran (and may have failed)
+        return None
     if result is not None:
         _record_api_usage(body, result)
     return result
+
+
+# What the ordinary call raced next to a quiet Gemini stream returned (see _gemini_stream_round). The agent loop
+# takes it with _take_stream_side() instead of making that same call a second time.
+_stream_side = threading.local()
+
+
+def _take_stream_side() -> tuple[bool, dict | None]:
+    out = getattr(_stream_side, "outcome", None)
+    _stream_side.outcome = None
+    return (True, out[1]) if out else (False, None)
 
 
 def _llm_stream_round(body: dict, timeout: int, speak_live, on_first_token=None) -> dict | None:
@@ -15634,6 +15669,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         streamed_this_round = False
         speaker: _LiveSpeaker | None = None
         data = None
+        side_ran = False
         # Not for the smart model: the SSE parser doesn't rebuild thinking blocks (with their
         # signatures), which the next round must echo back.
         if _can_stream_round(iteration, narrate, smart, narrated):
@@ -15642,10 +15678,15 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                     _lat.mark("ttft")
 
             speaker = _LiveSpeaker(_live_speech_limit(transcript))
+            _take_stream_side()  # never pick up a leftover from an earlier round
             data = _llm_stream_round(request_body, AGENT_ROUND_TIMEOUT_S, speaker,
                                      on_first_token=_on_first_token)
             streamed_this_round = data is not None
-        if data is None:
+            if data is None:
+                # A quiet stream may have had the ordinary call raced next to it: use that answer, and if it
+                # failed, don't spend another request on the same thing.
+                side_ran, data = _take_stream_side()
+        if data is None and not side_ran:
             data = _claude_request(request_body, timeout=AGENT_ROUND_TIMEOUT_S)
         if lat and iteration == 0:
             lat.mark("ttft")  # no-op if the streaming path above already marked it earlier

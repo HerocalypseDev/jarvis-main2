@@ -160,6 +160,16 @@ def run_checks(env: dict | None = None) -> list[dict]:
         out.append(_check(".env file", "warn", "no .env next to jarvis.py, so no settings or keys are saved",
                           "Create it from .env.example"))
 
+    # workspace folder (2026-10-16: a placeholder path made every plain-name save fail)
+    try:
+        import jarvis_workspace
+        wp = jarvis_workspace.root_problem() if (env.get("JARVIS_WORKSPACE_DIR") or "").strip() else ""
+        if wp:
+            out.append(_check("Workspace folder", "warn", wp,
+                              "Delete the JARVIS_WORKSPACE_DIR line in .env, or set it to a folder that exists"))
+    except Exception:
+        pass
+
     # Everything (file search)
     try:
         import jarvis_everything

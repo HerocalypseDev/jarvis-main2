@@ -468,7 +468,7 @@ def test_gemini_rounds_stream_sentences_into_speech_and_mark_the_reply_spoken(ja
     lines = _sse(_chunk({"text": "Paris is the capital of France. "}),
                  _chunk({"text": "It sits on the Seine river."}, finish="STOP"))
     monkeypatch.setattr(jarvis.gemini, "stream_round",
-                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None:
+                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None, race=None:
                         _drive(on_text, on_text_done, on_first_token, ["Paris is the capital of France. ",
                                                                         "It sits on the Seine river."]))
     monkeypatch.setattr(jarvis, "_claude_request", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no fallback")))
@@ -501,7 +501,7 @@ def test_final_answer_after_a_tool_call_is_streamed_too_on_gemini(jarvis, monkey
         lambda on_text, on_done, on_first: _drive(on_text, on_done, on_first, ["Your CPU is at 42 percent."]),
     ])
 
-    def fake_stream(body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None):
+    def fake_stream(body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None, race=None):
         return next(rounds)(on_text, on_text_done, on_first_token)
 
     monkeypatch.setattr(jarvis.gemini, "stream_round", fake_stream)
@@ -541,7 +541,7 @@ def test_long_streamed_reply_is_cut_for_speech_and_says_so(jarvis, monkeypatch):
     monkeypatch.setenv("JARVIS_LIVE_SPEECH_MAX_CHARS", "100")
     sentences = [f"This is spoken sentence number {i} of the answer. " for i in range(1, 7)]
     monkeypatch.setattr(jarvis.gemini, "stream_round",
-                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None:
+                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None, race=None:
                         _drive(on_text, on_text_done, on_first_token, sentences))
     reply = jarvis.run_agent_loop("tell me a long story", narrate=True)
     assert reply.count("sentence number") == 6  # the returned reply (dashboard/history) is never trimmed
@@ -652,7 +652,7 @@ def test_tool_call_with_no_words_triggers_a_lead_in_during_the_loop(jarvis, monk
         lambda on_text, on_done, on_first: _drive(on_text, on_done, on_first, ["Your CPU is at 42 percent."]),
     ])
     monkeypatch.setattr(jarvis.gemini, "stream_round",
-                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None:
+                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None, race=None:
                         next(rounds)(on_text, on_text_done, on_first_token))
     jarvis.run_agent_loop("how is my computer doing", narrate=True)
     assert spoken[0] in jarvis.ACK_PHRASES and spoken[-1] == "Your CPU is at 42 percent."
@@ -676,7 +676,7 @@ def test_lead_in_is_not_added_when_the_model_already_narrated(jarvis, monkeypatc
         lambda on_text, on_done, on_first: _drive(on_text, on_done, on_first, ["All good."]),
     ])
     monkeypatch.setattr(jarvis.gemini, "stream_round",
-                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None:
+                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None, race=None:
                         next(rounds)(on_text, on_text_done, on_first_token))
     jarvis.run_agent_loop("what's happening", narrate=True)
     time.sleep(0.05)
@@ -876,7 +876,7 @@ def test_announcement_follows_the_generic_lead_in_then_the_tool_runs_then_the_re
         lambda on_text, on_done, on_first: _drive(on_text, on_done, on_first, ["Found it on your Desktop."]),
     ])
     monkeypatch.setattr(jarvis.gemini, "stream_round",
-                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None:
+                        lambda body, timeout, on_text=None, on_text_done=None, on_first_token=None, opener=None, race=None:
                         next(rounds)(on_text, on_text_done, on_first_token))
     jarvis.run_agent_loop("help me find the file called weird on my laptop", narrate=True)
     jarvis._await_ack()
