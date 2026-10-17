@@ -656,6 +656,7 @@ def test_the_first_reason_is_kept_when_several_things_end_the_call():
 def test_a_plain_send_frame_is_not_mistaken_for_a_coroutine(monkeypatch):
     """py-tgcalls 3.x's send_frame is not always a coroutine: the call must keep speaking, not drop on frame one."""
     import jarvis_tgcall as tg
+    monkeypatch.setenv("JARVIS_TGCALL_STEREO", "0")
     sent = []
 
     class PlainLine:
@@ -675,6 +676,72 @@ def test_a_plain_send_frame_is_not_mistaken_for_a_coroutine(monkeypatch):
         tr.send(b"\x02" * tg.FRAME_BYTES)
         assert sent == [b"\x01" * tg.FRAME_BYTES, b"\x02" * tg.FRAME_BYTES]
         assert not tr.closed.is_set() and not tr.end_reason
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        th.join(timeout=5)
+
+
+def test_stereo_to_mono_averages_the_two_channels():
+    import numpy as np
+    import jarvis_tgcall as tg
+    raw = np.array([100, 300, -50, -150], dtype="<i2").tobytes()
+    assert np.frombuffer(tg.stereo_to_mono(raw), dtype="<i2").tolist() == [200, -100]
+
+
+def test_one_mono_frame_becomes_two_stereo_10ms_frames_with_both_channels_equal():
+    import numpy as np
+    import jarvis_tgcall as tg
+    mono = np.full(tg.FRAME_SAMPLES, 777, dtype="<i2").tobytes()
+    frames = tg.mono_to_stereo_frames(mono)
+    assert len(frames) == 2 and all(len(f) == tg.WIRE_FRAME_BYTES == 1920 for f in frames)
+    wire = np.frombuffer(b"".join(frames), dtype="<i2")
+    assert (wire == 777).all()
+
+
+def test_stereo_round_trip_keeps_the_speech():
+    import numpy as np
+    import jarvis_tgcall as tg
+    mono = (np.arange(tg.FRAME_SAMPLES) % 500).astype("<i2").tobytes()
+    frames = tg.mono_to_stereo_frames(mono)
+    back = tg.stereo_to_mono(b"".join(frames))
+    assert back == mono
+
+
+def test_incoming_stereo_frames_come_out_as_20ms_mono(monkeypatch):
+    import numpy as np
+    import jarvis_tgcall as tg
+    monkeypatch.delenv("JARVIS_TGCALL_STEREO", raising=False)
+    tr = tg.TelegramTransport("@owner")
+    ten_ms_stereo = np.full(tg.WIRE_FRAME_BYTES // 2, 500, dtype="<i2").tobytes()
+    tr._queue_incoming(ten_ms_stereo)
+    assert tr.frames.empty()                    # 10 ms is not yet a full 20 ms frame
+    tr._queue_incoming(ten_ms_stereo)
+    chunk = tr.frames.get_nowait()
+    assert len(chunk) == tg.FRAME_BYTES
+    assert (np.frombuffer(chunk, dtype="<i2") == 500).all()
+
+
+def test_stereo_send_pushes_two_10ms_frames_per_20ms_tick(monkeypatch):
+    import jarvis_tgcall as tg
+    monkeypatch.delenv("JARVIS_TGCALL_STEREO", raising=False)
+    sent = []
+
+    class PlainLine:
+        def send_frame(self, uid, device, frame):
+            sent.append(frame)
+
+    class Device:
+        MICROPHONE = "mic"
+
+    loop = asyncio.new_event_loop()
+    th = threading.Thread(target=loop.run_forever, daemon=True)
+    th.start()
+    try:
+        tr = tg.TelegramTransport("@owner")
+        tr._loop, tr._app, tr._uid, tr._device = loop, PlainLine(), 1, Device
+        tr.send(b"\x00" * tg.FRAME_BYTES)
+        assert len(sent) == 2 and all(len(f) == 1920 for f in sent)
+        assert not tr.closed.is_set()
     finally:
         loop.call_soon_threadsafe(loop.stop)
         th.join(timeout=5)

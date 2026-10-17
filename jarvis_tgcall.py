@@ -50,6 +50,28 @@ FRAME_MS = 20                       # one Opus frame
 FRAME_SAMPLES = RATE * FRAME_MS // 1000
 FRAME_BYTES = FRAME_SAMPLES * 2
 STT_RATE = 16000
+# Telegram's call audio is 10 ms stereo frames (1920 bytes), the same size as one 20 ms mono frame. Sending or
+# reading mono 20 ms frames plays the speech too fast and high. Stereo is the default; JARVIS_TGCALL_STEREO=0
+# goes back to mono for comparison.
+WIRE_FRAME_BYTES = RATE // 100 * 2 * 2     # 10 ms, two channels, 16-bit
+
+
+def stereo_wire() -> bool:
+    return (os.environ.get("JARVIS_TGCALL_STEREO") or "1").strip() != "0"
+
+
+def stereo_to_mono(raw: bytes) -> bytes:
+    usable = len(raw) // 4 * 4
+    pairs = np.frombuffer(raw[:usable], dtype="<i2").reshape(-1, 2)
+    return pairs.astype(np.int32).mean(axis=1).astype("<i2").tobytes()
+
+
+def mono_to_stereo_frames(mono: bytes) -> list[bytes]:
+    """One 20 ms mono frame -> 10 ms stereo frames, both channels carrying the same sample."""
+    samples = np.frombuffer(mono, dtype="<i2")
+    wire = np.repeat(samples, 2).astype("<i2").tobytes()
+    wire += b"\x00" * (-len(wire) % WIRE_FRAME_BYTES)
+    return [wire[i:i + WIRE_FRAME_BYTES] for i in range(0, len(wire), WIRE_FRAME_BYTES)]
 
 RING_TIMEOUT_S = 45
 SAME_TEXT_GAP_S = 3600
@@ -606,6 +628,18 @@ class TelegramTransport:
         self.frame_sizes: collections.Counter = collections.Counter()
         self.end_reason = ""                 # why the line dropped, in plain words (empty while it is up)
         self._answered_at: float | None = None
+        self._in_buf = bytearray()           # incoming mono audio waiting to fill a 20 ms frame
+
+    def _queue_incoming(self, raw: bytes) -> None:
+        """Turns what Telegram sent into 20 ms mono frames for the listener. Never blocks the call thread."""
+        self._in_buf += stereo_to_mono(raw) if stereo_wire() else raw
+        while len(self._in_buf) >= FRAME_BYTES:
+            chunk = bytes(self._in_buf[:FRAME_BYTES])
+            del self._in_buf[:FRAME_BYTES]
+            try:
+                self.frames.put_nowait(chunk)
+            except queue.Full:
+                pass                         # the listener is behind: drop, never block
 
     def _since_answer(self) -> str:
         if self._answered_at is None:
@@ -692,10 +726,7 @@ class TelegramTransport:
                     continue
                 self.frames_in += 1
                 self.frame_sizes[len(fr.frame)] += 1
-                try:
-                    self.frames.put_nowait(bytes(fr.frame))
-                except queue.Full:
-                    pass                               # the listener is behind: drop, never block the call thread
+                self._queue_incoming(bytes(fr.frame))
 
         @app.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
         async def _left(_, update):
@@ -711,11 +742,14 @@ class TelegramTransport:
     def send(self, frame: bytes) -> None:
         if self.closed.is_set() or self._loop is None or self._app is None:
             return
+        parts = mono_to_stereo_frames(frame) if stereo_wire() else [frame]
+
         async def push() -> None:
-            # py-tgcalls 3.x may give send_frame as a plain call or a coroutine: await it only if it is one
-            res = self._app.send_frame(self._uid, self._device.MICROPHONE, frame)
-            if inspect.isawaitable(res):
-                await res
+            for part in parts:
+                # py-tgcalls 3.x may give send_frame as a plain call or a coroutine: await it only if it is one
+                res = self._app.send_frame(self._uid, self._device.MICROPHONE, part)
+                if inspect.isawaitable(res):
+                    await res
 
         try:
             fut = asyncio.run_coroutine_threadsafe(push(), self._loop)
@@ -795,10 +829,7 @@ class InboundTransport(TelegramTransport):
                 if getattr(fr.info, "width", 0):
                     continue
                 self.frames_in += 1
-                try:
-                    self.frames.put_nowait(bytes(fr.frame))
-                except queue.Full:
-                    pass
+                self._queue_incoming(bytes(fr.frame))
 
         @app.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
         async def _left(_, update):
