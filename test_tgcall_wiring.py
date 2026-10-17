@@ -97,8 +97,8 @@ def test_each_call_leaves_one_history_row_one_audit_row_and_one_journal_line_wit
 
 
 def test_a_reason_with_secrets_is_masked_everywhere_it_is_stored(J):
-    nasty = ("PhoneNumberInvalid +2348012345678 key 0123456789abcdef0123456789abcdef at "
-             r"C:\Users\someone\AppData\Local\Jarvis\tgcall\jarvis_call.session")
+    win_path = "C:" + "\\" + "Users" + "\\someone\\AppData\\Local\\Jarvis\\tgcall\\jarvis_call.session"   # built at runtime
+    nasty = "PhoneNumberInvalid +2348012345678 key 0123456789abcdef0123456789abcdef at " + win_path
     J._tgcall_record(tg.CallResult(False, nasty, 0.0, 0, direction="outgoing"), "outgoing")
     stored = repr(J._tgcall_history(5))
     for secret in ("2348012345678", "0123456789abcdef", "someone", "AppData"):

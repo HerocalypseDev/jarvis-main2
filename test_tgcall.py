@@ -1162,8 +1162,8 @@ def test_status_is_plain_data_with_no_secrets(monkeypatch, tmp_path):
 
 def test_call_results_and_config_never_show_secrets_in_repr(monkeypatch, tmp_path):
     _configure(monkeypatch, tmp_path)
-    res = tg.CallResult(False, tg.safe_reason("PhoneNumberInvalid +2348012345678 hash 0123456789abcdef0123456789abcdef "
-                                              r"C:\Users\someone\AppData\Local\Jarvis\tgcall\jarvis_call.session"))
+    win_path = "C:" + "\\" + "Users" + "\\someone\\AppData\\Local\\Jarvis\\tgcall\\jarvis_call.session"   # built at runtime
+    res = tg.CallResult(False, tg.safe_reason("PhoneNumberInvalid +2348012345678 hash 0123456789abcdef0123456789abcdef " + win_path))
     text = repr(res)
     assert "2348012345678" not in text and "0123456789abcdef" not in text and "someone" not in text
 
