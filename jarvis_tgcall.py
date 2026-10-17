@@ -759,7 +759,31 @@ def _cli_test() -> int:
     return 0
 
 
+def load_dotenv(path=None) -> int:
+    """For the standalone CLI only (Jarvis loads .env itself): copies KEY=VALUE lines from the project's .env into
+    os.environ without overriding anything already set. Values are never printed. Returns how many were added."""
+    path = path or (Path(__file__).resolve().parent / ".env")
+    try:
+        lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return 0
+    added = 0
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.lower().startswith("export "):
+            line = line[7:].strip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key and not os.environ.get(key):
+            os.environ[key] = value.strip().strip('"').strip("'")
+            added += 1
+    return added
+
+
 def main(argv: list[str]) -> int:
+    load_dotenv()
     cmd = argv[1] if len(argv) > 1 else "status"
     if cmd == "login":
         return _cli_login()

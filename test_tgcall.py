@@ -385,3 +385,20 @@ def test_jarvis_call_command_is_a_hands_free_phone_command(monkeypatch, tmp_path
     assert out == "It is noon."
     assert seen == {"text": "[Call: x] what time is it", "source": "phone", "hands": True}
     assert not getattr(jarvis._command_ctx, "hands_free", False)
+
+
+def test_cli_reads_settings_from_the_dotenv_file(monkeypatch, tmp_path):
+    env = tmp_path / ".env"
+    env.write_text('﻿# c\nTGCALL_API_ID=123456\nexport TGCALL_API_HASH_SECRET="0123456789abcdef0123456789abcdef"\n'
+                   'TGCALL_TARGET=@some_owner\n', encoding="utf-8")
+    assert tg.api_id() is None
+    assert tg.load_dotenv(env) == 3
+    assert tg.api_id() == 123456 and tg.api_hash() and tg.target() == "@some_owner"
+
+
+def test_dotenv_never_overrides_what_is_already_set(monkeypatch, tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("TGCALL_TARGET=@from_file\n", encoding="utf-8")
+    monkeypatch.setenv("TGCALL_TARGET", "@already")
+    assert tg.load_dotenv(env) == 0 and tg.target() == "@already"
+    assert tg.load_dotenv(tmp_path / "missing.env") == 0
