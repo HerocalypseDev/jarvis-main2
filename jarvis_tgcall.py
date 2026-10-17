@@ -587,6 +587,10 @@ class TelegramTransport:
         if type(entity).__name__ != "User":
             raise CallError(f"{self.to} is not a person's account (it resolved to a {type(entity).__name__}); "
                             "use the @username of your MAIN account, not a channel or group")
+        me = await client.get_me()
+        if me is not None and int(entity.id) == int(me.id):
+            raise CallError(f"{self.to} is the spare account itself: Telegram can't call yourself. Set TGCALL_TARGET "
+                            "to the @username of your MAIN account (the one you answer calls on), not the spare one")
         await client.get_input_entity(entity)       # puts the access hash in the session so the call layer can find the user
         self._uid = int(entity.id)
         app = PyTgCalls(client)

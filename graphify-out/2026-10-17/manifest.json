@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792252228.5101664,
-    "seen": 1792252249.6287942,
-    "ast_hash": "53f18e850ab88cb420498a3bb5327d8a",
+    "mtime": 1792252600.674147,
+    "seen": 1792252618.8952358,
+    "ast_hash": "53a4f74f8386b3fda75cb3fcbad95653",
     "semantic_hash": ""
   },
   "README.md": {
@@ -2034,9 +2034,9 @@
     "semantic_hash": ""
   },
   "jarvis_tgcall.py": {
-    "mtime": 1792252212.5359259,
-    "seen": 1792252249.62842,
-    "ast_hash": "ef6b7c84f7797032c8b95aebf04bd6e2",
+    "mtime": 1792252599.6474435,
+    "seen": 1792252618.8949618,
+    "ast_hash": "c7e811f8b95e0b668b8f9ac0b4c35eaa",
     "semantic_hash": ""
   },
   "test_tgcall.py": {

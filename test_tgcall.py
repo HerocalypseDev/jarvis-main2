@@ -402,3 +402,33 @@ def test_dotenv_never_overrides_what_is_already_set(monkeypatch, tmp_path):
     monkeypatch.setenv("TGCALL_TARGET", "@already")
     assert tg.load_dotenv(env) == 0 and tg.target() == "@already"
     assert tg.load_dotenv(tmp_path / "missing.env") == 0
+
+
+def test_calling_the_spare_account_itself_is_refused_clearly(monkeypatch, tmp_path):
+    import asyncio
+    import sys
+    import types
+    _configure(monkeypatch, tmp_path)
+
+    class User:
+        id = 777
+
+    class Client:
+        def __init__(self, *a, **k): pass
+        async def connect(self): pass
+        async def is_user_authorized(self): return True
+        async def get_entity(self, to): return User()
+        async def get_me(self): return User()
+
+    tl = types.ModuleType("telethon"); tl.TelegramClient = Client
+    pt = types.ModuleType("pytgcalls"); pt.PyTgCalls = object; pt.filters = object
+    ty = types.ModuleType("pytgcalls.types")
+    for n in ("AudioQuality", "CallConfig", "ChatUpdate", "Device", "Direction", "ExternalMedia", "MediaStream", "RecordStream"):
+        setattr(ty, n, object)
+    monkeypatch.setitem(sys.modules, "telethon", tl)
+    monkeypatch.setitem(sys.modules, "pytgcalls", pt)
+    monkeypatch.setitem(sys.modules, "pytgcalls.types", ty)
+    monkeypatch.setattr(tg, "explain", lambda e: str(e), raising=False)
+    t = tg.TelegramTransport("@some_owner")
+    with pytest.raises(tg.CallError, match="spare account itself"):
+        asyncio.run(t._connect())
