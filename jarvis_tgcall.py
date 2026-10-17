@@ -27,6 +27,7 @@ Not verified on a real call: see CLAUDE.md. `python jarvis_tgcall.py test` check
 from __future__ import annotations
 
 import asyncio
+import atexit
 import collections
 import logging
 import os
@@ -112,6 +113,75 @@ def logged_in() -> bool:
         return f.is_file() and f.stat().st_size > 0
     except (CallError, OSError):
         return False
+
+
+_GUARD_NAME = "jarvis_call.owner"
+_claimed = False
+
+
+def _holder_alive(pid: int) -> bool:
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except ImportError:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def claim_session(what: str) -> None:
+    """One process at a time may open the spare account's session file: Telethon keeps it in sqlite, and a second
+    program opening it gets "database is locked". The first opener writes its pid here; a second program is refused
+    with a plain message. A file left by a process that has exited is taken over."""
+    global _claimed
+    if _claimed:
+        return
+    path = session_dir() / _GUARD_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                pid, held_by = int(lines[0]), (lines[1] if len(lines) > 1 else "another program")
+            except (OSError, ValueError, IndexError):
+                pid, held_by = 0, ""
+            if pid and pid != os.getpid() and _holder_alive(pid):
+                raise CallError(f"the spare account is in use by {held_by} (process {pid}). Stop that program "
+                                "first (Jarvis keeps the account while it runs), then try again")
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(f"{os.getpid()}\n{what}\n")
+        _claimed = True
+        atexit.register(_release_session)
+        return
+    raise CallError("could not take the spare account's session (another program keeps it)")
+
+
+def _release_session() -> None:
+    global _claimed
+    try:
+        path = session_dir() / _GUARD_NAME
+        if path.is_file() and path.read_text(encoding="utf-8").split("\n", 1)[0] == str(os.getpid()):
+            path.unlink()
+    except (OSError, ValueError, CallError):
+        pass
+    _claimed = False
+
+
+def _who() -> str:
+    """Plain label for this program, shown to another program that is refused."""
+    name = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "python"
+    if name.lower() == "jarvis.py":
+        return "Jarvis"
+    return " ".join([name] + sys.argv[1:2])
 
 
 def missing() -> list[str]:
@@ -582,6 +652,7 @@ class TelegramTransport:
         except ImportError as e:
             raise CallError(f"the call packages aren't installed ({INSTALL_HINT})") from e
         self._device = Device
+        claim_session(_who())
         client = TelegramClient(str(session_path()), api_id(), api_hash())
         self._client = client
         await client.connect()
@@ -682,6 +753,7 @@ class InboundTransport(TelegramTransport):
         if incoming_status is None:
             raise CallError("this py-tgcalls version can't answer incoming calls")
         self._device = Device
+        claim_session(_who())
         client = TelegramClient(str(session_path()), api_id(), api_hash())
         self._client = client
         await client.connect()
@@ -895,6 +967,11 @@ def _cli_login() -> int:
         print(f"Install the packages first: {INSTALL_HINT}")
         return 1
     session_dir().mkdir(parents=True, exist_ok=True)
+    try:
+        claim_session(_who())
+    except CallError as e:
+        print(str(e))
+        return 1
     print("Log in the SPARE Telegram account (not your main one). Telegram sends a code to that account.")
     phone = input("Spare account's phone number, with country code (e.g. +234...): ").strip()
 

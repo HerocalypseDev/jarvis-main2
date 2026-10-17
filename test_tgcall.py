@@ -569,3 +569,47 @@ def test_a_locked_session_is_retried_once(monkeypatch, tmp_path):
     made = [FakeTransport(fail="OperationalError: database is locked"), FakeTransport(fail="no answer (the call rang out)")]
     res = tg.call_owner("Hi", _hooks([], []), transport_factory=lambda: made.pop(0))
     assert not made and "rang out" in res.reason
+
+
+def test_second_program_is_refused_while_another_holds_the_session(tmp_path, monkeypatch):
+    """A running Jarvis keeps the spare account's session; the CLI test in another program must be refused with a
+    plain message instead of hitting sqlite's "database is locked"."""
+    import subprocess
+    import sys
+    import jarvis_tgcall as tg
+    monkeypatch.setattr(tg, "_claimed", False)
+    holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        guard = tg.session_dir() / tg._GUARD_NAME
+        guard.parent.mkdir(parents=True, exist_ok=True)
+        guard.write_text(f"{holder.pid}\nJarvis\n", encoding="utf-8")
+        with pytest.raises(tg.CallError) as e:
+            tg.claim_session("the call test")
+        assert "in use by Jarvis" in str(e.value)
+        assert str(holder.pid) in str(e.value)
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_session_left_by_an_exited_program_is_taken_over(tmp_path, monkeypatch):
+    import jarvis_tgcall as tg
+    monkeypatch.setattr(tg, "_claimed", False)
+    monkeypatch.setattr(tg.atexit, "register", lambda *a, **k: None)
+    guard = tg.session_dir() / tg._GUARD_NAME
+    guard.parent.mkdir(parents=True, exist_ok=True)
+    guard.write_text("999999\nJarvis\n", encoding="utf-8")        # no such process
+    tg.claim_session("the call test")
+    assert guard.read_text(encoding="utf-8").split("\n")[0] == str(tg.os.getpid())
+
+
+def test_claim_is_taken_once_per_process_and_released_on_exit(tmp_path, monkeypatch):
+    import jarvis_tgcall as tg
+    monkeypatch.setattr(tg, "_claimed", False)
+    monkeypatch.setattr(tg.atexit, "register", lambda *a, **k: None)
+    tg.claim_session("Jarvis")
+    tg.claim_session("Jarvis")                                     # same process: no refusal
+    guard = tg.session_dir() / tg._GUARD_NAME
+    assert guard.is_file()
+    tg._release_session()
+    assert not guard.exists()
