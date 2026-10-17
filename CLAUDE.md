@@ -1887,7 +1887,8 @@ row there each phase rather than only stating the total in chat.
 | 185 (Jarvis's own "call me" said it was ringing but never rang: the new incoming-call listener held the Telegram session file while connecting, so the outgoing call hit "database is locked"; the listener now claims the session from its first moment, gives it up while still connecting, outgoing calls wait for it to let go and retry a locked session once; 3 new tests) | Sonnet 5.5 | ~20 min | ~$1.40–$2.00 |
 | 186 (admin helper card showed "?" with "Windows answered in a form I couldn't read": PowerShell run with -EncodedCommand writes a CLIXML progress block to stderr and Jarvis reads stdout+stderr together, so the task-list answer was never pure JSON; the reader now drops the CLIXML block/BOM/warning lines, takes the first JSON line, and an unreadable answer shows a cleaned snippet of what came back; status script silences progress; 5 new tests, mutation-checked) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
 | 187 (tgcall "database is locked" again: the CLI test ran in its own program while Jarvis's listener kept the spare account's session; a claim file now refuses a second program with a plain message, a stale claim is taken over; 3 new tests) | Sonnet 5.5 | ~25 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~5642 min** | **~$387.15–$543.95** |
+| 188 (calls drop after 3-4 s both ways: the call code now records why a line ended (Telegram LEFT_CALL, a failed audio send, seconds after it was answered), logs it and the CLI test prints it; root cause not yet known, needs the owner's test output; 2 new tests) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~5662 min** | **~$388.35–$545.65** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
