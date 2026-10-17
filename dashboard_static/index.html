@@ -268,7 +268,8 @@
 
     <section id="view-phones" class="view">
       <div class="view-head"><h1 class="view-title">Phones</h1>
-        <span class="view-actions"><button id="ph-fit" class="btn" type="button">Fit all</button>
+        <span class="view-actions"><button id="ph-full" class="btn" type="button">Full screen</button>
+          <button id="ph-fit" class="btn" type="button">Fit all</button>
           <button id="ph-ask" class="btn btn-primary" type="button">Locate now</button></span></div>
       <p id="ph-status" class="muted">Where your phones are, from the Jarvis Locator app. Positions are sealed so only
         Jarvis can read them.</p>
@@ -493,6 +494,19 @@
       </form>
     </section>
   </main>
+
+  <div id="ph-cine" class="ph-cine" hidden role="dialog" aria-label="Phone location, full screen">
+    <div id="ph-cine-map" class="ph-cine-map"></div>
+    <div class="ph-cine-vignette"></div>
+    <div class="ph-cine-hud" id="ph-cine-hud">
+      <div class="ph-cine-tag">JARVIS LOCATOR</div>
+      <div class="ph-cine-name" id="ph-cine-name"></div>
+      <div class="ph-cine-place" id="ph-cine-place"></div>
+      <div class="ph-cine-meta" id="ph-cine-meta"></div>
+    </div>
+    <button id="ph-cine-close" class="btn ph-cine-close" type="button">Close (Esc)</button>
+    <div id="ph-cine-hint" class="ph-cine-hint" hidden>Click anywhere for true full screen</div>
+  </div>
 
   <aside id="context" class="context-panel">
     <div class="context-head">

@@ -1848,7 +1848,8 @@ row there each phase rather than only stating the total in chat.
 | 176 (phone locator: Jarvis Locator Android app (sealed GPS check-ins over ntfy, built here), relay listener, phone_location tool + "where's my phone, show me visually" voice route, dark OpenStreetMap Phones page that the same tab switches to; headless check at 1440/390 px; 19 new tests) | Opus 5.5 | ~70 min | ~$5.50–$7.50 |
 | 177 (Phones page bounced back to Home: browser kept an old app.js after the update; dashboard page files now sent with Cache-Control no-cache; headless check of direct load + nav click; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 178 (CallMeBot spam lock: a "reported as spam" answer now says how to unlock it (add the caller bot to contacts and message it); 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~5429 min** | **~$373.05–$524.05** |
+| 179 (cinematic phone map: "show me visually" opens a full-screen overlay that flies smoothly from the world down to the last-checked phone, HUD + ring burst, Esc/click to leave; "Full screen" button on the Phones page; opens by WebSocket or a `?cine=1` link; page itself unchanged; headless check; 2 tests changed/added) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
+| **Running total (final)** | | **~5464 min** | **~$375.55–$527.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3262,4 +3263,9 @@ the "Jarvis Locator APK" GitHub Action), `jarvis_phone_locate.py` (pure: pairing
   to Home, and the browser kept the old cached app.js (no "phones") after the update. The dashboard middleware now adds
   `Cache-Control: no-cache` to every non-`/api/` response (304s stay cheap), so page files are re-checked on each load.
   The current code opens `#/phones` directly and from the sidebar (headless check). One Ctrl+F5 was still needed once.
+- **Cinematic map (2026-10-17, owner: "not cool enough... zoom in smoothly, fill the screen, keep the page, add a button")**: `phonesCinematic()`
+  in `phones.js` draws its own non-interactive Leaflet map in the `#ph-cine` overlay (index.html) and `flyTo`s the newest-fix phone from zoom 3 to
+  17 over 6.5 s, then ring burst + HUD (reduced motion jumps straight there). Voice "show" sends a WS `navigate` with `cinematic`+`device`
+  (`_show_phones_page`), or opens `#/phones?cine=1&device=ID` when no tab is open (`currentRoute()` strips the query). Browsers allow real
+  fullscreen only from a click: the voice view fills the window and shows a hint, a click or the page's "Full screen" button goes truly full screen. Esc closes.
 

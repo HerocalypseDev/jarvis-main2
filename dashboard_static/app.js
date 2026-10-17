@@ -14,7 +14,7 @@ const ROUTES = [
 const ROUTES_WITH_CONTEXT = new Set(["home", "sessions", "tasks", "audit", "activity"]);
 
 function currentRoute() {
-  const raw = (location.hash || "#/home").replace(/^#\/?/, "");
+  const raw = (location.hash || "#/home").replace(/^#\/?/, "").split("?")[0];
   return ROUTES.includes(raw) ? raw : "home";
 }
 
@@ -1021,6 +1021,7 @@ function connectWs() {
     // "Where's my phone, show me visually" (2026-10-17): Jarvis switches this same tab to the Phones map.
     if (event && event.type === "navigate" && event.data && ROUTES.includes(event.data.route)) {
       location.hash = "#/" + event.data.route;
+      if (event.data.cinematic && window.phonesCinematic) window.phonesCinematic(event.data.device || "", {});
     }
     if (event && event.type === "phones_changed" && isRouteActive("phones") && window.refreshPhones) window.refreshPhones();
     if (event && event.type === "asks_changed" && isRouteActive("home") && window.refreshAsks) window.refreshAsks();

@@ -196,7 +196,21 @@ def test_show_switches_the_open_dashboard_tab(J, monkeypatch):
     monkeypatch.setattr(J._phone_locator, "ask", lambda dev=None: True)
     monkeypatch.setattr(J._phone_locator, "wait_for", lambda ids, after, t: set(ids))
     out = J._phone_location_tool({"action": "show"})
-    assert {"type": "navigate", "data": {"route": "phones"}} in events and "on the map" in out
+    nav = [e for e in events if e.get("type") == "navigate"][0]
+    assert nav["data"]["route"] == "phones" and nav["data"]["cinematic"] is True and nav["data"]["device"]
+    assert "on the map" in out
+
+
+def test_show_without_a_tab_opens_the_cinematic_link(J, monkeypatch):
+    J._phone_store.record(pl.parse_report(report(sent_ts=NOW), NOW + 1), NOW)
+    opened = []
+    monkeypatch.setattr(J, "JARVIS_DASHBOARD_ENABLED", True)
+    monkeypatch.setattr(J.dashboard, "client_count", lambda: 0)
+    monkeypatch.setattr(J.browsers, "open_link", lambda u: opened.append(u))
+    monkeypatch.setattr(J._phone_locator, "ask", lambda dev=None: True)
+    monkeypatch.setattr(J._phone_locator, "wait_for", lambda ids, after, t: set(ids))
+    J._phone_location_tool({"action": "show"})
+    assert opened and "#/phones?cine=1&device=" in opened[0]
 
 
 def test_location_is_private(J):

@@ -227,5 +227,105 @@ document.addEventListener("DOMContentLoaded", () => {
   if (fit) fit.addEventListener("click", () => phFit());
 });
 
+// --- Cinematic full-screen view (2026-10-17): the voice command and the "Full screen" button. ---
+const CINE = { map: null, open: false, timer: null, layers: [] };
+
+function phCineClose() {
+  const el = document.getElementById("ph-cine");
+  if (!el || !CINE.open) return;
+  CINE.open = false;
+  clearTimeout(CINE.timer);
+  el.classList.remove("ph-cine-in");
+  el.hidden = true;
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  if (CINE.map) { CINE.map.remove(); CINE.map = null; }
+}
+
+async function phonesCinematic(deviceId, opts) {
+  opts = opts || {};
+  const el = document.getElementById("ph-cine");
+  if (!el || typeof L === "undefined") return;
+  let rep = PH.data;
+  try { rep = await phGet(); PH.data = rep; } catch (e) { if (!rep) return; }
+  const located = (rep.devices || []).filter((d) => d.lat != null && d.lon != null);
+  if (!located.length) { alert("No phone has a position yet."); return; }
+  const want = deviceId && located.find((d) => d.id === deviceId);
+  const d = want || located.slice().sort((a, b) => (b.fix_ts || 0) - (a.fix_ts || 0))[0];
+  if (CINE.open) phCineClose();
+  CINE.open = true;
+  el.hidden = false;
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.getElementById("ph-cine-name").textContent = d.name || "Phone";
+  const hud = document.getElementById("ph-cine-hud");
+  hud.classList.remove("ph-cine-hud-on");
+  document.getElementById("ph-cine-place").textContent = "";
+  document.getElementById("ph-cine-meta").textContent = "";
+  void el.offsetWidth;
+  el.classList.add("ph-cine-in");
+  const hint = document.getElementById("ph-cine-hint");
+  hint.hidden = !!(opts.fromClick || document.fullscreenElement);
+  if (opts.fromClick && el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  CINE.map = L.map(document.getElementById("ph-cine-map"), {
+    zoomControl: false, attributionControl: true, zoomAnimation: true, fadeAnimation: true,
+    dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false,
+  }).setView([d.lat, d.lon], reduce ? 17 : 3);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+  }).addTo(CINE.map);
+  const map = CINE.map;
+  const land = () => {
+    if (CINE.map !== map) return;
+    const stale = !d.fix_ts || (rep.now || Date.now()) - d.fix_ts > 30 * 60 * 1000;
+    L.circle([d.lat, d.lon], { radius: d.acc || 20, color: "#2fd8ff", weight: 1, fillColor: "#2fd8ff", fillOpacity: 0.1 }).addTo(map);
+    L.marker([d.lat, d.lon], { icon: phPinIcon(d.name, stale), interactive: false }).addTo(map);
+    for (const o of located) {
+      if (o.id === d.id) continue;
+      L.marker([o.lat, o.lon], { icon: phPinIcon(o.name, true), interactive: false }).addTo(map);
+    }
+    el.classList.add("ph-cine-burst");
+    setTimeout(() => el.classList.remove("ph-cine-burst"), 1800);
+    document.getElementById("ph-cine-place").textContent = d.place || "";
+    const bits = [`${Number(d.lat).toFixed(5)}, ${Number(d.lon).toFixed(5)}`];
+    if (d.acc) bits.push(`within ${Math.round(d.acc)} m`);
+    if (d.ago) bits.push(d.ago);
+    if (d.battery != null) bits.push(`${d.battery}%${d.charging ? " charging" : ""}`);
+    document.getElementById("ph-cine-meta").textContent = bits.join("  |  ");
+    hud.classList.add("ph-cine-hud-on");
+  };
+  if (reduce) land();
+  else {
+    map.once("moveend", land);
+    CINE.timer = setTimeout(() => {
+      if (CINE.map === map) map.flyTo([d.lat, d.lon], 17, { duration: 6.5, easeLinearity: 0.12 });
+    }, 700);
+  }
+}
+window.phonesCinematic = phonesCinematic;
+
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && CINE.open) phCineClose(); });
+document.addEventListener("DOMContentLoaded", () => {
+  const full = document.getElementById("ph-full");
+  if (full) full.addEventListener("click", () => phonesCinematic("", { fromClick: true }));
+  const close = document.getElementById("ph-cine-close");
+  if (close) close.addEventListener("click", phCineClose);
+  const cine = document.getElementById("ph-cine");
+  if (cine) cine.addEventListener("click", (ev) => {
+    if (ev.target.closest("#ph-cine-close")) return;
+    if (!document.fullscreenElement && cine.requestFullscreen) {
+      cine.requestFullscreen().then(() => { document.getElementById("ph-cine-hint").hidden = true; }).catch(() => {});
+    }
+  });
+});
+
+// Opened by a link (no dashboard tab was open): #/phones?cine=1&device=ID
+(function () {
+  const m = /[?&]cine=1(?:&device=([^&]*))?/.exec(location.hash || "");
+  if (!m) return;
+  const dev = decodeURIComponent(m[1] || "");
+  history.replaceState(null, "", "#/phones");
+  window.addEventListener("load", () => phonesCinematic(dev, {}));
+})();
+
 // app.js routes before this file loads: a direct #/phones load would otherwise wait for the next event.
 if (typeof isRouteActive === "function" && isRouteActive("phones")) refreshPhones();

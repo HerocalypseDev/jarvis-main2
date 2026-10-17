@@ -10690,25 +10690,27 @@ def _phones_page_url() -> str:
     return f"http://127.0.0.1:{JARVIS_DASHBOARD_PORT}/#/phones"
 
 
-def _show_phones_page() -> str:
-    """Switches an open dashboard tab to the Phones map (same tab), or opens the dashboard there."""
+def _show_phones_page(device_id: str = "") -> str:
+    """Opens the cinematic full-screen phone map in an open dashboard tab, or opens the dashboard straight into it."""
     if not JARVIS_DASHBOARD_ENABLED:
         return "The dashboard is off, so I can't show the map (turn on JARVIS_DASHBOARD_ENABLED)."
     if dashboard.client_count() > 0:
-        dashboard.notify({"type": "navigate", "data": {"route": "phones"}})
+        dashboard.notify({"type": "navigate", "data": {"route": "phones", "cinematic": True, "device": device_id}})
         return ""
+    url = _phones_page_url() + "?cine=1" + (f"&device={urllib.parse.quote(device_id)}" if device_id else "")
     try:
-        browsers.open_link(_phones_page_url())
+        browsers.open_link(url)
     except Exception:
-        webbrowser.open(_phones_page_url())
+        webbrowser.open(url)
     return ""
 
 
 def _phone_location_text(action: str, words: str) -> str:
     cfg = _phone_locator_config()
     show = action == "show"
-    note = _show_phones_page() if show else ""
+    note = ""
     if not cfg:
+        note = _show_phones_page() if show else ""
         msg = ("Your phones aren't paired yet. Open the Phones page on the dashboard, install the Jarvis Locator app "
                "on each phone and paste the setup code it gives you.")
         return (note + " " + msg).strip()
@@ -10732,6 +10734,10 @@ def _phone_location_text(action: str, words: str) -> str:
         if action in ("where", "show") and d["id"] not in answered:
             line += " It didn't answer just now (switched off, no internet, or asleep), so that's its last check-in."
         lines.append(line)
+    if show:
+        located = [fresh.get(d["id"], d) for d in targets if fresh.get(d["id"], d).get("lat") is not None]
+        best = max(located, key=lambda d: d.get("fix_ts") or 0)["id"] if located else ""
+        note = _show_phones_page(best)
     if show and not note:
         lines.append("It's on the map on the dashboard.")
     return " ".join(([note] if note else []) + lines)
