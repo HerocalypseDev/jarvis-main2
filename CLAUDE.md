@@ -1846,7 +1846,8 @@ row there each phase rather than only stating the total in chat.
 | 174 (Windows MCP failing: a tool server that stops after connecting is now marked down, reconnected before the next call and shown failed on the dashboard; real error text instead of "unhandled errors in a TaskGroup"; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 175 (phone calls via CallMeBot: send_to_my_phone channel "call", own Telegram user only, daily cap, urgent alerts ring when away 10+ min; 8 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 176 (phone locator: Jarvis Locator Android app (sealed GPS check-ins over ntfy, built here), relay listener, phone_location tool + "where's my phone, show me visually" voice route, dark OpenStreetMap Phones page that the same tab switches to; headless check at 1440/390 px; 19 new tests) | Opus 5.5 | ~70 min | ~$5.50–$7.50 |
-| **Running total (final)** | | **~5409 min** | **~$371.85–$522.25** |
+| 177 (Phones page bounced back to Home: browser kept an old app.js after the update; dashboard page files now sent with Cache-Control no-cache; headless check of direct load + nav click; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~5419 min** | **~$372.45–$523.15** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3254,4 +3255,8 @@ the "Jarvis Locator APK" GitHub Action), `jarvis_phone_locate.py` (pure: pairing
 - Signing: `phone_locator/app/locator.keystore` (sideload key, private repo only, export-excluded) lets updates install over
   the old APK. Not verified on a real phone: the app itself (only compiled), Doze/battery-saver behaviour on Tecno/Infinix,
   the GitHub Action, the live relay round trip, the navigate switch in a real browser tab.
+- **Phones page went straight back to Home (2026-10-17, owner report)**: the router sends any route missing from `ROUTES`
+  to Home, and the browser kept the old cached app.js (no "phones") after the update. The dashboard middleware now adds
+  `Cache-Control: no-cache` to every non-`/api/` response (304s stay cheap), so page files are re-checked on each load.
+  The current code opens `#/phones` directly and from the sidebar (headless check). One Ctrl+F5 was still needed once.
 

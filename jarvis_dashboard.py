@@ -592,7 +592,13 @@ def _build_app(
                 origin = request.headers.get("origin")
                 if origin and not _origin_is_loopback(origin):
                     return JSONResponse({"error": "forbidden origin"}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        # The page's own files (app.js, style.css, ...) must be re-checked on every load: without this
+        # the browser kept an old app.js after an update, whose route list had no "phones", so the
+        # new Phones page bounced straight back to Home. no-cache still allows a cheap 304 answer.
+        if not request.url.path.startswith("/api/") and "cache-control" not in response.headers:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.get("/api/state")
     def api_state() -> dict:
