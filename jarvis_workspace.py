@@ -29,7 +29,7 @@ _SENSITIVE_NAMES = {
     ".git-credentials", ".npmrc", ".pypirc", ".netrc", "_netrc", ".credentials.json", "pairing.json",
     "logins.json", "key4.db", "login data", "cookies",
 }
-_SENSITIVE_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".kdbx", ".ppk")
+_SENSITIVE_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".kdbx", ".ppk", ".session")
 _SENSITIVE_DIRS = {".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", "gcloud", "github cli", ".gmail-mcp", "google-calendar-mcp",
                    "jarvis"}  # last = %LOCALAPPDATA%\Jarvis
 _WRITE_ONLY_DIRS = {".claude", ".git", "startup"}

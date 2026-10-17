@@ -24,3 +24,7 @@ soundcard==0.4.6
 anthropic==1.11.0
 # Optional, only for the "Hey Jarvis" wake word (Settings -> JARVIS_WAKE_WORD); Jarvis runs fine without it:
 # openwakeword==0.4.0
+# Two-way Telegram calls (optional, Python 3.12; see jarvis_tgcall.py)
+# telethon==1.45.0
+# py-tgcalls==3.0.0
+# ntgcalls==3.0.3

@@ -21,6 +21,12 @@ AI_DENIED = {
     "JARVIS_MEETING_AUTO": "it starts recording meetings by itself",
     "CALLMEBOT_TELEGRAM_USER": "it decides who Jarvis phones",
     "JARVIS_CALLS_PER_DAY": "it decides how often Jarvis may ring the owner",
+    "TGCALL_API_ID": "it names the account Jarvis phones from",
+    "TGCALL_API_HASH_SECRET": "it names the account Jarvis phones from",
+    "TGCALL_TARGET": "it decides who Jarvis phones",
+    "JARVIS_TGCALL_MAX_MIN": "it decides how long a phone call may run",
+    "JARVIS_TGCALL_IDLE_S": "it decides how long a phone call may run",
+    "JARVIS_TGCALL_DIR": "it decides where the phone login is stored",
 }
 # Handled by the tool that already has the right rules for them.
 ROUTED = {"JARVIS_SAFE_MODE": "safe_mode", "JARVIS_PERSONALITY": "personality"}

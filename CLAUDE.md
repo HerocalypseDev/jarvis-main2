@@ -1648,6 +1648,28 @@ Rules to keep:
   the claim checker caught (nudged) now writes a lesson too, as a "(claim check)" step. A failed or refused lesson write is
   logged at info. Tests that fake history must append before the lesson is written, or they hide fault 1.
 
+## Two-way Telegram calls (2026-10-17, owner choice after CallMeBot kept failing)
+
+`jarvis_tgcall.py` (never imports jarvis.py), tests `test_tgcall.py` (31). A SPARE Telegram account (Telethon + py-tgcalls
+3.0.0 / ntgcalls 3.0.3, Python 3.12, optional packages) rings the owner's main account; Jarvis speaks, listens and can be
+cut in on. Rules to keep:
+- **The spare account's phone number never goes in code, repo, tests or docs.** Config: `TGCALL_API_ID`,
+  `TGCALL_API_HASH_SECRET` (write-only), `TGCALL_TARGET` (falls back to `CALLMEBOT_TELEGRAM_USER`); the session lives in
+  `%LOCALAPPDATA%\Jarvis\tgcall\` (`JARVIS_TGCALL_DIR`, OneDrive refused, `.session` is a sensitive suffix). One-time login
+  is a CLI because only the owner gets the SMS code: `python jarvis_tgcall.py login`; `test` rings and checks the audio path.
+- **Safety**: caller speech runs through `jarvis._tgcall_run_command` = `handle_text_command(..., source="phone")` with
+  `_command_ctx.hands_free = True`: the catastrophic gate is intact and a spoken "yes" on a call can never confirm a staged
+  action; nothing plays on the PC speakers. The wrapper stays in jarvis.py (a test pins that the module has no "hands_free").
+- Listener = energy VAD (start 0.25 s voiced, 0.5 s while Jarvis talks so "mhm" doesn't cut it; end 0.8 s silence; max
+  20 s). Talker paces 20 ms frames in real time, prefetches the next sentence and stops within one frame on barge-in; the
+  next command gets a `[Call: the caller talked over ...]` note. Limits: `JARVIS_CALLS_PER_DAY` (shared with CallMeBot),
+  `JARVIS_TGCALL_MAX_MIN` 15, `JARVIS_TGCALL_IDLE_S` 45, same opening once an hour, one call at a time; an unanswered call is refunded.
+- `send_to_my_phone` channel `call` and urgent-alert calls use `_place_phone_call`: two-way when `tgcall.configured()`, else CallMeBot.
+  Result goes to the "what did I miss" inbox. Risks: Telegram can ban automated user accounts (spare only); anyone holding the
+  owner's phone can speak commands on the call; audio goes to Telegram and the speech engines.
+- **Not verified on a real call** (cloud container): ntgcalls frame size (20 ms assumed), incoming-frame tagging, whether `play()` returns
+  after the call is answered. Run `python jarvis_tgcall.py test` first.
+
 ### Cost reporting
 
 After every implementation phase, report a table with exactly these rows — Model, Work,
@@ -1849,7 +1871,8 @@ row there each phase rather than only stating the total in chat.
 | 177 (Phones page bounced back to Home: browser kept an old app.js after the update; dashboard page files now sent with Cache-Control no-cache; headless check of direct load + nav click; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 178 (CallMeBot spam lock: a "reported as spam" answer now says how to unlock it (add the caller bot to contacts and message it); 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
 | 179 (cinematic phone map: "show me visually" opens a full-screen overlay that flies smoothly from the world down to the last-checked phone, HUD + ring burst, Esc/click to leave; "Full screen" button on the Phones page; opens by WebSocket or a `?cine=1` link; page itself unchanged; headless check; 2 tests changed/added) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
-| **Running total (final)** | | **~5464 min** | **~$375.55–$527.55** |
+| 180 (two-way Telegram calls from a spare account: speak, listen, barge-in, login/test CLI, hands-free phone-source command path so the gate can't be confirmed by voice, Settings entries, CallMeBot fallback; 31 new tests; not verified on a real call) | Sonnet 5.5 | ~60 min | ~$4.00–$5.50 |
+| **Running total (final)** | | **~5524 min** | **~$379.55–$533.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

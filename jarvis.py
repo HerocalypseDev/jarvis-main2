@@ -57,6 +57,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 # no import-time dependency back on this module) and exposed here as extra agent tools.
 import jarvis_workflow as workflow
 import jarvis_callmebot as callmebot
+import jarvis_tgcall as tgcall
 import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
@@ -4981,6 +4982,55 @@ def _record_sleep_important(text: str) -> None:
         _save_session_context_locked()
 
 
+# --- Two-way Telegram calls (2026-10-17, owner choice: a spare Telegram account rings the owner and talks) ---------------
+# jarvis_tgcall.py never imports this file, so the wiring lives here. Everything the caller says runs through the normal
+# handle_text_command pipeline as a PHONE command that is also hands-free: the catastrophic gate stays intact and a spoken
+# "yes" on a call can never confirm a staged action. Nothing is spoken on the PC speakers (phone replies are text-only).
+def _tgcall_run_command(text: str, note: str = "") -> str:
+    out: list[str] = []
+    prev = getattr(_command_ctx, "hands_free", False)
+    _command_ctx.hands_free = True
+    try:
+        handle_text_command((note + text) if note else text, reply_sink=out.append, source="phone")
+    finally:
+        _command_ctx.hands_free = prev
+    return " ".join(str(x) for x in out if x).strip()
+
+
+def _tgcall_synth(text: str) -> tuple[bytes, int]:
+    spoken = _sanitize_for_speech(personality.spoken(speech_script.for_speech(text)))
+    pcm, rate, _engine = _synthesize_and_cache(spoken)
+    return pcm, rate
+
+
+def _tgcall_shape(reply: str) -> str:
+    return _collapse_paths_for_speech(_summarize_for_speech(reply))
+
+
+def _tgcall_hooks() -> "tgcall.Hooks":
+    return tgcall.Hooks(
+        transcribe=lambda audio: transcribe_pcm(audio, 16000),
+        synth=_tgcall_synth,
+        run_command=_tgcall_run_command,
+        shape=_tgcall_shape,
+    )
+
+
+def _tgcall_done(res: "tgcall.CallResult") -> None:
+    if not res.ok:
+        _add_missed(f"I tried to call you on Telegram but it didn't go through: {res.reason}.", "call")
+    else:
+        _add_missed(f"Phone call finished ({int(res.seconds)} s, {res.turns} things you asked).", "call")
+
+
+def _place_phone_call(text: str) -> tuple[bool, str]:
+    """Two-way Telegram call when it is set up, else CallMeBot's one-way call. Returns (started, what to tell)."""
+    if tgcall.configured():
+        return tgcall.start_in_background(text, _tgcall_hooks(), on_done=_tgcall_done)
+    ok, what = callmebot.call(text)
+    return ok, what
+
+
 CALL_WHEN_AWAY_S = 600  # an urgent alert rings the phone only when nobody touched the PC for 10 minutes
 
 
@@ -4989,7 +5039,7 @@ def _maybe_call_for_urgent(text: str) -> None:
     Telegram when they're away from the PC (idle 10+ min; unknown idle never calls), not in Sleep Mode, and
     JARVIS_CALL_ON_URGENT is on. callmebot keeps its own daily cap and same-text gap. Runs on a thread: a slow
     CallMeBot never delays speech."""
-    if not (_env_on("JARVIS_CALL_ON_URGENT", True) and callmebot.configured()):
+    if not (_env_on("JARVIS_CALL_ON_URGENT", True) and (tgcall.configured() or callmebot.configured())):
         return
     if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("JARVIS_TEST_ALLOW_CALLS"):
         return
@@ -5001,7 +5051,7 @@ def _maybe_call_for_urgent(text: str) -> None:
         return
 
     def _go():
-        ok, what = callmebot.call("Jarvis here. " + text)
+        ok, what = _place_phone_call("Jarvis here. " + text)
         log.info("Urgent-alert phone call: %s (%s)", "placed" if ok else "not placed", what)
 
     threading.Thread(target=_go, name="jarvis-urgent-call", daemon=True).start()
@@ -10589,9 +10639,12 @@ def _send_to_my_phone_tool(inp: dict) -> str:
     if not text:
         return "Tool failed: say what the message should say (text)."
     if str(inp.get("channel") or "").strip().lower() == "call":
-        ok, what = callmebot.call(text)
+        two_way = tgcall.configured()
+        ok, what = _place_phone_call(text)
         if not ok:
             return f"Tool failed: {what}."
+        if two_way:
+            return f"Calling you now: {what}. I'll open with: {callmebot.clean_text(text)[:120]}"
         return f"{what} and reading: {callmebot.clean_text(text)[:120]} (one-way: you can't talk back on this call)."
     telegram_ok = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
     ntfy_ok = bool(NTFY_TOPIC)
