@@ -551,7 +551,7 @@ class Conversation:
                 self._answer(said)
                 self._last_activity = self.clock()
             else:
-                reason = "the call ended"
+                reason = getattr(self.transport, "end_reason", "") or "the call ended"
         except Exception as e:  # a bug here must never leave a live call hanging
             log.warning("Call loop failed: %s", e, exc_info=True)
             reason = f"stopped by an error ({type(e).__name__})"
@@ -603,6 +603,19 @@ class TelegramTransport:
         self._ready = threading.Event()
         self.frames_in = 0
         self.frame_sizes: collections.Counter = collections.Counter()
+        self.end_reason = ""                 # why the line dropped, in plain words (empty while it is up)
+        self._answered_at: float | None = None
+
+    def _since_answer(self) -> str:
+        if self._answered_at is None:
+            return "before it was answered"
+        return f"{time.monotonic() - self._answered_at:.1f} s after it was answered"
+
+    def _end(self, reason: str) -> None:
+        if not self.end_reason:
+            self.end_reason = reason
+            log.warning("Telegram call ended: %s", reason)
+        self.closed.set()
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="jarvis-tgcall", daemon=True)
@@ -685,12 +698,13 @@ class TelegramTransport:
 
         @app.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
         async def _left(_, update):
-            self.closed.set()
+            self._end(f"Telegram reported that the call left the line ({self._since_answer()})")
 
         await app.start()
         stream = MediaStream(ExternalMedia.AUDIO, audio_parameters=AudioQuality.HIGH,
                              video_flags=MediaStream.Flags.IGNORE)
         await app.play(self._uid, stream, CallConfig(timeout=self.ring_timeout))   # blocks until answered
+        self._answered_at = time.monotonic()
         await app.record(self._uid, RecordStream(audio=True, audio_parameters=AudioQuality.HIGH))
 
     def send(self, frame: bytes) -> None:
@@ -701,8 +715,7 @@ class TelegramTransport:
         try:
             fut.result(timeout=3)
         except Exception as e:
-            log.info("Call: sending audio failed (%s); treating the call as ended", type(e).__name__)
-            self.closed.set()
+            self._end(f"sending audio failed {self._since_answer()} ({type(e).__name__}: {str(e)[:120]})")
 
     async def _shutdown(self) -> None:
         try:
@@ -783,7 +796,7 @@ class InboundTransport(TelegramTransport):
 
         @app.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
         async def _left(_, update):
-            self.closed.set()
+            self._end(f"Telegram reported that the call left the line ({self._since_answer()})")
 
         @app.on_update(filters.chat_update(incoming_status))
         async def _ring(_, update):
@@ -797,12 +810,13 @@ class InboundTransport(TelegramTransport):
                 stream = MediaStream(ExternalMedia.AUDIO, audio_parameters=AudioQuality.HIGH,
                                      video_flags=MediaStream.Flags.IGNORE)
                 await app.play(self._uid, stream, CallConfig(timeout=RING_TIMEOUT_S))   # answers the ringing call
+                self._answered_at = time.monotonic()
                 await app.record(self._uid, RecordStream(audio=True, audio_parameters=AudioQuality.HIGH))
                 self._answered.set()
             except Exception as e:  # noqa: BLE001
                 self._error = explain(e)
                 log.info("Could not answer the incoming call: %s: %s", type(e).__name__, e)
-                self.closed.set()
+                self._end(f"could not answer the incoming call ({type(e).__name__}: {str(e)[:120]})")
 
         await app.start()
 
@@ -1027,6 +1041,8 @@ def _cli_test() -> int:
         except queue.Empty:
             pass
     tr.stop()
+    if tr.end_reason:
+        print(f"The line dropped early: {tr.end_reason}.")
     print(f"Audio frames received: {tr.frames_in}; frame sizes seen: {dict(tr.frame_sizes) or 'none'}; "
           f"separate things you said: {heard}.")
     print("If you heard the beeps and the frame count is above zero, the call path works.")

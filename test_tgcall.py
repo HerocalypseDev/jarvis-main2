@@ -1,4 +1,5 @@
 """Two-way Telegram call (jarvis_tgcall): everything but the real Telegram line, which is faked."""
+import asyncio
 import queue
 import threading
 import time
@@ -613,3 +614,40 @@ def test_claim_is_taken_once_per_process_and_released_on_exit(tmp_path, monkeypa
     assert guard.is_file()
     tg._release_session()
     assert not guard.exists()
+
+
+def test_a_failed_send_records_why_the_call_dropped(monkeypatch):
+    """A call that drops must say what ended it and how long after it was answered (the owner saw 3-4 s drops)."""
+    import jarvis_tgcall as tg
+
+    class BrokenLine:
+        async def send_frame(self, uid, device, frame):
+            raise RuntimeError("no media connection")
+
+    class Device:
+        MICROPHONE = "mic"
+
+    loop = asyncio.new_event_loop()
+    th = threading.Thread(target=loop.run_forever, daemon=True)
+    th.start()
+    try:
+        tr = tg.TelegramTransport("@owner")
+        tr._loop, tr._app, tr._uid, tr._device = loop, BrokenLine(), 1, Device
+        tr._answered_at = time.monotonic() - 3.5
+        tr.send(b"\x00" * tg.FRAME_BYTES)
+        assert tr.closed.is_set()
+        assert "sending audio failed" in tr.end_reason
+        assert "3.5 s after it was answered" in tr.end_reason
+        assert "no media connection" in tr.end_reason
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        th.join(timeout=5)
+
+
+def test_the_first_reason_is_kept_when_several_things_end_the_call():
+    import jarvis_tgcall as tg
+    tr = tg.TelegramTransport("@owner")
+    tr._end("Telegram reported that the call left the line (1.0 s after it was answered)")
+    tr._end("sending audio failed later")
+    assert tr.end_reason.startswith("Telegram reported that the call left the line")
+    assert tr.closed.is_set()
