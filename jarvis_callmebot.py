@@ -8,7 +8,7 @@ Rules (owner's choice: own number only, urgent alerts only):
   a recipient from a caller, so a call can never reach anyone else.
 - At most JARVIS_CALLS_PER_DAY calls a day (default 5), the same text at most once an hour.
 - The text goes to CallMeBot's servers: callers keep it to a short alert (cut to MAX_TEXT_CHARS here).
-Setup on the phone: in Telegram, open @CallMeBot_API and press Start (or allow calls from it) once.
+Setup on the phone: in Telegram, open @CallMeBot_txtbot and press Start (or allow calls from it) once.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 
 API_URL = "https://api.callmebot.com/start.php"
-MAX_TEXT_CHARS = 300
+MAX_TEXT_CHARS = 250  # CallMeBot reads at most 256 characters
 SAME_TEXT_GAP_S = 3600
 
 _lock = threading.Lock()
@@ -75,7 +75,7 @@ def _refusal(body: str) -> str | None:
     low = re.sub(r"<[^>]+>", " ", body or "").lower()
     for words, reason in (
         (("not authorized", "not authorised", "authorize", "authorise"),
-         "CallMeBot isn't allowed to call you yet: open @CallMeBot_API in Telegram and press Start"),
+         "CallMeBot isn't allowed to call you yet: open @CallMeBot_txtbot in Telegram and press Start"),
         (("not found", "invalid user", "unknown user", "username not"),
          "CallMeBot doesn't know that Telegram user (check CALLMEBOT_TELEGRAM_USER)"),
         (("too many",), "CallMeBot is limiting calls right now; try again later"),
@@ -91,7 +91,7 @@ def call(text: str, opener=None) -> tuple[bool, str]:
     to = user()
     if not to:
         return False, ("phone calls aren't set up: put your Telegram @username or phone number in "
-                       "CALLMEBOT_TELEGRAM_USER (Settings), then press Start on @CallMeBot_API in Telegram")
+                       "CALLMEBOT_TELEGRAM_USER (Settings), then press Start on @CallMeBot_txtbot in Telegram")
     text = clean_text(text)
     if not text:
         return False, "nothing to say on the call"
