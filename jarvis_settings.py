@@ -173,9 +173,9 @@ SETTINGS: list[dict] = [
      "help": "Celsius or Fahrenheit.", "live": "env"},
     {"key": "JARVIS_PHONE_PROACTIVE_NOTIFICATIONS", "label": "Push proactive messages to phone", "kind": "bool", "default": "0",
      "help": "Reminders/alerts also go to Telegram/ntfy.", "live": ("jarvis", "JARVIS_PHONE_PROACTIVE_NOTIFICATIONS", _bool)},
-    {"key": "CALLMEBOT_TELEGRAM_USER", "label": "Phone calls: your Telegram @username or number", "kind": "text",
+    {"key": "CALLMEBOT_TELEGRAM_USER", "label": "Phone calls: your Telegram @username", "kind": "text",
      "default": "", "help": "Jarvis can ring your Telegram through CallMeBot (free, one-way: it reads a short alert "
-     "aloud). Open @CallMeBot_API in Telegram and press Start once. Empty = no calls.", "live": "env"},
+     "aloud). Open @CallMeBot_txtbot in Telegram and press Start once. Empty = no calls.", "live": "env"},
     {"key": "JARVIS_CALL_ON_URGENT", "label": "Call me for urgent alerts when I'm away", "kind": "bool", "default": "1",
      "help": "An urgent alert rings your Telegram if nobody used the PC for 10 minutes (never in Sleep Mode).",
      "live": "env"},

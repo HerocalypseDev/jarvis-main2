@@ -67,7 +67,7 @@ def test_not_set_up_daily_cap_and_same_text_gap(monkeypatch):
 def test_failures_say_why_and_dont_use_up_the_cap(monkeypatch):
     monkeypatch.setenv("JARVIS_CALLS_PER_DAY", "1")
     ok, what = callmebot.call("x", opener=_opener("<p>User not authorized to receive calls</p>"))
-    assert not ok and "@CallMeBot_API" in what
+    assert not ok and "@CallMeBot_txtbot" in what
 
     def boom(req, timeout=None):
         raise OSError("no network")

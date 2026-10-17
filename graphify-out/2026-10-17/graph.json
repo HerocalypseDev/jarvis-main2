@@ -76221,7 +76221,7 @@
       "node_kind": "heading",
       "norm_label": "caretaker: notice and fix problems on its own (2026-10-16, owner request: \"do actual real stuff by itself\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L2971"
+      "source_location": "L2972"
     },
     {
       "id": "claude_chief_of_staff_batch_2026_09_23",
@@ -76317,7 +76317,7 @@
       "node_kind": "heading",
       "norm_label": "every dashboard button has a tool or a reason (2026-10-16, pr 3 of the visibility work)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3215"
+      "source_location": "L3216"
     },
     {
       "id": "claude_executive_autonomy_deferred_execution_2026_09_27",
@@ -76353,7 +76353,7 @@
       "node_kind": "heading",
       "norm_label": "false \"still monitoring\" claims (2026-10-16, owner report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3131"
+      "source_location": "L3132"
     },
     {
       "id": "claude_feature_batch_2026_09_27",
@@ -76521,7 +76521,7 @@
       "node_kind": "heading",
       "norm_label": "hand-off guard (2026-09-25)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2924"
+      "source_location": "L2925"
     },
     {
       "id": "claude_homework_app_jarvis_as_teacher_of_learnai_2026_10_01_private",
@@ -76593,7 +76593,7 @@
       "node_kind": "heading",
       "norm_label": "jarvis asks you when a tool needs your answer (2026-10-16, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3151"
+      "source_location": "L3152"
     },
     {
       "id": "claude_jarvis_closing_by_itself_2026_10_07_owner_report",
@@ -76617,7 +76617,7 @@
       "node_kind": "heading",
       "norm_label": "jarvis knows what it is working on (2026-10-16, pr 2 of the visibility work)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3192"
+      "source_location": "L3193"
     },
     {
       "id": "claude_jarvis_manages_what_the_owner_manages_2026_10_16_owner_make_jarvis_able_to_see_and_manage_everything_i_can_do",
@@ -76629,7 +76629,7 @@
       "node_kind": "heading",
       "norm_label": "jarvis manages what the owner manages (2026-10-16, owner: \"make jarvis able to see and manage everything i can do\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L3179"
+      "source_location": "L3180"
     },
     {
       "id": "claude_knowing_what_already_happened_in_its_own_space_2026_10_03_debug_report",
@@ -76821,7 +76821,7 @@
       "node_kind": "heading",
       "norm_label": "quiet scheduled skills and queued tasks (2026-10-15, owner commit + recovery audit)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2937"
+      "source_location": "L2938"
     },
     {
       "id": "claude_reliability_fixes_from_real_usage_2026_09_18",
@@ -76881,7 +76881,7 @@
       "node_kind": "heading",
       "norm_label": "self-scheduling (2026-10-16, owner choice \"all but email\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L2958"
+      "source_location": "L2959"
     },
     {
       "id": "claude_sleep_mode_mail_take_over_2026_09_19",
@@ -76917,7 +76917,7 @@
       "node_kind": "heading",
       "norm_label": "slow file saves (2026-10-16, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3113"
+      "source_location": "L3114"
     },
     {
       "id": "claude_smart_model_routing_2026_09_22",
@@ -188584,7 +188584,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2924",
+      "source_location": "L2925",
       "weight": 1.0
     },
     {
@@ -188595,7 +188595,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2937",
+      "source_location": "L2938",
       "weight": 1.0
     },
     {
@@ -188606,7 +188606,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2958",
+      "source_location": "L2959",
       "weight": 1.0
     },
     {
@@ -188617,7 +188617,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2971",
+      "source_location": "L2972",
       "weight": 1.0
     },
     {
@@ -188628,7 +188628,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3113",
+      "source_location": "L3114",
       "weight": 1.0
     },
     {
@@ -188639,7 +188639,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3131",
+      "source_location": "L3132",
       "weight": 1.0
     },
     {
@@ -188650,7 +188650,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3151",
+      "source_location": "L3152",
       "weight": 1.0
     },
     {
@@ -188661,7 +188661,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3179",
+      "source_location": "L3180",
       "weight": 1.0
     },
     {
@@ -188672,7 +188672,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3192",
+      "source_location": "L3193",
       "weight": 1.0
     },
     {
@@ -188683,7 +188683,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3215",
+      "source_location": "L3216",
       "weight": 1.0
     },
     {
@@ -270057,5 +270057,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "c7c726066fd6242a981c3f1cd1fa9678612b0c16"
+  "built_at_commit": "696bd1c50d89ee8f460ced632a3cd26491941d65"
 }

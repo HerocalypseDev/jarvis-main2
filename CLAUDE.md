@@ -2913,7 +2913,8 @@ Owner's choices: self-healing loop + crash log, and **speak** the recovery. Code
 short text aloud: one-way, unofficial, no guarantee, needs data on the phone. Rules to keep:
 - Only recipient = `CALLMEBOT_TELEGRAM_USER` (.env/Settings, @username or +number); no caller passes a recipient. It
   and `JARVIS_CALLS_PER_DAY` (default 5) are in `selfmanage.AI_DENIED`. Same text at most once an hour; text cut to
-  300 chars, links dropped (it goes to CallMeBot's servers). A failed/refused call doesn't count toward the cap.
+  250 chars (CallMeBot reads at most 256), links dropped (it goes to CallMeBot's servers). A failed/refused call doesn't count toward the cap.
+- Setup: /start on @CallMeBot_txtbot in Telegram (one bot for texts and calls); use the @username, a phone number may not work.
 - `send_to_my_phone` channel `call` ("call me", "ring my phone"); `_MY_PHONE_RE` offers the tool for those words.
 - An urgent `queue_or_deliver_notification` also calls (`_maybe_call_for_urgent`, on a thread) only when
   `JARVIS_CALL_ON_URGENT` (default on), the PC was idle 10+ min (unknown idle never calls) and not in Sleep Mode. Never
