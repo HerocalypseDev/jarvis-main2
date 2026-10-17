@@ -61,9 +61,13 @@ def stereo_wire() -> bool:
 
 
 def stereo_to_mono(raw: bytes) -> bytes:
+    """Keeps the louder channel. Averaging would halve a caller heard on one side only, and quiet speech could
+    then miss the voice-activity threshold, so the cut-in would come late or not at all."""
     usable = len(raw) // 4 * 4
     pairs = np.frombuffer(raw[:usable], dtype="<i2").reshape(-1, 2)
-    return pairs.astype(np.int32).mean(axis=1).astype("<i2").tobytes()
+    left, right = pairs[:, 0], pairs[:, 1]
+    louder = left if np.abs(left.astype(np.int32)).sum() >= np.abs(right.astype(np.int32)).sum() else right
+    return louder.astype("<i2").tobytes()
 
 
 def mono_to_stereo_frames(mono: bytes) -> list[bytes]:

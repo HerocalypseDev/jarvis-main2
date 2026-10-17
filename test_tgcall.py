@@ -681,11 +681,13 @@ def test_a_plain_send_frame_is_not_mistaken_for_a_coroutine(monkeypatch):
         th.join(timeout=5)
 
 
-def test_stereo_to_mono_averages_the_two_channels():
+def test_stereo_to_mono_keeps_the_louder_channel_so_one_sided_speech_keeps_its_level():
     import numpy as np
     import jarvis_tgcall as tg
-    raw = np.array([100, 300, -50, -150], dtype="<i2").tobytes()
-    assert np.frombuffer(tg.stereo_to_mono(raw), dtype="<i2").tolist() == [200, -100]
+    raw = np.array([100, 300, -50, -150], dtype="<i2").tobytes()      # L = 100,-50   R = 300,-150
+    assert np.frombuffer(tg.stereo_to_mono(raw), dtype="<i2").tolist() == [300, -150]
+    only_left = np.array([800, 0, -800, 0], dtype="<i2").tobytes()    # caller on the left side only
+    assert np.frombuffer(tg.stereo_to_mono(only_left), dtype="<i2").tolist() == [800, -800]
 
 
 def test_one_mono_frame_becomes_two_stereo_10ms_frames_with_both_channels_equal():
