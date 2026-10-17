@@ -1873,7 +1873,8 @@ row there each phase rather than only stating the total in chat.
 | 179 (cinematic phone map: "show me visually" opens a full-screen overlay that flies smoothly from the world down to the last-checked phone, HUD + ring burst, Esc/click to leave; "Full screen" button on the Phones page; opens by WebSocket or a `?cine=1` link; page itself unchanged; headless check; 2 tests changed/added) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
 | 180 (two-way Telegram calls from a spare account: speak, listen, barge-in, login/test CLI, hands-free phone-source command path so the gate can't be confirmed by voice, Settings entries, CallMeBot fallback; 31 new tests; not verified on a real call) | Sonnet 5.5 | ~60 min | ~$4.00–$5.50 |
 | 181 (the tgcall login/test/status CLI ran outside Jarvis and never read `.env`, so it said the settings were not set: `load_dotenv()` at its start, never overriding real environment values, never printing; 2 new tests) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~5534 min** | **~$380.15–$533.95** |
+| 182 (tgcall test: "UserIdInvalid" on the first real ring: the target must resolve to a person (clear message for a channel), its access hash is cached before the call, `JARVIS_TGCALL_DEBUG=1` prints the real traceback in `test`) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~5544 min** | **~$380.75–$534.85** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

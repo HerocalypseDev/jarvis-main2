@@ -525,6 +525,7 @@ class TelegramTransport:
         self._uid: int | None = None
         self._device = None
         self._error: str | None = None
+        self.trace = ""
         self._ready = threading.Event()
         self.frames_in = 0
         self.frame_sizes: collections.Counter = collections.Counter()
@@ -547,6 +548,9 @@ class TelegramTransport:
             loop.run_until_complete(self._connect())
         except BaseException as e:  # noqa: BLE001 - every failure becomes a reason
             self._error = explain(e)
+            if os.environ.get("JARVIS_TGCALL_DEBUG"):
+                import traceback
+                self.trace = "".join(traceback.format_exception(e))
             log.info("Telegram call failed: %s: %s", type(e).__name__, e)
         finally:
             self._ready.set()
@@ -580,6 +584,10 @@ class TelegramTransport:
         if not await client.is_user_authorized():
             raise CallError("the spare account isn't logged in: run `python jarvis_tgcall.py login` on the PC")
         entity = await client.get_entity(self.to)
+        if type(entity).__name__ != "User":
+            raise CallError(f"{self.to} is not a person's account (it resolved to a {type(entity).__name__}); "
+                            "use the @username of your MAIN account, not a channel or group")
+        await client.get_input_entity(entity)       # puts the access hash in the session so the call layer can find the user
         self._uid = int(entity.id)
         app = PyTgCalls(client)
         self._app = app
@@ -734,6 +742,8 @@ def _cli_test() -> int:
         tr.start()
     except CallError as e:
         print(f"Call failed: {e}")
+        if getattr(tr, "trace", ""):
+            print(tr.trace[-1800:])
         return 1
     cancel = threading.Event()
     talker = Talker(tr.send, cancel)

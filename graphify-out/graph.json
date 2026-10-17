@@ -16408,7 +16408,7 @@
       "file_type": "code",
       "norm_label": "._connect()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L568"
+      "source_location": "L572"
     },
     {
       "id": "jarvis_tgcall_telegramtransport_connect_incoming",
@@ -16420,7 +16420,7 @@
       "file_type": "code",
       "norm_label": "_incoming()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L588"
+      "source_location": "L596"
     },
     {
       "id": "jarvis_tgcall_telegramtransport_connect_left",
@@ -16432,7 +16432,7 @@
       "file_type": "code",
       "norm_label": "_left()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L600"
+      "source_location": "L608"
     },
     {
       "id": "jarvis_tgcall_telegramtransport_init",
@@ -16456,7 +16456,7 @@
       "file_type": "code",
       "norm_label": "._run()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L542"
+      "source_location": "L543"
     },
     {
       "id": "jarvis_tgcall_telegramtransport_send",
@@ -16468,7 +16468,7 @@
       "file_type": "code",
       "norm_label": ".send()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L609"
+      "source_location": "L617"
     },
     {
       "id": "jarvis_tgcall_telegramtransport_shutdown",
@@ -16480,7 +16480,7 @@
       "file_type": "code",
       "norm_label": "._shutdown()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L620"
+      "source_location": "L628"
     },
     {
       "id": "jarvis_tgcall_telegramtransport_start",
@@ -16492,7 +16492,7 @@
       "file_type": "code",
       "norm_label": ".start()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L532"
+      "source_location": "L533"
     },
     {
       "id": "jarvis_tgcall_telegramtransport_stop",
@@ -16504,7 +16504,7 @@
       "file_type": "code",
       "norm_label": ".stop()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L632"
+      "source_location": "L640"
     },
     {
       "id": "test_tgcall_test_explain_gives_plain_reasons",
@@ -43248,7 +43248,7 @@
       "file_type": "code",
       "norm_label": "call_owner()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L642"
+      "source_location": "L650"
     },
     {
       "id": "jarvis_tgcall_conversation_init",
@@ -43296,7 +43296,7 @@
       "file_type": "code",
       "norm_label": "start_in_background()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L667"
+      "source_location": "L675"
     },
     {
       "id": "jarvis_tgcall_start_in_background_go",
@@ -43308,7 +43308,7 @@
       "file_type": "code",
       "norm_label": "_go()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L676"
+      "source_location": "L684"
     },
     {
       "id": "test_tgcall_test_call_owner_refuses_when_not_set_up",
@@ -54288,7 +54288,7 @@
       "file_type": "code",
       "norm_label": "_cli_login()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L691"
+      "source_location": "L699"
     },
     {
       "id": "jarvis_tgcall_cli_login_go",
@@ -54300,7 +54300,7 @@
       "file_type": "code",
       "norm_label": "go()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L706"
+      "source_location": "L714"
     },
     {
       "id": "jarvis_tgcall_cli_test",
@@ -54312,7 +54312,7 @@
       "file_type": "code",
       "norm_label": "_cli_test()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L725"
+      "source_location": "L733"
     },
     {
       "id": "jarvis_tgcall_configured",
@@ -54372,7 +54372,7 @@
       "file_type": "code",
       "norm_label": "load_dotenv()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L762"
+      "source_location": "L772"
     },
     {
       "id": "jarvis_tgcall_logged_in",
@@ -54396,7 +54396,7 @@
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L785"
+      "source_location": "L795"
     },
     {
       "id": "jarvis_tgcall_max_seconds",
@@ -81756,7 +81756,7 @@
       "node_kind": "heading",
       "norm_label": "audit hardening (2026-09-21)",
       "source_file": "CLAUDE.md",
-      "source_location": "L1886"
+      "source_location": "L1887"
     },
     {
       "id": "claude_audit_of_the_assistant_overhaul_whole_codebase_2026_10_03",
@@ -81768,7 +81768,7 @@
       "node_kind": "heading",
       "norm_label": "audit of the assistant overhaul + whole codebase (2026-10-03)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2617"
+      "source_location": "L2618"
     },
     {
       "id": "claude_browser_tabs_main_browser_setting_2026_10_03_owner_request",
@@ -81780,7 +81780,7 @@
       "node_kind": "heading",
       "norm_label": "browser tabs + main browser setting (2026-10-03, owner request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2469"
+      "source_location": "L2470"
     },
     {
       "id": "claude_caretaker_notice_and_fix_problems_on_its_own_2026_10_16_owner_request_do_actual_real_stuff_by_itself",
@@ -81792,7 +81792,7 @@
       "node_kind": "heading",
       "norm_label": "caretaker: notice and fix problems on its own (2026-10-16, owner request: \"do actual real stuff by itself\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L3002"
+      "source_location": "L3003"
     },
     {
       "id": "claude_chief_of_staff_batch_2026_09_23",
@@ -81864,7 +81864,7 @@
       "node_kind": "heading",
       "norm_label": "debug report 2026-10-07: false \"done\" claims, made-up sources, edited documents (owner: \"check for errors\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L2844"
+      "source_location": "L2845"
     },
     {
       "id": "claude_device_left_the_network_2026_09_30_user_request",
@@ -81876,7 +81876,7 @@
       "node_kind": "heading",
       "norm_label": "device left the network (2026-09-30, user request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2246"
+      "source_location": "L2247"
     },
     {
       "id": "claude_every_dashboard_button_has_a_tool_or_a_reason_2026_10_16_pr_3_of_the_visibility_work",
@@ -81888,7 +81888,7 @@
       "node_kind": "heading",
       "norm_label": "every dashboard button has a tool or a reason (2026-10-16, pr 3 of the visibility work)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3246"
+      "source_location": "L3247"
     },
     {
       "id": "claude_executive_autonomy_deferred_execution_2026_09_27",
@@ -81924,7 +81924,7 @@
       "node_kind": "heading",
       "norm_label": "false \"still monitoring\" claims (2026-10-16, owner report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3162"
+      "source_location": "L3163"
     },
     {
       "id": "claude_feature_batch_2026_09_27",
@@ -81948,7 +81948,7 @@
       "node_kind": "heading",
       "norm_label": "feature-batch audit (2026-09-30)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2188"
+      "source_location": "L2189"
     },
     {
       "id": "claude_file_find_on_a_pc_without_everything_2026_09_29_found_live",
@@ -81960,7 +81960,7 @@
       "node_kind": "heading",
       "norm_label": "file-find on a pc without everything (2026-09-29, found live)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2005"
+      "source_location": "L2006"
     },
     {
       "id": "claude_foreign_words_in_speech_2026_10_05_owner_report",
@@ -81972,7 +81972,7 @@
       "node_kind": "heading",
       "norm_label": "foreign words in speech (2026-10-05, owner report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2747"
+      "source_location": "L2748"
     },
     {
       "id": "claude_form_filling_guessed_python_path_2026_09_29_found_live",
@@ -81984,7 +81984,7 @@
       "node_kind": "heading",
       "norm_label": "form filling / guessed python path (2026-09-29, found live)",
       "source_file": "CLAUDE.md",
-      "source_location": "L1951"
+      "source_location": "L1952"
     },
     {
       "id": "claude_full_audit_second_pass_2026_10_04_05_the_owed_90_minute_audit",
@@ -81996,7 +81996,7 @@
       "node_kind": "heading",
       "norm_label": "full audit, second pass (2026-10-04/05, the owed 90-minute audit)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2663"
+      "source_location": "L2664"
     },
     {
       "id": "claude_full_autonomy_stack_2026_09_20",
@@ -82020,7 +82020,7 @@
       "node_kind": "heading",
       "norm_label": "full codebase audit (2026-09-29)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2029"
+      "source_location": "L2030"
     },
     {
       "id": "claude_full_codebase_audit_second_pass_2026_09_30",
@@ -82032,7 +82032,7 @@
       "node_kind": "heading",
       "norm_label": "full codebase audit, second pass (2026-09-30)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2217"
+      "source_location": "L2218"
     },
     {
       "id": "claude_gemini_brain_option_2026_09_18",
@@ -82056,7 +82056,7 @@
       "node_kind": "heading",
       "norm_label": "gemini speed pass (2026-09-29)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2045"
+      "source_location": "L2046"
     },
     {
       "id": "claude_git",
@@ -82092,7 +82092,7 @@
       "node_kind": "heading",
       "norm_label": "hand-off guard (2026-09-25)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2955"
+      "source_location": "L2956"
     },
     {
       "id": "claude_homework_app_jarvis_as_teacher_of_learnai_2026_10_01_private",
@@ -82104,7 +82104,7 @@
       "node_kind": "heading",
       "norm_label": "homework app: jarvis as teacher of learnai (2026-10-01, private)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2255"
+      "source_location": "L2256"
     },
     {
       "id": "claude_hourly_mail_check_repeating_itself_2026_10_02_debug_report",
@@ -82116,7 +82116,7 @@
       "node_kind": "heading",
       "norm_label": "hourly mail check repeating itself (2026-10-02, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2876"
+      "source_location": "L2877"
     },
     {
       "id": "claude_image_download_2026_09_19",
@@ -82140,7 +82140,7 @@
       "node_kind": "heading",
       "norm_label": "internet speed test (2026-10-02, owner request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2377"
+      "source_location": "L2378"
     },
     {
       "id": "claude_jarvis4u_pro_license_keys_donations_2026_09_29",
@@ -82164,7 +82164,7 @@
       "node_kind": "heading",
       "norm_label": "jarvis asks you when a tool needs your answer (2026-10-16, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3182"
+      "source_location": "L3183"
     },
     {
       "id": "claude_jarvis_closing_by_itself_2026_10_07_owner_report",
@@ -82176,7 +82176,7 @@
       "node_kind": "heading",
       "norm_label": "jarvis closing by itself (2026-10-07, owner report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2900"
+      "source_location": "L2901"
     },
     {
       "id": "claude_jarvis_knows_what_it_is_working_on_2026_10_16_pr_2_of_the_visibility_work",
@@ -82188,7 +82188,7 @@
       "node_kind": "heading",
       "norm_label": "jarvis knows what it is working on (2026-10-16, pr 2 of the visibility work)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3223"
+      "source_location": "L3224"
     },
     {
       "id": "claude_jarvis_manages_what_the_owner_manages_2026_10_16_owner_make_jarvis_able_to_see_and_manage_everything_i_can_do",
@@ -82200,7 +82200,7 @@
       "node_kind": "heading",
       "norm_label": "jarvis manages what the owner manages (2026-10-16, owner: \"make jarvis able to see and manage everything i can do\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L3210"
+      "source_location": "L3211"
     },
     {
       "id": "claude_knowing_what_already_happened_in_its_own_space_2026_10_03_debug_report",
@@ -82212,7 +82212,7 @@
       "node_kind": "heading",
       "norm_label": "knowing what already happened in its own space (2026-10-03, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2446"
+      "source_location": "L2447"
     },
     {
       "id": "claude_knows_its_own_records_remembers_what_it_said_and_did_2026_10_03_owner_request",
@@ -82224,7 +82224,7 @@
       "node_kind": "heading",
       "norm_label": "knows its own records + remembers what it said and did (2026-10-03, owner request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2407"
+      "source_location": "L2408"
     },
     {
       "id": "claude_layered_memory_tencentdb_agent_memory_style_2026_09_22",
@@ -82260,7 +82260,7 @@
       "node_kind": "heading",
       "norm_label": "messages to the owner's own phone (2026-10-03, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2434"
+      "source_location": "L2435"
     },
     {
       "id": "claude_own_code_location_fix_2026_09_18",
@@ -82284,7 +82284,7 @@
       "node_kind": "heading",
       "norm_label": "personal-assistant overhaul (2026-10-03, owner: \"not smart enough, slow, talks about the last topic\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L2532"
+      "source_location": "L2533"
     },
     {
       "id": "claude_personalities_2026_10_06_owner_request",
@@ -82296,7 +82296,7 @@
       "node_kind": "heading",
       "norm_label": "personalities (2026-10-06, owner request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2792"
+      "source_location": "L2793"
     },
     {
       "id": "claude_phone_calls_through_callmebot_2026_10_17_owner_choice_after_a_research_thread",
@@ -82308,7 +82308,7 @@
       "node_kind": "heading",
       "norm_label": "phone calls through callmebot (2026-10-17, owner choice after a research thread)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2937"
+      "source_location": "L2938"
     },
     {
       "id": "claude_phone_locator_2026_10_17_owner_request_where_s_my_phone_show_me_visually",
@@ -82320,7 +82320,7 @@
       "node_kind": "heading",
       "norm_label": "phone locator (2026-10-17, owner request: \"where's my phone, show me visually\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L3262"
+      "source_location": "L3263"
     },
     {
       "id": "claude_phrase_routines_instant_unless_they_need_the_ai_update_time_2026_10_03_debug_report_owner_rules",
@@ -82332,7 +82332,7 @@
       "node_kind": "heading",
       "norm_label": "phrase routines: instant unless they need the ai + \"update time\" (2026-10-03, debug report + owner rules)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2500"
+      "source_location": "L2501"
     },
     {
       "id": "claude_pictures_over_telegram_2026_10_02_owner_request",
@@ -82344,7 +82344,7 @@
       "node_kind": "heading",
       "norm_label": "pictures over telegram (2026-10-02, owner request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2363"
+      "source_location": "L2364"
     },
     {
       "id": "claude_product_feel_layer_2026_09_30_research_agentic_md_phase_3",
@@ -82356,7 +82356,7 @@
       "node_kind": "heading",
       "norm_label": "product-feel layer (2026-09-30, research_agentic.md phase 3)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2136"
+      "source_location": "L2137"
     },
     {
       "id": "claude_prompt_caching_2026_09_18",
@@ -82404,7 +82404,7 @@
       "node_kind": "heading",
       "norm_label": "quiet scheduled skills and queued tasks (2026-10-15, owner commit + recovery audit)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2968"
+      "source_location": "L2969"
     },
     {
       "id": "claude_reliability_fixes_from_real_usage_2026_09_18",
@@ -82428,7 +82428,7 @@
       "node_kind": "heading",
       "norm_label": "reliability layer (2026-09-30, research_agentic.md phase 1)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2094"
+      "source_location": "L2095"
     },
     {
       "id": "claude_self_awareness_2026_09_30_user_request_aware_of_himself",
@@ -82440,7 +82440,7 @@
       "node_kind": "heading",
       "norm_label": "self-awareness (2026-09-30, user request: \"aware of himself\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L2157"
+      "source_location": "L2158"
     },
     {
       "id": "claude_self_modification_change_jarvis_code_2026_09_18",
@@ -82464,7 +82464,7 @@
       "node_kind": "heading",
       "norm_label": "self-scheduling (2026-10-16, owner choice \"all but email\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L2989"
+      "source_location": "L2990"
     },
     {
       "id": "claude_sleep_mode_mail_take_over_2026_09_19",
@@ -82500,7 +82500,7 @@
       "node_kind": "heading",
       "norm_label": "slow file saves (2026-10-16, debug report)",
       "source_file": "CLAUDE.md",
-      "source_location": "L3144"
+      "source_location": "L3145"
     },
     {
       "id": "claude_smart_model_routing_2026_09_22",
@@ -82548,7 +82548,7 @@
       "node_kind": "heading",
       "norm_label": "speed layer (2026-09-30, research_agentic.md phase 2; groq item skipped at the owner's request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2121"
+      "source_location": "L2122"
     },
     {
       "id": "claude_speed_upgrade_deepgram_voice_pipeline_2026_09_22",
@@ -82584,7 +82584,7 @@
       "node_kind": "heading",
       "norm_label": "start lines: every task says what it is doing (2026-10-05, owner request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2720"
+      "source_location": "L2721"
     },
     {
       "id": "claude_step_limit_reading_documents_2026_10_02_found_live",
@@ -82596,7 +82596,7 @@
       "node_kind": "heading",
       "norm_label": "step limit + reading documents (2026-10-02, found live)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2886"
+      "source_location": "L2887"
     },
     {
       "id": "claude_text_to_speech_fish_audio_primary_piper_fallback_2026_09_18",
@@ -82620,7 +82620,7 @@
       "node_kind": "heading",
       "norm_label": "tool servers that stop after connecting (2026-10-16, \"my windows mcp has been failing\")",
       "source_file": "CLAUDE.md",
-      "source_location": "L2920"
+      "source_location": "L2921"
     },
     {
       "id": "claude_voice_restart_2026_09_19",
@@ -82644,7 +82644,7 @@
       "node_kind": "heading",
       "norm_label": "wake word (2026-09-30)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2075"
+      "source_location": "L2076"
     },
     {
       "id": "claude_watches_keep_checking_something_and_speak_up_2026_10_06_owner_request",
@@ -82656,7 +82656,7 @@
       "node_kind": "heading",
       "norm_label": "watches: keep checking something and speak up (2026-10-06, owner request)",
       "source_file": "CLAUDE.md",
-      "source_location": "L2765"
+      "source_location": "L2766"
     },
     {
       "id": "claude_web_search_engine_2026_09_29",
@@ -82668,7 +82668,7 @@
       "node_kind": "heading",
       "norm_label": "web search engine (2026-09-29)",
       "source_file": "CLAUDE.md",
-      "source_location": "L1999"
+      "source_location": "L2000"
     },
     {
       "id": "claude_whatsapp_over_devtools_2026_09_24",
@@ -82680,7 +82680,7 @@
       "node_kind": "heading",
       "norm_label": "whatsapp over devtools (2026-09-24)",
       "source_file": "CLAUDE.md",
-      "source_location": "L1923"
+      "source_location": "L1924"
     },
     {
       "id": "claude_window_control",
@@ -85779,7 +85779,7 @@
       "source_location": "L359"
     },
     {
-      "id": "jarvis_tgcall_rationale_643",
+      "id": "jarvis_tgcall_rationale_651",
       "label": "Blocking: rings the owner and talks until the call ends. Never raises.",
       "_origin": "ast",
       "community": 272,
@@ -85787,10 +85787,10 @@
       "file_type": "rationale",
       "norm_label": "blocking: rings the owner and talks until the call ends. never raises.",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L643"
+      "source_location": "L651"
     },
     {
-      "id": "jarvis_tgcall_rationale_669",
+      "id": "jarvis_tgcall_rationale_677",
       "label": "Starts the call on its own thread and returns at once: (started, what to tell\u2026",
       "_origin": "ast",
       "community": 272,
@@ -85798,7 +85798,7 @@
       "file_type": "rationale",
       "norm_label": "starts the call on its own thread and returns at once: (started, what to tell...",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L669"
+      "source_location": "L677"
     },
     {
       "id": "jarvis_speedtest_rationale_116",
@@ -89242,7 +89242,7 @@
       "source_location": "L118"
     },
     {
-      "id": "jarvis_tgcall_rationale_726",
+      "id": "jarvis_tgcall_rationale_734",
       "label": "Rings you, plays a few beeps and reports what came back from your side. Checks\u2026",
       "_origin": "ast",
       "community": 43,
@@ -89250,10 +89250,10 @@
       "file_type": "rationale",
       "norm_label": "rings you, plays a few beeps and reports what came back from your side. checks...",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L726"
+      "source_location": "L734"
     },
     {
-      "id": "jarvis_tgcall_rationale_763",
+      "id": "jarvis_tgcall_rationale_773",
       "label": "For the standalone CLI only (Jarvis loads .env itself): copies KEY=VALUE lines\u2026",
       "_origin": "ast",
       "community": 43,
@@ -89261,7 +89261,7 @@
       "file_type": "rationale",
       "norm_label": "for the standalone cli only (jarvis loads .env itself): copies key=value lines...",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L763"
+      "source_location": "L773"
     },
     {
       "id": "jarvis_tgcall_rationale_81",
@@ -150547,7 +150547,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L644",
+      "source_location": "L652",
       "weight": 1.0
     },
     {
@@ -150559,7 +150559,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L646",
+      "source_location": "L654",
       "weight": 1.0
     },
     {
@@ -150571,7 +150571,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L651",
+      "source_location": "L659",
       "weight": 1.0
     },
     {
@@ -150583,7 +150583,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L654",
+      "source_location": "L662",
       "weight": 1.0
     },
     {
@@ -150595,7 +150595,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L654",
+      "source_location": "L662",
       "weight": 1.0
     },
     {
@@ -150607,7 +150607,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L657",
+      "source_location": "L665",
       "weight": 1.0
     },
     {
@@ -150619,7 +150619,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L659",
+      "source_location": "L667",
       "weight": 1.0
     },
     {
@@ -150631,7 +150631,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L661",
+      "source_location": "L669",
       "weight": 1.0
     },
     {
@@ -150643,7 +150643,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L693",
+      "source_location": "L701",
       "weight": 1.0
     },
     {
@@ -150655,7 +150655,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L702",
+      "source_location": "L710",
       "weight": 1.0
     },
     {
@@ -150667,7 +150667,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L718",
+      "source_location": "L726",
       "weight": 1.0
     },
     {
@@ -150679,7 +150679,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L707",
+      "source_location": "L715",
       "weight": 1.0
     },
     {
@@ -150691,7 +150691,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L707",
+      "source_location": "L715",
       "weight": 1.0
     },
     {
@@ -150703,7 +150703,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L707",
+      "source_location": "L715",
       "weight": 1.0
     },
     {
@@ -150715,7 +150715,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L727",
+      "source_location": "L735",
       "weight": 1.0
     },
     {
@@ -150727,7 +150727,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L731",
+      "source_location": "L739",
       "weight": 1.0
     },
     {
@@ -150739,7 +150739,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L731",
+      "source_location": "L739",
       "weight": 1.0
     },
     {
@@ -150751,7 +150751,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L739",
+      "source_location": "L749",
       "weight": 1.0
     },
     {
@@ -150763,7 +150763,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L741",
+      "source_location": "L751",
       "weight": 1.0
     },
     {
@@ -150775,7 +150775,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L745",
+      "source_location": "L755",
       "weight": 1.0
     },
     {
@@ -151039,7 +151039,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L765",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -151063,7 +151063,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L786",
+      "source_location": "L796",
       "weight": 1.0
     },
     {
@@ -151075,7 +151075,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L789",
+      "source_location": "L799",
       "weight": 1.0
     },
     {
@@ -151087,7 +151087,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L791",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -151099,7 +151099,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L792",
+      "source_location": "L802",
       "weight": 1.0
     },
     {
@@ -151279,7 +151279,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L670",
+      "source_location": "L678",
       "weight": 1.0
     },
     {
@@ -151291,7 +151291,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L677",
+      "source_location": "L685",
       "weight": 1.0
     },
     {
@@ -151375,7 +151375,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L575",
+      "source_location": "L579",
       "weight": 1.0
     },
     {
@@ -151387,7 +151387,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L577",
+      "source_location": "L581",
       "weight": 1.0
     },
     {
@@ -151399,7 +151399,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L577",
+      "source_location": "L581",
       "weight": 1.0
     },
     {
@@ -151411,7 +151411,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L577",
+      "source_location": "L581",
       "weight": 1.0
     },
     {
@@ -151423,7 +151423,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L547",
+      "source_location": "L548",
       "weight": 1.0
     },
     {
@@ -151435,7 +151435,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L549",
+      "source_location": "L550",
       "weight": 1.0
     },
     {
@@ -151447,7 +151447,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L558",
+      "source_location": "L562",
       "weight": 1.0
     },
     {
@@ -151459,7 +151459,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L536",
+      "source_location": "L537",
       "weight": 1.0
     },
     {
@@ -151471,7 +151471,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L537",
+      "source_location": "L538",
       "weight": 1.0
     },
     {
@@ -185827,7 +185827,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L706",
+      "source_location": "L714",
       "weight": 1.0
     },
     {
@@ -189355,7 +189355,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L667",
+      "source_location": "L675",
       "weight": 1.0
     },
     {
@@ -196555,7 +196555,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L642",
+      "source_location": "L650",
       "weight": 1.0
     },
     {
@@ -196603,7 +196603,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L667",
+      "source_location": "L675",
       "weight": 1.0
     },
     {
@@ -201241,7 +201241,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L1886",
+      "source_location": "L1887",
       "weight": 1.0
     },
     {
@@ -201252,7 +201252,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L1923",
+      "source_location": "L1924",
       "weight": 1.0
     },
     {
@@ -201263,7 +201263,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L1951",
+      "source_location": "L1952",
       "weight": 1.0
     },
     {
@@ -201274,7 +201274,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L1999",
+      "source_location": "L2000",
       "weight": 1.0
     },
     {
@@ -201285,7 +201285,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2005",
+      "source_location": "L2006",
       "weight": 1.0
     },
     {
@@ -201307,7 +201307,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2029",
+      "source_location": "L2030",
       "weight": 1.0
     },
     {
@@ -201318,7 +201318,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2045",
+      "source_location": "L2046",
       "weight": 1.0
     },
     {
@@ -201329,7 +201329,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2075",
+      "source_location": "L2076",
       "weight": 1.0
     },
     {
@@ -201340,7 +201340,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2094",
+      "source_location": "L2095",
       "weight": 1.0
     },
     {
@@ -201362,7 +201362,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2121",
+      "source_location": "L2122",
       "weight": 1.0
     },
     {
@@ -201373,7 +201373,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2136",
+      "source_location": "L2137",
       "weight": 1.0
     },
     {
@@ -201384,7 +201384,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2157",
+      "source_location": "L2158",
       "weight": 1.0
     },
     {
@@ -201395,7 +201395,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2188",
+      "source_location": "L2189",
       "weight": 1.0
     },
     {
@@ -201406,7 +201406,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2217",
+      "source_location": "L2218",
       "weight": 1.0
     },
     {
@@ -201417,7 +201417,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2246",
+      "source_location": "L2247",
       "weight": 1.0
     },
     {
@@ -201428,7 +201428,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2255",
+      "source_location": "L2256",
       "weight": 1.0
     },
     {
@@ -201450,7 +201450,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2363",
+      "source_location": "L2364",
       "weight": 1.0
     },
     {
@@ -201461,7 +201461,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2377",
+      "source_location": "L2378",
       "weight": 1.0
     },
     {
@@ -201472,7 +201472,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2407",
+      "source_location": "L2408",
       "weight": 1.0
     },
     {
@@ -201483,7 +201483,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2434",
+      "source_location": "L2435",
       "weight": 1.0
     },
     {
@@ -201494,7 +201494,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2446",
+      "source_location": "L2447",
       "weight": 1.0
     },
     {
@@ -201505,7 +201505,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2469",
+      "source_location": "L2470",
       "weight": 1.0
     },
     {
@@ -201516,7 +201516,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2500",
+      "source_location": "L2501",
       "weight": 1.0
     },
     {
@@ -201527,7 +201527,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2532",
+      "source_location": "L2533",
       "weight": 1.0
     },
     {
@@ -201538,7 +201538,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2617",
+      "source_location": "L2618",
       "weight": 1.0
     },
     {
@@ -201549,7 +201549,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2663",
+      "source_location": "L2664",
       "weight": 1.0
     },
     {
@@ -201560,7 +201560,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2720",
+      "source_location": "L2721",
       "weight": 1.0
     },
     {
@@ -201571,7 +201571,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2747",
+      "source_location": "L2748",
       "weight": 1.0
     },
     {
@@ -201582,7 +201582,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2765",
+      "source_location": "L2766",
       "weight": 1.0
     },
     {
@@ -201593,7 +201593,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2792",
+      "source_location": "L2793",
       "weight": 1.0
     },
     {
@@ -201604,7 +201604,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2844",
+      "source_location": "L2845",
       "weight": 1.0
     },
     {
@@ -201615,7 +201615,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2876",
+      "source_location": "L2877",
       "weight": 1.0
     },
     {
@@ -201626,7 +201626,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2886",
+      "source_location": "L2887",
       "weight": 1.0
     },
     {
@@ -201637,7 +201637,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2900",
+      "source_location": "L2901",
       "weight": 1.0
     },
     {
@@ -201648,7 +201648,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2920",
+      "source_location": "L2921",
       "weight": 1.0
     },
     {
@@ -201659,7 +201659,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2937",
+      "source_location": "L2938",
       "weight": 1.0
     },
     {
@@ -201670,7 +201670,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2955",
+      "source_location": "L2956",
       "weight": 1.0
     },
     {
@@ -201681,7 +201681,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2968",
+      "source_location": "L2969",
       "weight": 1.0
     },
     {
@@ -201692,7 +201692,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L2989",
+      "source_location": "L2990",
       "weight": 1.0
     },
     {
@@ -201703,7 +201703,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3002",
+      "source_location": "L3003",
       "weight": 1.0
     },
     {
@@ -201714,7 +201714,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3144",
+      "source_location": "L3145",
       "weight": 1.0
     },
     {
@@ -201725,7 +201725,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3162",
+      "source_location": "L3163",
       "weight": 1.0
     },
     {
@@ -201736,7 +201736,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3182",
+      "source_location": "L3183",
       "weight": 1.0
     },
     {
@@ -201747,7 +201747,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3210",
+      "source_location": "L3211",
       "weight": 1.0
     },
     {
@@ -201758,7 +201758,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3223",
+      "source_location": "L3224",
       "weight": 1.0
     },
     {
@@ -201780,7 +201780,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3246",
+      "source_location": "L3247",
       "weight": 1.0
     },
     {
@@ -201791,7 +201791,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "CLAUDE.md",
-      "source_location": "L3262",
+      "source_location": "L3263",
       "weight": 1.0
     },
     {
@@ -228499,7 +228499,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L642",
+      "source_location": "L650",
       "weight": 1.0
     },
     {
@@ -228521,7 +228521,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L667",
+      "source_location": "L675",
       "weight": 1.0
     },
     {
@@ -228532,7 +228532,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L691",
+      "source_location": "L699",
       "weight": 1.0
     },
     {
@@ -228554,7 +228554,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L725",
+      "source_location": "L733",
       "weight": 1.0
     },
     {
@@ -228576,7 +228576,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L762",
+      "source_location": "L772",
       "weight": 1.0
     },
     {
@@ -228587,7 +228587,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L785",
+      "source_location": "L795",
       "weight": 1.0
     },
     {
@@ -228620,7 +228620,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L588",
+      "source_location": "L596",
       "weight": 1.0
     },
     {
@@ -228631,7 +228631,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L600",
+      "source_location": "L608",
       "weight": 1.0
     },
     {
@@ -258914,7 +258914,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L532",
+      "source_location": "L533",
       "weight": 1.0
     },
     {
@@ -258925,7 +258925,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L542",
+      "source_location": "L543",
       "weight": 1.0
     },
     {
@@ -258936,7 +258936,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L568",
+      "source_location": "L572",
       "weight": 1.0
     },
     {
@@ -258947,7 +258947,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L609",
+      "source_location": "L617",
       "weight": 1.0
     },
     {
@@ -258958,7 +258958,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L620",
+      "source_location": "L628",
       "weight": 1.0
     },
     {
@@ -258969,7 +258969,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L632",
+      "source_location": "L640",
       "weight": 1.0
     },
     {
@@ -272877,47 +272877,47 @@
       "weight": 1.0
     },
     {
-      "source": "jarvis_tgcall_rationale_643",
+      "source": "jarvis_tgcall_rationale_651",
       "target": "jarvis_tgcall_call_owner",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L643",
+      "source_location": "L651",
       "weight": 1.0
     },
     {
-      "source": "jarvis_tgcall_rationale_669",
+      "source": "jarvis_tgcall_rationale_677",
       "target": "jarvis_tgcall_start_in_background",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L669",
+      "source_location": "L677",
       "weight": 1.0
     },
     {
-      "source": "jarvis_tgcall_rationale_726",
+      "source": "jarvis_tgcall_rationale_734",
       "target": "jarvis_tgcall_cli_test",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L726",
+      "source_location": "L734",
       "weight": 1.0
     },
     {
-      "source": "jarvis_tgcall_rationale_763",
+      "source": "jarvis_tgcall_rationale_773",
       "target": "jarvis_tgcall_load_dotenv",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L763",
+      "source_location": "L773",
       "weight": 1.0
     },
     {
@@ -279826,7 +279826,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L686",
+      "source_location": "L694",
       "weight": 1.0
     },
     {
@@ -287926,7 +287926,7 @@
       "confidence_score": 0.85,
       "context": "getattr",
       "source_file": "jarvis_tgcall.py",
-      "source_location": "L713",
+      "source_location": "L721",
       "weight": 1.0
     },
     {
@@ -288134,5 +288134,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "8e6f6d6586e6bdcc57f72bed44379ee113c425fc"
+  "built_at_commit": "5f93cc6c4c19284a3c6758f271ef5934202b2b2e"
 }
