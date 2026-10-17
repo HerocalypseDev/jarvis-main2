@@ -1112,3 +1112,99 @@ p.consent-list { padding-left: 0; }
 .ask-questions { line-height: 1.5; }
 .ask-form { flex-wrap: wrap; }
 .ask-form .ask-input { flex: 1 1 200px; min-width: 0; }
+
+/* --- Phones route (2026-10-17): dark street map + phone cards ---------------------------------------- */
+.ph-layout { display: flex; gap: var(--space-4, 16px); align-items: stretch; min-height: 560px; }
+.ph-map {
+  flex: 1 1 auto; min-height: 560px; border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--color-border-strong); background: var(--color-bg-inset);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.ph-side { flex: 0 0 340px; display: flex; flex-direction: column; gap: var(--space-3, 12px); min-width: 0; }
+.ph-card, .ph-setup {
+  background: var(--color-bg-secondary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px); padding: 12px 14px;
+}
+.ph-list { display: flex; flex-direction: column; gap: var(--space-3, 12px); }
+.ph-card-stale { opacity: 0.8; }
+.ph-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ph-card-name { color: var(--color-accent); font-weight: 600; letter-spacing: 0.02em; }
+.ph-card-where { color: var(--color-text-primary); margin: 4px 0 2px; }
+.ph-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ph-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--color-border-strong); color: var(--color-text-secondary); }
+.ph-chip-danger { color: var(--color-error); border-color: var(--color-error); }
+.ph-h { margin: 0 0 6px; font-size: 15px; color: var(--color-text-primary); }
+.ph-steps { margin: 0 0 10px 18px; padding: 0; color: var(--color-text-secondary); font-size: 13px; }
+.ph-code code {
+  display: block; word-break: break-all; font-size: 12px; padding: 8px; border-radius: 8px;
+  background: var(--color-bg-inset); color: var(--color-accent); border: 1px solid var(--color-border);
+}
+.ph-repair { margin-top: 10px; font-size: 12px; }
+.ph-pin-wrap { background: none; border: none; }
+.ph-pin { position: relative; width: 24px; height: 24px; }
+.ph-pin-dot {
+  position: absolute; left: 5px; top: 5px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--color-accent); border: 2px solid var(--color-on-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 30%, transparent), 0 0 18px var(--color-accent);
+  animation: ph-pulse 2s ease-out infinite;
+}
+.ph-pin-stale .ph-pin-dot { background: var(--color-text-muted); box-shadow: 0 0 0 4px rgba(115, 148, 168, 0.25); animation: none; }
+.ph-pin-label {
+  position: absolute; left: 26px; top: 2px; white-space: nowrap; font-size: 12px; font-weight: 600;
+  color: var(--color-text-primary); background: color-mix(in srgb, var(--color-bg-primary) 80%, transparent);
+  border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 1px 6px;
+}
+@keyframes ph-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 60%, transparent), 0 0 18px var(--color-accent); }
+  100% { box-shadow: 0 0 0 16px transparent, 0 0 18px var(--color-accent); }
+}
+@media (prefers-reduced-motion: reduce) { .ph-pin-dot { animation: none; } }
+.leaflet-container { background: var(--color-bg-inset); font-family: inherit; }
+/* Dark map: invert OSM's light tiles and turn them back to natural hues, with a slight blue tint */
+.ph-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.92) saturate(0.6); }
+.leaflet-control-attribution { background: rgba(5, 11, 20, 0.7) !important; color: var(--color-text-muted) !important; }
+.leaflet-control-attribution a { color: var(--color-accent) !important; }
+.leaflet-bar a { background: var(--color-bg-secondary); color: var(--color-accent); border-color: var(--color-border); }
+.leaflet-tooltip { background: var(--color-bg-secondary); color: var(--color-text-primary); border-color: var(--color-border-strong); }
+@media (max-width: 800px) {
+  .ph-layout { flex-direction: column; }
+  .ph-map { min-height: 380px; }
+  .ph-side { flex: 1 1 auto; }
+}
+
+/* Cinematic phone view (2026-10-17) */
+.ph-cine { position: fixed; inset: 0; z-index: 10000; background: #02060c; opacity: 0; transform: scale(1.04);
+  transition: opacity 0.7s ease, transform 1.2s cubic-bezier(.2,.7,.2,1); }
+.ph-cine[hidden] { display: none; }
+.ph-cine.ph-cine-in { opacity: 1; transform: none; }
+.ph-cine-map { position: absolute; inset: 0; background: #02060c; }
+.ph-cine-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.92) saturate(0.6); }
+.ph-cine-map .leaflet-container, .ph-cine-map.leaflet-container { background: #02060c; }
+.ph-cine-vignette { position: absolute; inset: 0; pointer-events: none; z-index: 500;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(2,6,12,0.85) 100%),
+    repeating-linear-gradient(0deg, rgba(47,216,255,0.05) 0 1px, transparent 1px 4px); }
+.ph-cine-hud { position: absolute; left: 32px; bottom: 36px; z-index: 600; max-width: min(520px, calc(100vw - 64px));
+  padding: 16px 20px; border: 1px solid var(--color-border-strong); border-left: 3px solid var(--color-accent);
+  border-radius: 10px; background: color-mix(in srgb, var(--color-bg-primary) 82%, transparent);
+  backdrop-filter: blur(6px); box-shadow: 0 0 30px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  opacity: 0; transform: translateY(16px); transition: opacity 0.8s ease, transform 0.8s ease; }
+.ph-cine-hud.ph-cine-hud-on { opacity: 1; transform: none; }
+.ph-cine-tag { font-size: 11px; letter-spacing: 0.3em; color: var(--color-accent); }
+.ph-cine-name { font-size: 28px; font-weight: 700; color: var(--color-text-primary); margin: 4px 0; }
+.ph-cine-place { font-size: 15px; color: var(--color-text-primary); }
+.ph-cine-meta { font-size: 12px; color: var(--color-text-secondary); margin-top: 6px; }
+.ph-cine-close { position: absolute; top: 20px; right: 20px; z-index: 600; }
+.ph-cine-hint { position: absolute; top: 24px; left: 50%; transform: translateX(-50%); z-index: 600; font-size: 12px;
+  letter-spacing: 0.12em; color: var(--color-text-secondary); animation: ph-hint 2.4s ease-in-out infinite; }
+@keyframes ph-hint { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+.ph-cine-burst .ph-pin-dot { animation: ph-burst 1.6s ease-out 2; }
+@keyframes ph-burst {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 70%, transparent), 0 0 18px var(--color-accent); }
+  100% { box-shadow: 0 0 0 90px transparent, 0 0 18px var(--color-accent); }
+}
+.ph-cine .ph-pin-wrap { background: none; border: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ph-cine, .ph-cine-hud { transition: none; }
+  .ph-cine-hint, .ph-cine-burst .ph-pin-dot { animation: none; }
+}
+@media (max-width: 800px) { .ph-cine-hud { left: 12px; right: 12px; bottom: 16px; max-width: none; } .ph-cine-name { font-size: 22px; } }

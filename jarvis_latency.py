@@ -158,6 +158,13 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
                           r"update time|time (?:to|for an?) update|update yourself|update jarvis|update and restart"
                           r"|(?:do a |run a )?(?:git )?pull and restart(?: yourself)?|pull the (?:latest|new) code and restart"
                           r")(?:\s+now)?(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
+    # Phone locator (2026-10-17): "where's my phone", "where are my phones, show me visually", "show my phone on the
+    # map". Whole utterances only, and the word phone must be there ("where's my charger" is not this).
+    ("phone_where", re.compile(r"\A\s*(?:(?:hey|hi|ok|okay)[,.!]?\s+)?(?:jarvis[,.!]?\s*)?(?:please\s+|can you\s+|could you\s+)?"
+                               r"(?:where(?:'?s| is| are)|find|locate|show(?: me)?(?: where)?)\s+(?:is\s+|are\s+)?(?:my|both(?: of)? my|all(?: of)? my)\s+"
+                               r"(?:[a-z0-9]+\s+){0,2}phones?(?:\s+(?:is|are|at|now|right now))?"
+                               r"(?:[,.!]?\s*(?:and\s+)?(?:show (?:me|it|them|it to me)|on (?:the |a )?map|visually|(?:on )?the dashboard"
+                               r"|(?:right )?now|please|jarvis))*\W*\Z", re.I)),
     ("speedtest", re.compile(r"\A\s*(?:(?:hey|hi|ok|okay)[,.!]?\s+)?(?:jarvis[,.!]?\s*)?(?:please\s+|can you\s+|could you\s+)?(?:"
                              r"(?:run|do|start|perform|redo)\s+(?:a\s+|an\s+|the\s+|my\s+)?(?:quick\s+)?"
                              r"(?:(?:internet|network|wi-?fi|connection)\s+(?:speed\s*)?test|speed\s*test)"

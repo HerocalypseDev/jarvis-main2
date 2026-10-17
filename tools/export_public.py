@@ -57,6 +57,7 @@ EXCLUDE = (
     "homework_",                 # the owner's own homework app for their kids (names, ages): private by choice
     "test_homework.py",
     "dist/",
+    "phone_locator/app/locator.keystore",  # the owner's own app-signing key; public builds use the debug key
     "session_state.json",
     "jarvis_memory.db",
 )

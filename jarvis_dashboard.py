@@ -208,8 +208,18 @@ class _ConnectionManager:
             return list(self._clients.items())
 
 
+_manager_ref: "_ConnectionManager | None" = None
+
+
+def client_count() -> int:
+    """How many dashboard tabs are connected right now (0 when the dashboard isn't running)."""
+    m = _manager_ref
+    return len(m.snapshot()) if m is not None and _broadcast_fn is not None else 0
+
+
 def _set_broadcast(loop: "asyncio.AbstractEventLoop", manager: "_ConnectionManager") -> None:
-    global _broadcast_fn
+    global _broadcast_fn, _manager_ref
+    _manager_ref = manager
 
     def _broadcast(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(_do_broadcast(manager, event), loop)
@@ -582,7 +592,13 @@ def _build_app(
                 origin = request.headers.get("origin")
                 if origin and not _origin_is_loopback(origin):
                     return JSONResponse({"error": "forbidden origin"}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        # The page's own files (app.js, style.css, ...) must be re-checked on every load: without this
+        # the browser kept an old app.js after an update, whose route list had no "phones", so the
+        # new Phones page bounced straight back to Home. no-cache still allows a cheap 304 answer.
+        if not request.url.path.startswith("/api/") and "cache-control" not in response.headers:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.get("/api/state")
     def api_state() -> dict:

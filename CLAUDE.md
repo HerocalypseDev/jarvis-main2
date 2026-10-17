@@ -1639,6 +1639,44 @@ Rules to keep:
   newest audit row; Ollama traffic never uses a proxy; lessons only from voice/text/dashboard/phone and never
   name an address/link/domain; the command path never fetches embeddings (cache-only + background fill);
   find_tools max 3 per command; daily plan retries at most every 30 min.
+- **Lessons didn't learn (2026-10-16, owner: "it still makes the same mistakes")**: three faults, tests at the end of
+  `test_smarter.py`. (1) A correction's lesson read "the previous answer" after this turn was already in history, so the
+  writer only saw the correction and Jarvis's new reply; now `_previous_exchange` reads the earlier request + answer before
+  the loop, the lesson is about that request (also its `trigger`, used for retrieval). (2) `lessons.is_correction` strips a
+  leading "hey Jarvis,"/"Jarvis," and knows more phrasings ("that is incorrect", "you did it wrong", "you made a mistake",
+  "try again", "not what I asked for", "I told you..."); a bare "no" still doesn't count (it answers questions). (3) A claim
+  the claim checker caught (nudged) now writes a lesson too, as a "(claim check)" step. A failed or refused lesson write is
+  logged at info. Tests that fake history must append before the lesson is written, or they hide fault 1.
+
+## Two-way Telegram calls (2026-10-17, owner choice after CallMeBot kept failing)
+
+`jarvis_tgcall.py` (never imports jarvis.py), tests `test_tgcall.py` (31). A SPARE Telegram account (Telethon + py-tgcalls
+3.0.0 / ntgcalls 3.0.3, Python 3.12, optional packages) rings the owner's main account; Jarvis speaks, listens and can be
+cut in on. Rules to keep:
+- **The spare account's phone number never goes in code, repo, tests or docs.** Config: `TGCALL_API_ID`,
+  `TGCALL_API_HASH_SECRET` (write-only), `TGCALL_TARGET` (falls back to `CALLMEBOT_TELEGRAM_USER`); the session lives in
+  `%LOCALAPPDATA%\Jarvis\tgcall\` (`JARVIS_TGCALL_DIR`, OneDrive refused, `.session` is a sensitive suffix). One-time login
+  is a CLI because only the owner gets the SMS code: `python jarvis_tgcall.py login`; `test` rings and checks the audio path. The CLI runs outside Jarvis, so it loads the project `.env` itself (`load_dotenv`, no override of real env vars).
+- **Safety**: caller speech runs through `jarvis._tgcall_run_command` = `handle_text_command(..., source="phone")` with
+  `_command_ctx.hands_free = True`: the catastrophic gate is intact and a spoken "yes" on a call can never confirm a staged
+  action; nothing plays on the PC speakers. The wrapper stays in jarvis.py (a test pins that the module has no "hands_free").
+- Listener = energy VAD (start 0.25 s voiced, 0.5 s while Jarvis talks so "mhm" doesn't cut it; end 0.8 s silence; max
+  20 s). Talker paces 20 ms frames in real time, prefetches the next sentence and stops within one frame on barge-in; the
+  next command gets a `[Call: the caller talked over ...]` note. Limits: `JARVIS_CALLS_PER_DAY` (shared with CallMeBot),
+  `JARVIS_TGCALL_MAX_MIN` 15, `JARVIS_TGCALL_IDLE_S` 45, same opening once an hour, one call at a time; an unanswered call is refunded.
+- `send_to_my_phone` channel `call` and urgent-alert calls use `_place_phone_call`: two-way when `tgcall.configured()`, else CallMeBot.
+  Result goes to the "what did I miss" inbox. Risks: Telegram can ban automated user accounts (spare only); anyone holding the
+  owner's phone can speak commands on the call; audio goes to Telegram and the speech engines.
+- **Not verified on a real call** (cloud container): ntgcalls frame size (20 ms assumed), incoming-frame tagging, whether `play()` returns
+- **Calls to Jarvis (2026-10-17, owner: "jarvis answers only my main account")**: `InboundTransport` + `start_inbound` (listener
+  thread started from `main()`, `JARVIS_TGCALL_INBOUND`, default on) keep the spare account logged in and answer a ringing call
+  ONLY from `TGCALL_TARGET`'s chat id; any other caller is ignored. Same `Conversation`, same hands-free `source="phone"` path, so a
+  spoken "yes" never confirms the gate. The session file is single-user: an outgoing `call_owner` sets `_yield_line`, the listener
+  lets go, the call runs, the listener resumes. Inbound calls don't count toward `JARVIS_CALLS_PER_DAY`. Works only while Jarvis is
+  running; a call is logged in the "what did I miss" inbox. **Unverified on a real call**: that py-tgcalls 3.0.0 exposes
+  `ChatUpdate.Status.INCOMING_CALL` and that `app.play()` answers a ringing private call (otherwise the listener logs "can't answer
+  incoming calls" and backs off). Tests: end of `test_tgcall.py`.
+  after the call is answered. Run `python jarvis_tgcall.py test` first.
 
 ### Cost reporting
 
@@ -1834,8 +1872,21 @@ row there each phase rather than only stating the total in chat.
 | 170 (false "still monitoring" / "successfully created" claims: ongoing-work claims need a real job/watch/agent/reminder/scheduled skill, adverbs no longer hide a done claim, self-made jobs speak only when flagged URGENT; 12 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 171 (Jarvis asks you: tool questions must reach the user, saved with the exact call and resumed by the answer, Home "Jarvis needs you" card, background runs say it; live-reading watches sent to scheduled work, unattended runs no longer read the chat, honest agent results, open Roblox; 13 new tests, headless card check) | Opus 5.5 | ~50 min | ~$4.00–$5.50 |
 | 172 (admin helper card showed every repair "off" with no reason and "waiting for the prompt" long after it was answered: unknown is now shown as "?" with why Windows couldn't be read, the setup says "checking" once the prompt is accepted, the hidden elevated window writes OK/FAIL+reason to a result file, a 90 s wall-clock deadline replaces the fixed polls; 12 new tests, headless check of five states) | Sonnet 5.5 | ~35 min | ~$2.20–$3.00 |
-| 173 (admin helper card showed "?" with "Windows answered in a form I couldn't read": PowerShell run with -EncodedCommand writes a CLIXML progress block to stderr and Jarvis reads stdout+stderr together, so the task-list answer was never pure JSON; the reader now drops the CLIXML block/BOM/warning lines, takes the first JSON line, and an unreadable answer shows a cleaned snippet of what came back; status script silences progress; 5 new tests, mutation-checked) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~5294 min** | **~$362.55–$509.25** |
+| 173 (lessons didn't learn: corrections now see the original request + wrong answer, more correction phrasings incl. "Jarvis, ...", caught false claims write lessons, failed writes logged; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| 174 (Windows MCP failing: a tool server that stops after connecting is now marked down, reconnected before the next call and shown failed on the dashboard; real error text instead of "unhandled errors in a TaskGroup"; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| 175 (phone calls via CallMeBot: send_to_my_phone channel "call", own Telegram user only, daily cap, urgent alerts ring when away 10+ min; 8 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| 176 (phone locator: Jarvis Locator Android app (sealed GPS check-ins over ntfy, built here), relay listener, phone_location tool + "where's my phone, show me visually" voice route, dark OpenStreetMap Phones page that the same tab switches to; headless check at 1440/390 px; 19 new tests) | Opus 5.5 | ~70 min | ~$5.50–$7.50 |
+| 177 (Phones page bounced back to Home: browser kept an old app.js after the update; dashboard page files now sent with Cache-Control no-cache; headless check of direct load + nav click; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
+| 178 (CallMeBot spam lock: a "reported as spam" answer now says how to unlock it (add the caller bot to contacts and message it); 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
+| 179 (cinematic phone map: "show me visually" opens a full-screen overlay that flies smoothly from the world down to the last-checked phone, HUD + ring burst, Esc/click to leave; "Full screen" button on the Phones page; opens by WebSocket or a `?cine=1` link; page itself unchanged; headless check; 2 tests changed/added) | Sonnet 5.5 | ~35 min | ~$2.50–$3.50 |
+| 180 (two-way Telegram calls from a spare account: speak, listen, barge-in, login/test CLI, hands-free phone-source command path so the gate can't be confirmed by voice, Settings entries, CallMeBot fallback; 31 new tests; not verified on a real call) | Sonnet 5.5 | ~60 min | ~$4.00–$5.50 |
+| 181 (the tgcall login/test/status CLI ran outside Jarvis and never read `.env`, so it said the settings were not set: `load_dotenv()` at its start, never overriding real environment values, never printing; 2 new tests) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
+| 182 (tgcall test: "UserIdInvalid" on the first real ring: the target must resolve to a person (clear message for a channel), its access hash is cached before the call, `JARVIS_TGCALL_DEBUG=1` prints the real traceback in `test`) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
+| 183 (tgcall: calling the spare account itself gives UserIdInvalid, so `_connect` now refuses with a clear message when the target resolves to the logged-in account; 1 new test) | Sonnet 5.5 | ~8 min | ~$0.50–$0.70 |
+| 184 (calls TO Jarvis: ring the spare Telegram account from the main one and Jarvis answers, owner's account only, hands-free phone path, listener steps aside for outgoing calls, Settings switch; 5 new tests; not verified on a real call) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
+| 185 (Jarvis's own "call me" said it was ringing but never rang: the new incoming-call listener held the Telegram session file while connecting, so the outgoing call hit "database is locked"; the listener now claims the session from its first moment, gives it up while still connecting, outgoing calls wait for it to let go and retry a locked session once; 3 new tests) | Sonnet 5.5 | ~20 min | ~$1.40–$2.00 |
+| 186 (admin helper card showed "?" with "Windows answered in a form I couldn't read": PowerShell run with -EncodedCommand writes a CLIXML progress block to stderr and Jarvis reads stdout+stderr together, so the task-list answer was never pure JSON; the reader now drops the CLIXML block/BOM/warning lines, takes the first JSON line, and an unreadable answer shows a cleaned snippet of what came back; status script silences progress; 5 new tests, mutation-checked) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~5617 min** | **~$385.65–$541.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2879,6 +2930,41 @@ Owner's choices: self-healing loop + crash log, and **speak** the recovery. Code
 - Not covered: the process being killed from outside (Task Manager, `stop_jarvis.ps1`, Windows shutdown) and a hard hang; a
   watchdog that relaunches a dead process was offered and not built. Not verified live on the PC (unplugging a real device).
 
+## Tool servers that stop after connecting (2026-10-16, "my Windows MCP has been failing")
+
+- Reproduced with a real stdio MCP server that exits: the session only answered "Connection closed" to each call, the
+  supervisor kept its loop, the dashboard said "connected" and nothing retried it, so Windows-MCP (or any server whose
+  uvx/npx process ended) stayed broken until Jarvis restarted. Now a connection-closed error ends `_mcp_server_supervisor`:
+  the handle is marked dead and the server goes on the retry list (`_mcp_mark_down`, due at the next tick), waiting calls
+  are failed, and `execute_mcp_tool` reconnects a dead server before a call (`_mcp_reconnect_if_down`, at most every 20 s).
+  A call cut off mid-way is never repeated (it may already have typed or clicked). A reconnect replaces that server's
+  tools (no duplicate tool names). Failure logs give the real cause (`_mcp_error_text` unwraps anyio's ExceptionGroup).
+  Tests: `test_mcp_reconnect.py` (3). Not verified against the real Windows-MCP on the PC: why it stopped is unknown.
+
+- **Root cause found in the owner's log (2026-10-16)**: the Caretaker's cache cleaner (`cache_roots`) included `%LOCALAPPDATA%\\uv\\cache`,
+  and deleting files older than 2 days from uv's `archive-v0` (the unpacked environments `uvx` runs tools from) left Windows-MCP
+  half-installed: `ModuleNotFoundError: No module named 'windows_mcp.__main__'` on every start from 17:11 (the day's cleanup
+  went from 3.3 GB to 7.6 GB freed). uv's cache is no longer a cache root (never list a folder that holds installed code);
+  repair on the PC with `uv cache clean`, then restart Jarvis. Test: `test_cache_roots_never_include_uvs_environment_cache`.
+
+## Phone calls through CallMeBot (2026-10-17, owner choice after a research thread)
+
+`jarvis_callmebot.py`, tests `test_callmebot.py` (8). CallMeBot's free service rings the owner's Telegram and reads a
+short text aloud: one-way, unofficial, no guarantee, needs data on the phone. Rules to keep:
+- Only recipient = `CALLMEBOT_TELEGRAM_USER` (.env/Settings, @username or +number); no caller passes a recipient. It
+  and `JARVIS_CALLS_PER_DAY` (default 5) are in `selfmanage.AI_DENIED`. Same text at most once an hour; text cut to
+  250 chars (CallMeBot reads at most 256), links dropped (it goes to CallMeBot's servers). A failed/refused call doesn't count toward the cap.
+- Setup: /start on @CallMeBot_txtbot in Telegram (one bot for texts and calls); use the @username, a phone number may not work.
+- "Reported as spam" lock (seen 2026-10-17): the caller bot (@CallMeBot_API<number>, from the call history) must be added to
+  contacts and sent a message; `_refusal` explains that when the reply mentions spam.
+- `send_to_my_phone` channel `call` ("call me", "ring my phone"); `_MY_PHONE_RE` offers the tool for those words.
+- An urgent `queue_or_deliver_notification` also calls (`_maybe_call_for_urgent`, on a thread) only when
+  `JARVIS_CALL_ON_URGENT` (default on), the PC was idle 10+ min (unknown idle never calls) and not in Sleep Mode. Never
+  under pytest unless `JARVIS_TEST_ALLOW_CALLS`; conftest clears the user setting.
+- Success is judged from CallMeBot's reply page by known failure words; the real page wording is unverified. Two-way
+  calls (talking to Jarvis) were researched and not built: free route = a second Telegram account (ban risk).
+- Not verified live: a real CallMeBot call to the owner's Telegram.
+
 ## Hand-off guard (2026-09-25)
 
 - **Found live**: on Gemini flash-lite, Jarvis replied "I'll hand that off to James" four times
@@ -3193,3 +3279,38 @@ Tests: `test_coverage.py` (18). Audit write-up: `/mnt/project-files/jarvis-visib
   out of the Toolbox handler to be shared).
 - Still the owner's alone (in the map as `owner`): Approve/Reject, autonomy on/dry-run/policies, dynamic-tool proposals and deletion,
   licence, biometric picture erase. Autonomy card approvals stay attended-only through the existing `autonomy` tool.
+
+## Phone locator (2026-10-17, owner request: "where's my phone, show me visually")
+
+Owner's choices: phones have internet (SMS route dropped), a custom APK rather than MacroDroid, a Jarvis-themed map in
+the same dashboard tab. Code: `phone_locator/` (Android app, Java, no libraries; `gradle assembleRelease` with SDK 34, or
+the "Jarvis Locator APK" GitHub Action), `jarvis_phone_locate.py` (pure: pairing code, AES-GCM sealing, report checks,
+`Store`, relay `Locator`, OSM place names), wiring in jarvis.py ("Phone locator" block), `dashboard_static/phones.js`
+(route `#/phones`, vendored Leaflet 1.9.4). Tests: `test_phone_locate.py` (19). Rules to keep:
+- **Everything on the ntfy topic is sealed** (AES-256-GCM, nonce + tag, AAD `jloc1|<topic>`): the relay (ntfy.sh, or
+  `JARVIS_PHONE_LOCATOR_SERVER`) sees random text; anything that doesn't open is ignored. Java (`Crypto.java`) and Python
+  must stay byte-compatible (checked once by hand in a JVM; change both or neither). Pairing = random topic + key in `.env`
+  (`JARVIS_PHONE_LOCATOR_TOPIC/_KEY`, write-only on Settings); the setup code (`JLOC1.` + base64url JSON) is shown only on
+  the Phones page or sent to the owner's own Telegram, never into chat or the audit trail. "Make a new key" cuts every phone off.
+- A report older than the phone's last one is refused (replay can't move a pin back); max 10 phones; fields range-checked,
+  names sanitised. Phones ignore asks older than 10 minutes and asks they already answered.
+- `phone_location` tool (where/last/show/setup) and the no-model voice route `phone_where` ("where's my phone", "...show me
+  visually", "show my phones on the map"; whole utterances, must say phone): only for the owner's own request, blocked in
+  email-started and tainted runs. `show` sends `{"type": "navigate", "route": "phones"}` over the dashboard WebSocket when a
+  tab is open (`dashboard.client_count()`), else opens the dashboard at `#/phones`; app.js honours `navigate` for any route.
+- Place names: OpenStreetMap Nominatim (free, <= 1 request/s, cached 30 days per ~11 m); map tiles: tile.openstreetmap.org
+  darkened by a CSS filter (CARTO's dark tiles now need an API key). Data exposure: coordinates go to OSM, nothing else.
+- A phone silent for `JARVIS_PHONE_QUIET_MIN` (120) goes to the quiet "what did I miss" inbox once. `JARVIS_PHONE_LOCATOR=0` off.
+- Signing: `phone_locator/app/locator.keystore` (sideload key, private repo only, export-excluded) lets updates install over
+  the old APK. Not verified on a real phone: the app itself (only compiled), Doze/battery-saver behaviour on Tecno/Infinix,
+  the GitHub Action, the live relay round trip, the navigate switch in a real browser tab.
+- **Phones page went straight back to Home (2026-10-17, owner report)**: the router sends any route missing from `ROUTES`
+  to Home, and the browser kept the old cached app.js (no "phones") after the update. The dashboard middleware now adds
+  `Cache-Control: no-cache` to every non-`/api/` response (304s stay cheap), so page files are re-checked on each load.
+  The current code opens `#/phones` directly and from the sidebar (headless check). One Ctrl+F5 was still needed once.
+- **Cinematic map (2026-10-17, owner: "not cool enough... zoom in smoothly, fill the screen, keep the page, add a button")**: `phonesCinematic()`
+  in `phones.js` draws its own non-interactive Leaflet map in the `#ph-cine` overlay (index.html) and `flyTo`s the newest-fix phone from zoom 3 to
+  17 over 6.5 s, then ring burst + HUD (reduced motion jumps straight there). Voice "show" sends a WS `navigate` with `cinematic`+`device`
+  (`_show_phones_page`), or opens `#/phones?cine=1&device=ID` when no tab is open (`currentRoute()` strips the query). Browsers allow real
+  fullscreen only from a click: the voice view fills the window and shows a hint, a click or the page's "Full screen" button goes truly full screen. Esc closes.
+

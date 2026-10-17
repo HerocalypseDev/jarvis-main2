@@ -1,0 +1,26 @@
+name: Jarvis Locator APK
+
+on:
+  push:
+    paths: ["phone_locator/**", ".github/workflows/phone-locator-apk.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+      - name: Build the APK
+        working-directory: phone_locator
+        run: gradle --no-daemon assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JarvisLocator-apk
+          path: phone_locator/app/build/outputs/apk/release/app-release.apk

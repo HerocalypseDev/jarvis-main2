@@ -24,7 +24,7 @@ import json
 import logging
 import os
 
-from jarvis_env import env_float, env_int
+from jarvis_env import env_bool, env_float, env_int
 import queue
 import random
 import re
@@ -56,6 +56,8 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 # Modular improvements — each is self-contained (owns its own DB tables/connection,
 # no import-time dependency back on this module) and exposed here as extra agent tools.
 import jarvis_workflow as workflow
+import jarvis_callmebot as callmebot
+import jarvis_tgcall as tgcall
 import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
@@ -106,6 +108,7 @@ import jarvis_chief as chief
 import jarvis_voice_usage as voice_usage
 import jarvis_netscan as netscan
 import jarvis_speedtest as speedtest
+import jarvis_phone_locate as phone_locate
 import jarvis_dashdata as dashdata
 import jarvis_settings as settings
 import jarvis_license as license_mod
@@ -3723,10 +3726,11 @@ BATCH_TOOLS = [
             "Send a message to the USER'S OWN phone: their Telegram chat with Jarvis and/or their ntfy push topic. Use "
             "for 'send me X on Telegram', 'text me the list', 'message my phone', 'ping me'. Only ever goes to the user "
             "themselves (the configured chat/topic), never to anyone else. channel: telegram (default when set up), "
-            "ntfy, or both."),
+            "ntfy, both, or call (rings the user's Telegram and reads the text aloud through CallMeBot: one-way, for "
+            "'call me', 'ring my phone', or something urgent; keep the text to a short alert, max 5 calls a day)."),
         "input_schema": {"type": "object", "properties": {
             "text": {"type": "string", "description": "The message to send."},
-            "channel": {"type": "string", "enum": ["telegram", "ntfy", "both"]}},
+            "channel": {"type": "string", "enum": ["telegram", "ntfy", "both", "call"]}},
             "required": ["text"]},
     },
     {
@@ -3752,6 +3756,20 @@ BATCH_TOOLS = [
         "input_schema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "add", "forget"]},
             "lesson": {"type": "string"}, "id": {"type": "integer"}}, "required": ["action"]},
+    },
+    {
+        "name": "phone_location",
+        "description": (
+            "Where the owner's own phones are (they run the Jarvis Locator app and check in by themselves). "
+            "action=where (default: asks the phones for a fresh GPS position, waits up to ~40 s, says where each is "
+            "with the nearest street/area and how old the position is), last (latest known positions, no asking), "
+            "show (opens the dashboard Phones map in the same tab, then asks for fresh positions; use it when the user "
+            "says 'show me', 'on the map', 'visually'), setup (sends the pairing code for a new phone to the owner's "
+            "Telegram; never shown in chat). `phone` = a name like 'Samsung' to ask about one phone; leave it out for all."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["where", "last", "show", "setup"]},
+            "phone": {"type": "string", "description": "Optional phone name, e.g. Samsung."}}},
     },
 ]
 AGENT_TOOLS.extend(BATCH_TOOLS)
@@ -4964,6 +4982,85 @@ def _record_sleep_important(text: str) -> None:
         _save_session_context_locked()
 
 
+# --- Two-way Telegram calls (2026-10-17, owner choice: a spare Telegram account rings the owner and talks) ---------------
+# jarvis_tgcall.py never imports this file, so the wiring lives here. Everything the caller says runs through the normal
+# handle_text_command pipeline as a PHONE command that is also hands-free: the catastrophic gate stays intact and a spoken
+# "yes" on a call can never confirm a staged action. Nothing is spoken on the PC speakers (phone replies are text-only).
+def _tgcall_run_command(text: str, note: str = "") -> str:
+    out: list[str] = []
+    prev = getattr(_command_ctx, "hands_free", False)
+    _command_ctx.hands_free = True
+    try:
+        handle_text_command((note + text) if note else text, reply_sink=out.append, source="phone")
+    finally:
+        _command_ctx.hands_free = prev
+    return " ".join(str(x) for x in out if x).strip()
+
+
+def _tgcall_synth(text: str) -> tuple[bytes, int]:
+    spoken = _sanitize_for_speech(personality.spoken(speech_script.for_speech(text)))
+    pcm, rate, _engine = _synthesize_and_cache(spoken)
+    return pcm, rate
+
+
+def _tgcall_shape(reply: str) -> str:
+    return _collapse_paths_for_speech(_summarize_for_speech(reply))
+
+
+def _tgcall_hooks() -> "tgcall.Hooks":
+    return tgcall.Hooks(
+        transcribe=lambda audio: transcribe_pcm(audio, 16000),
+        synth=_tgcall_synth,
+        run_command=_tgcall_run_command,
+        shape=_tgcall_shape,
+    )
+
+
+def _tgcall_done(res: "tgcall.CallResult") -> None:
+    if not res.ok:
+        _add_missed(f"I tried to call you on Telegram but it didn't go through: {res.reason}.", "call")
+    else:
+        _add_missed(f"Phone call finished ({int(res.seconds)} s, {res.turns} things you asked).", "call")
+
+
+def _tgcall_inbound_done(res: "tgcall.CallResult") -> None:
+    _add_missed(f"You called me on Telegram ({int(res.seconds)} s, {res.turns} things you asked).", "call")
+
+
+def _place_phone_call(text: str) -> tuple[bool, str]:
+    """Two-way Telegram call when it is set up, else CallMeBot's one-way call. Returns (started, what to tell)."""
+    if tgcall.configured():
+        return tgcall.start_in_background(text, _tgcall_hooks(), on_done=_tgcall_done)
+    ok, what = callmebot.call(text)
+    return ok, what
+
+
+CALL_WHEN_AWAY_S = 600  # an urgent alert rings the phone only when nobody touched the PC for 10 minutes
+
+
+def _maybe_call_for_urgent(text: str) -> None:
+    """Phone calls (2026-10-17, owner: CallMeBot, urgent alerts only): an urgent notification also rings the owner's
+    Telegram when they're away from the PC (idle 10+ min; unknown idle never calls), not in Sleep Mode, and
+    JARVIS_CALL_ON_URGENT is on. callmebot keeps its own daily cap and same-text gap. Runs on a thread: a slow
+    CallMeBot never delays speech."""
+    if not (_env_on("JARVIS_CALL_ON_URGENT", True) and (tgcall.configured() or callmebot.configured())):
+        return
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("JARVIS_TEST_ALLOW_CALLS"):
+        return
+    try:
+        idle = _get_idle_seconds()
+        if idle is None or idle < CALL_WHEN_AWAY_S or sleep_mode.is_active():
+            return
+    except Exception:
+        return
+
+    def _go():
+        ok, what = _place_phone_call("Jarvis here. " + text)
+        log.info("Urgent-alert phone call: %s (%s)", "placed" if ok else "not placed", what)
+
+    threading.Thread(target=_go, name="jarvis-urgent-call", daemon=True).start()
+
+
 def queue_or_deliver_notification(
     text: str,
     urgent: bool = False,
@@ -4991,6 +5088,8 @@ def queue_or_deliver_notification(
     if not text:
         return
     _notify_phone(text, force=force_phone)
+    if urgent:
+        _maybe_call_for_urgent(text)
     refresh_session_context()
     if urgent and sleep_mode.is_active():
         # Remembered so the wake-up recap can report it first. Spoken live too, unless the caller
@@ -7021,6 +7120,7 @@ def _scheduler_steps(now: datetime) -> list:
         ("knowledge graph", _kg_sync_tick, ()),
         ("digest", _digest_tick, ()),
         ("caretaker", _caretaker_tick, ()),
+        ("phones", _phones_tick, ()),
     ]
 
 
@@ -7730,12 +7830,30 @@ def _learn_lesson(transcript: str, steps: list, correction: str = "", previous_r
     digest = lessons.failure_digest(transcript, steps, correction, previous_reply)
     text = _sleep_mail_claude(lessons.LESSON_SYSTEM, digest, 120)
     if not text:
+        log.info("Lesson not written: the model call failed or returned nothing")
         return None
     rid = lessons.add(_memory_db_connect, _memory_db_lock, text, trigger=transcript,
                       source="correction" if correction else "failure")
     if rid:
         log.info("Learned lesson #%s: %r", rid, text[:120])
+    else:
+        log.info("Lesson not stored (empty, NONE, or about rules/addresses): %r", text[:120])
     return rid
+
+
+def _previous_exchange(history: list[dict]) -> tuple[str, str]:
+    """(user request, Jarvis's answer) of the newest complete exchange in history, or ("", "")."""
+    req = rep = ""
+    for m in reversed(history or []):
+        content = m.get("content")
+        if not isinstance(content, str):
+            continue
+        if m.get("role") == "assistant" and not rep and not req:
+            rep = content
+        elif m.get("role") == "user" and rep:
+            req = content
+            break
+    return req, rep
 
 
 def _spawn_lesson(*args) -> None:
@@ -9280,7 +9398,9 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             # use it to send them a phishing link (autonomy's own notices go through another path)
                             "send_to_my_phone",
                             # 2026-10-16: changing settings or stopping work is the owner's call, not an email's
-                            "settings", "stop_background_task", "running_now", "housekeeping"}
+                            "settings", "stop_background_task", "running_now", "housekeeping",
+                            # 2026-10-17: where the owner's phones are is private; an email must not learn or move it
+                            "phone_location"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
@@ -9298,7 +9418,7 @@ _OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_t
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
                         "delegate_research", "caretaker", "settings", "stop_background_task", "running_now",
-                        "housekeeping",
+                        "housekeeping", "phone_location",
                         # memory steers every later prompt: an instruction hidden in a mail must not be written there
                         "remember_fact", "remember_decision", "remember_code_pattern", "update_project_status"}
 
@@ -9440,7 +9560,7 @@ def _capabilities(query: str = "") -> str:
 
     def first_line(desc: str) -> str:
         d = " ".join(str(desc or "").split())
-        return re.split(r"(?<=[.;:])\s", d, 1)[0][:90]
+        return re.split(r"(?<=[.;:])\s", d, 1)[0][:60]  # 109+ tools must still fit the 5000-char page
 
     tools = [(t["name"], first_line(t.get("description"))) for t in AGENT_TOOLS
              if not q or q in t["name"].lower() or q in str(t.get("description") or "").lower()]
@@ -10522,6 +10642,14 @@ def _send_to_my_phone_tool(inp: dict) -> str:
     text = str(inp.get("text") or inp.get("message") or "").strip()
     if not text:
         return "Tool failed: say what the message should say (text)."
+    if str(inp.get("channel") or "").strip().lower() == "call":
+        two_way = tgcall.configured()
+        ok, what = _place_phone_call(text)
+        if not ok:
+            return f"Tool failed: {what}."
+        if two_way:
+            return f"Calling you now: {what}. I'll open with: {callmebot.clean_text(text)[:120]}"
+        return f"{what} and reading: {callmebot.clean_text(text)[:120]} (one-way: you can't talk back on this call)."
     telegram_ok = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
     ntfy_ok = bool(NTFY_TOPIC)
     channel = str(inp.get("channel") or "").strip().lower() or ("telegram" if telegram_ok else "ntfy")
@@ -10551,6 +10679,239 @@ def _send_to_my_phone_tool(inp: dict) -> str:
     return f"Sent to your {' and '.join(sent)}: {text[:120]}{'...' if len(text) > 120 else ''}{note}"
 
 
+
+
+# --- Phone locator (2026-10-17, owner request: "where's my phone, show me visually") --------------------------------
+# The owner's Android phones run the Jarvis Locator app (phone_locator/) and send sealed GPS check-ins through an ntfy
+# topic only Jarvis and the phones can read (jarvis_phone_locate.py). Location is private: the tool is refused in runs
+# that came from or read someone else's text, and the pairing code only ever goes to the dashboard or the owner's
+# own Telegram, never into chat. Positions are named with OpenStreetMap's free reverse geocoder (data exposure: the
+# coordinates go to nominatim.openstreetmap.org, nothing else about the owner).
+PHONE_WAIT_S = 40
+_phone_store = phone_locate.Store(_memory_db_connect)
+
+
+def _phone_locator_config():
+    if not env_bool("JARVIS_PHONE_LOCATOR", True):
+        return None
+    return phone_locate.env_config()
+
+
+def _phone_name_place(dev_id: str, lat: float, lon: float) -> str | None:
+    now = int(time.time() * 1000)
+    k = phone_locate.place_key(lat, lon)
+    place = _phone_store.cached_place(k, 30 * 86400000, now)
+    if place is None:
+        try:
+            place = phone_locate.nominatim_reverse(lat, lon)
+        except Exception as e:
+            log.debug("phone place lookup failed: %s", type(e).__name__)
+            return None
+        if place:
+            _phone_store.cache_place(k, place, now)
+    if place:
+        _phone_store.set_place(dev_id, place)
+    return place
+
+
+def _phone_on_report(rep: dict, status: str) -> None:
+    if rep.get("kind") == "loc" and not _under_pytest():
+        threading.Thread(target=_phone_name_place, args=(rep["id"], rep["lat"], rep["lon"]),
+                         name="phone-place", daemon=True).start()
+    dashboard.notify({"type": "phones_changed", "data": {"id": rep["id"]}})
+    if status == "new":
+        _selfaware_record("system", "phone_paired", f"A new phone checked in: {rep['name']}.")
+
+
+def _under_pytest() -> bool:
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def _selfaware_record(subsystem: str, kind: str, summary: str) -> None:
+    try:
+        selfaware.record(subsystem, kind, summary)
+    except Exception as e:
+        log.debug("self-awareness record failed: %s", e)
+
+
+_phone_locator = phone_locate.Locator(_phone_store, _phone_locator_config, on_report=_phone_on_report)
+
+
+def _phone_targets(words: str) -> tuple[list[dict], list[dict]]:
+    devices = _phone_store.devices()
+    named = phone_locate.match_device(devices, words)
+    return devices, (named or devices)
+
+
+def _phones_page_url() -> str:
+    return f"http://127.0.0.1:{JARVIS_DASHBOARD_PORT}/#/phones"
+
+
+def _show_phones_page(device_id: str = "") -> str:
+    """Opens the cinematic full-screen phone map in an open dashboard tab, or opens the dashboard straight into it."""
+    if not JARVIS_DASHBOARD_ENABLED:
+        return "The dashboard is off, so I can't show the map (turn on JARVIS_DASHBOARD_ENABLED)."
+    if dashboard.client_count() > 0:
+        dashboard.notify({"type": "navigate", "data": {"route": "phones", "cinematic": True, "device": device_id}})
+        return ""
+    url = _phones_page_url() + "?cine=1" + (f"&device={urllib.parse.quote(device_id)}" if device_id else "")
+    try:
+        browsers.open_link(url)
+    except Exception:
+        webbrowser.open(url)
+    return ""
+
+
+def _phone_location_text(action: str, words: str) -> str:
+    cfg = _phone_locator_config()
+    show = action == "show"
+    note = ""
+    if not cfg:
+        note = _show_phones_page() if show else ""
+        msg = ("Your phones aren't paired yet. Open the Phones page on the dashboard, install the Jarvis Locator app "
+               "on each phone and paste the setup code it gives you.")
+        return (note + " " + msg).strip()
+    devices, targets = _phone_targets(words)
+    if not devices:
+        return (note + " No phone has checked in yet. Open the Jarvis Locator app on the phone and tap "
+                "\"Save and start sharing\".").strip()
+    now = int(time.time() * 1000)
+    answered: set[str] = set()
+    if action in ("where", "show"):
+        asked = _phone_locator.ask(targets[0]["id"] if len(targets) == 1 else None)
+        if asked:
+            answered = _phone_locator.wait_for([d["id"] for d in targets], now, PHONE_WAIT_S)
+    fresh = {d["id"]: d for d in _phone_store.devices()}
+    lines = []
+    for d in targets:
+        d = fresh.get(d["id"], d)
+        if d.get("lat") is not None and not d.get("place"):
+            d["place"] = _phone_name_place(d["id"], d["lat"], d["lon"])
+        line = phone_locate.describe(d, int(time.time() * 1000))
+        if action in ("where", "show") and d["id"] not in answered:
+            line += " It didn't answer just now (switched off, no internet, or asleep), so that's its last check-in."
+        lines.append(line)
+    if show:
+        located = [fresh.get(d["id"], d) for d in targets if fresh.get(d["id"], d).get("lat") is not None]
+        best = max(located, key=lambda d: d.get("fix_ts") or 0)["id"] if located else ""
+        note = _show_phones_page(best)
+    if show and not note:
+        lines.append("It's on the map on the dashboard.")
+    return " ".join(([note] if note else []) + lines)
+
+
+def _phone_location_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "where").lower()
+    if action not in ("where", "last", "show", "setup"):
+        return "Tool failed: action must be where, last, show or setup."
+    if action == "setup":
+        problem = _owner_here_problem("sending the phone pairing code")
+        if problem:
+            return problem
+        res = _phones_send_setup()
+        return res["message"] if res.get("ok") else "Tool failed: " + res.get("error", "couldn't send it")
+    if not _owner_request_now():
+        return "Tool failed: where the phones are is only told to the owner's own request."
+    return _phone_location_text(action, str(inp.get("phone") or ""))
+
+
+def _phones_pairing(create: bool) -> tuple | None:
+    """(server, topic, key) from .env, made and saved once when `create` is set."""
+    cfg = phone_locate.env_config()
+    if cfg or not create:
+        return cfg
+    p = phone_locate.new_pairing()
+    for k, v in ((phone_locate.ENV_TOPIC, p["topic"]), (phone_locate.ENV_KEY, p["key"])):
+        res = settings.set_setting(k, v)
+        if not res.get("ok"):
+            return None
+    _selfaware_record("system", "phone_pairing", "Made a new pairing for the phone locator.")
+    return phone_locate.env_config()
+
+
+def _phones_send_setup() -> dict:
+    cfg = _phones_pairing(create=True)
+    if not cfg:
+        return {"ok": False, "error": "couldn't save the pairing in .env"}
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
+        return {"ok": False, "error": "Telegram isn't set up; copy the code from the dashboard Phones page instead"}
+    code = phone_locate.setup_code(*cfg)
+    ok = _telegram_send("Jarvis Locator setup code (paste it into the app, keep it private):\n\n" + code)
+    _log_action_audit("phone_locator", {"action": "send_setup"}, "(code not logged)", "sent" if ok else "failed")
+    return ({"ok": True, "message": "I sent the setup code to your Telegram. Copy it into the Jarvis Locator app."}
+            if ok else {"ok": False, "error": "Telegram didn't accept the message"})
+
+
+@_feature("phones")
+def _feature_phones(action: str, payload: dict):
+    """Phones page: GET = paired?, every phone's latest position and today's trail (never the key). POST ask /
+    pair (make the pairing once) / setup_code (show it, dashboard only) / send_setup / forget / repair."""
+    if action == "get":
+        now = int(time.time() * 1000)
+        devices = _phone_store.devices()
+        for d in devices:
+            d["trail"] = _phone_store.trail(d["id"], now - 86400000)
+            d["ago"] = phone_locate.ago(d.get("fix_ts"), now)
+            d["text"] = phone_locate.describe(d, now)
+        return {"paired": phone_locate.env_config() is not None,
+                "enabled": env_bool("JARVIS_PHONE_LOCATOR", True),
+                "connected": _phone_locator.connected, "error": _phone_locator.last_error,
+                "telegram": bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID), "devices": devices, "now": now}
+    if action == "ask":
+        dev = str(payload.get("id") or "") or None
+        return {"ok": _phone_locator.ask(dev)}
+    if action in ("pair", "setup_code"):
+        cfg = _phones_pairing(create=True)
+        if not cfg:
+            return {"ok": False, "error": "Couldn't save the pairing in .env."}
+        _phone_locator.start()
+        return {"ok": True, "code": phone_locate.setup_code(*cfg) if action == "setup_code" else None}
+    if action == "send_setup":
+        return _phones_send_setup()
+    if action == "forget":
+        return {"ok": _phone_store.forget(str(payload.get("id") or ""))}
+    if action == "repair":
+        # a new topic + key: every phone has to be set up again (for a lost phone or a leaked code)
+        for k in (phone_locate.ENV_TOPIC, phone_locate.ENV_KEY):
+            settings.set_setting(k, "")
+        cfg = _phones_pairing(create=True)
+        return {"ok": bool(cfg), "code": phone_locate.setup_code(*cfg) if cfg else None}
+    return {"ok": False, "error": f"unknown action {action}"}
+
+
+_phone_quiet_state = {"last": 0.0}
+
+
+def _phones_tick() -> None:
+    """A phone that stops checking in for JARVIS_PHONE_QUIET_MIN minutes (default 120, 0 = off) is noted once, quietly
+    (the 'what did I miss' inbox): it may be off, out of battery, or the app was stopped."""
+    if time.time() - _phone_quiet_state["last"] < 300 or not _phone_locator_config():
+        return
+    _phone_quiet_state["last"] = time.time()
+    quiet_min = env_int("JARVIS_PHONE_QUIET_MIN", 120)
+    if quiet_min <= 0:
+        return
+    now = int(time.time() * 1000)
+    for d in _phone_store.devices():
+        last = d.get("recv_ts") or 0
+        if last and not d.get("quiet_told") and now - last > quiet_min * 60000:
+            _phone_store.mark_quiet_told(d["id"])
+            queue_or_deliver_notification(f"{d.get('name') or 'A phone'} hasn't checked in since "
+                                          f"{phone_locate.ago(last, now)}: it may be off, out of battery or offline.")
+
+
+_PHONE_LOCATION_RE = re.compile(r"\b(?:where(?:'s| is| are)\b.{0,25}\bphones?|(?:find|locate|track)\b.{0,15}\bphones?|"
+                                r"phones? (?:location|on (?:the|a) map)|locator)\b", re.I)
+
+
+def _phone_where_reply(transcript: str) -> str:
+    show = bool(re.search(r"\b(?:show|visual(?:ly)?|map|see (?:it|them|where))\b", transcript or "", re.I))
+    if not _owner_request_now():
+        return "I only say where your phones are when you ask me yourself."
+    if _phone_locator_config() and _current_command_source() != "phone" and not show:
+        _start_announcement("Let me ask your phones.")
+        _await_ack(6.0)
+    return _phone_location_text("show" if show else "where", transcript)
 
 
 # --- Jarvis managing what the owner can manage (2026-10-16, "see and manage everything I can") -------------------
@@ -10761,7 +11122,7 @@ HOUSEKEEPING_ACTIONS = {
 }
 
 
-_BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
+_BATCH_TOOL_HANDLERS.update({"phone_location": _phone_location_tool, "send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
                              "watches": _watches_tool, "personality": _personality_tool,
                              "settings": _settings_tool, "stop_background_task": _stop_background_task_tool,
                              "running_now": _running_now_tool, "housekeeping": _housekeeping_tool})
@@ -11250,16 +11611,54 @@ class _McpServerHandle:
         self.error: str | None = None
 
 
-async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle") -> None:
+def _mcp_error_text(e: BaseException) -> str:
+    """The real reason behind an MCP failure. anyio wraps it in an ExceptionGroup, so the log only said "unhandled
+    errors in a TaskGroup (1 sub-exception)" (2026-10-16, Windows-MCP failing with no visible cause)."""
+    seen = 0
+    while isinstance(e, BaseExceptionGroup) and e.exceptions and seen < 10:
+        e, seen = e.exceptions[0], seen + 1
+    text = str(e).strip()
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
+def _mcp_connection_closed(e: BaseException) -> bool:
+    code = getattr(e, "code", None)
+    if code is None:
+        code = getattr(getattr(e, "error", None), "code", None)
+    try:
+        from mcp.types import CONNECTION_CLOSED
+    except Exception:
+        CONNECTION_CLOSED = -32000
+    return code == CONNECTION_CLOSED or "connection closed" in str(e).lower()
+
+
+def _mcp_mark_down(server_name: str, cfg: dict, handle: "_McpServerHandle") -> None:
+    """A server that was connected and then stopped (crashed, killed, its uvx/npx process ended) goes on the retry
+    list. Before 2026-10-16 it stayed "connected" on the dashboard and every call answered "Connection closed" until
+    Jarvis was restarted: the Windows-MCP UI tools died that way."""
+    with _mcp_lock:
+        if _mcp_handles.get(server_name) is not handle:
+            return  # a newer connection already replaced it
+        # due at the next scheduler tick, not 2 minutes from now
+        _mcp_failed_servers[server_name] = {
+            "cfg": cfg, "last_attempt": datetime.now() - timedelta(seconds=MCP_RETRY_INTERVAL_S)}
+    log.warning("MCP server %r stopped (%s); reconnecting.", server_name, handle.error)
+
+
+async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle", server_name: str = "") -> None:
     """Owns one MCP server's stdio connection for the entire process lifetime. The
     ClientSession/stdio transport must stay open in the *same* still-running coroutine/task
     that created it — anyio's cancel scopes are bound to the task that entered them, so once
     that task returns, the connection is torn down even if Python objects referencing the
     session are kept alive elsewhere. Tool calls are therefore dispatched into this
-    long-running task via a queue instead of re-entering the session from a separate coroutine."""
+    long-running task via a queue instead of re-entering the session from a separate coroutine.
+
+    When the server process goes away the session only answers "Connection closed" to each call, so that error ends
+    this task: the handle is marked dead, waiting calls are failed and the server is put on the retry list."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
+    connected = marked = False
     try:
         params = StdioServerParameters(
             command=str(cfg.get("command") or ""),
@@ -11272,6 +11671,7 @@ async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle") -> None:
                 tools_result = await session.list_tools()
                 handle.tools = list(tools_result.tools)
                 handle.ready.set()
+                connected = True
                 while True:
                     tool_name, arguments, future = await handle.queue.get()
                     try:
@@ -11279,11 +11679,32 @@ async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle") -> None:
                         if not future.done():
                             future.set_result(result)
                     except Exception as e:
+                        closed = _mcp_connection_closed(e)
+                        if closed:
+                            # dead before the caller hears about it, so its next call already reconnects
+                            handle.error = _mcp_error_text(e)
+                            if server_name:
+                                _mcp_mark_down(server_name, cfg, handle)
+                                marked = True
                         if not future.done():
                             future.set_exception(e)
+                        if closed:
+                            raise
     except Exception as e:
-        handle.error = str(e)
+        handle.error = handle.error or _mcp_error_text(e)
+    finally:
+        # also reached on cancellation (BaseException): the handle must never look alive with nobody reading its queue
+        handle.error = handle.error or "the server stopped"
         handle.ready.set()  # unblock the connect-time waiter even on failure
+        while not handle.queue.empty():
+            try:
+                _tool, _args, future = handle.queue.get_nowait()
+            except Exception:
+                break
+            if not future.done():
+                future.set_exception(RuntimeError(f"MCP server stopped: {handle.error}"))
+        if connected and server_name and not marked:
+            _mcp_mark_down(server_name, cfg, handle)
 
 
 async def _mcp_connect_one(server_name: str, cfg: dict) -> bool:
@@ -11295,7 +11716,7 @@ async def _mcp_connect_one(server_name: str, cfg: dict) -> bool:
         return False
     handle = _McpServerHandle()
     _mcp_handles[server_name] = handle
-    asyncio.get_running_loop().create_task(_mcp_server_supervisor(cfg, handle))
+    asyncio.get_running_loop().create_task(_mcp_server_supervisor(cfg, handle, server_name))
     try:
         await asyncio.wait_for(handle.ready.wait(), timeout=MCP_STARTUP_TIMEOUT_S)
     except asyncio.TimeoutError:
@@ -11304,6 +11725,12 @@ async def _mcp_connect_one(server_name: str, cfg: dict) -> bool:
     if handle.error:
         log.warning("Failed to connect MCP server %r: %s", server_name, handle.error)
         return False
+    with _mcp_lock:
+        # a reconnect replaces that server's tools; leaving the old copies would send duplicate tool names
+        old = {n for n, (srv, _real) in _mcp_tool_index.items() if srv == server_name}
+        for n in old:
+            _mcp_tool_index.pop(n, None)
+        _mcp_tool_schemas[:] = [t for t in _mcp_tool_schemas if t.get("name") not in old]
     for tool in handle.tools:
         exposed_name = f"mcp_{server_name}_{tool.name}"[:128]
         _mcp_tool_index[exposed_name] = (server_name, tool.name)
@@ -11581,18 +12008,44 @@ def _mcp_auth_error_hint(server_name: str, text: str) -> str | None:
     )
 
 
+_mcp_reconnect_tried: dict[str, float] = {}
+MCP_CALL_RECONNECT_GAP_S = 20
+
+
+def _mcp_reconnect_if_down(server_name: str) -> None:
+    """A call to a server that already stopped reconnects it first instead of failing (at most once per
+    MCP_CALL_RECONNECT_GAP_S, so a server that won't start doesn't add a wait to every call). Only before the call:
+    a call that was cut off mid-way is never repeated (it may already have typed or clicked)."""
+    handle = _mcp_handles.get(server_name)
+    if handle is not None and handle.error is None:
+        return
+    now = time.monotonic()
+    if now - _mcp_reconnect_tried.get(server_name, -1e9) < MCP_CALL_RECONNECT_GAP_S:
+        return
+    _mcp_reconnect_tried[server_name] = now
+    with _mcp_lock:
+        info = _mcp_failed_servers.get(server_name)
+        if info is None:
+            return
+        info["last_attempt"] = datetime.now() - timedelta(seconds=MCP_RETRY_INTERVAL_S + 1)
+    _retry_failed_mcp_servers(datetime.now())
+
+
 def execute_mcp_tool(exposed_name: str, tool_input: dict) -> str:
     entry = _mcp_tool_index.get(exposed_name)
     if not entry:
         return f"Unknown MCP tool: {exposed_name!r}"
     server_name, real_name = entry
+    _mcp_reconnect_if_down(server_name)
     try:
         result = _mcp_run_coro(
             _mcp_call_tool_async(server_name, real_name, tool_input or {}),
             timeout=MCP_TOOL_CALL_TIMEOUT_S,
         )
+    except TimeoutError:
+        return f"MCP tool call failed: the {server_name} server didn't answer within {MCP_TOOL_CALL_TIMEOUT_S} s."
     except Exception as e:
-        return f"MCP tool call failed: {e}"
+        return f"MCP tool call failed: {_mcp_error_text(e)}"
     parts = [b.text for b in (getattr(result, "content", None) or []) if getattr(b, "text", None)]
     text = " ".join(parts) or "(no output)"
     hint = _mcp_auth_error_hint(server_name, text)
@@ -14569,7 +15022,7 @@ _SELF_RECORD_RE = re.compile(
     r"last time|previous(?:ly)?|can you|are you able|what can you)\b", re.I)
 
 
-_MY_PHONE_RE = re.compile(r"\b(?:telegram|ntfy|my phone|text me|message me|ping me|notify me)\b", re.I)
+_MY_PHONE_RE = re.compile(r"\b(?:telegram|ntfy|my phone|text me|message me|ping me|notify me|call me|ring me|phone me)\b", re.I)
 
 
 def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
@@ -14580,6 +15033,8 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core |= {"dashboard_data", "memory_search"}
     if _MY_PHONE_RE.search(transcript or ""):
         core.add("send_to_my_phone")
+    if _PHONE_LOCATION_RE.search(transcript or ""):
+        core.add("phone_location")
     if _BROWSER_TAB_RE.search(transcript or "") or _browser_in_front():
         core.add("browser_tabs")
     if _CARETAKER_RE.search(transcript or ""):
@@ -16296,8 +16751,12 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
         {"type": "text", "text": transcript}]
     # An unattended run (scheduled skill, queued task, watch, job: record_history=False) never sees the conversation:
     # found live 2026-10-16, a scheduled Gmail check read the user's chat about a speed monitor and acted on it.
-    history = reqctx.pick_history(_history_snapshot(), transcript) if record_history else []
+    full_history = _history_snapshot() if record_history else []
+    history = reqctx.pick_history(full_history, transcript) if record_history else []
     messages: list[dict] = history + [{"role": "user", "content": first}]
+    # Lessons memory: the exchange BEFORE this one (read now, before this turn is appended to history), so a
+    # correction's lesson sees the original request and the wrong answer (debug 2026-10-16: it only saw its own new reply).
+    prev_request, prev_reply = _previous_exchange(full_history)
     reply_parts: list[str] = []
     last_tool_result_text = ""  # fallback if Claude ends a turn with only a tool call, no text
     narrated = 0
@@ -16306,6 +16765,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     any_tool_failed = False
     handoff_nudged = False
     steps: list[tuple[str, str, str]] = []  # (tool, input, result) for lessons memory
+    false_claims: list[str] = []  # claims the claim checker caught (a mistake worth a lesson too)
     find_calls = 0
     # tools_override (Speed Upgrade cloud-latency pass, Phase D): a handful of simple intents
     # (see _reduced_tools_for_intent) pass a small hand-picked list here instead of the full
@@ -16490,6 +16950,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
                 unbacked = _unbacked_claims(claim, succeeded_tool_names + _recent_succeeded_tools(transcript)) + ongoing
             if unbacked and not claim_nudged and iteration < MAX_AGENT_ITERATIONS - 1:
                 claim_nudged = True
+                false_claims.append(claim[:200])
                 log.warning("Reply claims %s with no backing tool call; nudging: %r", unbacked, claim[:120])
                 del reply_parts[len(reply_parts) - len(texts):]
                 if streamed_this_round:
@@ -16597,15 +17058,16 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     # Lessons memory: learn from a failed tool or from the user correcting the previous answer.
     # Only for real user commands (not autonomy/scheduled runs), off the reply path.
     if _current_command_source() in ("voice", "text", "dashboard", "phone") and tools_override is None:
-        correction = transcript if (lessons.CORRECTION_RE.search(transcript) or (tone and tone.get("repeated"))) else ""
-        if any_tool_failed or correction:
-            prev = ""
-            for m in reversed(_history_snapshot()):
-                if m.get("role") == "assistant" and isinstance(m.get("content"), str):
-                    prev = m["content"]
-                    break
+        correction = transcript if (lessons.is_correction(transcript) or (tone and tone.get("repeated"))) else ""
+        if any_tool_failed or correction or false_claims:
+            lesson_steps = list(steps) + [("(claim check)", "", "Jarvis said it had done this but never called a tool "
+                                           f"that does it: {c}") for c in false_claims]
             try:
-                _spawn_lesson(transcript, steps, correction, prev)
+                if correction and prev_request:
+                    # The lesson is about the earlier request: what Jarvis did then, and what the user said was wrong.
+                    _spawn_lesson(prev_request, lesson_steps, correction, prev_reply)
+                else:
+                    _spawn_lesson(transcript, lesson_steps, correction, prev_reply if correction else "")
             except Exception as e:
                 log.debug("lesson spawn failed: %s", e)
     return reply
@@ -17169,7 +17631,7 @@ def _volume_reply(transcript: str) -> str | None:
 # so it runs after the dashboard session has started (_SLOW_INTENTS) and speaks a lead-in first; the test waits for
 # that line to finish, because speech streaming in would compete with the test for the connection.
 SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
-_SLOW_INTENTS = {"speedtest", "update"}
+_SLOW_INTENTS = {"speedtest", "update", "phone_where"}
 # Quick answers that keep their exact wording: a replay, a rewrite, silence, the switch itself (already in the new voice).
 _UNFLAVORED_INTENTS = {"repeat", "shorter", "hush", "personality", "running_cancel"}
 
@@ -17350,6 +17812,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return _update_and_restart_reply(transcript)
     if intent == "speedtest":
         return _speed_test_reply(transcript)
+    if intent == "phone_where":
+        return _phone_where_reply(transcript)
     if intent == "self_report":
         return _self_report_tool({})
     if intent == "running":
@@ -18072,6 +18536,8 @@ def main() -> int:
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         log.info("Phone (Telegram): pushing notifications and listening for chat %s.", TELEGRAM_CHAT_ID)
         threading.Thread(target=_telegram_listen_loop, daemon=True, name="telegram-listener").start()
+    if env_bool("JARVIS_PHONE_LOCATOR", True):
+        _phone_locator.start()  # waits quietly until a phone is paired from the dashboard Phones page
 
     if JARVIS_DASHBOARD_ENABLED:
         # Double-checked (Phase 0/2): localhost-only, no auth (user-accepted for a single-user
@@ -18139,6 +18605,10 @@ def main() -> int:
             log.warning("Dashboard failed to start; Jarvis continues without it: %s", e)
 
     _preload_mcp_async()
+    try:
+        tgcall.start_inbound(_tgcall_hooks, on_done=_tgcall_inbound_done)  # owner rings the spare account; JARVIS_TGCALL_INBOUND=0 off
+    except Exception as e:  # noqa: BLE001
+        log.warning("Incoming-call listener not started: %s", e)
     threading.Thread(target=_warm_embeddings, name="jarvis-embed-warm", daemon=True).start()
     clip_history.start(_memory_db_connect, _memory_db_lock)  # A1; JARVIS_CLIPBOARD_HISTORY=0 turns it off
     _fg_tracker.start()  # B3: last real app window, for app shortcuts and meeting auto-start

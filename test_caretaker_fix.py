@@ -221,3 +221,17 @@ def test_playbook_respects_the_daily_move_cap(tmp_path, home, store, monkeypatch
     big = make(home / "Downloads" / "big.iso", data=b"0" * (60 * MB), age_days=90)
     r = fx.fix_storage(store, "disk:C:", make_env(tmp_path, home, [0.05]))
     assert big.exists() and r["blocked"] and "today" in r["blocked"]
+
+
+def test_cache_roots_never_include_uvs_environment_cache(tmp_path, monkeypatch):
+    """uv's archive-v0 holds the unpacked environments `uvx` runs tools from; deleting old single files there broke
+    Windows-MCP ("No module named 'windows_mcp.__main__'", 2026-10-16)."""
+    import jarvis_caretaker_probe as probe
+    local = tmp_path / "Local"
+    for d in ("Temp", "uv/cache/archive-v0", "npm-cache"):
+        (local / d).mkdir(parents=True)
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.delenv("APPDATA", raising=False)
+    roots = [str(r) for r in probe.cache_roots()]
+    assert any(r.endswith("npm-cache") for r in roots)
+    assert not any("uv" in Path(r).parts for r in roots)

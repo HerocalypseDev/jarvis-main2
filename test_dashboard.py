@@ -528,3 +528,11 @@ def test_briefing_route_uses_registered_provider(client, monkeypatch):
     assert client.get("/api/briefing?kind=morning").json()["kind"] == "morning"
     assert client.get("/api/briefing?kind=anything").json()["kind"] == "urgent"
     assert client.get("/api/briefing", headers={"Host": "evil.example"}).status_code == 403
+
+
+def test_page_files_are_rechecked_on_every_load(client):
+    # A cached old app.js (without the new "phones" route) sent the Phones page back to Home.
+    r = client.get("/app.js")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
+    assert client.get("/").headers.get("cache-control") == "no-cache"

@@ -1,0 +1,39 @@
+plugins { id 'com.android.application' }
+
+// A fixed signing key (locator.keystore, next to this file) lets a newer APK install over an older one.
+// It is a sideload-only key for the owner's own phones, not a Play Store key. Without it (the public
+// copy) the normal debug key is used.
+def ks = file('locator.keystore')
+
+android {
+    namespace 'com.jarvis.locator'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.jarvis.locator'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+    signingConfigs {
+        if (ks.exists()) {
+            locator {
+                storeFile ks
+                storePassword 'jarvislocator'
+                keyAlias 'locator'
+                keyPassword 'jarvislocator'
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig ks.exists() ? signingConfigs.locator : signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError false; checkReleaseBuilds false }
+}

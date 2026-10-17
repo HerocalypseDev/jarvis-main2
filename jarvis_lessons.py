@@ -27,11 +27,24 @@ MAX_ROWS = 200
 MAX_LEN = 200
 PROMPT_LIMIT = 3
 
-# A user turn that corrects the previous answer.
+# A user turn that corrects the previous answer. Checked after a leading "hey Jarvis," / "Jarvis," / "um," (push-to-talk
+# transcripts keep the name), so "Jarvis, that's wrong" counts (debug 2026-10-16: most real corrections were missed).
 CORRECTION_RE = re.compile(
-    r"^\s*(?:no[,.!\s]|nope\b|wrong\b|that'?s (?:wrong|not (?:it|right|what))|not that\b|i (?:said|meant)\b|"
-    r"you (?:didn'?t|did not|forgot|misunderstood|got it wrong)|that (?:didn'?t|did not) work|it didn'?t work|"
-    r"why did you\b|stop doing\b|don'?t do that\b)", re.I)
+    r"^\s*(?:no[,.!\s]|nope\b|wrong\b|incorrect\b|"
+    r"(?:that|it|this)(?:'?s| is| was) (?:wrong|incorrect|not (?:it|right|correct|what)|the wrong)|not that\b|"
+    r"(?:that'?s |it'?s |this is )?not what i (?:asked|wanted|said|meant)|i (?:said|meant|told you|asked (?:you )?(?:for|to))\b|"
+    r"you (?:didn'?t|did not|forgot|misunderstood|got (?:it|that) wrong|did (?:it|that|this) wrong|made a mistake|"
+    r"(?:'?re|are) wrong|messed (?:it |that )?up|keep (?:doing|making|getting))|"
+    r"(?:that|it) (?:didn'?t|did not|doesn'?t|does not) work|"
+    r"why did you\b|why didn'?t you\b|stop doing\b|don'?t do that\b|try (?:it )?again\b|do it (?:again|properly|right)\b|"
+    r"wrong (?:one|file|folder|person|app|window|answer)\b)", re.I)
+_LEAD_RE = re.compile(r"^\s*(?:(?:hey|ok|okay|oi|um+|uh+|erm)[,.!\s]+)*(?:jarvis\b[,.!]?\s*)?", re.I)
+
+
+def is_correction(text: str) -> bool:
+    """Whether a user turn corrects Jarvis's previous answer (after any leading "hey Jarvis,")."""
+    t = _LEAD_RE.sub("", text or "", count=1)
+    return bool(CORRECTION_RE.search(t))
 
 # Never stored: anything that could loosen a safety rule if read back later as "advice".
 _FORBIDDEN_RE = re.compile(
@@ -187,7 +200,7 @@ def failure_digest(transcript: str, steps: list[tuple[str, str, str]], correctio
     """The DATA block for the lesson call: the command, each (tool, input, result) and any correction."""
     lines = [f"User command: {transcript[:400]}"]
     if previous_reply:
-        lines.append(f"Jarvis's previous answer: {previous_reply[:400]}")
+        lines.append(f"Jarvis's answer to it: {previous_reply[:400]}")
     if correction:
         lines.append(f"User's correction: {correction[:300]}")
     for name, inp, result in steps[-8:]:
