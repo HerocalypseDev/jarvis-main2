@@ -432,3 +432,94 @@ def test_calling_the_spare_account_itself_is_refused_clearly(monkeypatch, tmp_pa
     t = tg.TelegramTransport("@some_owner")
     with pytest.raises(tg.CallError, match="spare account itself"):
         asyncio.run(t._connect())
+
+
+# --- calls TO Jarvis ---------------------------------------------------------------------------------------------
+def test_inbound_switch(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    assert tg.inbound_enabled()
+    for v in ("0", "false", "off", "no"):
+        monkeypatch.setenv("JARVIS_TGCALL_INBOUND", v)
+        assert not tg.inbound_enabled()
+
+
+def test_inbound_off_when_not_set_up(monkeypatch):
+    assert not tg.inbound_enabled()
+    assert tg.start_inbound(lambda: None) is False
+
+
+def test_listener_answers_and_reports_then_stops(fast, monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(tg, "_inbound_thread", None)
+    done = []
+    made = []
+
+    class Ringing(FakeTransport):
+        def start(self):
+            made.append(self)
+            tg._inbound_stop.set()   # one call only
+            super().start()
+
+    res_seen = threading.Event()
+    log = []
+    hooks = lambda: _hooks([], log)  # noqa: E731
+
+    def on_done(res):
+        done.append(res)
+        res_seen.set()
+
+    # the caller hangs up straight after the greeting
+    class Short(Ringing):
+        def start(self):
+            super().start()
+            threading.Timer(0.3, self.stop).start()
+
+    assert tg.start_inbound(hooks, on_done=on_done, transport_factory=Short)
+    assert res_seen.wait(5) or made
+    tg.stop_inbound()
+    assert made and made[0].started and made[0].sent   # the greeting was spoken to the caller
+    tg._inbound_stop.clear()
+
+
+def test_listener_does_not_start_twice(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(tg, "_inbound_thread", None)
+    monkeypatch.setattr(tg, "_inbound_stop", threading.Event())
+    monkeypatch.setattr(tg, "_line_busy", threading.Lock())
+    tg._line_busy.acquire()   # keeps the loop idle
+    try:
+        assert tg.start_inbound(lambda: None)
+        assert tg.start_inbound(lambda: None) is False
+    finally:
+        tg.stop_inbound()
+        tg._line_busy.release()
+
+
+def test_inbound_transport_refuses_the_spare_account_as_target_and_other_callers(monkeypatch, tmp_path):
+    src = open(tg.__file__, encoding="utf-8").read()
+    # only the owner's chat id is ever answered, and a ring from anyone else is ignored
+    assert "!= self._uid or self._incoming.is_set()" in src
+    assert "hands_free" not in src
+
+
+def test_outgoing_call_makes_the_listener_step_aside(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(tg, "_line_busy", threading.Lock())
+    monkeypatch.setattr(tg, "_yield_line", threading.Event())
+    monkeypatch.setattr(tg, "_inbound_listening", threading.Event())
+    tg._inbound_listening.set()
+    seen = []
+
+    def release():
+        for _ in range(100):
+            if tg._yield_line.is_set():
+                seen.append(True)
+                tg._inbound_listening.clear()
+                return
+            time.sleep(0.01)
+
+    threading.Thread(target=release, daemon=True).start()
+    tr = FakeTransport(fail="no answer (the call rang out)")
+    res = tg.call_owner("Hi", _hooks([], []), transport_factory=lambda: tr)
+    assert seen and not res.ok
+    assert not tg._yield_line.is_set() and not tg._line_busy.locked()

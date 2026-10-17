@@ -154,6 +154,10 @@ def idle_seconds() -> int:
 _lock = threading.Lock()
 _calls: list[tuple[float, str]] = []
 _line_busy = threading.Lock()
+_yield_line = threading.Event()        # an outgoing call wants the Telegram session: the inbound listener steps aside
+_inbound_listening = threading.Event()  # set while the inbound listener holds the Telegram session
+_inbound_stop = threading.Event()
+_inbound_thread: threading.Thread | None = None
 
 
 def reserve(opening: str) -> str | None:
@@ -650,13 +654,180 @@ class TelegramTransport:
             th.join(timeout=10)
 
 
+# --- calls TO Jarvis: the spare account answers, but only for the owner's main account ---------------------------------
+def inbound_enabled() -> bool:
+    return configured() and os.environ.get("JARVIS_TGCALL_INBOUND", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+class InboundTransport(TelegramTransport):
+    """Waits (connected, nothing ringing) for a call from the owner's main account, answers it, then behaves like the
+    outgoing transport. Calls from any other account are never answered (they just ring out)."""
+
+    def __init__(self, to: str, should_stop: Callable[[], bool] = lambda: False):
+        super().__init__(to)
+        self.should_stop = should_stop
+        self._incoming = threading.Event()
+        self._answered = threading.Event()
+        self._holds_line = False
+
+    async def _connect(self) -> None:
+        try:
+            from telethon import TelegramClient
+            from pytgcalls import PyTgCalls, filters
+            from pytgcalls.types import (AudioQuality, CallConfig, ChatUpdate, Device, Direction, ExternalMedia,
+                                         MediaStream, RecordStream)
+        except ImportError as e:
+            raise CallError(f"the call packages aren't installed ({INSTALL_HINT})") from e
+        incoming_status = getattr(ChatUpdate.Status, "INCOMING_CALL", None)
+        if incoming_status is None:
+            raise CallError("this py-tgcalls version can't answer incoming calls")
+        self._device = Device
+        client = TelegramClient(str(session_path()), api_id(), api_hash())
+        self._client = client
+        await client.connect()
+        if not await client.is_user_authorized():
+            raise CallError("the spare account isn't logged in: run `python jarvis_tgcall.py login` on the PC")
+        entity = await client.get_entity(self.to)
+        if type(entity).__name__ != "User":
+            raise CallError(f"{self.to} is not a person's account (it resolved to a {type(entity).__name__})")
+        me = await client.get_me()
+        if me is not None and int(entity.id) == int(me.id):
+            raise CallError(f"{self.to} is the spare account itself: set TGCALL_TARGET to your MAIN account")
+        await client.get_input_entity(entity)
+        self._uid = int(entity.id)
+        app = PyTgCalls(client)
+        self._app = app
+
+        @app.on_update(filters.stream_frame(Direction.INCOMING))
+        async def _incoming_frames(_, update):
+            for fr in update.frames:
+                if getattr(fr.info, "width", 0):
+                    continue
+                self.frames_in += 1
+                try:
+                    self.frames.put_nowait(bytes(fr.frame))
+                except queue.Full:
+                    pass
+
+        @app.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
+        async def _left(_, update):
+            self.closed.set()
+
+        @app.on_update(filters.chat_update(incoming_status))
+        async def _ring(_, update):
+            if int(getattr(update, "chat_id", 0) or 0) != self._uid or self._incoming.is_set():
+                return                                      # not the owner: never answered
+            if not _line_busy.acquire(blocking=False):
+                return                                      # already on a call
+            self._holds_line = True
+            self._incoming.set()
+            try:
+                stream = MediaStream(ExternalMedia.AUDIO, audio_parameters=AudioQuality.HIGH,
+                                     video_flags=MediaStream.Flags.IGNORE)
+                await app.play(self._uid, stream, CallConfig(timeout=RING_TIMEOUT_S))   # answers the ringing call
+                await app.record(self._uid, RecordStream(audio=True, audio_parameters=AudioQuality.HIGH))
+                self._answered.set()
+            except Exception as e:  # noqa: BLE001
+                self._error = explain(e)
+                log.info("Could not answer the incoming call: %s: %s", type(e).__name__, e)
+                self.closed.set()
+
+        await app.start()
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="jarvis-tgcall-in", daemon=True)
+        self._thread.start()
+        if not self._ready.wait(60):
+            self.stop()
+            raise CallError("Telegram took too long to connect")
+        if self._error:
+            self.stop()
+            raise CallError(self._error)
+        _inbound_listening.set()
+        while not self._incoming.is_set():
+            if self.should_stop() or self.closed.is_set():
+                self.stop()
+                raise CallError("listening stopped")
+            time.sleep(0.3)
+        for _ in range(int((RING_TIMEOUT_S + 15) / 0.2)):
+            if self._answered.is_set():
+                return
+            if self.closed.is_set() or self._error:
+                break
+            time.sleep(0.2)
+        self.stop()
+        raise CallError(self._error or "the call ended before it could be answered")
+
+    def stop(self) -> None:
+        super().stop()
+        _inbound_listening.clear()
+        if self._holds_line:
+            self._holds_line = False
+            try:
+                _line_busy.release()
+            except RuntimeError:
+                pass
+
+
+def start_inbound(hooks_factory: Callable[[], "Hooks"], on_done: Callable[[CallResult], None] | None = None,
+                  transport_factory=None) -> bool:
+    """Starts the background listener (once). Returns whether it started. A call from the owner is answered with a short
+    greeting and then handled exactly like an outgoing one; the listener steps aside while an outgoing call is placed."""
+    global _inbound_thread
+    if not inbound_enabled() or (_inbound_thread is not None and _inbound_thread.is_alive()):
+        return False
+    _inbound_stop.clear()
+
+    def _loop() -> None:
+        failures = 0
+        while not _inbound_stop.is_set():
+            if not inbound_enabled() or _yield_line.is_set() or _line_busy.locked():
+                _inbound_stop.wait(2)
+                continue
+            tr = (transport_factory or (lambda: InboundTransport(
+                target(), lambda: _yield_line.is_set() or _inbound_stop.is_set())))()
+            try:
+                res = Conversation(tr, hooks_factory(), "Hi, it's Jarvis. Go ahead.").run()
+            except Exception as e:  # noqa: BLE001
+                res = CallResult(False, explain(e))
+            if res.turns or res.ok:
+                failures = 0
+                log.info("Incoming Telegram call: %s (%.0fs, %d turns)", res.reason, res.seconds, res.turns)
+                if on_done:
+                    try:
+                        on_done(res)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("Call follow-up failed: %s", e)
+            elif res.reason != "listening stopped":
+                failures += 1
+                if failures in (1, 5):
+                    log.info("Incoming-call listener could not start: %s", res.reason)
+                _inbound_stop.wait(min(300, 20 * failures))   # back off: never hammer Telegram's login
+            _inbound_stop.wait(1)
+
+    _inbound_thread = threading.Thread(target=_loop, name="jarvis-tgcall-listener", daemon=True)
+    _inbound_thread.start()
+    return True
+
+
+def stop_inbound() -> None:
+    _inbound_stop.set()
+
+
 # --- placing a call from Jarvis ------------------------------------------------------------------------------------
 def call_owner(opening: str, hooks: Hooks, transport_factory=None) -> CallResult:
     """Blocking: rings the owner and talks until the call ends. Never raises."""
     todo = missing()
     if todo:
         return CallResult(False, "calls aren't set up yet: " + "; ".join(todo))
+    if _inbound_listening.is_set():
+        _yield_line.set()                                    # the listener holds the session file; ask it to let go
+        for _ in range(60):
+            if not _inbound_listening.is_set():
+                break
+            time.sleep(0.25)
     if not _line_busy.acquire(blocking=False):
+        _yield_line.clear()
         return CallResult(False, "already on a call")
     opening = (opening or "").strip()
     try:
@@ -674,6 +845,7 @@ def call_owner(opening: str, hooks: Hooks, transport_factory=None) -> CallResult
         return result
     finally:
         _line_busy.release()
+        _yield_line.clear()
 
 
 def start_in_background(opening: str, hooks: Hooks, on_done: Callable[[CallResult], None] | None = None,

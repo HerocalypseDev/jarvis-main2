@@ -192,6 +192,8 @@ SETTINGS: list[dict] = [
      "help": "Jarvis hangs up after this long.", "live": "env"},
     {"key": "JARVIS_TGCALL_IDLE_S", "label": "Hang up after silence (seconds)", "kind": "number", "default": "45",
      "help": "Jarvis ends the call when nobody has spoken for this long.", "live": "env"},
+    {"key": "JARVIS_TGCALL_INBOUND", "label": "Answer your calls to the spare account", "kind": "bool", "default": "1",
+     "help": "You ring the spare Telegram account from your main one and Jarvis answers (only your main account). Needs Jarvis running; restart to apply.", "live": "env"},
     {"key": "JARVIS_TTS_BACKEND", "label": "Voice engine", "kind": "choice", "default": "auto",
      "choices": ["auto", "deepgram", "fish", "piper"], "help": "auto = best available, with fallback.", "live": "env"},
     {"key": "JARVIS_STT_BACKEND", "label": "Speech recognition", "kind": "choice", "default": "auto",

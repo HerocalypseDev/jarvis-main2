@@ -1668,6 +1668,14 @@ cut in on. Rules to keep:
   Result goes to the "what did I miss" inbox. Risks: Telegram can ban automated user accounts (spare only); anyone holding the
   owner's phone can speak commands on the call; audio goes to Telegram and the speech engines.
 - **Not verified on a real call** (cloud container): ntgcalls frame size (20 ms assumed), incoming-frame tagging, whether `play()` returns
+- **Calls to Jarvis (2026-10-17, owner: "jarvis answers only my main account")**: `InboundTransport` + `start_inbound` (listener
+  thread started from `main()`, `JARVIS_TGCALL_INBOUND`, default on) keep the spare account logged in and answer a ringing call
+  ONLY from `TGCALL_TARGET`'s chat id; any other caller is ignored. Same `Conversation`, same hands-free `source="phone"` path, so a
+  spoken "yes" never confirms the gate. The session file is single-user: an outgoing `call_owner` sets `_yield_line`, the listener
+  lets go, the call runs, the listener resumes. Inbound calls don't count toward `JARVIS_CALLS_PER_DAY`. Works only while Jarvis is
+  running; a call is logged in the "what did I miss" inbox. **Unverified on a real call**: that py-tgcalls 3.0.0 exposes
+  `ChatUpdate.Status.INCOMING_CALL` and that `app.play()` answers a ringing private call (otherwise the listener logs "can't answer
+  incoming calls" and backs off). Tests: end of `test_tgcall.py`.
   after the call is answered. Run `python jarvis_tgcall.py test` first.
 
 ### Cost reporting
@@ -1875,7 +1883,8 @@ row there each phase rather than only stating the total in chat.
 | 181 (the tgcall login/test/status CLI ran outside Jarvis and never read `.env`, so it said the settings were not set: `load_dotenv()` at its start, never overriding real environment values, never printing; 2 new tests) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
 | 182 (tgcall test: "UserIdInvalid" on the first real ring: the target must resolve to a person (clear message for a channel), its access hash is cached before the call, `JARVIS_TGCALL_DEBUG=1` prints the real traceback in `test`) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
 | 183 (tgcall: calling the spare account itself gives UserIdInvalid, so `_connect` now refuses with a clear message when the target resolves to the logged-in account; 1 new test) | Sonnet 5.5 | ~8 min | ~$0.50–$0.70 |
-| **Running total (final)** | | **~5552 min** | **~$381.25–$535.55** |
+| 184 (calls TO Jarvis: ring the spare Telegram account from the main one and Jarvis answers, owner's account only, hands-free phone path, listener steps aside for outgoing calls, Settings switch; 5 new tests; not verified on a real call) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
+| **Running total (final)** | | **~5577 min** | **~$383.05–$538.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

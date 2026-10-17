@@ -5023,6 +5023,10 @@ def _tgcall_done(res: "tgcall.CallResult") -> None:
         _add_missed(f"Phone call finished ({int(res.seconds)} s, {res.turns} things you asked).", "call")
 
 
+def _tgcall_inbound_done(res: "tgcall.CallResult") -> None:
+    _add_missed(f"You called me on Telegram ({int(res.seconds)} s, {res.turns} things you asked).", "call")
+
+
 def _place_phone_call(text: str) -> tuple[bool, str]:
     """Two-way Telegram call when it is set up, else CallMeBot's one-way call. Returns (started, what to tell)."""
     if tgcall.configured():
@@ -18601,6 +18605,10 @@ def main() -> int:
             log.warning("Dashboard failed to start; Jarvis continues without it: %s", e)
 
     _preload_mcp_async()
+    try:
+        tgcall.start_inbound(_tgcall_hooks, on_done=_tgcall_inbound_done)  # owner rings the spare account; JARVIS_TGCALL_INBOUND=0 off
+    except Exception as e:  # noqa: BLE001
+        log.warning("Incoming-call listener not started: %s", e)
     threading.Thread(target=_warm_embeddings, name="jarvis-embed-warm", daemon=True).start()
     clip_history.start(_memory_db_connect, _memory_db_lock)  # A1; JARVIS_CLIPBOARD_HISTORY=0 turns it off
     _fg_tracker.start()  # B3: last real app window, for app shortcuts and meeting auto-start
