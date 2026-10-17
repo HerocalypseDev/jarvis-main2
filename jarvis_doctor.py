@@ -195,6 +195,7 @@ def run_checks(env: dict | None = None) -> list[dict]:
         out.append(_check("Python packages", "ok", "all present"))
 
     out += google_login_checks()
+    out += telegram_call_checks(env)
 
     ev = _last_eval()
     if ev:
@@ -215,6 +216,25 @@ def run_checks(env: dict | None = None) -> list[dict]:
     except Exception:
         pass
     return out
+
+
+def telegram_call_checks(env) -> list[dict]:
+    """Two-way Telegram calls: only once the owner started setting them up (otherwise they are simply unused)."""
+    if env is not os.environ or not any((env.get(k) or "").strip() for k in ("TGCALL_API_ID", "TGCALL_API_HASH_SECRET", "TGCALL_TARGET")):
+        return []
+    try:
+        import jarvis_tgcall as tgc
+        pk = tgc.packages_problem()
+        if pk:
+            return [_check("Telegram calls", "warn", f"the call packages aren't usable here: {pk}",
+                           f"{tgc.INSTALL_HINT} (Python {sys.version_info.major}.{sys.version_info.minor} is what Jarvis runs on)")]
+        todo = tgc.missing()
+        if todo:
+            return [_check("Telegram calls", "warn", "not finished setting up: " + "; ".join(todo),
+                           "Finish the missing items; the login is `python jarvis_tgcall.py login`")]
+        return [_check("Telegram calls", "ok", "set up; `python jarvis_tgcall.py status` shows the details")]
+    except Exception:
+        return []
 
 
 def problems(checks: list[dict] | None = None) -> list[dict]:

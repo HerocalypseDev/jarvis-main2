@@ -1650,33 +1650,74 @@ Rules to keep:
 
 ## Two-way Telegram calls (2026-10-17, owner choice after CallMeBot kept failing)
 
-`jarvis_tgcall.py` (never imports jarvis.py), tests `test_tgcall.py` (31). A SPARE Telegram account (Telethon + py-tgcalls
-3.0.0 / ntgcalls 3.0.3, Python 3.12, optional packages) rings the owner's main account; Jarvis speaks, listens and can be
-cut in on. Rules to keep:
+`jarvis_tgcall.py` (never imports jarvis.py), tests `test_tgcall.py` (175) + `test_tgcall_wiring.py` (36), `test_callmebot.py` (9). A SPARE Telegram
+account (Telethon 1.45.0 + py-tgcalls 3.0.0 / ntgcalls 3.0.3, optional packages; ntgcalls wheels exist for Python 3.10-3.14, Windows
+3.12 and 3.14 checked) rings the owner's main account and answers the owner's calls; Jarvis speaks, listens and can be cut in on.
+Rules to keep:
 - **The spare account's phone number never goes in code, repo, tests or docs.** Config: `TGCALL_API_ID`,
   `TGCALL_API_HASH_SECRET` (write-only), `TGCALL_TARGET` (falls back to `CALLMEBOT_TELEGRAM_USER`); the session lives in
-  `%LOCALAPPDATA%\Jarvis\tgcall\` (`JARVIS_TGCALL_DIR`, OneDrive refused, `.session` is a sensitive suffix). One-time login
-  is a CLI because only the owner gets the SMS code: `python jarvis_tgcall.py login`; `test` rings and checks the audio path. The CLI runs outside Jarvis, so it loads the project `.env` itself (`load_dotenv`, no override of real env vars).
+  `%LOCALAPPDATA%\Jarvis\tgcall\` (`JARVIS_TGCALL_DIR`: OneDrive and Jarvis's own folder are refused, `.session` is a sensitive
+  suffix). One-time login is a CLI because only the owner gets the SMS code: `python jarvis_tgcall.py login`; `status` shows what is
+  ready (packages, login, calls today); `test` rings, plays beeps and prints frames, the media-connection states and why a line ended.
+  The CLI runs outside Jarvis, so it loads the project `.env` itself (`load_dotenv`, no override of real env vars).
 - **Safety**: caller speech runs through `jarvis._tgcall_run_command` = `handle_text_command(..., source="phone")` with
   `_command_ctx.hands_free = True`: the catastrophic gate is intact and a spoken "yes" on a call can never confirm a staged
-  action; nothing plays on the PC speakers. The wrapper stays in jarvis.py (a test pins that the module has no "hands_free").
-- Listener = energy VAD (start 0.25 s voiced, 0.5 s while Jarvis talks so "mhm" doesn't cut it; end 0.8 s silence; max
-  20 s). Talker paces 20 ms frames in real time, prefetches the next sentence and stops within one frame on barge-in; the
-  next command gets a `[Call: the caller talked over ...]` note. Limits: `JARVIS_CALLS_PER_DAY` (shared with CallMeBot),
-  `JARVIS_TGCALL_MAX_MIN` 15, `JARVIS_TGCALL_IDLE_S` 45, same opening once an hour, one call at a time; an unanswered call is refunded.
-- `send_to_my_phone` channel `call` and urgent-alert calls use `_place_phone_call`: two-way when `tgcall.configured()`, else CallMeBot.
-  Result goes to the "what did I miss" inbox. Risks: Telegram can ban automated user accounts (spare only); anyone holding the
-  owner's phone can speak commands on the call; audio goes to Telegram and the speech engines.
-- **Not verified on a real call** (cloud container): ntgcalls frame size (20 ms assumed), incoming-frame tagging, whether `play()` returns
-- **Calls to Jarvis (2026-10-17, owner: "jarvis answers only my main account")**: `InboundTransport` + `start_inbound` (listener
-  thread started from `main()`, `JARVIS_TGCALL_INBOUND`, default on) keep the spare account logged in and answer a ringing call
-  ONLY from `TGCALL_TARGET`'s chat id; any other caller is ignored. Same `Conversation`, same hands-free `source="phone"` path, so a
-  spoken "yes" never confirms the gate. The session file is single-user: an outgoing `call_owner` sets `_yield_line`, the listener
-  lets go, the call runs, the listener resumes. Inbound calls don't count toward `JARVIS_CALLS_PER_DAY`. Works only while Jarvis is
-  running; a call is logged in the "what did I miss" inbox. **Unverified on a real call**: that py-tgcalls 3.0.0 exposes
-  `ChatUpdate.Status.INCOMING_CALL` and that `app.play()` answers a ringing private call (otherwise the listener logs "can't answer
-  incoming calls" and backs off). Tests: end of `test_tgcall.py`.
-  after the call is answered. Run `python jarvis_tgcall.py test` first.
+  action; nothing plays on the PC speakers (`narrate=False`, no lead-in). Pinned through the REAL wrapper and gate in
+  `test_tgcall_wiring.py`; a test also pins that the module never mentions the gate / `hands_free` / `jarvis`.
+- **Only the owner's main account** is ever rung or answered: `tgcall.is_owner_ring(chat_id, owner_uid)` (int, positive, equal;
+  None/bool/float/group ids refused). A ring from anyone else is not answered, not logged, not replied to.
+- **Frame format (the library's real contract)**: `AudioQuality.HIGH` = 48 kHz stereo, 16-bit; one wire frame = 10 ms = 1920 bytes
+  (`WIRE_FRAME_BYTES`). Jarvis works in 20 ms mono; `send` splits it into two 10 ms stereo frames, incoming frames are reduced to
+  mono keeping the louder channel. `PyTgCalls.send_frame` returns an awaitable (the library wraps it), so the transport awaits it
+  when it is one. `JARVIS_TGCALL_STEREO=0` = the old mono frames (speech plays too fast): only for comparing.
+- **The 3-4 s drop (phase 188 -> audit 2026-10-17): most probable cause fixed, NOT confirmed on a real call.** Jarvis only sent audio
+  while it was speaking, so the line was dead once the opening ended (which matches "3-4 s after answer", both directions, and the
+  CLI test: 1.5 s of beeps, then silence). The transport now owns a keep-alive: after `KEEPALIVE_GAP_S` (60 ms) without speech it
+  feeds 10 ms silence frames on its own deadline schedule (never inside a speech frame, under `_wire_lock`); `JARVIS_TGCALL_KEEPALIVE=0`
+  switches it off. Also recorded: every media-connection state (`_watch_connection` wraps py-tgcalls' `_handle_connection_changed`;
+  py-tgcalls itself discards the call when the state leaves CONNECTED), so a hang-up reads "the media connection ended (timeout ...)"
+  vs "the other side hung up ..." in `end_reason`. Python 3.14 vs 3.12 binary mismatch was ruled out (wheels exist for both).
+  If calls still drop, the `test` output's "Media connection:" line names the cause.
+- Listener = energy VAD (start 0.25 s voiced, 0.5 s while Jarvis talks, end 0.8 s silence, max 20 s, DC offset removed). **Echo gate**:
+  while Jarvis speaks, the caller must be at least `JARVIS_TGCALL_ECHO_RATIO` (0.35) times as loud as Jarvis is sending (`Talker.level()`),
+  so a quiet copy of Jarvis's own voice doesn't cut it off (not verified on a real line: lower it if cutting in is hard); if its echo still gets
+  transcribed, an utterance that is >= 80% words Jarvis said in the last 20 s is dropped (`_is_own_echo`), so it never answers itself. Talker paces 20 ms
+  frames on a monotonic deadline, prefetches the next sentence, stops within one frame on barge-in and at once on hang-up (`alive`). The
+  next command gets a `[Call: the caller talked over ...]` note (once), with Jarvis's own quoted words defused (`_defused`: a mail it was
+  reading out must not become an instruction). 48 kHz -> 16 kHz for speech-to-text is low-passed (not plain interpolation).
+- **Limits**: `JARVIS_CALLS_PER_DAY` (ONE count shared with CallMeBot, which now calls `tgcall.reserve/refund`; the 24 h count is saved in `calls.json` as
+  timestamps + a hash of the opening, so a restart can't reset it), `JARVIS_TGCALL_MAX_MIN` 15 (plus a watchdog 30 s later that cuts a hung command), `JARVIS_TGCALL_IDLE_S`
+  45, same opening once an hour (not for a call the owner asked for: `repeat_ok`), one call at a time (`_starting` + `_line_busy`: two quick
+  "call me"s start one call), an unanswered call is refunded; nan/inf settings fall back to the default. The login claim file holds
+  pid + label + process start time, so a recycled pid is not mistaken for a live holder.
+- **"Call me" / honest wording**: intent `call_me` (whole utterance only, no model call, runs as a slow intent). `start_in_background` waits up to
+  `RING_CONFIRM_S` (8 s) for the transport's `ringing` event and returns "ringing ..." only then; a failure before that is reported as not
+  started; slower than 8 s says "still connecting". `send_to_my_phone` channel `call` and urgent-alert calls use `_place_phone_call`: two-way when
+  `tgcall.configured()`, else CallMeBot. Urgent alerts never ring while muted, in Sleep Mode, or during a call.
+- **During a call**: `queue_or_deliver_notification` reads a due reminder / urgent alert ON the call between turns (`tgcall.announce`, content
+  only) and sends everything else to "what did I miss"; nothing plays on the PC, no second call; wake word and the follow-up window are off;
+  the reply cache key includes call state. Replies are made fit for the ear (`for_the_ear`: no links, code, table rules, emoji; paths named by
+  folder). Fixed lines are pre-warmed into the speech cache 20 s after start (`_tgcall_prewarm`).
+- **Records**: table `tgcall_calls` (last 200: time, direction, seconds, turns, ok, reason; never words), one `telegram_call` audit row and one
+  self-awareness line per call, one inbox line per call, Home "Calls" card + `dashboard_data` page `calls` (`@_feature("calls")`, Test call =
+  attended, rings the owner, counts against the cap), health card "Calls" entry, doctor check (only once set up has started). Reasons go
+  through `safe_reason` (no api hash, number, path). Per-turn timing (speech-to-text, Jarvis, first audio, utterance-to-audio) is logged and
+  kept in `Conversation.turn_log` (`latency_summary` gives p50/p95). Call speech and transcription are counted on the Voice page by the same
+  functions as everything else.
+- Calls to Jarvis: `InboundTransport` + `start_inbound` (listener thread from `main()`, `JARVIS_TGCALL_INBOUND`, default on, waits
+  `JARVIS_TGCALL_INBOUND_DELAY_S` 10 s after start, supervises itself: crash -> log + jittered backoff, FloodWait -> at least 15 min, no
+  packages -> not started) keeps the spare account logged in (`status()["listener_up"]` = connected and waiting, not just the thread alive). The session file is single-user: an outgoing `call_owner` sets `_yield_line`,
+  the listener lets go, the call runs, the listener resumes. Inbound calls don't count toward the daily cap. Works only while Jarvis runs.
+- Risks: Telegram can ban automated user accounts (spare only; nothing uses the main account's session); anyone holding the owner's phone can
+  speak commands on the call (the gate still holds); audio goes to Telegram and the speech engines.
+- **Verified in the container** against the real py-tgcalls 3.0.0 / ntgcalls 3.0.3 / Telethon 1.45.0 source and types: the exact constructors
+  (`MediaStream`, `CallConfig`, `RecordStream`), `filters.stream_frame/chat_update`, `ChatUpdate.Status.INCOMING_CALL` exists, `play()` answers a
+  ringing private call (incoming `CallData` is created by py-tgcalls before our handler runs), `ConnectionState` names, Telethon dispatches updates
+  as separate tasks (answering inside the ring handler can't block the update loop). **Not verified on a real call**: a real ring either way,
+  audio quality, echo on speakerphone vs headphones, latency on the owner's network, whether the keep-alive really ends the 3-4 s drop, the echo
+  ratio, antivirus/firewall prompts, Telegram anti-spam behaviour. Live checklist: FEATURES.md "Telegram calls: setup and troubleshooting".
+- Open proposals (need the owner's decision, not built): a spoken passphrase or "call-only mode" that limits tools on a call; a retry-once after a
+  mid-call network loss; streaming speech-to-text for calls (open at speech start, ~0.3 s faster); a shorter end-of-speech silence (0.8 s).
 
 ### Cost reporting
 
@@ -1888,7 +1929,10 @@ row there each phase rather than only stating the total in chat.
 | 186 (admin helper card showed "?" with "Windows answered in a form I couldn't read": PowerShell run with -EncodedCommand writes a CLIXML progress block to stderr and Jarvis reads stdout+stderr together, so the task-list answer was never pure JSON; the reader now drops the CLIXML block/BOM/warning lines, takes the first JSON line, and an unreadable answer shows a cleaned snippet of what came back; status script silences progress; 5 new tests, mutation-checked) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
 | 187 (tgcall "database is locked" again: the CLI test ran in its own program while Jarvis's listener kept the spare account's session; a claim file now refuses a second program with a plain message, a stale claim is taken over; 3 new tests) | Sonnet 5.5 | ~25 min | ~$1.50–$2.20 |
 | 188 (calls drop after 3-4 s both ways: the call code now records why a line ended (Telegram LEFT_CALL, a failed audio send, seconds after it was answered), logs it and the CLI test prints it; root cause not yet known, needs the owner's test output; 2 new tests) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
-| **Running total (final)** | | **~5662 min** | **~$388.35–$545.65** |
+| 189 (Telegram calls audit part 1: read the real py-tgcalls 3.0.0 / ntgcalls 3.0.3 / Telethon 1.45.0 source and types, ruled out the Python 3.12 vs 3.14 mismatch (wheels exist for both), root cause of the 3-4 s drop = the line goes silent once Jarvis stops speaking: a transport-owned silence keep-alive (own 20 ms deadline schedule, never inside a speech frame, `JARVIS_TGCALL_KEEPALIVE`), media-connection states recorded so a drop says WHY, hermetic repro with a peer model + mutation check; not confirmed on a real call) | Sonnet 5.5 | ~19 min | ~$1.90–$2.70 |
+| 190 (Telegram calls audit part 2: safety and reliability: daily cap saved across restarts and shared with CallMeBot, recycled-pid claim, `is_owner_ring` + real `_connect` code driven against fakes shaped like the real library, whole-utterance goodbye, echo-aware cut-in + own-echo guard, DC offset, low-pass resampling, hang-up/watchdog limits, supervised listener with flood backoff, defused cut-in note, plain login errors, honest "ringing" wording, two quick "call me"s; 140 new tests) | Sonnet 5.5 | ~16 min | ~$1.60–$2.30 |
+| 191 (Telegram calls audit part 3: integration: reminders read on the call and everything else to the inbox, wake word/follow-up/reply cache aware of calls, call history table + audit row + journal line, Home Calls card + `dashboard_data` page + health + doctor, "call me" intent with no model call, per-turn latency log; 17 mutation checks all caught; docs; full suite identical to the 83 baseline failures) | Sonnet 5.5 | ~12 min | ~$1.30–$1.90 |
+| **Running total (final)** | | **~5709 min** | **~$393.15–$552.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

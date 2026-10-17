@@ -100,6 +100,8 @@ outside the project folder.
   and follow the notes in it.
 - **Scheduled routines ("skills"):** see `examples/skills/` and copy the ones you want into `skills/`.
 - **Phone control:** set `NTFY_TOPIC` and/or `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env`.
+- **Two-way phone calls:** Jarvis can ring you on Telegram and answer your calls through a spare Telegram account; see
+  "Telegram calls: setup and troubleshooting" in `FEATURES.md`.
 - **Coding hand-offs:** install the Claude Code CLI and run `claude` then `/login` once.
 
 ## Safety

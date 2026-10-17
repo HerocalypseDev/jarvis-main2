@@ -6,7 +6,8 @@ unofficial free service with no guarantee, so a call is always an extra alert, n
 Rules (owner's choice: own number only, urgent alerts only):
 - The only recipient is CALLMEBOT_TELEGRAM_USER from .env (a Telegram @username or +phone number). Nothing here takes
   a recipient from a caller, so a call can never reach anyone else.
-- At most JARVIS_CALLS_PER_DAY calls a day (default 5), the same text at most once an hour.
+- At most JARVIS_CALLS_PER_DAY calls a day (default 5), the same text at most once an hour: ONE count shared with the two-way
+  Telegram calls (jarvis_tgcall.reserve/refund), saved across restarts, holding only a hash of the text.
 - The text goes to CallMeBot's servers: callers keep it to a short alert (cut to MAX_TEXT_CHARS here).
 Setup on the phone: in Telegram, open @CallMeBot_txtbot and press Start (or allow calls from it) once.
 """
@@ -14,17 +15,13 @@ from __future__ import annotations
 
 import os
 import re
-import threading
-import time
 import urllib.parse
 import urllib.request
 
+import jarvis_tgcall as _cap   # the daily cap + same-text rule live there, shared by both kinds of call
+
 API_URL = "https://api.callmebot.com/start.php"
 MAX_TEXT_CHARS = 250  # CallMeBot reads at most 256 characters
-SAME_TEXT_GAP_S = 3600
-
-_lock = threading.Lock()
-_calls: list[tuple[float, str]] = []  # (time, text) of calls made in the last day
 
 
 def user() -> str:
@@ -45,10 +42,7 @@ def configured() -> bool:
 
 
 def per_day() -> int:
-    try:
-        return max(0, min(50, int(float(os.environ.get("JARVIS_CALLS_PER_DAY") or 5))))
-    except ValueError:
-        return 5
+    return _cap.per_day()
 
 
 def clean_text(text: str) -> str:
@@ -99,34 +93,23 @@ def call(text: str, opener=None) -> tuple[bool, str]:
     text = clean_text(text)
     if not text:
         return False, "nothing to say on the call"
-    now = time.time()
-    with _lock:
-        _calls[:] = [c for c in _calls if now - c[0] < 86400]
-        limit = per_day()
-        if len(_calls) >= limit:
-            return False, f"already made {limit} calls today (JARVIS_CALLS_PER_DAY); not calling again"
-        if any(t == text and now - ts < SAME_TEXT_GAP_S for ts, t in _calls):
-            return False, "already called you about this in the last hour"
-        _calls.append((now, text))
+    why = _cap.reserve(text)
+    if why:
+        return False, why
     opener = opener or urllib.request.urlopen
     try:
         req = urllib.request.Request(build_url(to, text), headers={"User-Agent": "Jarvis"})
         with opener(req, timeout=30) as resp:
             body = resp.read(4000).decode("utf-8", "replace")
     except Exception as e:  # network trouble: the call didn't happen, so it doesn't count toward the cap
-        with _lock:
-            if (now, text) in _calls:
-                _calls.remove((now, text))
+        _cap.refund(text)
         return False, f"couldn't reach CallMeBot ({type(e).__name__})"
     reason = _refusal(body)
     if reason:
-        with _lock:
-            if (now, text) in _calls:
-                _calls.remove((now, text))
+        _cap.refund(text)
         return False, reason
     return True, "CallMeBot is ringing your Telegram"
 
 
 def reset_for_tests() -> None:
-    with _lock:
-        _calls.clear()
+    _cap.reset_for_tests()

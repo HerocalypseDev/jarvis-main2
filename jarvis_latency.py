@@ -93,6 +93,10 @@ def recent(n: int = 20) -> list[dict]:
 # never starts in the first place, since jarvis.py only spawns it once a Claude call is needed).
 _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("greeting", re.compile(r"\A\s*(?:hi|hey|hello|hiya|yo)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
+    # "Call me" (2026-10-17 audit): rings the owner's Telegram with no model round trip. Whole utterance only, so
+    # "call me Sam" (a name) and "call me at nine" (a reminder) still reach the agent.
+    ("call_me", re.compile(r"\A\s*(?:hey,?\s*)?(?:jarvis,?\s*)?(?:(?:can|could|will|would) you |please )*(?:call|ring|phone) me"
+                           r"(?: up| back)?(?:\s+(?:now|please|on telegram|on my phone))*(?:,?\s*(?:please|jarvis))?\W*\Z", re.I)),
     ("thanks", re.compile(r"\A\s*(?:thanks|thank you|thx|ty)\s*(?:,?\s*jarvis)?\s*[.!]?\s*\Z", re.I)),
     # Briefing v2 (2026-09-23): composed from local data by jarvis_briefing, no LLM call.
     ("briefing", re.compile(r"\A\s*(?:jarvis,?\s*)?(?:good morning|(?:give me |what'?s )?(?:my |the )?(?:morning )?briefing|brief me)"

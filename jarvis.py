@@ -5004,7 +5004,20 @@ def _tgcall_synth(text: str) -> tuple[bytes, int]:
 
 
 def _tgcall_shape(reply: str) -> str:
-    return _collapse_paths_for_speech(_summarize_for_speech(reply))
+    """A reply made fit for the ear on a phone line: shortened, paths named by folder, no links/code/table rules/emoji."""
+    return tgcall.for_the_ear(_collapse_paths_for_speech(_summarize_for_speech(reply)))
+
+
+def _tgcall_prewarm() -> None:
+    """Speaks the call's fixed lines into the speech cache once, so a call's opening ("Hi, it's Jarvis. Go ahead.") never
+    waits on the speech engine. Only when calls are set up; one cached clip per line, nothing is played."""
+    if not tgcall.configured():
+        return
+    for line in tgcall.FIXED_LINES:
+        try:
+            _tgcall_synth(line)
+        except Exception as e:  # noqa: BLE001
+            log.debug("Call line pre-warm failed (harmless): %s", e)
 
 
 def _tgcall_hooks() -> "tgcall.Hooks":
@@ -5016,23 +5029,89 @@ def _tgcall_hooks() -> "tgcall.Hooks":
     )
 
 
+def _tgcall_record(res: "tgcall.CallResult", direction: str) -> None:
+    """One history row (no words, just direction/length/result/reason), one audit-trail row and one journal line per call.
+    Never raises: a bookkeeping problem must not turn a call into an error."""
+    res.direction = res.direction or direction
+    reason = tgcall.safe_reason(res.reason)
+    try:
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS tgcall_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, "
+                             "direction TEXT NOT NULL, seconds REAL NOT NULL, turns INTEGER NOT NULL, ok INTEGER NOT NULL, "
+                             "reason TEXT NOT NULL)")
+                conn.execute("INSERT INTO tgcall_calls (ts, direction, seconds, turns, ok, reason) VALUES (?,?,?,?,?,?)",
+                             (datetime.fromtimestamp(res.started or time.time()).isoformat(timespec="seconds"),
+                              res.direction, round(float(res.seconds), 1), int(res.turns), 1 if res.ok else 0, reason))
+                conn.execute("DELETE FROM tgcall_calls WHERE id NOT IN (SELECT id FROM tgcall_calls ORDER BY id DESC LIMIT 200)")
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception as e:  # noqa: BLE001
+        log.warning("Couldn't store the call history: %s", e)
+    try:
+        _log_action_audit("telegram_call", {"direction": res.direction, "seconds": int(res.seconds), "turns": res.turns},
+                          "", ("ended" if res.ok else "not completed") + (f": {reason}" if reason else ""))
+    except Exception as e:  # noqa: BLE001
+        log.debug("Call audit row failed: %s", e)
+    try:
+        selfaware.record("system", "call", f"{res.direction} Telegram call {'ended' if res.ok else 'did not connect'}"
+                                          f"{(': ' + reason) if reason else ''} ({int(res.seconds)} s)")
+    except Exception as e:  # noqa: BLE001
+        log.debug("Call journal line failed: %s", e)
+
+
+def _tgcall_history(limit: int = 10) -> list[dict]:
+    try:
+        with _memory_db_lock:
+            conn = _memory_db_connect()
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS tgcall_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, "
+                             "direction TEXT NOT NULL, seconds REAL NOT NULL, turns INTEGER NOT NULL, ok INTEGER NOT NULL, "
+                             "reason TEXT NOT NULL)")
+                rows = conn.execute("SELECT ts, direction, seconds, turns, ok, reason FROM tgcall_calls "
+                                    "ORDER BY id DESC LIMIT ?", (max(1, min(50, int(limit))),)).fetchall()
+            finally:
+                conn.close()
+    except Exception as e:  # noqa: BLE001
+        log.debug("Call history unreadable: %s", e)
+        return []
+    return [{"ts": r[0], "direction": r[1], "seconds": r[2], "turns": r[3], "ok": bool(r[4]), "reason": r[5]} for r in rows]
+
+
 def _tgcall_done(res: "tgcall.CallResult") -> None:
+    _tgcall_record(res, "outgoing")
+    if "already on a call" in (res.reason or ""):
+        return                                   # a second request while one is up: nothing happened, nothing to report
     if not res.ok:
-        _add_missed(f"I tried to call you on Telegram but it didn't go through: {res.reason}.", "call")
+        _add_missed(f"I tried to call you on Telegram but it didn't go through: {tgcall.safe_reason(res.reason)}.", "call")
     else:
-        _add_missed(f"Phone call finished ({int(res.seconds)} s, {res.turns} things you asked).", "call")
+        why = f" It ended because {tgcall.safe_reason(res.reason)}." if res.reason else ""
+        _add_missed(f"Phone call finished ({int(res.seconds)} s, {res.turns} things you asked).{why}", "call")
 
 
 def _tgcall_inbound_done(res: "tgcall.CallResult") -> None:
-    _add_missed(f"You called me on Telegram ({int(res.seconds)} s, {res.turns} things you asked).", "call")
+    _tgcall_record(res, "incoming")
+    why = f" It ended because {tgcall.safe_reason(res.reason)}." if res.reason else ""
+    _add_missed(f"You called me on Telegram ({int(res.seconds)} s, {res.turns} things you asked).{why}", "call")
 
 
-def _place_phone_call(text: str) -> tuple[bool, str]:
-    """Two-way Telegram call when it is set up, else CallMeBot's one-way call. Returns (started, what to tell)."""
+def _place_phone_call(text: str, asked: bool = False) -> tuple[bool, str]:
+    """Two-way Telegram call when it is set up, else CallMeBot's one-way call. Returns (started, what to tell).
+    `asked`: the owner themselves asked for this call (the same-text-within-the-hour rule is for alerts, not for them)."""
     if tgcall.configured():
-        return tgcall.start_in_background(text, _tgcall_hooks(), on_done=_tgcall_done)
+        return tgcall.start_in_background(text, _tgcall_hooks(), on_done=_tgcall_done, repeat_ok=asked)
     ok, what = callmebot.call(text)
     return ok, what
+
+
+def _calls_card() -> dict:
+    """Home "Calls" card and the `dashboard_data` page "calls": setup state, the last 10 calls (time, direction, length,
+    result, why it ended) and the three switches. Read-only data, no contents of any call, no secrets."""
+    return {"status": tgcall.status(), "calls": _tgcall_history(10),
+            "settings": {k: (os.environ.get(k) or d).strip() for k, d in
+                         (("JARVIS_TGCALL_INBOUND", "1"), ("JARVIS_CALL_ON_URGENT", "1"), ("JARVIS_TGCALL_KEEPALIVE", "1"))}}
 
 
 CALL_WHEN_AWAY_S = 600  # an urgent alert rings the phone only when nobody touched the PC for 10 minutes
@@ -5047,6 +5126,8 @@ def _maybe_call_for_urgent(text: str) -> None:
         return
     if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("JARVIS_TEST_ALLOW_CALLS"):
         return
+    if _is_muted() or tgcall.on_call():
+        return                                   # "shut up" also means no ringing; and never a second call
     try:
         idle = _get_idle_seconds()
         if idle is None or idle < CALL_WHEN_AWAY_S or sleep_mode.is_active():
@@ -5088,6 +5169,16 @@ def queue_or_deliver_notification(
     if not text:
         return
     _notify_phone(text, force=force_phone)
+    if tgcall.on_call():
+        # The owner is on a Telegram call (2026-10-17 audit): nothing plays on the PC speakers meanwhile and no second
+        # call is placed. A due reminder or an urgent alert is read out ON the call, between turns (its content only);
+        # everything else waits in "what did I miss".
+        if urgent and sleep_mode.is_active():
+            _record_sleep_important(text)
+        if (is_reminder or urgent) and tgcall.announce(text):
+            return
+        _add_missed(text, "call")
+        return
     if urgent:
         _maybe_call_for_urgent(text)
     refresh_session_context()
@@ -7292,6 +7383,17 @@ def health_report() -> dict:
     with _session_context_lock:
         held = len(_session_context.get("pending_notifications") or [])
     add("Held messages", held == 0, f"{held} waiting")
+    try:
+        cs = tgcall.status()
+        if cs["configured"]:
+            last = cs.get("last") or {}
+            note = (f"last call {last.get('direction')}, {last.get('seconds')} s: {last.get('reason') or 'ok'}") if last else "no call yet"
+            problem = cs["packages"] != "ok"
+            add("Calls", not problem, (cs["packages"] if problem else
+                                       ("on a call now" if cs["on_call"] else
+                                        ("answering your calls; " if cs["listener_up"] else "not listening; ") + note)))
+    except Exception as e:  # noqa: BLE001
+        log.debug("Calls health entry failed: %s", e)
     pending = _dashboard_get_pending()
     add("Confirmation", pending is None, f"waiting: {pending.get('tool_name')}" if pending else "none")
     with _timers_lock:
@@ -8377,6 +8479,20 @@ def _as_dashboard(fn, *args):
 
 
 _feature("daily_plan")(_feature_daily_plan)
+
+
+@_feature("calls")
+def _feature_calls(action: str, payload: dict):
+    if action == "get":
+        return _calls_card()
+    if action == "test":
+        # Rings the owner's own Telegram with a short test line. Only reachable from the dashboard (Host/Origin guarded), so
+        # it is an attended action; it counts against the daily cap like any call, and the opening carries the time so the
+        # same-text-once-an-hour rule never blocks a second test.
+        ok, what = _place_phone_call("Jarvis here. This is a test call at " + datetime.now().strftime("%I:%M %p").lstrip("0") + ".",
+                                     asked=True)
+        return {"ok": ok, "message": what}
+    return None
 
 
 @_feature("license")
@@ -10648,7 +10764,7 @@ def _send_to_my_phone_tool(inp: dict) -> str:
         if not ok:
             return f"Tool failed: {what}."
         if two_way:
-            return f"Calling you now: {what}. I'll open with: {callmebot.clean_text(text)[:120]}"
+            return f"{what[:1].upper() + what[1:]}. I'll open with: {callmebot.clean_text(text)[:120]}"
         return f"{what} and reading: {callmebot.clean_text(text)[:120]} (one-way: you can't talk back on this call)."
     telegram_ok = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
     ntfy_ok = bool(NTFY_TOPIC)
@@ -16738,7 +16854,7 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
             cache.normalize_text(transcript),
             sleep_mode.system_prompt_context_line() + face.system_prompt_context_line()
             + chief.reply_style_line(os.environ.get("JARVIS_REPLY_STYLE"))
-            + f"|self{selfaware.revision()}|p{_personality_name()}",
+            + f"|self{selfaware.revision()}|p{_personality_name()}|call{int(tgcall.on_call())}",
         )
         cached_reply = _reply_cache.get(reply_key)
         cache.record("reply", cached_reply is not cache.MISS, repr(transcript[:40]))
@@ -17631,7 +17747,7 @@ def _volume_reply(transcript: str) -> str | None:
 # so it runs after the dashboard session has started (_SLOW_INTENTS) and speaks a lead-in first; the test waits for
 # that line to finish, because speech streaming in would compete with the test for the connection.
 SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
-_SLOW_INTENTS = {"speedtest", "update", "phone_where"}
+_SLOW_INTENTS = {"speedtest", "update", "phone_where", "call_me"}   # call_me waits up to 8 s to learn whether it is ringing
 # Quick answers that keep their exact wording: a replay, a rewrite, silence, the switch itself (already in the new voice).
 _UNFLAVORED_INTENTS = {"repeat", "shorter", "hush", "personality", "running_cancel"}
 
@@ -17780,6 +17896,9 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
             _muted_until = 0.0
             return "Mute cancelled. Jarvis will speak normally again."
         return None
+    if intent == "call_me":
+        ok, what = _place_phone_call("Hi, it's Jarvis. You asked me to call.", asked=True)
+        return (what[:1].upper() + what[1:] + ".") if ok else f"I couldn't call you: {what}."
     if intent == "hush":
         _interrupt_speech()  # stop whatever is still playing, and say nothing back
         if _HUSH_MUTE_RE.search(transcript or ""):  # "shut up" also keeps unprompted speech quiet for a while; "stop" doesn't
@@ -18121,7 +18240,7 @@ def _handle_voice_command_impl(
             log.info("Wake word: name only, waiting for the command.")
             latency.end()
             speak_text("Yes?")
-            if not safe_mode_on():
+            if not safe_mode_on() and not tgcall.on_call():
                 followup.arm(chained=False)  # the command comes next, through the normal follow-up window
             return
         log.info("Wake word: %r", rest)
@@ -18160,7 +18279,7 @@ def _handle_voice_command_impl(
         _command_ctx.wake = False
         _command_ctx.attach_image = None
         latency.end()
-    if not _speech_cancelled_since(started) and not safe_mode_on():  # not after a barge-in / in safe mode
+    if not _speech_cancelled_since(started) and not safe_mode_on() and not tgcall.on_call():  # not after a barge-in / in safe mode / on a call
         followup.arm(chained=hands_free and not wake)  # a fresh "Hey Jarvis" starts the chain over
 
 
@@ -18607,6 +18726,8 @@ def main() -> int:
     _preload_mcp_async()
     try:
         tgcall.start_inbound(_tgcall_hooks, on_done=_tgcall_inbound_done)  # owner rings the spare account; JARVIS_TGCALL_INBOUND=0 off
+        if tgcall.configured():
+            threading.Timer(20.0, _tgcall_prewarm).start()                  # after start-up is done, off the main thread
     except Exception as e:  # noqa: BLE001
         log.warning("Incoming-call listener not started: %s", e)
     threading.Thread(target=_warm_embeddings, name="jarvis-embed-warm", daemon=True).start()
@@ -18710,7 +18831,8 @@ def main() -> int:
                         if time.monotonic() - wake_gate_ts > 2.0:  # Sleep Mode state is a DB read: not every block
                             wake_gate_ts = time.monotonic()
                             try:
-                                wake_gate_ok = jarvis_wakeword.enabled() and not sleep_mode.is_active()
+                                wake_gate_ok = (jarvis_wakeword.enabled() and not sleep_mode.is_active()
+                                                and not tgcall.on_call())     # on a Telegram call the PC mic only hears the room
                             except Exception:
                                 wake_gate_ok = False
                         if wake_gate_ok and not safe_mode_on():

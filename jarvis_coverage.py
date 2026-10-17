@@ -32,6 +32,7 @@ COVERAGE: dict[str, dict] = {
     "feature:license:activate": _owner("a licence key is a secret the owner pastes in; it never passes through the model"),
     "feature:license:deactivate": _owner("licence changes stay with the owner"),
     "feature:license:theme_css": _owner("serves the Pro theme stylesheet to the browser, nothing to decide"),
+    "feature:calls:test": _tool("send_to_my_phone", None, "channel=call rings the owner's Telegram; the Test call button does the same"),
     "feature:clipboard:clear": _tool("clipboard_history", "clear"),
     "feature:clipboard:copy": _tool("clipboard_history", "get", "get with copy=true puts the item back on the clipboard"),
     "feature:clipboard:search": _tool("clipboard_history", "search"),

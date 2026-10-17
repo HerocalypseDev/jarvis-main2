@@ -223,3 +223,43 @@ audit"), regression tests in `test_feature_batch_audit.py`. Most important: mail
 on every check (missing module import); agent placeholders could carry a mail subject into a shell/send
 step; fuzzy macro matching could run the opposite command; meeting notes dropped short remarks in quiet
 chunks; a critical battery held reminders; every named device was announced after the PC woke up.
+
+## Telegram calls: setup and troubleshooting (2026-10-17)
+
+Two-way phone calls through a SPARE Telegram account: Jarvis rings your main account ("call me", urgent alerts when you
+are away from the PC) and answers when you ring the spare account from your main one. Only your main account is ever
+rung or answered; a call from anyone else is ignored. What you say on the call goes through the normal command pipeline
+as a hands-free phone command, so a spoken "yes" can never confirm a staged shutdown/format (use the push-to-talk key).
+
+**Setup (once)**
+1. Make a spare Telegram account. Never use your main one: Telegram can ban accounts that automate calls.
+2. On my.telegram.org (API development tools) create an app and copy its `api_id` and `api_hash`. In `.env` (or Settings):
+   `TGCALL_API_ID`, `TGCALL_API_HASH_SECRET` (write-only) and `TGCALL_TARGET` (your MAIN account's @username).
+3. `pip install telethon==1.45.0 py-tgcalls==3.0.0 ntgcalls==3.0.3` (Python 3.10 to 3.14; Windows wheels exist for 3.12 and 3.14).
+4. `python jarvis_tgcall.py login` (the code Telegram sends goes to the spare account).
+5. In your main Telegram: Settings, Privacy and Security, Calls: add the spare account to "Always allow".
+6. `python jarvis_tgcall.py status` shows what is ready; `python jarvis_tgcall.py test` rings you, plays three beeps and
+   reports what came back (frames received, how the media connection behaved, why the line ended if it dropped). Stop
+   Jarvis first: it keeps the spare account's login while it runs, and only one program may hold it.
+
+**Using it**: say or type "call me"; ring the spare account from your main one while Jarvis is running. The dashboard Home
+page has a Calls card (status, the last 10 calls with how each ended, three switches, a Test call button). While you are
+on a call, a due reminder is read out on the call, other messages wait in "what did I miss", and nothing plays on the PC.
+Limits: `JARVIS_CALLS_PER_DAY` (default 5, survives a restart), `JARVIS_TGCALL_MAX_MIN` (15), `JARVIS_TGCALL_IDLE_S` (45).
+
+| You see | It means | What to do |
+|---|---|---|
+| "the call packages aren't installed" | telethon / py-tgcalls / ntgcalls missing for the Python Jarvis runs on | the `pip install` line above, with the same Python as Jarvis |
+| `UserIdInvalid`, "is the spare account itself", "not a person's account" | `TGCALL_TARGET` is the spare account, a channel or a group | set it to your MAIN account's @username |
+| "database is locked", "the spare account is in use by ..." | two programs share the one login file | stop the other program (Jarvis keeps the login while it runs) |
+| "asked this account to slow down" (FloodWait) | Telegram rate limit | wait; Jarvis backs off at least 15 minutes by itself |
+| "the spare account's login ended" | the login was revoked or expired | `python jarvis_tgcall.py login` again |
+| "doesn't let the spare account call you" | privacy setting on the main account | add the spare to Calls, "Always allow" |
+| "the other side hung up, declined, or Telegram ended the call (3.4 s after it was answered)" | Telegram ended the call; our media connection had not failed | note the seconds; run `test` and read its "Media connection" line |
+| "the media connection ended (timeout/failed/closed ...)" | the audio connection to Telegram failed first (network or firewall) | check the network, VPN or firewall prompts; try again |
+| calls drop a few seconds after the greeting | the line went silent between sentences | fixed by the silence keep-alive (`JARVIS_TGCALL_KEEPALIVE`, default on); if it still happens, send the `test` output |
+
+Risks: the spare account can be banned for automation (it is expendable; the main account is never used); anyone holding
+your phone can speak commands on a call (the confirmation gate still holds). Audio goes to Telegram and to the speech
+engines you already use. Not verified on a real call from the cloud: real audio quality, echo on speakerphone, latency on
+your network, antivirus/firewall prompts. If cutting in feels hard or Jarvis cuts itself off, tune `JARVIS_TGCALL_ECHO_RATIO`.

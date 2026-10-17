@@ -34,6 +34,9 @@ NOTES = {
               "tokens, saved_usd (what prompt caching saved); per model. Gemini free tier really costs $0: its cost is what "
               "the same calls would cost on the paid tier."),
     "sleep": "Sleep Mode statistics: nights, averages, bedtime/wake, goal hits, sleep debt, naps (time in Sleep Mode, not measured sleep).",
+    "calls": ("Telegram calls: status = set up or not, logged in, packages, whether the incoming-call listener is up, on_call now, "
+              "calls_today of per_day, last = the most recent call; calls[] = the last 10 (ts, direction outgoing/incoming, "
+              "seconds, turns, ok, reason = why it ended or failed). No call contents are ever stored."),
     "health": "Home health card: brain and failover, speech engines, disk, camera, autonomy, held messages, pending confirmation, timers, doctor problems.",
     "system": "Live CPU/RAM/disk/battery/uptime of this PC.",
     "network": "Devices on the local network from the last scan (name, IP, MAC, tags, new).",

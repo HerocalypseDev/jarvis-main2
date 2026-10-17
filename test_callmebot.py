@@ -26,7 +26,8 @@ def _opener(body="Call queued", seen=None):
 
 
 @pytest.fixture(autouse=True)
-def _fresh(monkeypatch):
+def _fresh(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_TGCALL_DIR", str(tmp_path / "tgcall"))   # the shared daily count is saved here
     callmebot.reset_for_tests()
     monkeypatch.setenv("CALLMEBOT_TELEGRAM_USER", "@hero_test")
     yield

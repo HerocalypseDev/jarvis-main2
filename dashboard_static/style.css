@@ -1208,3 +1208,8 @@ p.consent-list { padding-left: 0; }
   .ph-cine-hint, .ph-cine-burst .ph-pin-dot { animation: none; }
 }
 @media (max-width: 800px) { .ph-cine-hud { left: 12px; right: 12px; bottom: 16px; max-width: none; } .ph-cine-name { font-size: 22px; } }
+
+/* --- Telegram calls card (Home) --------------------------------------------------------------------------------- */
+.calls-switches { display: flex; flex-wrap: wrap; gap: var(--space-3, 12px); margin: var(--space-2, 8px) 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.calls-switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+#home-calls-list .list-item { overflow-wrap: anywhere; }

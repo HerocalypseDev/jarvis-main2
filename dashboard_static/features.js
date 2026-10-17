@@ -550,3 +550,69 @@ async function refreshProWidgets() {
 window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshProWidgets(); });
 if (typeof currentRoute === "function" && currentRoute() === "home") refreshProWidgets();
 setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshProWidgets(); }, 30000);
+
+
+// --- Telegram calls card on Home: GET /api/feature/calls (read-only), POST .../calls/test (attended, rings the owner) ---
+const CALL_SWITCHES = [
+  ["JARVIS_TGCALL_INBOUND", "Answer my calls"],
+  ["JARVIS_CALL_ON_URGENT", "Ring me for urgent alerts"],
+  ["JARVIS_TGCALL_KEEPALIVE", "Keep the line alive"],
+];
+
+function callWhen(ts) {
+  const d = new Date(ts);
+  return isNaN(d) ? esc(String(ts || "")) : esc(d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }));
+}
+
+async function refreshCalls() {
+  const box = document.getElementById("home-calls");
+  if (!box) return;
+  try {
+    const data = await featureGet("calls");
+    const st = data.status || {};
+    if (!st.configured && !(data.calls || []).length) { box.hidden = true; return; }   // never set up: no card
+    box.hidden = false;
+    const live = st.on_call ? "on a call now" : st.listener_up ? "answering your calls" : st.configured ? "not listening" : "not set up";
+    document.getElementById("home-calls-meta").textContent =
+      `${live} · ${st.calls_today || 0} of ${st.per_day || 0} calls today` + (st.packages && st.packages !== "ok" ? " · " + st.packages : "");
+    document.getElementById("calls-test").disabled = !st.configured || !!st.on_call;
+    const sw = data.settings || {};
+    document.getElementById("home-calls-switches").innerHTML = CALL_SWITCHES.map(([key, label]) => {
+      const on = (sw[key] || "1") !== "0";
+      return `<label class="calls-switch"><input type="checkbox" data-call-switch="${escAttr(key)}" ${on ? "checked" : ""}> ${esc(label)}</label>`;
+    }).join("");
+    const rows = data.calls || [];
+    document.getElementById("home-calls-list").innerHTML = rows.length ? rows.map((c) =>
+      `<li class="list-item compact"><span>${callWhen(c.ts)} · ${esc(c.direction === "incoming" ? "you called Jarvis" : "Jarvis called you")} · ${esc(String(Math.round(c.seconds || 0)))} s` +
+      ` · ${c.ok ? "ended" : "didn't connect"}${c.reason ? " (" + esc(c.reason) + ")" : ""}</span></li>`).join("")
+      : '<li class="muted">No calls yet.</li>';
+  } catch (e) {
+    box.hidden = true;                                  // an extra card: never break Home because of it
+  }
+}
+
+document.addEventListener("change", async (ev) => {
+  const el = ev.target;
+  if (!el || !el.matches || !el.matches("input[data-call-switch]")) return;
+  try {
+    const res = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: el.getAttribute("data-call-switch"), value: el.checked ? "1" : "0" }) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+  } catch (e) { el.checked = !el.checked; alert("Couldn't save that setting."); }
+});
+
+document.addEventListener("click", async (ev) => {
+  const btn = ev.target && ev.target.closest ? ev.target.closest("#calls-test") : null;
+  if (!btn) return;
+  if (!confirm("Ring your Telegram now with a short test line? It counts as one of today's calls.")) return;
+  btn.disabled = true;
+  try {
+    const r = await featurePost("calls", "test", {});
+    alert(r.message || (r.ok ? "Ringing." : "Couldn't start the call."));
+  } catch (e) { alert("Couldn't start the call: " + e.message); }
+  setTimeout(refreshCalls, 1500);
+});
+
+window.addEventListener("hashchange", () => { if (currentRoute() === "home") refreshCalls(); });
+if (typeof currentRoute === "function" && currentRoute() === "home") refreshCalls();
+setInterval(() => { if (currentRoute() === "home" && !document.hidden) refreshCalls(); }, 20000);
