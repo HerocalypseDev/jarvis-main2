@@ -261,6 +261,7 @@ def stage_script(text: str, dest_dir: Path, filename: str) -> str:
 # --- reading what is installed -----------------------------------------------------------------------
 _STATUS_SCRIPT = (
     "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$ProgressPreference = 'SilentlyContinue'\n"
     "$rows = @(Get-ScheduledTask -TaskPath " + _psq(TASK_PATH) + " | ForEach-Object {\n"
     "  $i = $_ | Get-ScheduledTaskInfo\n"
     "  [pscustomobject]@{ name = $_.TaskName; state = [string]$_.State; level = [string]$_.Principal.RunLevel;\n"
@@ -276,6 +277,27 @@ def clean_note(text: str, limit: int = 200) -> str:
     return (one[: limit - 1] + "…") if len(one) > limit else one
 
 
+_CLIXML_RE = re.compile(r"#<\s*CLIXML.*?(?:</Objs>|\Z)", re.S)
+
+
+def _without_ps_noise(out: str) -> str:
+    """PowerShell run with -EncodedCommand writes progress/error records to stderr as a CLIXML block, and Jarvis reads
+    stdout and stderr together, so the answer is surrounded by it. Drop that block and any byte-order mark."""
+    return _CLIXML_RE.sub("", (out or "").replace("\ufeff", "")).strip()
+
+
+def _first_json(text: str):
+    """The first line (or the whole text) that parses as a JSON list or object, else None."""
+    cands = [text] + [ln.strip() for ln in text.splitlines()]
+    for c in cands:
+        if c[:1] in ("[", "{"):
+            try:
+                return json.loads(c)
+            except ValueError:
+                continue
+    return None
+
+
 def _read_tasks_why(runner: Callable) -> tuple[list[dict] | None, str]:
     """(tasks, "") or (None, why Windows couldn't be asked)."""
     rc, out = runner(ps_argv(_STATUS_SCRIPT))
@@ -284,17 +306,16 @@ def _read_tasks_why(runner: Callable) -> tuple[list[dict] | None, str]:
     if rc != 0:
         first = clean_note((out or "").strip().splitlines()[0] if (out or "").strip() else "", 120)
         return None, f"PowerShell reported an error (code {rc})" + (f": {first}" if first else "")
-    out = (out or "").strip()
+    out = _without_ps_noise(out)
     if not out:
         return [], ""
-    try:
-        data = json.loads(out)
-    except ValueError:
-        return None, "Windows answered in a form I couldn't read"
+    data = _first_json(out)
+    if data is None:
+        return None, "Windows answered in a form I couldn't read: " + clean_note(out, 100)
     if isinstance(data, dict):
         data = [data]
     if not isinstance(data, list):
-        return None, "Windows answered in a form I couldn't read"
+        return None, "Windows answered in a form I couldn't read: " + clean_note(out, 100)
     return [r for r in data if isinstance(r, dict)], ""
 
 

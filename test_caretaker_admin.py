@@ -242,6 +242,44 @@ def test_status_says_why_windows_could_not_be_asked():
     assert "error" not in _status(FakeWin())                              # a good read carries no error
 
 
+def _noisy_status(w, wrap):
+    """Status read where PowerShell's real answer comes back wrapped by `wrap` (stdout and stderr are read together)."""
+    orig = w.run
+
+    def run(argv, timeout=60):
+        rc, out = orig(argv, timeout)
+        if "Get-ScheduledTask" in adm.decode_ps_argv(argv):
+            return rc, wrap(out)
+        return rc, out
+    return adm.status(run, env=w.env, reader=w.reader, me=w.user)
+
+
+_CLIXML = ('#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+           '<Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T></TN>'
+           '<MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj></Objs>')
+
+
+@pytest.mark.parametrize("wrap", [
+    lambda o: _CLIXML + "\r\n" + o,                      # progress record on stderr, read first
+    lambda o: o + "\r\n" + _CLIXML,                      # ... or last
+    lambda o: "\ufeff" + o,                               # byte-order mark
+    lambda o: "WARNING: something harmless\r\n" + o + "\r\n",
+])
+def test_status_reads_through_powershell_noise(wrap):
+    w = FakeWin()
+    st = _noisy_status(w, wrap)
+    assert st["known"] and "error" not in st, st
+    assert set(st["ready"]) == set(adm.ADMIN_ACTIONS)
+
+
+def test_status_error_shows_what_windows_returned():
+    w = FakeWin()
+    st = _noisy_status(w, lambda o: "Something odd happened\x00\x01 here")
+    assert not st["known"]
+    assert "couldn't read" in st["error"] and "Something odd happened" in st["error"]
+    assert "\x00" not in st["error"]
+
+
 @pytest.mark.parametrize("change,why", [
     (lambda w: w.tasks["flush_dns"].update(args=w.tasks["flush_dns"]["args"] + " -Command calc"), "the task was changed"),
     (lambda w: w.tasks["flush_dns"].update(exe="cmd.exe"), "the task was changed"),

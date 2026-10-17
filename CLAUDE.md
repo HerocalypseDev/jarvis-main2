@@ -1834,7 +1834,8 @@ row there each phase rather than only stating the total in chat.
 | 170 (false "still monitoring" / "successfully created" claims: ongoing-work claims need a real job/watch/agent/reminder/scheduled skill, adverbs no longer hide a done claim, self-made jobs speak only when flagged URGENT; 12 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 171 (Jarvis asks you: tool questions must reach the user, saved with the exact call and resumed by the answer, Home "Jarvis needs you" card, background runs say it; live-reading watches sent to scheduled work, unattended runs no longer read the chat, honest agent results, open Roblox; 13 new tests, headless card check) | Opus 5.5 | ~50 min | ~$4.00–$5.50 |
 | 172 (admin helper card showed every repair "off" with no reason and "waiting for the prompt" long after it was answered: unknown is now shown as "?" with why Windows couldn't be read, the setup says "checking" once the prompt is accepted, the hidden elevated window writes OK/FAIL+reason to a result file, a 90 s wall-clock deadline replaces the fixed polls; 12 new tests, headless check of five states) | Sonnet 5.5 | ~35 min | ~$2.20–$3.00 |
-| **Running total (final)** | | **~5274 min** | **~$361.35–$507.55** |
+| 173 (admin helper card showed "?" with "Windows answered in a form I couldn't read": PowerShell run with -EncodedCommand writes a CLIXML progress block to stderr and Jarvis reads stdout+stderr together, so the task-list answer was never pure JSON; the reader now drops the CLIXML block/BOM/warning lines, takes the first JSON line, and an unreadable answer shows a cleaned snippet of what came back; status script silences progress; 5 new tests, mutation-checked) | Sonnet 5.5 | ~20 min | ~$1.20–$1.70 |
+| **Running total (final)** | | **~5294 min** | **~$362.55–$509.25** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3066,6 +3067,14 @@ jarvis.py), `jarvis_caretaker_probe.py` (read-only OS sensors, each fail-soft), 
   (try/catch; hash check still comes first, `launcher_argv(..., result_file)`), read by `read_setup_result` and only ever shown as
   cleaned text; the wait ends by wall clock (`HELPER_CHECK_WINDOW_S` 90 s); failures name the task that doesn't match; the waiting
   text tells the owner to look for a flashing shield in the taskbar. Not verified on a real PC (Phase 6 never was).
+
+- **"?" instead of ready/off (2026-10-17, owner screenshot "why do they have question marks")**: after the Windows prompt was accepted every repair
+  read "? Windows answered in a form I couldn't read". Cause: `run_cmd` returns stdout + stderr together, and `powershell -EncodedCommand` writes a
+  `#< CLIXML ... </Objs>` progress/error block to stderr, so the task-list answer was never pure JSON and `json.loads` failed every time (the earlier
+  "off" display had hidden this). `_read_tasks_why` now drops the CLIXML block and BOM (`_without_ps_noise`), takes the first line that parses as a JSON
+  list/object (`_first_json`), and an unreadable answer includes a cleaned 100-char snippet of what came back; `_STATUS_SCRIPT` sets
+  `$ProgressPreference = 'SilentlyContinue'`. Tests in `test_caretaker_admin.py` (noise before/after, BOM, warning line, snippet; fail on the old code).
+  Not verified on a real PC. Same hazard applies to any other `run_cmd` + JSON/parse call of a PowerShell script: keep the CLIXML filter in mind.
 
 ## Slow file saves (2026-10-16, debug report)
 
