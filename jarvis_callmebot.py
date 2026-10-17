@@ -74,6 +74,10 @@ def _refusal(body: str) -> str | None:
     """CallMeBot answers with a short HTML page; known failure wording becomes a reason."""
     low = re.sub(r"<[^>]+>", " ", body or "").lower()
     for words, reason in (
+        (("spam",),
+         "CallMeBot's caller bot was reported as spam and is locked for new calls: in Telegram, find the bot that "
+         "called you before in your call history (@CallMeBot_API or @CallMeBot_API<number>, e.g. @CallMeBot_API16), "
+         "add it to your contacts and send it any message, then try again"),
         (("not authorized", "not authorised", "authorize", "authorise"),
          "CallMeBot isn't allowed to call you yet: open @CallMeBot_txtbot in Telegram and press Start"),
         (("not found", "invalid user", "unknown user", "username not"),

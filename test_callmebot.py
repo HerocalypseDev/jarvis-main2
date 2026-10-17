@@ -133,3 +133,9 @@ def test_urgent_alert_calls_only_when_away_and_awake(J, monkeypatch):
 def test_ai_can_not_change_who_gets_called():
     import jarvis_selfmanage as sm
     assert "CALLMEBOT_TELEGRAM_USER" in sm.AI_DENIED and "JARVIS_CALLS_PER_DAY" in sm.AI_DENIED
+
+
+def test_spam_lock_is_explained():
+    import jarvis_callmebot as cmb
+    reason = cmb._refusal("<p>Someone has reported CallMeBot as Spamer. Please add the bot to your contacts.</p>")
+    assert reason and "contacts" in reason and "spam" in reason
