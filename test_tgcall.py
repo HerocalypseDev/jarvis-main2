@@ -651,3 +651,30 @@ def test_the_first_reason_is_kept_when_several_things_end_the_call():
     tr._end("sending audio failed later")
     assert tr.end_reason.startswith("Telegram reported that the call left the line")
     assert tr.closed.is_set()
+
+
+def test_a_plain_send_frame_is_not_mistaken_for_a_coroutine(monkeypatch):
+    """py-tgcalls 3.x's send_frame is not always a coroutine: the call must keep speaking, not drop on frame one."""
+    import jarvis_tgcall as tg
+    sent = []
+
+    class PlainLine:
+        def send_frame(self, uid, device, frame):   # returns nothing, no coroutine
+            sent.append(frame)
+
+    class Device:
+        MICROPHONE = "mic"
+
+    loop = asyncio.new_event_loop()
+    th = threading.Thread(target=loop.run_forever, daemon=True)
+    th.start()
+    try:
+        tr = tg.TelegramTransport("@owner")
+        tr._loop, tr._app, tr._uid, tr._device = loop, PlainLine(), 1, Device
+        tr.send(b"\x01" * tg.FRAME_BYTES)
+        tr.send(b"\x02" * tg.FRAME_BYTES)
+        assert sent == [b"\x01" * tg.FRAME_BYTES, b"\x02" * tg.FRAME_BYTES]
+        assert not tr.closed.is_set() and not tr.end_reason
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        th.join(timeout=5)

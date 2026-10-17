@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import inspect
 import collections
 import logging
 import os
@@ -710,9 +711,14 @@ class TelegramTransport:
     def send(self, frame: bytes) -> None:
         if self.closed.is_set() or self._loop is None or self._app is None:
             return
-        fut = asyncio.run_coroutine_threadsafe(
-            self._app.send_frame(self._uid, self._device.MICROPHONE, frame), self._loop)
+        async def push() -> None:
+            # py-tgcalls 3.x may give send_frame as a plain call or a coroutine: await it only if it is one
+            res = self._app.send_frame(self._uid, self._device.MICROPHONE, frame)
+            if inspect.isawaitable(res):
+                await res
+
         try:
+            fut = asyncio.run_coroutine_threadsafe(push(), self._loop)
             fut.result(timeout=3)
         except Exception as e:
             self._end(f"sending audio failed {self._since_answer()} ({type(e).__name__}: {str(e)[:120]})")
