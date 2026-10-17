@@ -736,14 +736,20 @@ class InboundTransport(TelegramTransport):
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="jarvis-tgcall-in", daemon=True)
+        _inbound_listening.set()                 # from the first moment: the session file is ours while we connect
         self._thread.start()
-        if not self._ready.wait(60):
+        for _ in range(300):                     # up to 60 s, but an outgoing call can cut the wait short
+            if self._ready.wait(0.2):
+                break
+            if self.should_stop():
+                self.stop()
+                raise CallError("listening stopped")
+        else:
             self.stop()
             raise CallError("Telegram took too long to connect")
         if self._error:
             self.stop()
             raise CallError(self._error)
-        _inbound_listening.set()
         while not self._incoming.is_set():
             if self.should_stop() or self.closed.is_set():
                 self.stop()
@@ -822,7 +828,7 @@ def call_owner(opening: str, hooks: Hooks, transport_factory=None) -> CallResult
         return CallResult(False, "calls aren't set up yet: " + "; ".join(todo))
     if _inbound_listening.is_set():
         _yield_line.set()                                    # the listener holds the session file; ask it to let go
-        for _ in range(60):
+        for _ in range(120):                                 # it may still be connecting or shutting down: wait it out
             if not _inbound_listening.is_set():
                 break
             time.sleep(0.25)
@@ -836,10 +842,15 @@ def call_owner(opening: str, hooks: Hooks, transport_factory=None) -> CallResult
             return CallResult(False, why)
         factory = transport_factory or (lambda: TelegramTransport(target()))
         result = CallResult(False, "not started")
-        try:
-            result = Conversation(factory(), hooks, opening).run()
-        except Exception as e:  # noqa: BLE001
-            result = CallResult(False, explain(e))
+        for attempt in range(2):
+            try:
+                result = Conversation(factory(), hooks, opening).run()
+            except Exception as e:  # noqa: BLE001
+                result = CallResult(False, explain(e))
+            if attempt == 0 and result.turns == 0 and not result.ok and "database is locked" in (result.reason or "").lower():
+                time.sleep(3)                    # the session file was still being released: one more try
+                continue
+            break
         if result.turns == 0 and not result.ok:
             refund(opening)                      # it never rang or wasn't answered: not a call that counts
         return result

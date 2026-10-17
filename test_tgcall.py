@@ -523,3 +523,49 @@ def test_outgoing_call_makes_the_listener_step_aside(monkeypatch, tmp_path):
     res = tg.call_owner("Hi", _hooks([], []), transport_factory=lambda: tr)
     assert seen and not res.ok
     assert not tg._yield_line.is_set() and not tg._line_busy.locked()
+
+
+def test_listener_holds_the_session_from_the_moment_it_starts_connecting(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(tg, "_inbound_listening", threading.Event())
+    seen = []
+
+    class Slow(tg.InboundTransport):
+        def _run(self):
+            seen.append(tg._inbound_listening.is_set())   # the thread starts only after the flag is up
+            self._error = "boom"
+            self._ready.set()
+            self.closed.set()
+
+    tr = Slow("@x")
+    with pytest.raises(tg.CallError):
+        tr.start()
+    assert seen == [True]
+    assert not tg._inbound_listening.is_set()             # and it is released again on failure
+
+
+def test_connecting_listener_is_cut_short_by_an_outgoing_call(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(tg, "_inbound_listening", threading.Event())
+
+    class Never(tg.InboundTransport):
+        def _run(self):
+            time.sleep(0.5)                                # still "connecting"
+
+    tr = Never("@x", should_stop=lambda: True)
+    t0 = time.monotonic()
+    with pytest.raises(tg.CallError):
+        tr.start()
+    assert time.monotonic() - t0 < 4
+    assert not tg._inbound_listening.is_set()
+
+
+def test_a_locked_session_is_retried_once(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(tg, "_line_busy", threading.Lock())
+    monkeypatch.setattr(tg, "_yield_line", threading.Event())
+    monkeypatch.setattr(tg, "_inbound_listening", threading.Event())
+    monkeypatch.setattr(tg.time, "sleep", lambda s: None)
+    made = [FakeTransport(fail="OperationalError: database is locked"), FakeTransport(fail="no answer (the call rang out)")]
+    res = tg.call_owner("Hi", _hooks([], []), transport_factory=lambda: made.pop(0))
+    assert not made and "rang out" in res.reason

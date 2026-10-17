@@ -1884,7 +1884,8 @@ row there each phase rather than only stating the total in chat.
 | 182 (tgcall test: "UserIdInvalid" on the first real ring: the target must resolve to a person (clear message for a channel), its access hash is cached before the call, `JARVIS_TGCALL_DEBUG=1` prints the real traceback in `test`) | Sonnet 5.5 | ~10 min | ~$0.60–$0.90 |
 | 183 (tgcall: calling the spare account itself gives UserIdInvalid, so `_connect` now refuses with a clear message when the target resolves to the logged-in account; 1 new test) | Sonnet 5.5 | ~8 min | ~$0.50–$0.70 |
 | 184 (calls TO Jarvis: ring the spare Telegram account from the main one and Jarvis answers, owner's account only, hands-free phone path, listener steps aside for outgoing calls, Settings switch; 5 new tests; not verified on a real call) | Sonnet 5.5 | ~25 min | ~$1.80–$2.50 |
-| **Running total (final)** | | **~5577 min** | **~$383.05–$538.05** |
+| 185 (Jarvis's own "call me" said it was ringing but never rang: the new incoming-call listener held the Telegram session file while connecting, so the outgoing call hit "database is locked"; the listener now claims the session from its first moment, gives it up while still connecting, outgoing calls wait for it to let go and retry a locked session once; 3 new tests) | Sonnet 5.5 | ~20 min | ~$1.40–$2.00 |
+| **Running total (final)** | | **~5597 min** | **~$384.45–$540.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are

@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "jarvis.py": {
-    "mtime": 1792251370.0578225,
-    "seen": 1792251409.93229,
-    "ast_hash": "086d908409786f0811d6e9bd5809312d",
+    "mtime": 1792253460.8609362,
+    "seen": 1792253514.6054826,
+    "ast_hash": "de30236e20b0a87303f361232d3f5c89",
     "semantic_hash": ""
   },
   "jarvis_filewatcher.py": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792252996.3958418,
-    "seen": 1792253015.5403452,
-    "ast_hash": "aa179e4f7c42c14712fe818d6d9d01e8",
+    "mtime": 1792253494.5782,
+    "seen": 1792253514.606044,
+    "ast_hash": "16afa0f22bcbefe6c2cc5f83f78dffa7",
     "semantic_hash": ""
   },
   "README.md": {
@@ -642,9 +642,9 @@
     "semantic_hash": ""
   },
   "jarvis_settings.py": {
-    "mtime": 1792251370.0578225,
-    "seen": 1792251409.932448,
-    "ast_hash": "63979745a604f685795e8d5e58da63f0",
+    "mtime": 1792253480.9170256,
+    "seen": 1792253514.6056721,
+    "ast_hash": "4df1a2054ea0f3e7d4f5de1fd0df6168",
     "semantic_hash": ""
   },
   "jarvis_weather.py": {
@@ -2034,15 +2034,15 @@
     "semantic_hash": ""
   },
   "jarvis_tgcall.py": {
-    "mtime": 1792252976.7141693,
-    "seen": 1792253015.5399103,
-    "ast_hash": "7ee36c9c378156d8a8350b5ce09d4db9",
+    "mtime": 1792253404.0113215,
+    "seen": 1792253514.6057045,
+    "ast_hash": "2667552904b2e04aa1791a5c454e2398",
     "semantic_hash": ""
   },
   "test_tgcall.py": {
-    "mtime": 1792252987.57017,
-    "seen": 1792253015.5403192,
-    "ast_hash": "361ee89b9f5fbc7c7b0ecb585c27f84b",
+    "mtime": 1792253492.35677,
+    "seen": 1792253514.6060205,
+    "ast_hash": "5318433d8e2eede016ad3b0cbdd26237",
     "semantic_hash": ""
   }
 }
