@@ -1844,7 +1844,8 @@ row there each phase rather than only stating the total in chat.
 | 172 (admin helper card showed every repair "off" with no reason and "waiting for the prompt" long after it was answered: unknown is now shown as "?" with why Windows couldn't be read, the setup says "checking" once the prompt is accepted, the hidden elevated window writes OK/FAIL+reason to a result file, a 90 s wall-clock deadline replaces the fixed polls; 12 new tests, headless check of five states) | Sonnet 5.5 | ~35 min | ~$2.20–$3.00 |
 | 173 (lessons didn't learn: corrections now see the original request + wrong answer, more correction phrasings incl. "Jarvis, ...", caught false claims write lessons, failed writes logged; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 174 (Windows MCP failing: a tool server that stops after connecting is now marked down, reconnected before the next call and shown failed on the dashboard; real error text instead of "unhandled errors in a TaskGroup"; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~5319 min** | **~$364.85–$512.55** |
+| 175 (phone locator: Jarvis Locator Android app (sealed GPS check-ins over ntfy, built here), relay listener, phone_location tool + "where's my phone, show me visually" voice route, dark OpenStreetMap Phones page that the same tab switches to; headless check at 1440/390 px; 19 new tests) | Opus 5.5 | ~70 min | ~$5.50–$7.50 |
+| **Running total (final)** | | **~5389 min** | **~$370.35–$520.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3211,3 +3212,29 @@ Tests: `test_coverage.py` (18). Audit write-up: `/mnt/project-files/jarvis-visib
   out of the Toolbox handler to be shared).
 - Still the owner's alone (in the map as `owner`): Approve/Reject, autonomy on/dry-run/policies, dynamic-tool proposals and deletion,
   licence, biometric picture erase. Autonomy card approvals stay attended-only through the existing `autonomy` tool.
+
+## Phone locator (2026-10-17, owner request: "where's my phone, show me visually")
+
+Owner's choices: phones have internet (SMS route dropped), a custom APK rather than MacroDroid, a Jarvis-themed map in
+the same dashboard tab. Code: `phone_locator/` (Android app, Java, no libraries; `gradle assembleRelease` with SDK 34, or
+the "Jarvis Locator APK" GitHub Action), `jarvis_phone_locate.py` (pure: pairing code, AES-GCM sealing, report checks,
+`Store`, relay `Locator`, OSM place names), wiring in jarvis.py ("Phone locator" block), `dashboard_static/phones.js`
+(route `#/phones`, vendored Leaflet 1.9.4). Tests: `test_phone_locate.py` (19). Rules to keep:
+- **Everything on the ntfy topic is sealed** (AES-256-GCM, nonce + tag, AAD `jloc1|<topic>`): the relay (ntfy.sh, or
+  `JARVIS_PHONE_LOCATOR_SERVER`) sees random text; anything that doesn't open is ignored. Java (`Crypto.java`) and Python
+  must stay byte-compatible (checked once by hand in a JVM; change both or neither). Pairing = random topic + key in `.env`
+  (`JARVIS_PHONE_LOCATOR_TOPIC/_KEY`, write-only on Settings); the setup code (`JLOC1.` + base64url JSON) is shown only on
+  the Phones page or sent to the owner's own Telegram, never into chat or the audit trail. "Make a new key" cuts every phone off.
+- A report older than the phone's last one is refused (replay can't move a pin back); max 10 phones; fields range-checked,
+  names sanitised. Phones ignore asks older than 10 minutes and asks they already answered.
+- `phone_location` tool (where/last/show/setup) and the no-model voice route `phone_where` ("where's my phone", "...show me
+  visually", "show my phones on the map"; whole utterances, must say phone): only for the owner's own request, blocked in
+  email-started and tainted runs. `show` sends `{"type": "navigate", "route": "phones"}` over the dashboard WebSocket when a
+  tab is open (`dashboard.client_count()`), else opens the dashboard at `#/phones`; app.js honours `navigate` for any route.
+- Place names: OpenStreetMap Nominatim (free, <= 1 request/s, cached 30 days per ~11 m); map tiles: tile.openstreetmap.org
+  darkened by a CSS filter (CARTO's dark tiles now need an API key). Data exposure: coordinates go to OSM, nothing else.
+- A phone silent for `JARVIS_PHONE_QUIET_MIN` (120) goes to the quiet "what did I miss" inbox once. `JARVIS_PHONE_LOCATOR=0` off.
+- Signing: `phone_locator/app/locator.keystore` (sideload key, private repo only, export-excluded) lets updates install over
+  the old APK. Not verified on a real phone: the app itself (only compiled), Doze/battery-saver behaviour on Tecno/Infinix,
+  the GitHub Action, the live relay round trip, the navigate switch in a real browser tab.
+

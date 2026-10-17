@@ -45,3 +45,9 @@ update_note.tmp
 skills/.deleted/
 llm_provider.json.tmp
 skills/*.json.tmp
+
+# Phone locator app build output (2026-10-17)
+phone_locator/.gradle/
+phone_locator/build/
+phone_locator/app/build/
+phone_locator/local.properties

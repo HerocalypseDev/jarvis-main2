@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Jarvis Dashboard</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -48,6 +49,7 @@
       <a href="#/daily" data-route="daily" class="nav-link"><span class="nav-icon">&#8635;</span><span class="nav-label">Daily</span></a>
       <a href="#/voice" data-route="voice" class="nav-link"><span class="nav-icon">&#127908;</span><span class="nav-label">Voice</span></a>
       <a href="#/memory" data-route="memory" class="nav-link"><span class="nav-icon">&#10070;</span><span class="nav-label">Memory</span></a>
+      <a href="#/phones" data-route="phones" class="nav-link"><span class="nav-icon">&#9906;</span><span class="nav-label">Phones</span></a>
       <a href="#/caretaker" data-route="caretaker" class="nav-link"><span class="nav-icon">&#10010;</span><span class="nav-label">Caretaker</span></a>
       <a href="#/toolbox" data-route="toolbox" class="nav-link"><span class="nav-icon">&#9874;</span><span class="nav-label">Toolbox</span></a>
       <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></a>
@@ -262,6 +264,21 @@
       <div class="view-head"><h1 class="view-title">Victory Log</h1></div>
       <div id="victory-counts" class="victory-counts"></div>
       <ul id="victory-list" class="list compact"><li class="skeleton" aria-hidden="true"></li><li class="skeleton" aria-hidden="true"></li></ul>
+    </section>
+
+    <section id="view-phones" class="view">
+      <div class="view-head"><h1 class="view-title">Phones</h1>
+        <span class="view-actions"><button id="ph-fit" class="btn" type="button">Fit all</button>
+          <button id="ph-ask" class="btn btn-primary" type="button">Locate now</button></span></div>
+      <p id="ph-status" class="muted">Where your phones are, from the Jarvis Locator app. Positions are sealed so only
+        Jarvis can read them.</p>
+      <div class="ph-layout">
+        <div id="ph-map" class="ph-map" role="region" aria-label="Map of your phones"></div>
+        <div class="ph-side">
+          <div id="ph-list" class="ph-list"><div class="skeleton" aria-hidden="true" style="height:64px"></div></div>
+          <div id="ph-setup" class="ph-setup"></div>
+        </div>
+      </div>
     </section>
 
     <section id="view-caretaker" class="view">
@@ -493,5 +510,7 @@
 <script src="voice.js"></script>
 <script src="features.js"></script>
 <script src="caretaker.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="phones.js"></script>
 </body>
 </html>

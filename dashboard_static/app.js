@@ -5,7 +5,7 @@ const state = { data: null, followedSessionId: null };
 // no history API, no nested routes — this is a supervision dashboard, not a SPA framework demo.
 const ROUTES = [
   "home", "sessions", "tasks", "autonomy", "identity", "sleep",
-  "usage", "activity", "audit", "victory", "daily", "voice", "memory", "toolbox", "caretaker", "settings",
+  "usage", "activity", "audit", "victory", "daily", "voice", "memory", "toolbox", "caretaker", "phones", "settings",
 ];
 // Routes that have somewhere to click *into* more detail — Autonomy/Identity/Sleep/Usage/
 // Victory/Daily each already show everything inline and want the full width instead (see
@@ -36,6 +36,7 @@ function onRouteActivated(route) {
   if (route === "voice" && window.refreshVoice) window.refreshVoice();
   if (route === "toolbox" && window.refreshToolbox) window.refreshToolbox();
   if (route === "caretaker" && window.refreshCaretaker) window.refreshCaretaker();
+  if (route === "phones" && window.refreshPhones) window.refreshPhones();
   syncContextVisibility();
 }
 
@@ -1017,6 +1018,11 @@ function connectWs() {
     if (event && event.type === "caretaker" && isRouteActive("caretaker") && window.refreshCaretaker) {
       window.refreshCaretaker();
     }
+    // "Where's my phone, show me visually" (2026-10-17): Jarvis switches this same tab to the Phones map.
+    if (event && event.type === "navigate" && event.data && ROUTES.includes(event.data.route)) {
+      location.hash = "#/" + event.data.route;
+    }
+    if (event && event.type === "phones_changed" && isRouteActive("phones") && window.refreshPhones) window.refreshPhones();
     if (event && event.type === "asks_changed" && isRouteActive("home") && window.refreshAsks) window.refreshAsks();
     if (event && event.type === "settings_changed" && isRouteActive("settings") && window.applySettingChange) {
       window.applySettingChange(event.data || {});

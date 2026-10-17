@@ -208,8 +208,18 @@ class _ConnectionManager:
             return list(self._clients.items())
 
 
+_manager_ref: "_ConnectionManager | None" = None
+
+
+def client_count() -> int:
+    """How many dashboard tabs are connected right now (0 when the dashboard isn't running)."""
+    m = _manager_ref
+    return len(m.snapshot()) if m is not None and _broadcast_fn is not None else 0
+
+
 def _set_broadcast(loop: "asyncio.AbstractEventLoop", manager: "_ConnectionManager") -> None:
-    global _broadcast_fn
+    global _broadcast_fn, _manager_ref
+    _manager_ref = manager
 
     def _broadcast(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(_do_broadcast(manager, event), loop)

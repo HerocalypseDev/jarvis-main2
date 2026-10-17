@@ -39,3 +39,10 @@ def env_int(key: str, default: int) -> int:
         except ValueError:
             log.warning("Setting %s=%r isn't a whole number; using %s.", key, raw, default)
             return int(default)
+
+
+def env_bool(key: str, default: bool) -> bool:
+    raw = _raw(key).lower()
+    if not raw:
+        return bool(default)
+    return raw in ("1", "true", "yes", "on")

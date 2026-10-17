@@ -202,6 +202,12 @@ SETTINGS: list[dict] = [
     {"key": "JARVIS_NETSCAN_ANNOUNCE_LEFT", "label": "Announce named devices leaving", "kind": "bool", "default": "1",
      "help": "Say \"John's iPhone left the network\" when a named device has been gone from the scans for 5 minutes.",
      "live": "env"},
+    {"key": "JARVIS_PHONE_LOCATOR", "label": "Phone locator", "kind": "bool", "default": "1",
+     "help": "Listen for your phones' check-ins from the Jarvis Locator app (Phones page). Nothing happens until a phone "
+     "is paired. Off = Jarvis stops listening and won't say where they are.", "live": "env"},
+    {"key": "JARVIS_PHONE_QUIET_MIN", "label": "Tell me when a phone goes quiet (minutes)", "kind": "number",
+     "default": "120", "help": "A phone that hasn't checked in for this long is noted once in 'what did I miss' "
+     "(off, flat battery or offline). 0 = never.", "live": "env"},
     {"key": "JARVIS_SPEEDTEST_MAX_MB", "label": "Speed test data limit (MB)", "kind": "number", "default": "40",
      "help": "\"What's my internet speed?\" downloads at most this much (and uploads half of it). A test usually stops "
      "sooner, after about 8 seconds; only a fast line reaches the limit. 10-500.", "live": "env"},

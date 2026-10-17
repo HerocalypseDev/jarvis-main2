@@ -1112,3 +1112,62 @@ p.consent-list { padding-left: 0; }
 .ask-questions { line-height: 1.5; }
 .ask-form { flex-wrap: wrap; }
 .ask-form .ask-input { flex: 1 1 200px; min-width: 0; }
+
+/* --- Phones route (2026-10-17): dark street map + phone cards ---------------------------------------- */
+.ph-layout { display: flex; gap: var(--space-4, 16px); align-items: stretch; min-height: 560px; }
+.ph-map {
+  flex: 1 1 auto; min-height: 560px; border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--color-border-strong); background: var(--color-bg-inset);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.ph-side { flex: 0 0 340px; display: flex; flex-direction: column; gap: var(--space-3, 12px); min-width: 0; }
+.ph-card, .ph-setup {
+  background: var(--color-bg-secondary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px); padding: 12px 14px;
+}
+.ph-list { display: flex; flex-direction: column; gap: var(--space-3, 12px); }
+.ph-card-stale { opacity: 0.8; }
+.ph-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ph-card-name { color: var(--color-accent); font-weight: 600; letter-spacing: 0.02em; }
+.ph-card-where { color: var(--color-text-primary); margin: 4px 0 2px; }
+.ph-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ph-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--color-border-strong); color: var(--color-text-secondary); }
+.ph-chip-danger { color: var(--color-error); border-color: var(--color-error); }
+.ph-h { margin: 0 0 6px; font-size: 15px; color: var(--color-text-primary); }
+.ph-steps { margin: 0 0 10px 18px; padding: 0; color: var(--color-text-secondary); font-size: 13px; }
+.ph-code code {
+  display: block; word-break: break-all; font-size: 12px; padding: 8px; border-radius: 8px;
+  background: var(--color-bg-inset); color: var(--color-accent); border: 1px solid var(--color-border);
+}
+.ph-repair { margin-top: 10px; font-size: 12px; }
+.ph-pin-wrap { background: none; border: none; }
+.ph-pin { position: relative; width: 24px; height: 24px; }
+.ph-pin-dot {
+  position: absolute; left: 5px; top: 5px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--color-accent); border: 2px solid var(--color-on-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 30%, transparent), 0 0 18px var(--color-accent);
+  animation: ph-pulse 2s ease-out infinite;
+}
+.ph-pin-stale .ph-pin-dot { background: var(--color-text-muted); box-shadow: 0 0 0 4px rgba(115, 148, 168, 0.25); animation: none; }
+.ph-pin-label {
+  position: absolute; left: 26px; top: 2px; white-space: nowrap; font-size: 12px; font-weight: 600;
+  color: var(--color-text-primary); background: color-mix(in srgb, var(--color-bg-primary) 80%, transparent);
+  border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 1px 6px;
+}
+@keyframes ph-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 60%, transparent), 0 0 18px var(--color-accent); }
+  100% { box-shadow: 0 0 0 16px transparent, 0 0 18px var(--color-accent); }
+}
+@media (prefers-reduced-motion: reduce) { .ph-pin-dot { animation: none; } }
+.leaflet-container { background: var(--color-bg-inset); font-family: inherit; }
+/* Dark map: invert OSM's light tiles and turn them back to natural hues, with a slight blue tint */
+.ph-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.92) saturate(0.6); }
+.leaflet-control-attribution { background: rgba(5, 11, 20, 0.7) !important; color: var(--color-text-muted) !important; }
+.leaflet-control-attribution a { color: var(--color-accent) !important; }
+.leaflet-bar a { background: var(--color-bg-secondary); color: var(--color-accent); border-color: var(--color-border); }
+.leaflet-tooltip { background: var(--color-bg-secondary); color: var(--color-text-primary); border-color: var(--color-border-strong); }
+@media (max-width: 800px) {
+  .ph-layout { flex-direction: column; }
+  .ph-map { min-height: 380px; }
+  .ph-side { flex: 1 1 auto; }
+}

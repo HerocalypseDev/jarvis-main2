@@ -24,7 +24,7 @@ import json
 import logging
 import os
 
-from jarvis_env import env_float, env_int
+from jarvis_env import env_bool, env_float, env_int
 import queue
 import random
 import re
@@ -106,6 +106,7 @@ import jarvis_chief as chief
 import jarvis_voice_usage as voice_usage
 import jarvis_netscan as netscan
 import jarvis_speedtest as speedtest
+import jarvis_phone_locate as phone_locate
 import jarvis_dashdata as dashdata
 import jarvis_settings as settings
 import jarvis_license as license_mod
@@ -3753,6 +3754,20 @@ BATCH_TOOLS = [
             "action": {"type": "string", "enum": ["list", "add", "forget"]},
             "lesson": {"type": "string"}, "id": {"type": "integer"}}, "required": ["action"]},
     },
+    {
+        "name": "phone_location",
+        "description": (
+            "Where the owner's own phones are (they run the Jarvis Locator app and check in by themselves). "
+            "action=where (default: asks the phones for a fresh GPS position, waits up to ~40 s, says where each is "
+            "with the nearest street/area and how old the position is), last (latest known positions, no asking), "
+            "show (opens the dashboard Phones map in the same tab, then asks for fresh positions; use it when the user "
+            "says 'show me', 'on the map', 'visually'), setup (sends the pairing code for a new phone to the owner's "
+            "Telegram; never shown in chat). `phone` = a name like 'Samsung' to ask about one phone; leave it out for all."
+        ),
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["where", "last", "show", "setup"]},
+            "phone": {"type": "string", "description": "Optional phone name, e.g. Samsung."}}},
+    },
 ]
 AGENT_TOOLS.extend(BATCH_TOOLS)
 
@@ -7021,6 +7036,7 @@ def _scheduler_steps(now: datetime) -> list:
         ("knowledge graph", _kg_sync_tick, ()),
         ("digest", _digest_tick, ()),
         ("caretaker", _caretaker_tick, ()),
+        ("phones", _phones_tick, ()),
     ]
 
 
@@ -9298,7 +9314,9 @@ _UNTRUSTED_BLOCKED_TOOLS = {"run_shell", "run_python", "create_tool", "manage_dy
                             # use it to send them a phishing link (autonomy's own notices go through another path)
                             "send_to_my_phone",
                             # 2026-10-16: changing settings or stopping work is the owner's call, not an email's
-                            "settings", "stop_background_task", "running_now", "housekeeping"}
+                            "settings", "stop_background_task", "running_now", "housekeeping",
+                            # 2026-10-17: where the owner's phones are is private; an email must not learn or move it
+                            "phone_location"}
 UNTRUSTED_TASK_MARKER = "[untrusted-origin]"
 
 
@@ -9316,7 +9334,7 @@ _OUTSIDE_TEXT_TOOL_RE = re.compile(r"^mcp_|^(?:http_request|web_search|browser_t
 _TAINT_BLOCKED_TOOLS = {"run_shell", "run_python", "type_text", "click_at", "control_window", "create_tool",
                         "manage_dynamic_tool", "change_jarvis_code", "delegate_to_claude_code", "save_skill", "set_plan",
                         "delegate_research", "caretaker", "settings", "stop_background_task", "running_now",
-                        "housekeeping",
+                        "housekeeping", "phone_location",
                         # memory steers every later prompt: an instruction hidden in a mail must not be written there
                         "remember_fact", "remember_decision", "remember_code_pattern", "update_project_status"}
 
@@ -9458,7 +9476,7 @@ def _capabilities(query: str = "") -> str:
 
     def first_line(desc: str) -> str:
         d = " ".join(str(desc or "").split())
-        return re.split(r"(?<=[.;:])\s", d, 1)[0][:90]
+        return re.split(r"(?<=[.;:])\s", d, 1)[0][:60]  # 109+ tools must still fit the 5000-char page
 
     tools = [(t["name"], first_line(t.get("description"))) for t in AGENT_TOOLS
              if not q or q in t["name"].lower() or q in str(t.get("description") or "").lower()]
@@ -10571,6 +10589,233 @@ def _send_to_my_phone_tool(inp: dict) -> str:
 
 
 
+# --- Phone locator (2026-10-17, owner request: "where's my phone, show me visually") --------------------------------
+# The owner's Android phones run the Jarvis Locator app (phone_locator/) and send sealed GPS check-ins through an ntfy
+# topic only Jarvis and the phones can read (jarvis_phone_locate.py). Location is private: the tool is refused in runs
+# that came from or read someone else's text, and the pairing code only ever goes to the dashboard or the owner's
+# own Telegram, never into chat. Positions are named with OpenStreetMap's free reverse geocoder (data exposure: the
+# coordinates go to nominatim.openstreetmap.org, nothing else about the owner).
+PHONE_WAIT_S = 40
+_phone_store = phone_locate.Store(_memory_db_connect)
+
+
+def _phone_locator_config():
+    if not env_bool("JARVIS_PHONE_LOCATOR", True):
+        return None
+    return phone_locate.env_config()
+
+
+def _phone_name_place(dev_id: str, lat: float, lon: float) -> str | None:
+    now = int(time.time() * 1000)
+    k = phone_locate.place_key(lat, lon)
+    place = _phone_store.cached_place(k, 30 * 86400000, now)
+    if place is None:
+        try:
+            place = phone_locate.nominatim_reverse(lat, lon)
+        except Exception as e:
+            log.debug("phone place lookup failed: %s", type(e).__name__)
+            return None
+        if place:
+            _phone_store.cache_place(k, place, now)
+    if place:
+        _phone_store.set_place(dev_id, place)
+    return place
+
+
+def _phone_on_report(rep: dict, status: str) -> None:
+    if rep.get("kind") == "loc" and not _under_pytest():
+        threading.Thread(target=_phone_name_place, args=(rep["id"], rep["lat"], rep["lon"]),
+                         name="phone-place", daemon=True).start()
+    dashboard.notify({"type": "phones_changed", "data": {"id": rep["id"]}})
+    if status == "new":
+        _selfaware_record("system", "phone_paired", f"A new phone checked in: {rep['name']}.")
+
+
+def _under_pytest() -> bool:
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def _selfaware_record(subsystem: str, kind: str, summary: str) -> None:
+    try:
+        selfaware.record(subsystem, kind, summary)
+    except Exception as e:
+        log.debug("self-awareness record failed: %s", e)
+
+
+_phone_locator = phone_locate.Locator(_phone_store, _phone_locator_config, on_report=_phone_on_report)
+
+
+def _phone_targets(words: str) -> tuple[list[dict], list[dict]]:
+    devices = _phone_store.devices()
+    named = phone_locate.match_device(devices, words)
+    return devices, (named or devices)
+
+
+def _phones_page_url() -> str:
+    return f"http://127.0.0.1:{JARVIS_DASHBOARD_PORT}/#/phones"
+
+
+def _show_phones_page() -> str:
+    """Switches an open dashboard tab to the Phones map (same tab), or opens the dashboard there."""
+    if not JARVIS_DASHBOARD_ENABLED:
+        return "The dashboard is off, so I can't show the map (turn on JARVIS_DASHBOARD_ENABLED)."
+    if dashboard.client_count() > 0:
+        dashboard.notify({"type": "navigate", "data": {"route": "phones"}})
+        return ""
+    try:
+        browsers.open_link(_phones_page_url())
+    except Exception:
+        webbrowser.open(_phones_page_url())
+    return ""
+
+
+def _phone_location_text(action: str, words: str) -> str:
+    cfg = _phone_locator_config()
+    show = action == "show"
+    note = _show_phones_page() if show else ""
+    if not cfg:
+        msg = ("Your phones aren't paired yet. Open the Phones page on the dashboard, install the Jarvis Locator app "
+               "on each phone and paste the setup code it gives you.")
+        return (note + " " + msg).strip()
+    devices, targets = _phone_targets(words)
+    if not devices:
+        return (note + " No phone has checked in yet. Open the Jarvis Locator app on the phone and tap "
+                "\"Save and start sharing\".").strip()
+    now = int(time.time() * 1000)
+    answered: set[str] = set()
+    if action in ("where", "show"):
+        asked = _phone_locator.ask(targets[0]["id"] if len(targets) == 1 else None)
+        if asked:
+            answered = _phone_locator.wait_for([d["id"] for d in targets], now, PHONE_WAIT_S)
+    fresh = {d["id"]: d for d in _phone_store.devices()}
+    lines = []
+    for d in targets:
+        d = fresh.get(d["id"], d)
+        if d.get("lat") is not None and not d.get("place"):
+            d["place"] = _phone_name_place(d["id"], d["lat"], d["lon"])
+        line = phone_locate.describe(d, int(time.time() * 1000))
+        if action in ("where", "show") and d["id"] not in answered:
+            line += " It didn't answer just now (switched off, no internet, or asleep), so that's its last check-in."
+        lines.append(line)
+    if show and not note:
+        lines.append("It's on the map on the dashboard.")
+    return " ".join(([note] if note else []) + lines)
+
+
+def _phone_location_tool(inp: dict) -> str:
+    action = str(inp.get("action") or "where").lower()
+    if action not in ("where", "last", "show", "setup"):
+        return "Tool failed: action must be where, last, show or setup."
+    if action == "setup":
+        problem = _owner_here_problem("sending the phone pairing code")
+        if problem:
+            return problem
+        res = _phones_send_setup()
+        return res["message"] if res.get("ok") else "Tool failed: " + res.get("error", "couldn't send it")
+    if not _owner_request_now():
+        return "Tool failed: where the phones are is only told to the owner's own request."
+    return _phone_location_text(action, str(inp.get("phone") or ""))
+
+
+def _phones_pairing(create: bool) -> tuple | None:
+    """(server, topic, key) from .env, made and saved once when `create` is set."""
+    cfg = phone_locate.env_config()
+    if cfg or not create:
+        return cfg
+    p = phone_locate.new_pairing()
+    for k, v in ((phone_locate.ENV_TOPIC, p["topic"]), (phone_locate.ENV_KEY, p["key"])):
+        res = settings.set_setting(k, v)
+        if not res.get("ok"):
+            return None
+    _selfaware_record("system", "phone_pairing", "Made a new pairing for the phone locator.")
+    return phone_locate.env_config()
+
+
+def _phones_send_setup() -> dict:
+    cfg = _phones_pairing(create=True)
+    if not cfg:
+        return {"ok": False, "error": "couldn't save the pairing in .env"}
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
+        return {"ok": False, "error": "Telegram isn't set up; copy the code from the dashboard Phones page instead"}
+    code = phone_locate.setup_code(*cfg)
+    ok = _telegram_send("Jarvis Locator setup code (paste it into the app, keep it private):\n\n" + code)
+    _log_action_audit("phone_locator", {"action": "send_setup"}, "(code not logged)", "sent" if ok else "failed")
+    return ({"ok": True, "message": "I sent the setup code to your Telegram. Copy it into the Jarvis Locator app."}
+            if ok else {"ok": False, "error": "Telegram didn't accept the message"})
+
+
+@_feature("phones")
+def _feature_phones(action: str, payload: dict):
+    """Phones page: GET = paired?, every phone's latest position and today's trail (never the key). POST ask /
+    pair (make the pairing once) / setup_code (show it, dashboard only) / send_setup / forget / repair."""
+    if action == "get":
+        now = int(time.time() * 1000)
+        devices = _phone_store.devices()
+        for d in devices:
+            d["trail"] = _phone_store.trail(d["id"], now - 86400000)
+            d["ago"] = phone_locate.ago(d.get("fix_ts"), now)
+            d["text"] = phone_locate.describe(d, now)
+        return {"paired": phone_locate.env_config() is not None,
+                "enabled": env_bool("JARVIS_PHONE_LOCATOR", True),
+                "connected": _phone_locator.connected, "error": _phone_locator.last_error,
+                "telegram": bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID), "devices": devices, "now": now}
+    if action == "ask":
+        dev = str(payload.get("id") or "") or None
+        return {"ok": _phone_locator.ask(dev)}
+    if action in ("pair", "setup_code"):
+        cfg = _phones_pairing(create=True)
+        if not cfg:
+            return {"ok": False, "error": "Couldn't save the pairing in .env."}
+        _phone_locator.start()
+        return {"ok": True, "code": phone_locate.setup_code(*cfg) if action == "setup_code" else None}
+    if action == "send_setup":
+        return _phones_send_setup()
+    if action == "forget":
+        return {"ok": _phone_store.forget(str(payload.get("id") or ""))}
+    if action == "repair":
+        # a new topic + key: every phone has to be set up again (for a lost phone or a leaked code)
+        for k in (phone_locate.ENV_TOPIC, phone_locate.ENV_KEY):
+            settings.set_setting(k, "")
+        cfg = _phones_pairing(create=True)
+        return {"ok": bool(cfg), "code": phone_locate.setup_code(*cfg) if cfg else None}
+    return {"ok": False, "error": f"unknown action {action}"}
+
+
+_phone_quiet_state = {"last": 0.0}
+
+
+def _phones_tick() -> None:
+    """A phone that stops checking in for JARVIS_PHONE_QUIET_MIN minutes (default 120, 0 = off) is noted once, quietly
+    (the 'what did I miss' inbox): it may be off, out of battery, or the app was stopped."""
+    if time.time() - _phone_quiet_state["last"] < 300 or not _phone_locator_config():
+        return
+    _phone_quiet_state["last"] = time.time()
+    quiet_min = env_int("JARVIS_PHONE_QUIET_MIN", 120)
+    if quiet_min <= 0:
+        return
+    now = int(time.time() * 1000)
+    for d in _phone_store.devices():
+        last = d.get("recv_ts") or 0
+        if last and not d.get("quiet_told") and now - last > quiet_min * 60000:
+            _phone_store.mark_quiet_told(d["id"])
+            queue_or_deliver_notification(f"{d.get('name') or 'A phone'} hasn't checked in since "
+                                          f"{phone_locate.ago(last, now)}: it may be off, out of battery or offline.")
+
+
+_PHONE_LOCATION_RE = re.compile(r"\b(?:where(?:'s| is| are)\b.{0,25}\bphones?|(?:find|locate|track)\b.{0,15}\bphones?|"
+                                r"phones? (?:location|on (?:the|a) map)|locator)\b", re.I)
+
+
+def _phone_where_reply(transcript: str) -> str:
+    show = bool(re.search(r"\b(?:show|visual(?:ly)?|map|see (?:it|them|where))\b", transcript or "", re.I))
+    if not _owner_request_now():
+        return "I only say where your phones are when you ask me yourself."
+    if _phone_locator_config() and _current_command_source() != "phone" and not show:
+        _start_announcement("Let me ask your phones.")
+        _await_ack(6.0)
+    return _phone_location_text("show" if show else "where", transcript)
+
+
 # --- Jarvis managing what the owner can manage (2026-10-16, "see and manage everything I can") -------------------
 def _owner_here_problem(what: str) -> str | None:
     """Changing settings / stopping work: only for the owner's own command, never an automatic or email-started run."""
@@ -10779,7 +11024,7 @@ HOUSEKEEPING_ACTIONS = {
 }
 
 
-_BATCH_TOOL_HANDLERS.update({"send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
+_BATCH_TOOL_HANDLERS.update({"phone_location": _phone_location_tool, "send_to_my_phone": _send_to_my_phone_tool, "skills": _skills_tool,
                              "watches": _watches_tool, "personality": _personality_tool,
                              "settings": _settings_tool, "stop_background_task": _stop_background_task_tool,
                              "running_now": _running_now_tool, "housekeeping": _housekeeping_tool})
@@ -14690,6 +14935,8 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core |= {"dashboard_data", "memory_search"}
     if _MY_PHONE_RE.search(transcript or ""):
         core.add("send_to_my_phone")
+    if _PHONE_LOCATION_RE.search(transcript or ""):
+        core.add("phone_location")
     if _BROWSER_TAB_RE.search(transcript or "") or _browser_in_front():
         core.add("browser_tabs")
     if _CARETAKER_RE.search(transcript or ""):
@@ -17286,7 +17533,7 @@ def _volume_reply(transcript: str) -> str | None:
 # so it runs after the dashboard session has started (_SLOW_INTENTS) and speaks a lead-in first; the test waits for
 # that line to finish, because speech streaming in would compete with the test for the connection.
 SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
-_SLOW_INTENTS = {"speedtest", "update"}
+_SLOW_INTENTS = {"speedtest", "update", "phone_where"}
 # Quick answers that keep their exact wording: a replay, a rewrite, silence, the switch itself (already in the new voice).
 _UNFLAVORED_INTENTS = {"repeat", "shorter", "hush", "personality", "running_cancel"}
 
@@ -17467,6 +17714,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
         return _update_and_restart_reply(transcript)
     if intent == "speedtest":
         return _speed_test_reply(transcript)
+    if intent == "phone_where":
+        return _phone_where_reply(transcript)
     if intent == "self_report":
         return _self_report_tool({})
     if intent == "running":
@@ -18189,6 +18438,8 @@ def main() -> int:
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         log.info("Phone (Telegram): pushing notifications and listening for chat %s.", TELEGRAM_CHAT_ID)
         threading.Thread(target=_telegram_listen_loop, daemon=True, name="telegram-listener").start()
+    if env_bool("JARVIS_PHONE_LOCATOR", True):
+        _phone_locator.start()  # waits quietly until a phone is paired from the dashboard Phones page
 
     if JARVIS_DASHBOARD_ENABLED:
         # Double-checked (Phase 0/2): localhost-only, no auth (user-accepted for a single-user
