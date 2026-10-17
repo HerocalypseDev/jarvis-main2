@@ -1844,7 +1844,8 @@ row there each phase rather than only stating the total in chat.
 | 172 (admin helper card showed every repair "off" with no reason and "waiting for the prompt" long after it was answered: unknown is now shown as "?" with why Windows couldn't be read, the setup says "checking" once the prompt is accepted, the hidden elevated window writes OK/FAIL+reason to a result file, a 90 s wall-clock deadline replaces the fixed polls; 12 new tests, headless check of five states) | Sonnet 5.5 | ~35 min | ~$2.20–$3.00 |
 | 173 (lessons didn't learn: corrections now see the original request + wrong answer, more correction phrasings incl. "Jarvis, ...", caught false claims write lessons, failed writes logged; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 174 (Windows MCP failing: a tool server that stops after connecting is now marked down, reconnected before the next call and shown failed on the dashboard; real error text instead of "unhandled errors in a TaskGroup"; 3 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
-| **Running total (final)** | | **~5319 min** | **~$364.85–$512.55** |
+| 175 (phone calls via CallMeBot: send_to_my_phone channel "call", own Telegram user only, daily cap, urgent alerts ring when away 10+ min; 8 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
+| **Running total (final)** | | **~5339 min** | **~$366.35–$514.75** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2904,6 +2905,21 @@ Owner's choices: self-healing loop + crash log, and **speak** the recovery. Code
   half-installed: `ModuleNotFoundError: No module named 'windows_mcp.__main__'` on every start from 17:11 (the day's cleanup
   went from 3.3 GB to 7.6 GB freed). uv's cache is no longer a cache root (never list a folder that holds installed code);
   repair on the PC with `uv cache clean`, then restart Jarvis. Test: `test_cache_roots_never_include_uvs_environment_cache`.
+
+## Phone calls through CallMeBot (2026-10-17, owner choice after a research thread)
+
+`jarvis_callmebot.py`, tests `test_callmebot.py` (8). CallMeBot's free service rings the owner's Telegram and reads a
+short text aloud: one-way, unofficial, no guarantee, needs data on the phone. Rules to keep:
+- Only recipient = `CALLMEBOT_TELEGRAM_USER` (.env/Settings, @username or +number); no caller passes a recipient. It
+  and `JARVIS_CALLS_PER_DAY` (default 5) are in `selfmanage.AI_DENIED`. Same text at most once an hour; text cut to
+  300 chars, links dropped (it goes to CallMeBot's servers). A failed/refused call doesn't count toward the cap.
+- `send_to_my_phone` channel `call` ("call me", "ring my phone"); `_MY_PHONE_RE` offers the tool for those words.
+- An urgent `queue_or_deliver_notification` also calls (`_maybe_call_for_urgent`, on a thread) only when
+  `JARVIS_CALL_ON_URGENT` (default on), the PC was idle 10+ min (unknown idle never calls) and not in Sleep Mode. Never
+  under pytest unless `JARVIS_TEST_ALLOW_CALLS`; conftest clears the user setting.
+- Success is judged from CallMeBot's reply page by known failure words; the real page wording is unverified. Two-way
+  calls (talking to Jarvis) were researched and not built: free route = a second Telegram account (ban risk).
+- Not verified live: a real CallMeBot call to the owner's Telegram.
 
 ## Hand-off guard (2026-09-25)
 

@@ -19,6 +19,8 @@ AI_DENIED = {
     "JARVIS_BROWSER_BRIDGE_PORT": "it opens a network port",
     "JARVIS_FACE_ENABLED": "it turns the camera on",
     "JARVIS_MEETING_AUTO": "it starts recording meetings by itself",
+    "CALLMEBOT_TELEGRAM_USER": "it decides who Jarvis phones",
+    "JARVIS_CALLS_PER_DAY": "it decides how often Jarvis may ring the owner",
 }
 # Handled by the tool that already has the right rules for them.
 ROUTED = {"JARVIS_SAFE_MODE": "safe_mode", "JARVIS_PERSONALITY": "personality"}

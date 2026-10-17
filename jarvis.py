@@ -56,6 +56,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 # Modular improvements — each is self-contained (owns its own DB tables/connection,
 # no import-time dependency back on this module) and exposed here as extra agent tools.
 import jarvis_workflow as workflow
+import jarvis_callmebot as callmebot
 import jarvis_proactive as proactive
 import jarvis_tech_understanding as tech_understanding
 import jarvis_memory_enhance as memory_enhance
@@ -3723,10 +3724,11 @@ BATCH_TOOLS = [
             "Send a message to the USER'S OWN phone: their Telegram chat with Jarvis and/or their ntfy push topic. Use "
             "for 'send me X on Telegram', 'text me the list', 'message my phone', 'ping me'. Only ever goes to the user "
             "themselves (the configured chat/topic), never to anyone else. channel: telegram (default when set up), "
-            "ntfy, or both."),
+            "ntfy, both, or call (rings the user's Telegram and reads the text aloud through CallMeBot: one-way, for "
+            "'call me', 'ring my phone', or something urgent; keep the text to a short alert, max 5 calls a day)."),
         "input_schema": {"type": "object", "properties": {
             "text": {"type": "string", "description": "The message to send."},
-            "channel": {"type": "string", "enum": ["telegram", "ntfy", "both"]}},
+            "channel": {"type": "string", "enum": ["telegram", "ntfy", "both", "call"]}},
             "required": ["text"]},
     },
     {
@@ -4964,6 +4966,32 @@ def _record_sleep_important(text: str) -> None:
         _save_session_context_locked()
 
 
+CALL_WHEN_AWAY_S = 600  # an urgent alert rings the phone only when nobody touched the PC for 10 minutes
+
+
+def _maybe_call_for_urgent(text: str) -> None:
+    """Phone calls (2026-10-17, owner: CallMeBot, urgent alerts only): an urgent notification also rings the owner's
+    Telegram when they're away from the PC (idle 10+ min; unknown idle never calls), not in Sleep Mode, and
+    JARVIS_CALL_ON_URGENT is on. callmebot keeps its own daily cap and same-text gap. Runs on a thread: a slow
+    CallMeBot never delays speech."""
+    if not (_env_on("JARVIS_CALL_ON_URGENT", True) and callmebot.configured()):
+        return
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("JARVIS_TEST_ALLOW_CALLS"):
+        return
+    try:
+        idle = _get_idle_seconds()
+        if idle is None or idle < CALL_WHEN_AWAY_S or sleep_mode.is_active():
+            return
+    except Exception:
+        return
+
+    def _go():
+        ok, what = callmebot.call("Jarvis here. " + text)
+        log.info("Urgent-alert phone call: %s (%s)", "placed" if ok else "not placed", what)
+
+    threading.Thread(target=_go, name="jarvis-urgent-call", daemon=True).start()
+
+
 def queue_or_deliver_notification(
     text: str,
     urgent: bool = False,
@@ -4991,6 +5019,8 @@ def queue_or_deliver_notification(
     if not text:
         return
     _notify_phone(text, force=force_phone)
+    if urgent:
+        _maybe_call_for_urgent(text)
     refresh_session_context()
     if urgent and sleep_mode.is_active():
         # Remembered so the wake-up recap can report it first. Spoken live too, unless the caller
@@ -10540,6 +10570,11 @@ def _send_to_my_phone_tool(inp: dict) -> str:
     text = str(inp.get("text") or inp.get("message") or "").strip()
     if not text:
         return "Tool failed: say what the message should say (text)."
+    if str(inp.get("channel") or "").strip().lower() == "call":
+        ok, what = callmebot.call(text)
+        if not ok:
+            return f"Tool failed: {what}."
+        return f"{what} and reading: {callmebot.clean_text(text)[:120]} (one-way: you can't talk back on this call)."
     telegram_ok = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
     ntfy_ok = bool(NTFY_TOPIC)
     channel = str(inp.get("channel") or "").strip().lower() or ("telegram" if telegram_ok else "ntfy")
@@ -14679,7 +14714,7 @@ _SELF_RECORD_RE = re.compile(
     r"last time|previous(?:ly)?|can you|are you able|what can you)\b", re.I)
 
 
-_MY_PHONE_RE = re.compile(r"\b(?:telegram|ntfy|my phone|text me|message me|ping me|notify me)\b", re.I)
+_MY_PHONE_RE = re.compile(r"\b(?:telegram|ntfy|my phone|text me|message me|ping me|notify me|call me|ring me|phone me)\b", re.I)
 
 
 def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
