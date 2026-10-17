@@ -1847,7 +1847,8 @@ row there each phase rather than only stating the total in chat.
 | 175 (phone calls via CallMeBot: send_to_my_phone channel "call", own Telegram user only, daily cap, urgent alerts ring when away 10+ min; 8 new tests) | Opus 5.5 | ~20 min | ~$1.50–$2.20 |
 | 176 (phone locator: Jarvis Locator Android app (sealed GPS check-ins over ntfy, built here), relay listener, phone_location tool + "where's my phone, show me visually" voice route, dark OpenStreetMap Phones page that the same tab switches to; headless check at 1440/390 px; 19 new tests) | Opus 5.5 | ~70 min | ~$5.50–$7.50 |
 | 177 (Phones page bounced back to Home: browser kept an old app.js after the update; dashboard page files now sent with Cache-Control no-cache; headless check of direct load + nav click; 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
-| **Running total (final)** | | **~5419 min** | **~$372.45–$523.15** |
+| 178 (CallMeBot spam lock: a "reported as spam" answer now says how to unlock it (add the caller bot to contacts and message it); 1 new test) | Opus 5.5 | ~10 min | ~$0.60–$0.90 |
+| **Running total (final)** | | **~5429 min** | **~$373.05–$524.05** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -2916,6 +2917,8 @@ short text aloud: one-way, unofficial, no guarantee, needs data on the phone. Ru
   and `JARVIS_CALLS_PER_DAY` (default 5) are in `selfmanage.AI_DENIED`. Same text at most once an hour; text cut to
   250 chars (CallMeBot reads at most 256), links dropped (it goes to CallMeBot's servers). A failed/refused call doesn't count toward the cap.
 - Setup: /start on @CallMeBot_txtbot in Telegram (one bot for texts and calls); use the @username, a phone number may not work.
+- "Reported as spam" lock (seen 2026-10-17): the caller bot (@CallMeBot_API<number>, from the call history) must be added to
+  contacts and sent a message; `_refusal` explains that when the reply mentions spam.
 - `send_to_my_phone` channel `call` ("call me", "ring my phone"); `_MY_PHONE_RE` offers the tool for those words.
 - An urgent `queue_or_deliver_notification` also calls (`_maybe_call_for_urgent`, on a thread) only when
   `JARVIS_CALL_ON_URGENT` (default on), the PC was idle 10+ min (unknown idle never calls) and not in Sleep Mode. Never
