@@ -767,6 +767,7 @@ class Hooks:
     synth: Callable[[str], tuple[bytes, int]]            # text -> (16-bit mono PCM, sample rate)
     run_command: Callable[[str, str], str]               # (what the caller said, note) -> Jarvis's reply text
     shape: Callable[[str], str] = lambda t: t            # reply -> what is fit to say aloud (summary, paths, symbols)
+    cancel_command: Callable[[], None] = lambda: None    # the line dropped while a command ran: stop that command
 
 
 @dataclass
@@ -881,11 +882,34 @@ class Conversation:
         th = threading.Thread(target=filler, daemon=True)
         th.start()
         t_agent = self.clock()
+        box: dict = {}
+
+        def work() -> None:
+            try:
+                box["reply"] = self.hooks.run_command(said, note)
+            except BaseException as e:  # noqa: BLE001 - handed back to the call loop below
+                box["error"] = e
+            finally:
+                finished.set()
+
+        finished = threading.Event()
+        threading.Thread(target=work, name="jarvis-call-command", daemon=True).start()
         try:
-            reply = self.hooks.run_command(said, note)
+            # Wait for the command, but never past the end of the line: a caller who hung up while Jarvis was still
+            # thinking used to leave the call "busy" until the command returned (or the 15+ minute watchdog).
+            while not finished.wait(0.2):
+                if self.transport.closed.is_set():
+                    try:
+                        self.hooks.cancel_command()
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("Couldn't cancel the command of a call that ended: %s", e)
+                    break
         finally:
             done.set()
             th.join(timeout=15)
+        if "error" in box:
+            raise box["error"]
+        reply = box.get("reply", "")
         agent_s = self.clock() - t_agent
         self.turns += 1
         first_audio_s = None

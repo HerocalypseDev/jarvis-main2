@@ -5008,14 +5008,32 @@ def _record_sleep_important(text: str) -> None:
 # jarvis_tgcall.py never imports this file, so the wiring lives here. Everything the caller says runs through the normal
 # handle_text_command pipeline as a PHONE command that is also hands-free: the catastrophic gate stays intact and a spoken
 # "yes" on a call can never confirm a staged action. Nothing is spoken on the PC speakers (phone replies are text-only).
+_tgcall_command_ids: list[int] = []  # run ids of the call turns in flight (the registry id of each handle_text_command)
+
+
+def _tgcall_cancel_command() -> None:
+    """The line dropped while a spoken command was still running: cancel it so it leaves "Running now"."""
+    for rid in list(_tgcall_command_ids):
+        running_mod.registry.cancel(rid)
+
+
 def _tgcall_run_command(text: str, note: str = "") -> str:
     out: list[str] = []
     prev = getattr(_command_ctx, "hands_free", False)
+    prev_box = getattr(_command_ctx, "run_id_box", None)
+    box: list = []
     _command_ctx.hands_free = True
+    _command_ctx.run_id_box = box
     try:
         handle_text_command((note + text) if note else text, reply_sink=out.append, source="phone")
     finally:
         _command_ctx.hands_free = prev
+        _command_ctx.run_id_box = prev_box
+        for rid in box:
+            try:
+                _tgcall_command_ids.remove(rid)
+            except ValueError:
+                pass
     return " ".join(str(x) for x in out if x).strip()
 
 
@@ -5048,6 +5066,7 @@ def _tgcall_hooks() -> "tgcall.Hooks":
         synth=_tgcall_synth,
         run_command=_tgcall_run_command,
         shape=_tgcall_shape,
+        cancel_command=_tgcall_cancel_command,
     )
 
 
@@ -17902,6 +17921,10 @@ def handle_text_command(
     except Exception as e:  # the list is bookkeeping: a failure here never stops the command
         log.debug("running list start failed: %s", e)
     _command_ctx.run_id = run_id
+    box = getattr(_command_ctx, "run_id_box", None)
+    if box is not None and run_id is not None:
+        box.append(run_id)
+        _tgcall_command_ids.append(run_id)
     _inflight_enter()
     status = "done"
     try:

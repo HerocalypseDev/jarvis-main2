@@ -1728,3 +1728,24 @@ def test_an_echoed_utterance_runs_no_command_but_a_real_one_does(fast):
     threading.Thread(target=caller, daemon=True).start()
     res = conv.run()
     assert [s for s, _ in log] == ["what time is it"] and res.turns == 1 and "goodbye" in res.reason
+
+
+def test_hanging_up_during_a_command_frees_the_line_and_cancels_it():
+    """Stuck "in a call" (2026-10-18): a caller who hung up while Jarvis was still working left the call busy until the
+    command returned, so Test call stayed disabled. The line must end at once and the command be told to stop."""
+    tr = FakeTransport()
+    release, cancelled = threading.Event(), []
+    conv = tg.Conversation(tr, _hooks([], []), "")
+    conv.hooks.transcribe = lambda audio: "do the long thing"
+    conv.hooks.run_command = lambda said, note: release.wait(30) or ""
+    conv.hooks.cancel_command = lambda: cancelled.append(1)
+    threading.Thread(target=lambda: (time.sleep(0.1), tr.say_to_jarvis(_tone(0.6) + _quiet(1.2))), daemon=True).start()
+    res_box = {}
+    th = threading.Thread(target=lambda: res_box.update(r=conv.run()), daemon=True)
+    th.start()
+    time.sleep(2.0)                                           # the command is now running and never returns
+    tr.closed.set()                                           # the caller hangs up
+    th.join(timeout=5)
+    release.set()
+    assert not th.is_alive() and "r" in res_box               # the call finished although the command was still stuck
+    assert cancelled == [1]
