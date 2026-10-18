@@ -110,6 +110,7 @@ import jarvis_netscan as netscan
 import jarvis_speedtest as speedtest
 import jarvis_phone_locate as phone_locate
 import jarvis_dashdata as dashdata
+import jarvis_status as jstatus
 import jarvis_settings as settings
 import jarvis_license as license_mod
 import jarvis_pro as pro
@@ -1724,6 +1725,12 @@ ran, autonomy, settings, memory, routines, and every Toolbox feature); page=capa
 do. Never say you keep no record of something, or can't do something, before checking there. You also remember: \
 recent exchanges are in this conversation, your own action log is in the volatile context, and anything older is \
 in memory_search or dashboard_data page=audit.
+
+Whether one of your own parts works (a tool server such as Windows MCP, Gmail or WhatsApp, the Telegram listener, \
+calls, your brain, voice, microphone, internet, Everything, browser tabs, agents, watches...) is answered ONLY by \
+status_check, which asks the real thing right now. Never judge it from processes, ports or Windows service names: tool \
+servers talk over stdio, not a port. If status_check has no check for something, say plainly that you can't check it; \
+never guess either way.
 
 Never say where something came from, or that you did something, without checking: when asked where a deadline, task or \
 reminder came from, look it up (autonomy action=origin for deadlines/commitments, the calendar for events, list_reminders, \
@@ -3732,6 +3739,20 @@ BATCH_TOOLS = [
             "text": {"type": "string", "description": "The message to send."},
             "channel": {"type": "string", "enum": ["telegram", "ntfy", "both", "call"]}},
             "required": ["text"]},
+    },
+    {
+        "name": "status_check",
+        "description": (
+            "Check for real whether one of your own parts works RIGHT NOW: a tool server (Windows MCP, Gmail, Calendar, "
+            "WhatsApp...), the Telegram/ntfy listeners, Telegram calls, the phone locator, your brain (Claude/Gemini), "
+            "the internet, speech-to-text, your voice, microphone, speakers, wake word, camera, Everything search, the "
+            "dashboard, browser tabs, disk, Google sign-in, auto-replies, autonomy, safe/Sleep Mode, agents, watches, "
+            "jobs, skills, caretaker. ALWAYS use this for 'is X working/connected/up?'; never judge it from processes, "
+            "ports or Windows service names (tool servers talk over stdio, not ports). component='everything' checks "
+            "all, 'list' lists them. If it says there is no check, tell the user plainly you can't check it."),
+        "input_schema": {"type": "object", "properties": {
+            "component": {"type": "string", "description": "What to check, in plain words or a key from 'list'."}},
+            "required": ["component"]},
     },
     {
         "name": "dashboard_data",
@@ -5993,6 +6014,7 @@ def _ntfy_listen_loop() -> None:
     while True:
         try:
             with urllib.request.urlopen(urllib.request.Request(url), timeout=90) as resp:
+                _listener_ok("ntfy")
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line:
@@ -6012,6 +6034,7 @@ def _ntfy_listen_loop() -> None:
                             text, reply_sink=lambda r: _ntfy_publish(r, title="Jarvis"), source="phone"
                         )
         except Exception as e:
+            _listener_failed("ntfy", e)
             log.warning("ntfy listener error (reconnecting): %s", e)
             time.sleep(5)
 
@@ -6041,6 +6064,7 @@ def _telegram_listen_loop() -> None:
             url = f"{base}/getUpdates?timeout=50&offset={offset}"
             with urllib.request.urlopen(url, timeout=60) as resp:
                 data = json.loads(resp.read())
+            _listener_ok("telegram")
             for update in data.get("result", []):
                 offset = update["update_id"] + 1
                 msg = update.get("message") or {}
@@ -6069,6 +6093,7 @@ def _telegram_listen_loop() -> None:
                     # Before 2026-10-02 a picture (or anything without text) was dropped with no reply at all.
                     _telegram_send("I can read text messages and pictures here, not that kind of message yet.")
         except Exception as e:
+            _listener_failed("telegram", e)
             log.warning("Telegram listener error (reconnecting): %s", e)
             time.sleep(5)
 
@@ -10745,6 +10770,419 @@ def _dashboard_data_tool(inp: dict) -> str:
 _BATCH_TOOL_HANDLERS.update({"dashboard_data": _dashboard_data_tool})
 
 
+# --- Real status checks (2026-10-18 debug report: "is my Windows MCP working?" was answered from a port scan) ---------
+# Jarvis listed node/python processes, tried localhost:3000, scanned three ports and found a Windows service called
+# McpManagementService, then said Windows-MCP was "still not up". Windows-MCP talks over stdio (uvx), not a port, so
+# none of that could tell, while Jarvis itself tracks the real connection. The owner then asked for the same for
+# everything else: every status question is answered by a real check, or "I can't check that", never a guess.
+# Checks live here (they need Jarvis's state), the matching and wording in jarvis_status.py.
+import socket  # noqa: E402
+
+_MCP_EXTRA_ALIASES = {
+    "windows": ("windows mcp", "windows tools", "windows tool", "windows control", "windows ui tools", "ui tools",
+                "desktop control", "windows-mcp", "window mcp", "windows mcp server"),
+    "gmail": ("gmail", "email", "emails", "mail", "my email", "my mail", "inbox", "gmail mcp"),
+    "calendar": ("calendar", "google calendar", "my calendar", "calendar mcp"),
+    "whatsapp": ("whatsapp", "whatsapp tools", "whats app"),
+    "browser": ("playwright", "browser automation", "automation browser"),
+    "context7": ("context7", "context 7", "docs lookup"),
+}
+_LISTENER_FRESH_S = 180          # the listeners poll every ~50-90 s; older than this and we don't know
+_listener_health: dict[str, dict] = {}
+_listener_health_lock = threading.Lock()
+
+
+def _listener_ok(name: str) -> None:
+    with _listener_health_lock:
+        h = _listener_health.setdefault(name, {})
+        h.update(ok_at=time.time(), fails=0)
+
+
+def _listener_failed(name: str, e: BaseException) -> None:
+    code = getattr(e, "code", None)
+    with _listener_health_lock:
+        h = _listener_health.setdefault(name, {})
+        h.update(error_at=time.time(), error=f"{type(e).__name__}" + (f" {code}" if code else ""),
+                 code=code, fails=int(h.get("fails") or 0) + 1)
+
+
+def _listener_state(name: str, configured: bool, what: str) -> tuple[str, str]:
+    if not configured:
+        return jstatus.OFF, f"not set up ({what})"
+    with _listener_health_lock:
+        h = dict(_listener_health.get(name) or {})
+    now = time.time()
+    if h.get("error_at", 0) > h.get("ok_at", 0):
+        code = h.get("code")
+        why = ("Telegram says the bot token is wrong (HTTP 404): check TELEGRAM_BOT_TOKEN" if name == "telegram" and code == 404
+               else "Telegram says another program is reading this bot's messages (HTTP 409)" if code == 409
+               else f"its last try failed ({h.get('error')}), {h.get('fails')} time(s) in a row")
+        return jstatus.DOWN, why + f", {_ago(now - h['error_at'])}"
+    if h.get("ok_at") and now - h["ok_at"] <= _LISTENER_FRESH_S:
+        return jstatus.WORKING, f"heard from the server {_ago(now - h['ok_at'])}"
+    if h.get("ok_at"):
+        return jstatus.UNKNOWN, f"its last good answer was {_ago(now - h['ok_at'])}"
+    return jstatus.UNKNOWN, "the listener hasn't answered yet since Jarvis started"
+
+
+def _ago(seconds: float) -> str:
+    s = max(0, int(seconds))
+    return ("just now" if s < 10 else f"{s} seconds ago" if s < 90 else f"{s // 60} minutes ago" if s < 5400
+            else f"{s // 3600} hours ago")
+
+
+_MCP_PROBE = "\x00probe"          # a queue item the supervisor answers with list_tools(): a real round trip
+
+
+def _mcp_probe(server_name: str, timeout: float = 8.0) -> int:
+    """Asks the server itself to answer (list its tools). Returns the tool count; raises if it doesn't answer."""
+    return int(_mcp_run_coro(_mcp_call_tool_async(server_name, _MCP_PROBE, {}), timeout=timeout))
+
+
+def _mcp_status(name: str) -> tuple[str, str]:
+    handle = _mcp_handles.get(name)
+    with _mcp_lock:
+        failed = name in _mcp_failed_servers
+    if (handle is None or handle.error or failed) and _mcp_started:
+        # "I fixed it": try to connect now instead of reporting the last failure (bounded, so voice isn't held up)
+        t = threading.Thread(target=_mcp_reconnect_now, args=(name,), daemon=True, name=f"status-reconnect-{name}")
+        t.start()
+        t.join(15)
+        if t.is_alive():
+            return jstatus.UNKNOWN, "it's still starting up after I tried to reconnect it; ask me again in a minute"
+        handle = _mcp_handles.get(name)
+    if handle is None:
+        return (jstatus.UNKNOWN, "tool servers haven't been started yet (they start on first use)") if not _mcp_started \
+            else (jstatus.DOWN, "it isn't connected")
+    if handle.error:
+        hint = ""
+        if "ModuleNotFoundError" in handle.error and name == "windows":
+            hint = ". Its installed copy is broken: run `uv cache clean`, then restart Jarvis"
+        return jstatus.DOWN, f"I just tried to connect it and it failed: {handle.error[:160]}{hint}"
+    if not handle.ready.is_set():
+        return jstatus.UNKNOWN, "it's still starting"
+    try:
+        n = _mcp_probe(name)
+    except Exception as e:  # noqa: BLE001
+        return jstatus.DOWN, f"it's connected but didn't answer just now ({_mcp_error_text(e)[:120]})"
+    return jstatus.WORKING, f"I asked it just now and it answered ({n} tools)"
+
+
+def _mcp_reconnect_now(name: str) -> None:
+    _mcp_reconnect_tried.pop(name, None)
+    with _mcp_lock:
+        info = _mcp_failed_servers.get(name)
+        if info is None:
+            cfg = _load_mcp_server_configs().get(name)
+            if not isinstance(cfg, dict):
+                return
+            info = _mcp_failed_servers[name] = {"cfg": cfg, "last_attempt": datetime.now()}
+        info["last_attempt"] = datetime.now() - timedelta(seconds=MCP_RETRY_INTERVAL_S + 1)
+    _retry_failed_mcp_servers(datetime.now())
+
+
+def _tcp_ok(host: str, port: int, timeout: float = 3.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _status_internet() -> tuple[str, str]:
+    reach = [h for h in ("1.1.1.1", "8.8.8.8") if _tcp_ok(h, 443)]
+    try:
+        socket.getaddrinfo("www.google.com", 443)
+        dns = True
+    except OSError:
+        dns = False
+    if reach and dns:
+        return jstatus.WORKING, "I reached the internet and looked up a name just now"
+    if reach:
+        return jstatus.DOWN, "the internet answers but name lookups (DNS) fail"
+    return jstatus.DOWN, "I couldn't reach the internet just now"
+
+
+def _status_brain(which: str) -> tuple[str, str]:
+    active = _llm_provider()
+    if which == "active":
+        which = active
+    if which == "ollama":
+        return jstatus.UNKNOWN, "I have no live check for the local brain yet"
+    prob = (_claude_live_problem if which == "claude" else _gemini_live_problem)()
+    tag = " (the brain I'm using now)" if which == active else ""
+    if prob and prob.startswith("no ") and "key" in prob:
+        return jstatus.OFF, prob + tag
+    return (jstatus.DOWN, prob + tag) if prob else (jstatus.WORKING, f"it answered a test request just now{tag}")
+
+
+def _status_breaker(key_set: bool, breaker, what: str) -> tuple[str, str]:
+    if not key_set:
+        return jstatus.OFF, "no key is set"
+    if not breaker.allow():
+        return jstatus.DOWN, f"{what} paused itself after repeated failures; it tries again within 2 minutes"
+    return jstatus.WORKING, "no failures in recent use (I didn't make a test call: that would cost credits)"
+
+
+def _status_audio(kind: str) -> tuple[str, str]:
+    try:
+        dev = sd.query_devices(kind=kind)
+    except Exception as e:  # noqa: BLE001
+        return jstatus.DOWN, f"Windows reports no working {'microphone' if kind == 'input' else 'speaker'} ({type(e).__name__})"
+    return jstatus.WORKING, f"Windows has it: {dev['name']}"
+
+
+def _status_face() -> tuple[str, str]:
+    if not face.enabled():
+        return jstatus.OFF, "face recognition is switched off"
+    prob = face.health_problem()
+    return (jstatus.DOWN, prob) if prob else (jstatus.WORKING, "the camera answered its last look")
+
+
+def _status_wake() -> tuple[str, str]:
+    if not jarvis_wakeword.enabled():
+        return jstatus.OFF, "the wake word is switched off in Settings"
+    import importlib.util
+    if importlib.util.find_spec("openwakeword") is None:
+        return jstatus.DOWN, "it's on, but the openwakeword package isn't installed"
+    return jstatus.WORKING, "it's on and its package is installed (I can't test it without your voice)"
+
+
+def _status_everything() -> tuple[str, str]:
+    if everything.reachable(max_age_s=0):
+        return jstatus.WORKING, "it answered a search just now"
+    return jstatus.DOWN, "it didn't answer: is Everything running with its HTTP server switched on?"
+
+
+def _status_dashboard() -> tuple[str, str]:
+    if not env_bool("JARVIS_DASHBOARD_ENABLED", False):
+        return jstatus.OFF, "set JARVIS_DASHBOARD_ENABLED=1 to turn it on"
+    ok = _tcp_ok("127.0.0.1", JARVIS_DASHBOARD_PORT, 2)
+    return (jstatus.WORKING, f"it answers on port {JARVIS_DASHBOARD_PORT}") if ok else \
+        (jstatus.DOWN, f"nothing answers on port {JARVIS_DASHBOARD_PORT}")
+
+
+def _status_browser_tabs() -> tuple[str, str]:
+    if not _browser_bridge:
+        return jstatus.OFF, "the browser-tabs bridge is off"
+    conns = _browser_bridge.status()
+    if conns:
+        return jstatus.WORKING, "connected to " + ", ".join(c["browser"] for c in conns)
+    return jstatus.DOWN, "no browser is connected: is the Jarvis Tabs extension installed and on?"
+
+
+def _status_calls() -> tuple[str, str]:
+    cs = tgcall.status()
+    if not cs["configured"]:
+        return jstatus.OFF, "not set up (" + ", ".join(cs.get("missing") or []) + ")"
+    if cs["packages"] != "ok":
+        return jstatus.DOWN, cs["packages"]
+    if cs["on_call"]:
+        return jstatus.WORKING, "on a call right now"
+    if cs["inbound_enabled"] and not cs["listener_up"]:
+        return jstatus.DOWN, "it isn't logged in and waiting for your calls right now"
+    last = cs.get("last") or {}
+    return jstatus.WORKING, ("logged in and waiting for your calls" if cs["listener_up"] else "set up") + (
+        f"; last call: {last.get('reason') or 'ok'}" if last else "")
+
+
+def _status_callmebot() -> tuple[str, str]:
+    if not callmebot.configured():
+        return jstatus.OFF, "not set up"
+    return jstatus.UNKNOWN, "it's set up, but the only test is a real call to your phone"
+
+
+def _status_phone_locator() -> tuple[str, str]:
+    if not env_bool("JARVIS_PHONE_LOCATOR", True) or phone_locate.env_config() is None:
+        return jstatus.OFF, "no phone is paired"
+    if _phone_locator.last_error and not _phone_locator.connected:
+        return jstatus.DOWN, f"Jarvis can't reach the relay ({str(_phone_locator.last_error)[:80]})"
+    now = int(time.time() * 1000)
+    devs = _phone_store.devices()
+    if not devs:
+        return jstatus.UNKNOWN, "paired, but no phone has checked in yet"
+    return jstatus.WORKING, "; ".join(phone_locate.checkin_text(d, now) for d in devs[:3])
+
+
+def _status_autoreply() -> tuple[str, str]:
+    on = env_bool("JARVIS_MAIL_AUTOREPLY", True)
+    return (jstatus.WORKING, "switched on") if on else (jstatus.OFF, "switched off")
+
+
+def _status_mode(name: str) -> tuple[str, str]:
+    if name == "safe":
+        return (jstatus.WORKING, "safe mode is ON") if safe_mode_on() else (jstatus.OFF, "safe mode is off")
+    if name == "sleep":
+        return (jstatus.WORKING, "Sleep Mode is on") if sleep_mode.is_active() else (jstatus.OFF, "Sleep Mode is off")
+    if not autonomy.enabled():
+        return jstatus.OFF, "autonomy is switched off"
+    return jstatus.WORKING, ("paused by safe mode" if safe_mode_on() else
+                            "on" + (" (dry run: it records, doesn't act)" if autonomy.dry_run() else ""))
+
+
+def _status_agents() -> tuple[str, str]:
+    rows = _agent_store.all()
+    on = [a for a in rows if a.get("enabled")]
+    if not rows:
+        return jstatus.OFF, "you have no background agents"
+    return jstatus.WORKING, f"{len(on)} of {len(rows)} on" + (
+        "; running now: " + ", ".join(sorted(_agents_running)) if _agents_running else "")
+
+
+def _status_watches() -> tuple[str, str]:
+    rows = _watches().all()
+    if not rows:
+        return jstatus.OFF, "you have no watches"
+    on = [w for w in rows if w.get("enabled", True)]
+    return jstatus.WORKING, f"{len(on)} of {len(rows)} on"
+
+
+def _status_jobs() -> tuple[str, str]:
+    jobs = deferred.list_jobs(_deferred_store, include_finished=True, limit=50)
+    pending = [j for j in jobs if j.get("status") in ("pending", "running")]
+    cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+    failed = [j for j in jobs if j.get("status") == "failed" and str(j.get("finished_at") or j.get("updated_at") or "") >= cutoff]
+    if failed:
+        return jstatus.DOWN, f"{len(failed)} failed in the last day; {len(pending)} waiting"
+    return (jstatus.WORKING, f"{len(pending)} waiting to run") if pending else (jstatus.OFF, "no jobs waiting")
+
+
+def _status_skills() -> tuple[str, str]:
+    scheduled = [s for s in _load_skills() if isinstance(s.get("schedule"), dict)]
+    if not scheduled:
+        return jstatus.OFF, "no scheduled skills"
+    return jstatus.WORKING, f"{len(scheduled)} scheduled; the scheduler is running"
+
+
+def _status_caretaker() -> tuple[str, str]:
+    if not caretaker_enabled():
+        return jstatus.OFF, "the caretaker is switched off"
+    issues = _caretaker_store.visible_issues()
+    if issues:
+        return jstatus.DOWN, f"{len(issues)} open issue(s): " + "; ".join(str(i.get("title") or i.get("key"))[:60] for i in issues[:3])
+    return jstatus.WORKING, "no open issues"
+
+
+def _status_google_signin() -> tuple[str, str]:
+    found = [c for c in doctor.run_checks() if "sign-in" in str(c.get("name", "")).lower()]
+    if not found:
+        return jstatus.UNKNOWN, "I found no Google sign-in file to look at on this PC"
+    bad = [c for c in found if c["status"] != "ok"]
+    if bad:
+        return jstatus.DOWN, "; ".join(f"{c['name']}: {c['detail']}" + (f" (fix: {c['fix']})" if c.get("fix") else "")
+                                      for c in bad)
+    return jstatus.WORKING, "; ".join(f"{c['name']}: {c['detail']}" for c in found)
+
+
+def _status_disk() -> tuple[str, str]:
+    du = shutil.disk_usage(Path.home().anchor or "C:\\")
+    free = du.free * 100 // du.total
+    return (jstatus.WORKING if free >= 10 else jstatus.DOWN), f"{free}% free"
+
+
+def _status_checks() -> list:
+    C = jstatus.Check
+    out = []
+    for name, cfg in _load_mcp_server_configs().items():
+        if name.startswith("_") or not isinstance(cfg, dict):
+            continue
+        label = "Windows MCP" if name == "windows" else f"the {name} tool server"
+        out.append(C(f"mcp:{name}", label, ((name,) if name != "windows" else ()) + (f"{name} mcp", f"{name} server", f"{name} tool server",
+                                            f"{name} tools") + _MCP_EXTRA_ALIASES.get(name, ()),
+                     lambda n=name: _mcp_status(n), group="tool servers"))
+    out += [
+        C("telegram", "the Telegram listener", ("telegram", "telegram bot", "my telegram", "telegram messages"),
+          lambda: _listener_state("telegram", bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
+                                  "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"), group="phone"),
+        C("ntfy", "the ntfy listener", ("ntfy", "ntfy listener", "phone commands"),
+          lambda: _listener_state("ntfy", bool(NTFY_TOPIC), "NTFY_TOPIC"), group="phone"),
+        C("calls", "Telegram calls", ("telegram calls", "calls", "phone calls", "calling", "call feature", "tgcall"),
+          _status_calls, group="phone"),
+        C("callmebot", "CallMeBot calls", ("callmebot", "call me bot"), _status_callmebot, group="phone"),
+        C("phone_locator", "the phone locator", ("phone locator", "locator", "phone tracking", "find my phone",
+                                                  "jarvis locator", "phone location"), _status_phone_locator, group="phone"),
+        C("brain", "my brain", ("brain", "ai", "llm", "model", "your brain"), lambda: _status_brain("active"), group="brain"),
+        C("claude", "Claude", ("claude", "anthropic"), lambda: _status_brain("claude"), group="brain", everything=False),
+        C("gemini", "Gemini", ("gemini", "google ai"), lambda: _status_brain("gemini"), group="brain", everything=False),
+        C("internet", "the internet", ("internet", "wifi", "wi fi", "network connection", "connection", "my internet"),
+          _status_internet, group="system"),
+        C("stt", "speech-to-text", ("speech to text", "transcription", "deepgram", "stt", "hearing", "listening"),
+          lambda: _status_breaker(bool(stt_deepgram.DEEPGRAM_API_KEY), _dg_stt_breaker, "Deepgram speech-to-text"),
+          group="voice"),
+        C("tts", "my voice", ("voice", "text to speech", "tts", "your voice", "speaking", "aura"),
+          lambda: _status_breaker(bool(tts_deepgram.DEEPGRAM_API_KEY), _dg_tts_breaker, "Deepgram's voice"), group="voice"),
+        C("mic", "the microphone", ("microphone", "mic", "my mic"), lambda: _status_audio("input"), group="voice"),
+        C("speakers", "the speakers", ("speakers", "speaker", "audio output", "sound"), lambda: _status_audio("output"),
+          group="voice"),
+        C("wake_word", "the wake word", ("wake word", "hey jarvis", "wakeword"), _status_wake, group="voice"),
+        C("camera", "face recognition", ("camera", "webcam", "face recognition", "face id"), _status_face, group="system"),
+        C("everything", "Everything file search", ("everything search", "file search", "everything app",
+                                                    "quick search", "voidtools"), _status_everything, group="system"),
+        C("dashboard", "the dashboard", ("dashboard",), _status_dashboard, group="system"),
+        C("browser_tabs", "browser tabs", ("browser tabs", "tabs extension", "jarvis tabs", "browser extension",
+                                           "tab bridge"), _status_browser_tabs, group="system"),
+        C("disk", "the disk", ("disk", "storage", "hard drive", "drive space"), _status_disk, group="system"),
+        C("google_signin", "the Google sign-in", ("google sign in", "google login", "google token", "gmail sign in"),
+          _status_google_signin, group="tool servers"),
+        C("autoreply", "email auto-replies", ("auto reply", "auto replies", "autoreply", "email auto reply"),
+          _status_autoreply, group="automation"),
+        C("autonomy", "autonomy", ("autonomy", "autonomous mode"), lambda: _status_mode("autonomy"), group="automation"),
+        C("safe_mode", "safe mode", ("safe mode",), lambda: _status_mode("safe"), group="automation"),
+        C("sleep_mode", "Sleep Mode", ("sleep mode", "nap mode"), lambda: _status_mode("sleep"), group="automation"),
+        C("agents", "background agents", ("background agents", "agents", "my agents"), _status_agents, group="automation"),
+        C("watches", "watches", ("watches", "my watches", "watch"), _status_watches, group="automation"),
+        C("jobs", "scheduled jobs", ("scheduled jobs", "jobs", "scheduled tasks", "scheduled work"), _status_jobs,
+          group="automation"),
+        C("skills", "scheduled skills", ("scheduled skills", "skills", "my skills"), _status_skills, group="automation"),
+        C("caretaker", "the caretaker", ("caretaker",), _status_caretaker, group="automation"),
+    ]
+    return out
+
+
+def _status_question_keys(transcript: str) -> list[str] | None:
+    """Keys a status question names; ["*"] for "is everything working?"; None when it isn't a status question."""
+    if not jstatus.is_status_question(transcript):
+        return None
+    if jstatus.asks_everything(transcript):
+        return ["*"]
+    try:
+        keys = jstatus.match(transcript, _status_checks())
+    except Exception as e:  # noqa: BLE001
+        log.debug("status match failed: %s", e)
+        return None
+    return keys or None
+
+
+def _status_reply(transcript: str) -> str:
+    keys = _status_question_keys(transcript) or []
+    checks = _status_checks()
+    if _current_command_source() != "phone":
+        _start_announcement("Checking everything now." if keys == ["*"] else "Checking it now.")
+    every = keys == ["*"]
+    results = jstatus.run(checks, None if every else keys, timeout=20)
+    for r in results:
+        log.info("Status check %s: %s (%s) in %d ms", r["key"], r["state"], r["detail"], r["ms"])
+    return jstatus.render(results, everything=every)
+
+
+def _status_check_tool(inp: dict) -> str:
+    """Agent tool: real checks by name or words; an unknown thing gets an honest "no check for that"."""
+    checks = _status_checks()
+    what = str(inp.get("component") or inp.get("query") or inp.get("name") or "").strip()
+    if not what or what.lower() in ("list", "help", "what"):
+        return "Things I can really check (pass one as component, or 'everything'):\n" + jstatus.catalogue(checks)
+    if what.lower() in ("everything", "all", "*"):
+        return jstatus.render(jstatus.run(checks, None, timeout=20), everything=True, full=True)
+    keys = [c.key for c in checks if c.key == what] or jstatus.match(what, checks)
+    if not keys:
+        return ("No check exists for " + repr(what[:60]) + ". Tell the user plainly you can't check whether it "
+                "works; don't guess from processes, ports or service names. " + jstatus.no_check_reply(what, checks))
+    return jstatus.render(jstatus.run(checks, keys, timeout=20))
+
+
+_BATCH_TOOL_HANDLERS.update({"status_check": _status_check_tool})
+
+
 # --- Messages to the owner's own phone (2026-10-03, debug report: "send a random message to me on Telegram" -> "I can't") --
 # Jarvis already talks to the owner's Telegram chat/ntfy topic (replies, reminders), but the model had no tool for it, so
 # it ran a placeholder script and claimed success. This tool only reaches the configured chat/topic, never another
@@ -11792,7 +12230,10 @@ async def _mcp_server_supervisor(cfg: dict, handle: "_McpServerHandle", server_n
                 while True:
                     tool_name, arguments, future = await handle.queue.get()
                     try:
-                        result = await session.call_tool(tool_name, arguments)
+                        if tool_name == _MCP_PROBE:  # a status check: the server itself must answer
+                            result = len((await session.list_tools()).tools)
+                        else:
+                            result = await session.call_tool(tool_name, arguments)
                         if not future.done():
                             future.set_result(result)
                     except Exception as e:
@@ -15148,6 +15589,8 @@ def _narrowing_core(transcript: str, on_screen: bool = False) -> set[str]:
         core |= SCREEN_KIT_TOOLS
     if _SELF_RECORD_RE.search(transcript or ""):
         core |= {"dashboard_data", "memory_search"}
+    if jstatus.is_status_question(transcript or ""):
+        core.add("status_check")
     if _MY_PHONE_RE.search(transcript or ""):
         core.add("send_to_my_phone")
     if _PHONE_LOCATION_RE.search(transcript or ""):
@@ -15311,6 +15754,26 @@ _FAKE_CHECK_RE = re.compile(
 _FAKE_CHECK_WORDS_RE = re.compile(
     r"\b(?:hello|operational|all (?:good|clear|ok|fine|systems|checks?)|ok\b|success|passed|clean|fixed|working|done|no (?:issues|errors|problems))\b",
     re.I)
+
+
+_STATUS_PROBE_RE = re.compile(
+    r"Get-Process|tasklist|Get-NetTCPConnection|netstat|Test-NetConnection|Win32_Service|Get-Service|\bsc(?:\.exe)? query|"
+    r"localhost:\d+|127\.0\.0\.1:\d+|urlopen\(|Invoke-WebRequest|curl\b|psutil", re.I)
+
+
+def _status_probe_problem(code: str) -> str | None:
+    """2026-10-18 debug report: "is my Windows MCP working?" got a process list, a request to localhost:3000, a port scan
+    and a search for a Windows service named like MCP, then a wrong "it's not up". During a status question, poking at
+    processes/ports/services to judge one of Jarvis's own parts is refused: status_check asks the real thing."""
+    keys = getattr(_command_ctx, "status_question", None)
+    if keys is None:
+        return None
+    if not (re.search(r"\bmcp\b", code, re.I) or (keys and _STATUS_PROBE_RE.search(code))):
+        return None
+    return ("Tool failed: not run. Whether one of your own parts works is answered by status_check (component='...'), "
+            "which asks the real connection. Processes, ports and Windows service names can't show it: tool servers "
+            "like Windows MCP talk over stdio, not a port, and 'McpManagementService' is an unrelated Windows service. "
+            "If status_check has no check for it, say plainly that you can't check it.")
 
 
 def _fake_check_problem(code: str) -> str | None:
@@ -15799,6 +16262,8 @@ def _execute_tool_impl(
                 result = _secret_file_problem(command)
             elif _fake_check_problem(command):
                 result = _fake_check_problem(command)
+            elif _status_probe_problem(command):
+                result = _status_probe_problem(command)
             elif _placeholder_code_problem(command):
                 result = _placeholder_code_problem(command)
             elif _file_search_via_shell_problem(command):
@@ -15828,6 +16293,8 @@ def _execute_tool_impl(
                 result = _secret_file_problem(code)
             elif _fake_check_problem(code):
                 result = _fake_check_problem(code)
+            elif _status_probe_problem(code):
+                result = _status_probe_problem(code)
             elif _placeholder_code_problem(code):
                 result = _placeholder_code_problem(code)
             else:
@@ -16894,6 +17361,10 @@ def run_agent_loop(transcript: str, tone: dict | None = None, narrate: bool = Fa
     full_tools = AGENT_TOOLS + dyn_tools.schemas() + get_mcp_tool_schemas()
     on_screen = _on_screen_command(transcript, messages[:-1])
     _command_ctx.on_screen = on_screen  # read by the mcp_browser_* guard in _execute_tool_impl
+    # read by the run_shell/run_python guard: a status question is answered by status_check, not a port scan
+    _command_ctx.status_question = _status_question_keys(transcript) if jstatus.is_status_question(transcript) else None
+    if _command_ctx.status_question is None and jstatus.is_status_question(transcript):
+        _command_ctx.status_question = []
     if tools_override is not None:
         tools = tools_override
     elif _tool_narrowing_on():
@@ -17748,7 +18219,7 @@ def _volume_reply(transcript: str) -> str | None:
 # so it runs after the dashboard session has started (_SLOW_INTENTS) and speaks a lead-in first; the test waits for
 # that line to finish, because speech streaming in would compete with the test for the connection.
 SPEED_TEST_ANNOUNCEMENT = "Sure, I'll test your internet speed. It takes about 20 seconds."
-_SLOW_INTENTS = {"speedtest", "update", "phone_where", "call_me"}   # call_me waits up to 8 s to learn whether it is ringing
+_SLOW_INTENTS = {"speedtest", "update", "phone_where", "call_me", "status_check"}   # call_me waits up to 8 s to learn whether it is ringing
 # Quick answers that keep their exact wording: a replay, a rewrite, silence, the switch itself (already in the new voice).
 _UNFLAVORED_INTENTS = {"repeat", "shorter", "hush", "personality", "running_cancel"}
 
@@ -17880,6 +18351,8 @@ def _deterministic_intent_reply(intent: str, transcript: str = "") -> str | None
     network round trip, no tool, nothing that could reach the catastrophic gate at all. Returns
     None for every other intent (caller falls through to the normal agent loop)."""
     global _muted_until
+    if intent == "status_check":
+        return _status_reply(transcript)
     if intent in ("briefing", "urgent"):
         return briefing_report("morning" if intent == "briefing" else "urgent")["speech"]
     if intent == "mute":
@@ -18087,6 +18560,8 @@ def _handle_text_command_impl(
         cancel_reply = _running_cancel_reply(transcript)  # "cancel the speed test": only when something running matches
         if cancel_reply is not None:
             intent = "running_cancel"
+        elif _status_question_keys(transcript):  # "is my Windows MCP working?": real checks, no model call
+            intent = "status_check"
     slow_intent = macro_reply is None and intent in _SLOW_INTENTS  # answered locally, but only after the session starts
     deterministic_reply = (macro_reply if macro_reply is not None else cancel_reply if cancel_reply is not None
                            else None if slow_intent else _deterministic_intent_reply(intent, transcript))

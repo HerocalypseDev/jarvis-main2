@@ -982,6 +982,7 @@ def test_face_code_cannot_reach_the_confirmation_gate():
         "main",  # start polling / event hook
         "self_check_report",  # read-only: face.enabled() + face.health_problem()
         "health_report",  # read-only: face.enabled() + face.health_problem() (Home health card)
+        "_status_face",  # read-only: face.enabled() + face.health_problem() (status_check "is the camera working?")
         "_dashboard_page_identity",  # read-only: face.dashboard_state() minus pictures (dashboard_data tool)
     }
     assert users <= allowed, f"face is referenced from unreviewed code: {sorted(users - allowed)}"

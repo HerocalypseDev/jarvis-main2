@@ -1933,7 +1933,8 @@ row there each phase rather than only stating the total in chat.
 | 190 (Telegram calls audit part 2: safety and reliability: daily cap saved across restarts and shared with CallMeBot, recycled-pid claim, `is_owner_ring` + real `_connect` code driven against fakes shaped like the real library, whole-utterance goodbye, echo-aware cut-in + own-echo guard, DC offset, low-pass resampling, hang-up/watchdog limits, supervised listener with flood backoff, defused cut-in note, plain login errors, honest "ringing" wording, two quick "call me"s; 140 new tests) | Sonnet 5.5 | ~16 min | ~$1.60–$2.30 |
 | 191 (Telegram calls audit part 3: integration: reminders read on the call and everything else to the inbox, wake word/follow-up/reply cache aware of calls, call history table + audit row + journal line, Home Calls card + `dashboard_data` page + health + doctor, "call me" intent with no model call, per-turn latency log; 17 mutation checks all caught; docs; full suite identical to the 83 baseline failures) | Sonnet 5.5 | ~13 min | ~$1.30–$1.90 |
 | 192 (phone "last seen 23 h ago": send held awake, fused + last-known fallback, backup clock, card shows the last check-in apart from the position, app 1.1 built; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
-| **Running total (final)** | | **~5735 min** | **~$395.15–$555.35** |
+| 193 (real status checks: "is Windows MCP working?" asked the server itself instead of a port scan; 30 checks with live probes and a reconnect-now, no-model voice route, status_check tool, port/process guessing refused, honest "I can't check that"; 25 new tests) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
+| **Running total (final)** | | **~5770 min** | **~$398.15–$559.55** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3011,6 +3012,27 @@ short text aloud: one-way, unofficial, no guarantee, needs data on the phone. Ru
 - Success is judged from CallMeBot's reply page by known failure words; the real page wording is unverified. Two-way
   calls (talking to Jarvis) were researched and not built: free route = a second Telegram account (ban risk).
 - Not verified live: a real CallMeBot call to the owner's Telegram.
+
+## Real status checks (2026-10-18, debug report + owner: "for everything Jarvis could not check")
+
+Asked "is my Windows MCP working?", Jarvis listed node/python processes, tried localhost:3000, scanned ports and found a
+Windows service called McpManagementService, then said Windows-MCP was "still not up". Windows-MCP talks over stdio (uvx),
+not a port. Code: `jarvis_status.py` (pure: question detection, alias matching, parallel runner, wording), checks in
+jarvis.py ("Real status checks" block), tests `test_status.py` (25). Rules to keep:
+- Status questions ("is X working/up/connected?", "is everything working?", "what's broken?") about a part with a check
+  take the no-model intent `status_check` (slow intent, "Checking it now."). The `status_check` tool covers other
+  wordings (`component=list` lists them, `everything` = all); narrowing offers it for any status question; the stable
+  prompt says to use only it. Something with no check gets "I can't check that", never a guess.
+- Checks ask the real thing: a tool server gets a live round trip (`_MCP_PROBE` -> `list_tools()` in its supervisor); a
+  failed server is reconnected right then (15 s cap) so a fix shows at once; the Telegram/ntfy listeners record each poll
+  (`_listener_ok/_failed`; a 404 = wrong bot token); internet = TCP + DNS; brains = the live 1-token check; Everything =
+  a live search. Voice engines only report their breakers (a test call would cost credits; the detail says so).
+  CallMeBot is "can't test without ringing you". A check that raises or is slow is UNKNOWN with why, never "working".
+- During a status question, run_shell/run_python that probes processes/ports/services (or names "mcp") is refused
+  (`_status_probe_problem`). For a part with no check (a printer) the shell is still allowed.
+- Bare "windows" is not an alias of Windows MCP ("is windows update working?"). Homework aliases stay out of public code.
+- To add a check: append a `jstatus.Check(key, label, aliases, fn)` in `_status_checks()`; fn returns (state, detail).
+- Not verified on the PC: the live probe against the real Windows-MCP, the listeners' real states, the voice route.
 
 ## Hand-off guard (2026-09-25)
 
