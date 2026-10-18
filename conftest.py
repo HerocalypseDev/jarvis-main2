@@ -26,5 +26,6 @@ def _classic_personality(monkeypatch):
     for key in ("JARVIS_PERSONALITY", "JARVIS_PERSONALITY_SCHEDULE", "JARVIS_PERSONALITY_TIRED_AFTER",
                 "JARVIS_VOICE_CLASSIC", "JARVIS_VOICE_PLAYFUL", "JARVIS_VOICE_SERIOUS", "JARVIS_VOICE_GENZ",
                 "JARVIS_VOICE_TIRED", "JARVIS_VOICE_HYPE", "JARVIS_VOICE_NAIJA",
-                "CALLMEBOT_TELEGRAM_USER", "JARVIS_CALLS_PER_DAY"):  # a real phone in .env must never be rung
+                "CALLMEBOT_TELEGRAM_USER", "JARVIS_CALLS_PER_DAY",  # a real phone in .env must never be rung
+                "JARVIS_ALERTS", "JARVIS_ALERT_TELEGRAM", "JARVIS_ALERT_HEADS_UP", "JARVIS_MAIL_ALERT_CHECKS_PER_DAY"):
         monkeypatch.delenv(key, raising=False)

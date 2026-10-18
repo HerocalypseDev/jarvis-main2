@@ -140,6 +140,7 @@ import jarvis_browser_bridge as browser_bridge
 import jarvis_browser_tabs as browser_tabs
 import jarvis_context as reqctx
 import jarvis_missed as missed
+import jarvis_alerts as alerts
 import jarvis_asks as asks_mod
 import jarvis_watches as watches_mod
 import jarvis_caretaker as caretaker
@@ -5313,6 +5314,83 @@ def queue_or_deliver_notification(
     log.info("Queued non-urgent notification (user busy in preferred work hours): %r", text)
 
 
+_alert_store_cache: list = []
+
+
+def _alert_store() -> "alerts.Store":
+    if not _alert_store_cache:
+        _alert_store_cache.append(alerts.Store(_memory_db_connect, _memory_db_lock))
+    return _alert_store_cache[0]
+
+
+def alert_owner(text: str, level: str = "important", key: str | None = None, source: str = "") -> bool:
+    """Tell the owner something they should know (2026-10-18, owner: a failing Windows Update and tool server reached
+    neither Telegram, a call, nor the conversation). urgent: said now + Telegram + a call when away; important: Telegram
+    now + said at the start of the next thing they say; minor: "what did I miss" + said at the start of the next thing
+    they say. Same `key` once per alerts.COOLDOWN_H unless it gets worse. True = it went out."""
+    text = alerts.clean(text)
+    level = alerts.norm_level(level)
+    if not text:
+        return False
+    if not alerts.enabled():
+        queue_or_deliver_notification(text, urgent=(level == "urgent"))
+        return True
+    key = key or ("text:" + re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()[:120])
+    try:
+        if not _alert_store().claim(key, level, text, source):
+            return False
+    except Exception as e:
+        log.warning("Alert bookkeeping failed (%s); telling the owner anyway.", e)
+    log.info("Owner alert (%s, %s): %s", level, source or "-", text)
+    try:
+        _log_action_audit("owner_alert", {"level": level, "source": source, "key": key}, "(alert)", text)
+    except Exception:
+        pass
+    ch = alerts.channels(level)
+    phone = ch["telegram"] and alerts.telegram_on() and not (
+        os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("JARVIS_TEST_ALLOW_PHONE"))
+    if level == "urgent":
+        # Speaks now, rings the phone when the owner is away (_maybe_call_for_urgent), and pushes to Telegram.
+        queue_or_deliver_notification(text, urgent=True, force_phone=phone)
+        return True
+    if phone:
+        _notify_phone(text, force=True)
+    if tgcall.on_call():
+        _add_missed(text, source or "alert")   # never read over a call unless urgent; it's in the inbox
+        return True
+    _add_missed(text, source or "alert")
+    if ch["heads_up"] and alerts.heads_up_on():
+        with _session_context_lock:
+            items = _session_context.setdefault("heads_up", [])
+            items.append({"text": text, "level": level, "at": datetime.now().isoformat(timespec="seconds")})
+            _session_context["heads_up"] = items[-20:]
+            _save_session_context_locked()
+    return True
+
+
+def _deliver_heads_up(source: str) -> str:
+    """Said before answering the owner's next command at the PC: what came in since they last talked to Jarvis.
+    A phone command skips it (Telegram already carried it). Returns the line ("" = nothing)."""
+    if source not in ("voice", "text", "dashboard"):
+        return ""
+    try:
+        if _is_muted() or sleep_mode.is_active():
+            return ""   # kept for the next time they talk
+    except Exception:
+        pass
+    with _session_context_lock:
+        items = alerts.fresh_heads_up(_session_context.get("heads_up") or [])
+        _session_context["heads_up"] = []
+        _save_session_context_locked()
+    line = alerts.heads_up_line(items)
+    if line:
+        try:
+            _speak_shaped(line)
+        except Exception as e:
+            log.warning("Could not say the heads-up: %s", e)
+    return line
+
+
 def _quiet_assistant() -> bool:
     return (os.environ.get("JARVIS_PROACTIVE_SPEECH") or "important").strip().lower() != "all"
 
@@ -7130,9 +7208,12 @@ def _mail_reply_db() -> mail_reply.Store:
 
 
 def _mail_autoreply_tick(now: datetime) -> None:
-    if not mail_reply.enabled() or safe_mode_on() or autonomy.hard_disabled():
+    # Also runs with auto-replies off while alerts are on (2026-10-18): then mail is only read for warnings.
+    if not (mail_reply.enabled() or alerts.enabled()) or safe_mode_on() or autonomy.hard_disabled():
         return
-    if not {"mcp_gmail_search_emails", "mcp_gmail_read_email", "mcp_gmail_send_email"} <= set(_mcp_tool_index):
+    need = {"mcp_gmail_search_emails", "mcp_gmail_read_email"} | (
+        {"mcp_gmail_send_email"} if mail_reply.enabled() else set())
+    if not need <= set(_mcp_tool_index):
         return
     last = _mail_reply_state["last"]
     if last is not None and time.monotonic() - last < mail_reply.interval_min() * 60:
@@ -7179,10 +7260,12 @@ def _mail_autoreply_cycle(now: datetime) -> dict:
     skip_ids = {r[0] for r in _related_rows("SELECT message_id FROM sleep_mail_handled WHERE kind='family'")}
     return mail_reply.run_cycle(
         store=_mail_reply_db(), mcp=_sleep_mail_mcp, claude=_sleep_mail_claude,
-        notify=lambda text: queue_or_deliver_notification(text, important=True), record=_mail_reply_record,
+        notify=lambda text: alert_owner(text, "important", source="mail"), record=_mail_reply_record,
         now=now, own=own, memory_addresses=_memory_email_addresses() - own, skip_senders=skip_senders,
         facts_text=_mail_reply_facts, calendar_text=_mail_reply_calendar, skip_ids=skip_ids,
-        dry_run=autonomy.dry_run())
+        dry_run=autonomy.dry_run(),
+        alert=(lambda text, level, key: alert_owner(text, level, key=key, source="mail")) if alerts.enabled() else None,
+        reply=mail_reply.enabled())
 
 
 def _run_single_flight(name: str, fn, *args) -> bool:
@@ -7515,8 +7598,8 @@ def _doctor_tick() -> None:
             continue  # said once; only a sign-in that is about to expire is repeated (every 3 days)
         told[key] = time.time()
         selfaware.record("system", "doctor", f"noticed a problem: {c['name']} - {c['detail']}")
-        queue_or_deliver_notification(
-            f"Heads up: {c['name']}. {c['detail']}." + (f" To fix it: {c['fix']}." if c["fix"] else ""))
+        alert_owner(f"{c['name']}: {c['detail']}." + (f" To fix it: {c['fix']}." if c["fix"] else ""),
+                    "important", key=f"doctor:{key}:{int(told[key] // 86400)}", source="doctor")
 
 
 _selfaware_state = {"next": 0.0}
@@ -7594,8 +7677,8 @@ def _notify_google_reauth(server_name: str) -> None:
     _google_reauth_told[server_name] = time.time()
     cmd = doctor.REAUTH.get(server_name, "")
     try:
-        queue_or_deliver_notification(
-            f"Your {server_name} sign-in has expired." + (f" Run {cmd} on your PC to renew it." if cmd else ""))
+        alert_owner(f"Your {server_name} sign-in has expired." + (f" Run {cmd} on your PC to renew it." if cmd else ""),
+                    "important", key=f"reauth:{server_name}", source="tools")
     except Exception as e:
         log.debug("Re-auth notice skipped: %s", e)
 
@@ -9767,6 +9850,11 @@ def _caretaker_scan() -> list:
     )
     _caretaker_store.ingest(findings)
     closed = _caretaker_store.resolve_missing({f.key for f in findings}, report.get("ok", set()))
+    for k in closed:   # gone: if it comes back, that is news again
+        try:
+            _alert_store().forget(f"caretaker:{k}")
+        except Exception as e:
+            log.debug("alert forget skipped: %s", e)
     try:
         _caretaker_ai_credit_closed(closed)
     except Exception as e:
@@ -9831,12 +9919,12 @@ def _caretaker_fix_storage(issue: dict) -> str | None:
         if n >= caretaker.MAX_ATTEMPTS and key not in _caretaker_state["announced"]:
             _caretaker_state["announced"].add(key)
             held = _caretaker_store.summary_since(72)["held_bytes"]
-            queue_or_deliver_notification(
+            _caretaker_alert_important(key,
                 f"{ev.get('drive', 'The disk')} is still {ev.get('percent', 0):.0f}% full and there's nothing "
                 f"left I can safely clear on my own."
                 + (f" {caretaker.human_bytes(held)} of old installers is in the holding folder and frees up "
                    f"within {caretaker.HOLDING_DAYS} days." if held else "")
-                + " The rest is your own files: ask me for the biggest ones.", important=True)
+                + " The rest is your own files: ask me for the biggest ones.")
     return "; ".join(r["steps"]) or None
 
 
@@ -9851,7 +9939,10 @@ def _caretaker_gave_up(issue: dict, reason: str, announce: bool = True) -> None:
     selfaware.record("system", "caretaker_gave_up", f"{issue['title']} {reason}")
     if announce and key not in _caretaker_state["announced"]:
         _caretaker_state["announced"].add(key)
-        queue_or_deliver_notification(f"I couldn't fix this on my own. {issue['title']} {reason}")
+        # 2026-10-18: this used to land only in the quiet inbox, so a Windows Update or tool server Jarvis gave up on
+        # never reached the owner. Now Telegram + said at the start of the next command (urgent if critical).
+        alert_owner(alerts.caretaker_text(issue, reason), alerts.caretaker_level(issue, gave_up=True),
+                    key=f"caretaker:{key}", source="caretaker")
 
 
 def _caretaker_reconnect_mcp(name: str) -> bool:
@@ -9922,11 +10013,11 @@ def _caretaker_fix_self(issue: dict) -> str | None:
 
 
 def _caretaker_tell_once(key: str, text: str) -> None:
-    """One quiet line (the "what did I miss" inbox, not spoken) per issue per run."""
+    """One line per issue per run: the "what did I miss" inbox, and said at the start of the next command."""
     if key in _caretaker_state["announced"]:
         return
     _caretaker_state["announced"].add(key)
-    queue_or_deliver_notification(text)
+    alert_owner(text, "minor", key=f"caretaker-note:{key}", source="caretaker")
 
 
 def _minutes_ago(iso: str | None) -> float | None:
@@ -10484,15 +10575,15 @@ def _caretaker_run() -> None:
         issues = _caretaker_scan()
         _caretaker_state["last"] = {"at": datetime.now().isoformat(timespec="seconds"), "issues": len(issues)}
         for iss in issues:
-            # Only the things that can't wait are spoken; everything else is read on the Caretaker page
-            # or in the daily line (the owner's quiet-assistant rule).
+            # A critical one (a failing disk) can't wait: said now, Telegram, and a call when away.
             if iss["severity"] == "critical" and iss["key"] not in _caretaker_state["announced"]:
                 _caretaker_state["announced"].add(iss["key"])
-                queue_or_deliver_notification(iss["title"], important=True)
+                alert_owner(alerts.caretaker_text(iss), "urgent", key=f"caretaker:{iss['key']}", source="caretaker")
                 selfaware.record("system", "caretaker_critical", iss["title"])
         if _caretaker_fix_all():
             _caretaker_state["last"] = {"at": datetime.now().isoformat(timespec="seconds"),
                                         "issues": len(_caretaker_store.open_issues())}
+        _caretaker_alert_lasting()
         if not _caretaker_why_not_act():
             _caretaker_housekeeping()
         dashboard.notify({"type": "caretaker", "data": {"issues": len(issues)}})
@@ -10500,6 +10591,35 @@ def _caretaker_run() -> None:
         log.warning("Caretaker scan failed: %s", e)
     finally:
         _caretaker_state["running"] = False
+
+
+CARETAKER_ALERT_AFTER_MIN = 9   # seen in two scans (10 min apart) and still open after the fixes: not a blip
+
+
+def _caretaker_alert_lasting(now: datetime | None = None) -> list[str]:
+    """2026-10-18 (owner: Windows Update and a tool server kept failing and nothing reached them): an important problem
+    (Windows Update/Defender, a tool server down, a skill or job that keeps failing, the network, a failing disk) that
+    is still open after a fix pass and was already there on the previous scan goes to Telegram and the next command,
+    without waiting for Jarvis to give up. Once per problem per day (alerts.Store)."""
+    now = now or datetime.now()
+    told = []
+    for iss in _caretaker_store.open_issues():
+        level = alerts.caretaker_level(iss)
+        if level == "minor" or iss.get("status") == "ignored":
+            continue
+        try:
+            age = (now - datetime.fromisoformat(str(iss.get("first_seen")))).total_seconds() / 60
+        except (TypeError, ValueError):
+            continue
+        if age < CARETAKER_ALERT_AFTER_MIN:
+            continue
+        if alert_owner(alerts.caretaker_text(iss), level, key=f"caretaker:{iss['key']}", source="caretaker"):
+            told.append(iss["key"])
+    return told
+
+
+def _caretaker_alert_important(key: str, text: str) -> None:
+    alert_owner(text, "important", key=f"caretaker:{key}", source="caretaker")
 
 
 def _caretaker_tick() -> None:
@@ -18496,6 +18616,11 @@ def _handle_text_command_impl(
     # deliver anything queued earlier right now instead of leaving it stuck until the next
     # health check or scheduled skill happens to notice.
     flush_pending_notifications()
+    try:
+        if latency.classify_intent(transcript) != "hush":   # "stop talking" gets silence, not a heads-up
+            _deliver_heads_up(source)
+    except Exception as e:
+        log.debug("heads-up skipped: %s", e)
     if source in ("voice", "text", "dashboard"):
         try:
             notify_priority.on_user_command(_memory_db_connect, _memory_db_lock)  # C6: engaged after one = acted

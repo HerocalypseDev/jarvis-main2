@@ -198,7 +198,11 @@ def test_jarvis_runs_it_only_with_gmail_and_not_in_safe_mode(J, monkeypatch):
     monkeypatch.setenv("JARVIS_MAIL_AUTOREPLY", "0")
     J._mail_reply_state["last"] = None
     J._mail_autoreply_tick(datetime.now())
-    assert ran == ["mail-autoreply"]
+    assert ran == ["mail-autoreply"] * 2   # replies off, alerts on: mail is still read for warnings
+    monkeypatch.setenv("JARVIS_ALERTS", "0")
+    J._mail_reply_state["last"] = None
+    J._mail_autoreply_tick(datetime.now())
+    assert ran == ["mail-autoreply"] * 2
 
 
 def test_jarvis_cycle_end_to_end_records_and_audits(J, monkeypatch):

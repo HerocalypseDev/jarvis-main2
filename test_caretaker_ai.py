@@ -190,6 +190,7 @@ def jv(monkeypatch, tmp_path):
     monkeypatch.setattr(j, "_foreground_window", lambda: {"app": "code.exe"})
     said = []
     monkeypatch.setattr(j, "queue_or_deliver_notification", lambda t, **kw: said.append((t, kw)))
+    monkeypatch.setattr(j, "alert_owner", lambda t, level="important", key=None, source="": said.append((t, {"level": level, "important": level != "minor", "urgent": level == "urgent"})))
     j._said = said
     j._model_calls = []
     return j

@@ -140,6 +140,7 @@ def jv(monkeypatch, tmp_path):
     monkeypatch.setattr(j.autonomy, "hard_disabled", lambda: False)
     said = []
     monkeypatch.setattr(j, "queue_or_deliver_notification", lambda t, **kw: said.append((t, kw)))
+    monkeypatch.setattr(j, "alert_owner", lambda t, level="important", key=None, source="": said.append((t, {"level": level, "important": level != "minor", "urgent": level == "urgent"})))
     j._said = said
     return j
 
@@ -166,14 +167,15 @@ def skills(jv, monkeypatch):
     return runs
 
 
-def test_a_skill_failing_on_a_sign_in_is_not_re_run_and_the_owner_is_told_once_quietly(jv, skills):
+def test_a_skill_failing_on_a_sign_in_is_not_re_run_and_the_owner_is_told_once(jv, skills):
     key = _open(jv, "skill", "gmail_watch", "invalid_grant")
     jv._caretaker_fix_all()
     jv._caretaker_fix_all()
     assert skills == []
     assert jv._caretaker_store.get(key)["status"] == "gave_up"
     assert len(jv._said) == 1 and "sign in again" in jv._said[0][0]
-    assert not jv._said[0][1].get("important") and not jv._said[0][1].get("urgent")   # inbox, never spoken
+    # 2026-10-18: a give-up reaches the owner (Telegram + said before their next command), never as an urgent call
+    assert jv._said[0][1]["level"] == "important"
 
 
 def test_a_failing_skill_is_re_run_then_counted_then_given_up_after_three(jv, skills):

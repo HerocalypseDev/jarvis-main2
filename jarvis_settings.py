@@ -102,6 +102,20 @@ SETTINGS: list[dict] = [
      "help": "\"My exam score was 280\", \"I live in Paris\", \"call me Sam\": remembered at once, no AI call. "
              "Questions, commands and passing states (\"my phone is dead\") are ignored. See and edit them on the Memory page.",
      "live": "env"},
+    {"key": "JARVIS_ALERTS", "label": "Tell me what I should know", "kind": "bool", "default": "1",
+     "help": "Problems and warnings reach you by how much they matter: urgent = said now, Telegram, and a phone call "
+             "when you're away; important (a failing Windows Update or tool, an email warning) = Telegram right away "
+             "and said before Jarvis answers your next command; minor = mentioned next time you talk. Each problem "
+             "once a day unless it gets worse.", "live": "env"},
+    {"key": "JARVIS_ALERT_TELEGRAM", "label": "Send important alerts to Telegram", "kind": "bool", "default": "1",
+     "help": "Needs the Telegram bot set up. Works even with proactive phone pushes off.", "live": "env"},
+    {"key": "JARVIS_ALERT_HEADS_UP", "label": "Mention alerts when I next talk to Jarvis", "kind": "bool",
+     "default": "1", "help": "Before answering your next command, Jarvis says what came in since you last talked.",
+     "live": "env"},
+    {"key": "JARVIS_MAIL_ALERT_CHECKS_PER_DAY", "label": "Automated emails read for warnings per day", "kind": "number",
+     "default": "40", "help": "Newsletters and notifications are never answered, but up to this many a day are read "
+                             "for warnings (a bad update, a security notice). One AI call each. 0 = off.",
+     "live": "env"},
     {"key": "JARVIS_PROACTIVE_SPEECH", "label": "Unprompted speech", "kind": "choice", "default": "important",
      "choices": ["important", "all"],
      "help": "important: Jarvis only speaks on its own for your reminders, urgent things and jobs you asked for; the "

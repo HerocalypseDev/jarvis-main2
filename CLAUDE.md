@@ -1934,7 +1934,8 @@ row there each phase rather than only stating the total in chat.
 | 191 (Telegram calls audit part 3: integration: reminders read on the call and everything else to the inbox, wake word/follow-up/reply cache aware of calls, call history table + audit row + journal line, Home Calls card + `dashboard_data` page + health + doctor, "call me" intent with no model call, per-turn latency log; 17 mutation checks all caught; docs; full suite identical to the 83 baseline failures) | Sonnet 5.5 | ~13 min | ~$1.30–$1.90 |
 | 192 (phone "last seen 23 h ago": send held awake, fused + last-known fallback, backup clock, card shows the last check-in apart from the position, app 1.1 built; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
 | 193 (real status checks: "is Windows MCP working?" asked the server itself instead of a port scan; 30 checks with live probes and a reconnect-now, no-model voice route, status_check tool, port/process guessing refused, honest "I can't check that"; 25 new tests) | Opus 5.5 | ~35 min | ~$3.00–$4.20 |
-| **Running total (final)** | | **~5770 min** | **~$398.15–$559.55** |
+| 194 (owner alerts: one router (urgent = said + Telegram + call when away, important = Telegram + said before the next command, minor = inbox + said next time), caretaker problems that last or that Jarvis gives up on reach the owner, doctor/sign-in notices too, emails read for warnings (bulk mail never answered, can't ring the phone), private/unsure email requests held with a draft, file requests answered "Hero will send it" + Telegram; 17 new tests, full suite identical to main) | Opus 5.5 | ~45 min | ~$3.50–$4.90 |
+| **Running total (final)** | | **~5815 min** | **~$401.65–$564.45** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3033,6 +3034,38 @@ jarvis.py ("Real status checks" block), tests `test_status.py` (25). Rules to ke
 - Bare "windows" is not an alias of Windows MCP ("is windows update working?"). Homework aliases stay out of public code.
 - To add a check: append a `jstatus.Check(key, label, aliases, fn)` in `_status_checks()`; fn returns (state, detail).
 - Not verified on the PC: the live probe against the real Windows-MCP, the listeners' real states, the voice route.
+
+## Owner alerts: problems and warnings reach the owner (2026-10-18, owner report)
+
+"My Windows Update and MCP tool were failing in the caretaker but it didn't send me a Telegram message, a phone call,
+or tell me while I was talking to it." Cause: every caretaker notice except a critical one went through
+`queue_or_deliver_notification` with no flag, so the quiet rule put it in the "what did I miss" inbox only, and phone
+pushes are off unless `JARVIS_PHONE_PROACTIVE_NOTIFICATIONS`; Windows Update and a down tool server are "warn"
+findings, so nothing was ever said. Code: `jarvis_alerts.py` (pure: levels, channels, once-per-problem store
+`owner_alerts`, heads-up line), `alert_owner()` / `_deliver_heads_up()` in jarvis.py. Tests: `test_alerts.py` (17).
+Rules to keep:
+- `alert_owner(text, level, key, source)`: **urgent** = `queue_or_deliver_notification(urgent=True, force_phone=True)`
+  (said now, Telegram, a call when the PC is idle 10+ min via `_maybe_call_for_urgent`); **important** = Telegram now
+  (`_notify_phone(force=True)`, even with proactive pushes off) + inbox + said before the owner's next voice/typed/
+  dashboard command; **minor** = inbox + said before the next command. Same key once per 24 h unless the level rises;
+  a caretaker issue that closes forgets its key (a recurrence is news). Text is one line, injection-defused, secrets
+  masked. Switches: `JARVIS_ALERTS` (off = the old quiet behaviour), `JARVIS_ALERT_TELEGRAM`, `JARVIS_ALERT_HEADS_UP`.
+- Heads-up: `_deliver_heads_up` runs right after `flush_pending_notifications` in `_handle_text_command_impl`, never
+  for a phone command (Telegram carried it), never for "stop talking", and waits while muted or in Sleep Mode. One
+  line, worst first, max 3 + "N more in what you missed".
+- Caretaker: an issue in update/disk_health/self_mcp/self_skill/self_job/self_agent/network still open after a fix
+  pass and first seen 9+ min ago is important (`_caretaker_alert_lasting`, so a one-scan blip is quiet); giving up is
+  important; critical is urgent; CPU hogs/crashes/storage warnings stay on the page (minor notes via
+  `_caretaker_tell_once`). Doctor problems and expired Google sign-ins are important.
+- Email (`jarvis_mail_reply`): the model also returns `alert`/`alert_text`, `file_request`, `hold_for_owner`/
+  `hold_reason`. An email can raise at most an **important** alert unless the sender is known (a forged or bulk email
+  must not ring the phone). Automated/bulk mail is never answered but read for warnings with `alert_only_prompt`, at
+  most `JARVIS_MAIL_ALERT_CHECKS_PER_DAY` (40) a day; the Gmail search no longer excludes the Updates category (security
+  notices land there). `hold_for_owner` = no reply sent, the draft goes to the inbox and the owner gets an important
+  alert. `file_request` = the reply says the owner will send it (never attaches) + important alert. With
+  `JARVIS_MAIL_AUTOREPLY=0` and alerts on, the tick still runs and mail is only read for alerts (no send tool needed).
+- Data exposure: unchanged in kind (mail bodies already went to the active brain for replies); more bulk mail is read.
+- Not verified live on the PC: real Telegram delivery, the spoken heads-up, a real bad-update email through Gmail.
 
 ## Hand-off guard (2026-09-25)
 

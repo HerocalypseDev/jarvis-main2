@@ -172,7 +172,7 @@ def test_health_card_and_self_check_include_doctor_problems(jarvis, monkeypatch)
 
 def test_google_expiry_notice_fires_once_per_half_day(jarvis, monkeypatch):
     sent = []
-    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda t, **k: sent.append(t))
+    monkeypatch.setattr(jarvis, "alert_owner", lambda t, *a, **k: sent.append(t))
     jarvis._google_reauth_told.clear()
     jarvis._notify_google_reauth("gmail")
     jarvis._notify_google_reauth("gmail")
@@ -185,7 +185,7 @@ def test_google_expiry_notice_fires_once_per_half_day(jarvis, monkeypatch):
 
 def test_doctor_tick_announces_each_problem_once(jarvis, monkeypatch):
     sent = []
-    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda t, **k: sent.append(t))
+    monkeypatch.setattr(jarvis, "alert_owner", lambda t, *a, **k: sent.append(t))
     bad = [{"name": "File search (Everything)", "status": "warn", "detail": "not answering", "fix": "Enable HTTP server"}]
     monkeypatch.setattr(jarvis.doctor, "problems", lambda *a, **k: bad)
     jarvis._doctor_state.update(next=0.0, told={}, force=True)
