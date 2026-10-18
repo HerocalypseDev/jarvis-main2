@@ -112,7 +112,7 @@ def test_a_saved_file_with_dots_and_spaces_in_its_name_is_verified_not_reported_
 # --- F. doctor ---------------------------------------------------------------------------------------------------
 def test_doctor_announces_a_problem_once_by_name_and_never_the_developer_note(jarvis, monkeypatch):
     said = []
-    monkeypatch.setattr(jarvis, "queue_or_deliver_notification", lambda m, **k: said.append(m))
+    monkeypatch.setattr(jarvis, "alert_owner", lambda m, *a, **k: said.append(m))
     problems = [{"name": "Gmail sign-in", "status": "warn", "detail": "signed in 6 days ago", "fix": "run auth", "repeat": True},
                 {"name": "File search (Everything)", "status": "warn", "detail": "not answering", "fix": "install it"},
                 {"name": "Tool arguments", "status": "warn", "detail": "argument repairs: x x2", "fix": "", "quiet": True}]

@@ -259,6 +259,7 @@ def test_only_critical_findings_are_spoken(jv, monkeypatch):
     said = []
     monkeypatch.setattr(jv, "queue_or_deliver_notification",
                         lambda text, **kw: said.append((text, kw)))
+    monkeypatch.setattr(jv, "alert_owner", lambda t, level="important", key=None, source="": said.append((t, {"level": level, "important": level != "minor", "urgent": level == "urgent"})))
     monkeypatch.setattr(jv.caretaker_probe, "run_all",
                         lambda **k: [ct.storage_finding("C:", 91, 8.0),
                                      ct.disk_health_finding("0", "Warning")])
@@ -411,6 +412,7 @@ def test_it_says_so_once_when_nothing_safe_is_left(jv, monkeypatch, tmp_path):
     env, _ = _env_for(jv, tmp_path, [0.05])                  # nothing to clean, nothing to hold
     said = []
     monkeypatch.setattr(jv, "queue_or_deliver_notification", lambda t, **kw: said.append((t, kw)))
+    monkeypatch.setattr(jv, "alert_owner", lambda t, level="important", key=None, source="": said.append((t, {"level": level, "important": level != "minor", "urgent": level == "urgent"})))
     monkeypatch.setattr(jv, "_caretaker_storage_env", lambda mount: env)
     monkeypatch.setattr(jv.autonomy, "hard_disabled", lambda: False)
     monkeypatch.setattr(jv.caretaker_probe, "run_all", lambda **k: [ct.storage_finding("C:", 95, 5.0)])
