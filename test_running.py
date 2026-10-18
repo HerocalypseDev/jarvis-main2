@@ -374,3 +374,11 @@ def test_late_overlapping_reply_is_labelled_in_what_is_spoken(J, monkeypatch):
     J._handle_text_command_impl("find anime dates please", None, {"brief": False}, "voice")
     assert spoken and spoken[-1].startswith('About "find anime dates": Your download')
     reg._clock = __import__("time").time
+
+
+def test_a_cancelled_command_leaves_the_live_list_at_once():
+    """The Cancel button on Home looked dead (2026-10-18): the command stayed listed until its work noticed the flag."""
+    reg = rn.Registry(Clock())
+    a = reg.start("a slow lookup", "phone")
+    assert reg.cancel(a) is True
+    assert reg.live() == [] and reg.recent()[0]["status"] == "cancelled" and reg.cancelled(a)

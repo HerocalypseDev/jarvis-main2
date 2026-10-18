@@ -127,7 +127,12 @@ class Registry:
             if item is None or item["status"] != "running":
                 return False
             item["cancelled"] = True
+            # It leaves "Running now" at once: the work behind it may take a moment to notice, but the button must show
+            # that the click was heard. finish() keeps the status; the cancelled flag stays for the agent loop and speech.
+            item["status"] = "cancelled"
+            item["ended"] = self._clock()
             hooks = list(item["hooks"])
+            item["hooks"] = []
         for fn in hooks:
             try:
                 fn()
