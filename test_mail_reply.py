@@ -206,6 +206,7 @@ def test_jarvis_runs_it_only_with_gmail_and_not_in_safe_mode(J, monkeypatch):
 
 
 def test_jarvis_cycle_end_to_end_records_and_audits(J, monkeypatch):
+    monkeypatch.setenv("JARVIS_MAIL_AUTOREPLY", "1")  # the public copy ships with it off
     J.remember_fact("relationship", "The user's sister is Ada (ada@family.test).")
     J.remember_fact("fact", "The user's exam score was 280.")
     gmail, model = FakeGmail([_mail(1, "ada@family.test")]), FakeModel()
