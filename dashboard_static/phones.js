@@ -114,7 +114,8 @@ function phDrawList(rep) {
     return `<div class="ph-card${stale ? " ph-card-stale" : ""}" data-id="${escAttr(d.id)}">
       <div class="ph-card-head"><span class="ph-card-name">${esc(d.name)}</span>${phBattery(d)}</div>
       <div class="ph-card-where">${esc(where)}${d.acc ? ` <span class="muted">(within ${esc(String(Math.round(d.acc)))} m)</span>` : ""}</div>
-      <div class="muted">${esc(d.ago || "")}${stale && d.fix_ts ? " (old position)" : ""}</div>
+      <div class="muted">Position ${esc(d.ago || "")}${stale && d.fix_ts ? " (old position)" : ""}</div>
+      <div class="muted">${esc(d.checkin ? d.checkin.charAt(0).toUpperCase() + d.checkin.slice(1) : "")}</div>
       <div class="ph-card-actions">
         <button class="btn btn-primary" type="button" data-ph="ask">Locate</button>
         <button class="btn" type="button" data-ph="focus">Show</button>${gmaps}

@@ -190,7 +190,7 @@ class Store:
         with self._lock:
             c = self._conn()
             try:
-                row = c.execute("SELECT sent_ts FROM phone_devices WHERE id=?", (rep["id"],)).fetchone()
+                row = c.execute("SELECT sent_ts, fix_ts FROM phone_devices WHERE id=?", (rep["id"],)).fetchone()
                 if row is None:
                     n = c.execute("SELECT COUNT(*) FROM phone_devices").fetchone()[0]
                     if n >= MAX_DEVICES:
@@ -205,7 +205,10 @@ class Store:
                           "quiet_told=0 WHERE id=?",
                           (rep["name"], rep["sent_ts"], now_ms, rep["battery"],
                            None if rep["charging"] is None else int(rep["charging"]), rep["reason"], rep["id"]))
-                if rep["kind"] == "loc":
+                # A phone with no fresh fix sends its last known position with its real (older) time: it counts as
+                # a check-in, but the pin never moves back to a position older than the one already shown.
+                newer_fix = row is None or row[1] is None or rep.get("fix_ts", 0) >= row[1]
+                if rep["kind"] == "loc" and newer_fix:
                     c.execute("UPDATE phone_devices SET lat=?, lon=?, acc=?, speed=?, provider=?, fix_ts=?, "
                               "problem=NULL, place=NULL WHERE id=?",
                               (rep["lat"], rep["lon"], rep["acc"], rep["speed"], rep["provider"], rep["fix_ts"],
@@ -215,6 +218,8 @@ class Store:
                     c.execute("DELETE FROM phone_fixes WHERE fix_ts < ?", (now_ms - HISTORY_DAYS * 86400000,))
                     c.execute("DELETE FROM phone_fixes WHERE id NOT IN (SELECT id FROM phone_fixes "
                               "ORDER BY id DESC LIMIT ?)", (HISTORY_MAX_ROWS,))
+                elif rep["kind"] == "loc":
+                    c.execute("UPDATE phone_devices SET problem='no_fix', problem_ts=? WHERE id=?", (now_ms, rep["id"]))
                 else:
                     c.execute("UPDATE phone_devices SET problem=?, problem_ts=? WHERE id=?",
                               (rep["problem"], now_ms, rep["id"]))
@@ -349,6 +354,18 @@ def ago(ms: int | None, now_ms: int) -> str:
     return f"{d} day{'s' if d != 1 else ''} ago"
 
 
+def checkin_text(dev: dict, now_ms: int) -> str:
+    """The dashboard card's second line: when the phone last talked to Jarvis, and what it said if it had no fix.
+    Kept apart from the position's age: a phone indoors can check in every 10 minutes with no new position."""
+    rec = dev.get("recv_ts")
+    if not rec:
+        return "no check-in yet"
+    text = f"checked in {ago(rec, now_ms)}"
+    if dev.get("problem") and (dev.get("problem_ts") or 0) >= (dev.get("fix_ts") or 0):
+        text += f", but {PROBLEM_TEXT.get(dev['problem'], 'it had no GPS fix')}"
+    return text
+
+
 def describe(dev: dict, now_ms: int) -> str:
     name = dev.get("name") or "Phone"
     if dev.get("lat") is None:
@@ -360,6 +377,8 @@ def describe(dev: dict, now_ms: int) -> str:
         line = f"{name}: near {where}{within}, {ago(dev.get('fix_ts'), now_ms)}"
     if dev.get("problem") and (dev.get("problem_ts") or 0) >= (dev.get("fix_ts") or 0):
         line += f"; last check-in {ago(dev.get('problem_ts'), now_ms)} said {PROBLEM_TEXT.get(dev['problem'], 'no GPS fix')}"
+    elif dev.get("recv_ts") and dev.get("fix_ts") and dev["recv_ts"] - dev["fix_ts"] > 30 * 60000:
+        line += f"; last check-in {ago(dev['recv_ts'], now_ms)}"
     if dev.get("battery") is not None:
         line += f", battery {dev['battery']}%" + (" and charging" if dev.get("charging") else "")
     return line + "."

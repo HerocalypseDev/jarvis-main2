@@ -1932,7 +1932,8 @@ row there each phase rather than only stating the total in chat.
 | 189 (Telegram calls audit part 1: read the real py-tgcalls 3.0.0 / ntgcalls 3.0.3 / Telethon 1.45.0 source and types, ruled out the Python 3.12 vs 3.14 mismatch (wheels exist for both), root cause of the 3-4 s drop = the line goes silent once Jarvis stops speaking: a transport-owned silence keep-alive (own 20 ms deadline schedule, never inside a speech frame, `JARVIS_TGCALL_KEEPALIVE`), media-connection states recorded so a drop says WHY, hermetic repro with a peer model + mutation check; not confirmed on a real call) | Sonnet 5.5 | ~19 min | ~$1.90–$2.70 |
 | 190 (Telegram calls audit part 2: safety and reliability: daily cap saved across restarts and shared with CallMeBot, recycled-pid claim, `is_owner_ring` + real `_connect` code driven against fakes shaped like the real library, whole-utterance goodbye, echo-aware cut-in + own-echo guard, DC offset, low-pass resampling, hang-up/watchdog limits, supervised listener with flood backoff, defused cut-in note, plain login errors, honest "ringing" wording, two quick "call me"s; 140 new tests) | Sonnet 5.5 | ~16 min | ~$1.60–$2.30 |
 | 191 (Telegram calls audit part 3: integration: reminders read on the call and everything else to the inbox, wake word/follow-up/reply cache aware of calls, call history table + audit row + journal line, Home Calls card + `dashboard_data` page + health + doctor, "call me" intent with no model call, per-turn latency log; 17 mutation checks all caught; docs; full suite identical to the 83 baseline failures) | Sonnet 5.5 | ~13 min | ~$1.30–$1.90 |
-| **Running total (final)** | | **~5710 min** | **~$393.15–$552.55** |
+| 192 (phone "last seen 23 h ago": send held awake, fused + last-known fallback, backup clock, card shows the last check-in apart from the position, app 1.1 built; 3 new tests) | Opus 5.5 | ~25 min | ~$2.00–$2.80 |
+| **Running total (final)** | | **~5735 min** | **~$395.15–$555.35** |
 
 - **Multi-user enrollment (2026-09-20, user request via Jarvis) — supersedes the "exactly one enrolled person" decision above.**
   Roles Admin/User/Guest in `face_profiles.role`. First enrollee is always the single Admin (owner); later ones are
@@ -3354,6 +3355,15 @@ the "Jarvis Locator APK" GitHub Action), `jarvis_phone_locate.py` (pure: pairing
   to Home, and the browser kept the old cached app.js (no "phones") after the update. The dashboard middleware now adds
   `Cache-Control: no-cache` to every non-`/api/` response (304s stay cheap), so page files are re-checked on each load.
   The current code opens `#/phones` directly and from the sidebar (headless check). One Ctrl+F5 was still needed once.
+- **"Last seen 23 hours ago" while the phone was sharing (2026-10-18, owner report; app 1.1)**: three gaps, no data from the PC to say
+  which one hit. (1) The phone released its wake lock right after the fix and sent on another thread, so with the screen off the CPU
+  could sleep before the POST: `sendWithRetry` now holds its own wake lock (90 s). (2) Indoors with no fresh fix it sent "nofix", which
+  only updated `recv_ts`, while the card showed only the position's age: the card now has a second line `checkin_text` ("Checked in X
+  ago, but ..."), the app also asks the fused provider (Android 12+) and sends its newest last-known position up to 24 h old, and the
+  Store only moves the pin when `fix_ts` is not older than the one shown (an old position counts as a check-in + `no_fix`). (3) A
+  dropped alarm stopped check-ins for good: a one-minute backup clock inside the service starts a fix once the interval is overdue.
+  The notification now names the relay error ("Couldn't reach Jarvis's relay at 14:05 (relay answered 429)"). Same signing key, so
+  1.1 installs over 1.0. Not verified on a real phone.
 - **Cinematic map (2026-10-17, owner: "not cool enough... zoom in smoothly, fill the screen, keep the page, add a button")**: `phonesCinematic()`
   in `phones.js` draws its own non-interactive Leaflet map in the `#ph-cine` overlay (index.html) and `flyTo`s the newest-fix phone from zoom 3 to
   17 over 6.5 s, then ring burst + HUD (reduced motion jumps straight there). Voice "show" sends a WS `navigate` with `cinematic`+`device`

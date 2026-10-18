@@ -47,6 +47,8 @@ public class LocatorService extends Service {
     static final String CHANNEL = "locator";
     static final long FIX_TIMEOUT_MS = 60000;
     static final long ASK_MAX_AGE_MS = 10 * 60 * 1000;
+    static final long OLD_FIX_MAX_MS = 24 * 60 * 60 * 1000L;
+    static final long SEND_WAKE_MS = 90000;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ExecutorService net = Executors.newSingleThreadExecutor();
@@ -56,6 +58,21 @@ public class LocatorService extends Service {
     private Handler fixHandler;
     private Thread listenThread;
     private boolean fixing;
+    private volatile long lastFixAt;
+
+    /** A second clock inside the service: some phones drop the alarm, and then no check-in would ever come again. */
+    private final Runnable backupTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!running.get()) return;
+            long every = Config.interval(LocatorService.this) * 60000L;
+            if (SystemClock.elapsedRealtime() - lastFixAt > every + 60000) {
+                requestFix("interval");
+                scheduleAlarm();
+            }
+            fixHandler.postDelayed(this, 60000);
+        }
+    };
 
     static void start(Context ctx, String action) {
         Intent i = new Intent(ctx, LocatorService.class).setAction(action);
@@ -97,6 +114,7 @@ public class LocatorService extends Service {
         if (running.compareAndSet(false, true)) {
             startListening();
             requestFix("start");
+            fixHandler.postDelayed(backupTick, 60000);
         } else if (ACTION_NOW.equals(action)) {
             requestFix("manual");
         } else if (ACTION_TICK.equals(action)) {
@@ -214,6 +232,7 @@ public class LocatorService extends Service {
 
     // --- taking a fix --------------------------------------------------------------------------
     private void requestFix(String reason) {
+        lastFixAt = SystemClock.elapsedRealtime();
         fixHandler.post(() -> {
             synchronized (pendingReasons) {
                 pendingReasons.add(reason);
@@ -238,7 +257,10 @@ public class LocatorService extends Service {
         }
         boolean gps = lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
         boolean netw = lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
-        if (!gps && !netw) {
+        // Android 12+: the fused provider gives a fix indoors from Wi-Fi/cell when GPS has no sky view.
+        boolean fused = Build.VERSION.SDK_INT >= 31 && lm.getAllProviders().contains(LocationManager.FUSED_PROVIDER)
+                && lm.isProviderEnabled(LocationManager.FUSED_PROVIDER);
+        if (!gps && !netw && !fused && !(Build.VERSION.SDK_INT >= 28 && lm.isLocationEnabled())) {
             finishFix(null, "location_off");
             return;
         }
@@ -278,16 +300,24 @@ public class LocatorService extends Service {
         };
         if (gps) lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, holder[0], fixThread.getLooper());
         if (netw) lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000, 0, holder[0], fixThread.getLooper());
+        if (fused) lm.requestLocationUpdates(LocationManager.FUSED_PROVIDER, 1000, 0, holder[0], fixThread.getLooper());
         fixHandler.postDelayed(finish, FIX_TIMEOUT_MS);
     }
 
     @SuppressWarnings("MissingPermission")
     private Location lastKnown(LocationManager lm) {
+        // No fresh fix (indoors, GPS only): send the phone's newest known position with its real time, so Jarvis
+        // still hears from the phone. Jarvis never moves the pin back to an older position than it already has.
         Location best = null;
-        for (String p : lm.getProviders(true)) {
-            Location l = lm.getLastKnownLocation(p);
+        for (String p : lm.getAllProviders()) {
+            Location l;
+            try {
+                l = lm.getLastKnownLocation(p);
+            } catch (Exception e) {
+                continue;
+            }
             if (l == null) continue;
-            if (System.currentTimeMillis() - l.getTime() > 30 * 60 * 1000) continue;
+            if (System.currentTimeMillis() - l.getTime() > OLD_FIX_MAX_MS) continue;
             if (best == null || l.getTime() > best.getTime()) best = l;
         }
         return best;
@@ -338,20 +368,35 @@ public class LocatorService extends Service {
     }
 
     private void sendWithRetry(Config cfg, String sealed, boolean hadFix) {
-        for (int attempt = 0; attempt < 3; attempt++) {
-            try {
-                Relay.publish(cfg, sealed);
-                String when = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
-                setStatus(hadFix ? "Last sent at " + when : "No GPS fix at " + when + " (Jarvis was told)");
-                return;
-            } catch (Exception e) {
+        // Keep the CPU awake until the send is done: with the screen off the phone used to fall asleep between
+        // taking the fix and sending it, so nothing reached Jarvis.
+        PowerManager.WakeLock wl = ((PowerManager) getSystemService(POWER_SERVICE))
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "jarvislocator:send");
+        wl.acquire(SEND_WAKE_MS);
+        String why = "";
+        try {
+            for (int attempt = 0; attempt < 3; attempt++) {
                 try {
-                    Thread.sleep(5000L * (attempt + 1));
-                } catch (InterruptedException ie) {
+                    Relay.publish(cfg, sealed);
+                    String when = now();
+                    setStatus(hadFix ? "Last sent at " + when : "Sent at " + when + ", but no location fix (Jarvis was told)");
                     return;
+                } catch (Exception e) {
+                    why = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                    try {
+                        Thread.sleep(5000L * (attempt + 1));
+                    } catch (InterruptedException ie) {
+                        return;
+                    }
                 }
             }
+            setStatus("Couldn't reach Jarvis's relay at " + now() + " (" + why + "), will try again at the next check-in");
+        } finally {
+            if (wl.isHeld()) wl.release();
         }
-        setStatus("Couldn't reach the internet, will try again at the next check-in");
+    }
+
+    private static String now() {
+        return java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
     }
 }

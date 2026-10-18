@@ -230,3 +230,40 @@ def test_not_paired_says_how(J, monkeypatch):
     monkeypatch.delenv(pl.ENV_KEY)
     out = J._phone_location_tool({"action": "where"})
     assert "aren't paired yet" in out
+
+
+# --- 2026-10-18: "it says 23 hours ago but the phone is sharing" ------------------------------------------------
+def test_old_last_known_position_counts_as_a_check_in_but_never_moves_the_pin_back(store):
+    p = pl.parse_report(report(sent_ts=NOW - 5000, fix_ts=NOW - 6000, lat=6.5, lon=3.3), NOW)
+    store.record(p, NOW)
+    # Later check-in from indoors: no fresh fix, so the phone sends an older last-known position
+    later = NOW + 600000
+    old = pl.parse_report(report(sent_ts=later, fix_ts=NOW - 3 * 3600000, lat=7.0, lon=4.0), later)
+    assert store.record(old, later) == "updated"
+    d = store.devices()[0]
+    assert (d["lat"], d["lon"], d["fix_ts"]) == (6.5, 3.3, NOW - 6000)  # pin stays on the newer position
+    assert d["recv_ts"] == later and d["problem"] == "no_fix"
+    assert "checked in just now, but it couldn't get a GPS fix" in pl.checkin_text(d, later + 1000)
+
+
+def test_card_shows_the_check_in_apart_from_the_position_age(store):
+    store.record(pl.parse_report(report(sent_ts=NOW - 1000, fix_ts=NOW - 2000), NOW), NOW)
+    later = NOW + 23 * 3600000
+    nofix = pl.parse_report({"type": "nofix", "id": "abcdef0123456789", "phone": "Tecno", "sent_ts": later,
+                             "problem": "location_off"}, later)
+    store.record(nofix, later)
+    d = store.devices()[0]
+    assert pl.ago(d["fix_ts"], later + 60000) == "23 hours ago"
+    assert pl.checkin_text(d, later + 60000) == "checked in just now, but its location setting is off"
+    assert pl.checkin_text({}, NOW) == "no check-in yet"
+    # A fresh fix clears the problem
+    store.record(pl.parse_report(report(sent_ts=later + 5000, fix_ts=later + 4000), later + 5000), later + 5000)
+    d = store.devices()[0]
+    assert pl.checkin_text(d, later + 6000) == "checked in just now"
+
+
+def test_dashboard_card_gets_the_check_in_line(J):
+    now = int(J.time.time() * 1000)
+    J._phone_store.record(pl.parse_report(report(sent_ts=now, fix_ts=now - 1000), now + 1), now)
+    rep = J._feature_phones("get", {})
+    assert [d["checkin"] for d in rep["devices"]] == ["checked in just now"]

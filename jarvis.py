@@ -10968,6 +10968,7 @@ def _feature_phones(action: str, payload: dict):
         for d in devices:
             d["trail"] = _phone_store.trail(d["id"], now - 86400000)
             d["ago"] = phone_locate.ago(d.get("fix_ts"), now)
+            d["checkin"] = phone_locate.checkin_text(d, now)
             d["text"] = phone_locate.describe(d, now)
         return {"paired": phone_locate.env_config() is not None,
                 "enabled": env_bool("JARVIS_PHONE_LOCATOR", True),
