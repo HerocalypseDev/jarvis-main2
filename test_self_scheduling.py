@@ -79,3 +79,22 @@ def test_owner_request_keeps_origin_user(J):
     J._command_ctx.source = "voice"
     _run(J, "schedule_jarvis_task", {"instruction": "Run the tests", "due_in_minutes": 10})
     assert J.deferred.list_jobs(J._deferred_store)[0]["origin"] == "user"
+
+
+def test_self_rescheduling_job_is_not_blocked_by_its_own_row(J, monkeypatch):
+    """Debug report 2026-10-19: a battery check scheduled 'this same task again in 2 minutes' and got 'Already
+    scheduled as job #N' (its own running row), so the chain ended after one check."""
+    from datetime import datetime, timedelta
+    instr = "Check the battery with system_status. If it is at or below 45 percent call me, otherwise schedule this same task again in 2 minutes."
+    jid, _ = J.deferred.schedule(J._deferred_store, instr, datetime.now() + timedelta(minutes=1), origin="jarvis")
+    J._deferred_store.q("UPDATE autonomy_deferred_jobs SET status='running' WHERE id=?", (jid,), write=True)
+    # without the job id: the old behaviour (reuses itself)
+    assert "Already scheduled" in _run(J, "schedule_jarvis_task", {"instruction": instr, "due_in_minutes": 2})
+    monkeypatch.setattr(J._command_ctx, "deferred_job_id", jid, raising=False)
+    out = _run(J, "schedule_jarvis_task", {"instruction": instr, "due_in_minutes": 2})
+    assert "Scheduled job #" in out and "Already" not in out
+    rows = J.deferred.list_jobs(J._deferred_store)
+    assert len([r for r in rows if r["status"] == "pending"]) == 1
+    # a duplicate of the NEW pending job is still deduped
+    again = _run(J, "schedule_jarvis_task", {"instruction": instr, "due_in_minutes": 2})
+    assert "Already scheduled" in again

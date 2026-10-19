@@ -9475,7 +9475,8 @@ def _schedule_jarvis_task_tool(inp: dict) -> str:
         return "When should I do it? Give a time or a number of minutes from now."
     jid, msg = deferred.schedule(_deferred_store, str(inp.get("instruction") or ""), when,
                                  str(inp.get("source_quote") or ""), origin=origin,
-                                 start_line=startline.clean(inp.get("start_line")))
+                                 start_line=startline.clean(inp.get("start_line")),
+                                 exclude_id=getattr(_command_ctx, "deferred_job_id", None))
     return msg
 
 
@@ -9513,6 +9514,7 @@ def _run_deferred_job(job: dict) -> None:
     prev = (getattr(_command_ctx, "source", None), getattr(_command_ctx, "autonomous", False))
     _command_ctx.source, _command_ctx.autonomous = DEFERRED_SOURCE, True
     _command_ctx.taint_watch, _command_ctx.outside_text_seen = True, False
+    _command_ctx.deferred_job_id = job["id"]  # so a self-rescheduling job isn't blocked by its own row
     _set_scheduled_task_running(True)
     started = time.monotonic()
     session_id = dashboard.start_session("autonomy", transcript)
@@ -9544,6 +9546,7 @@ def _run_deferred_job(job: dict) -> None:
     finally:
         _command_ctx.source, _command_ctx.autonomous = prev
         _command_ctx.taint_watch, _command_ctx.outside_text_seen = False, False
+        _command_ctx.deferred_job_id = None
         _set_scheduled_task_running(False)
     try:
         _finish_deferred_job(job, ok, reply, transient, transcript, session_id, started)

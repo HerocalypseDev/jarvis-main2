@@ -115,9 +115,12 @@ def _similar(a: str, b: str) -> bool:
 
 
 def schedule(store: Store, instruction: str, due_at: datetime, source_quote: str = "", origin: str = "user",
-             kind: str = "execute_jarvis", now: datetime | None = None, start_line: str = "") -> tuple[int | None, str]:
+             kind: str = "execute_jarvis", now: datetime | None = None, start_line: str = "",
+             exclude_id: int | None = None) -> tuple[int | None, str]:
     """-> (job id or None, message). A near-identical pending job due within DEDUPE_WINDOW_MIN is reused, so
-    one request (seen by both the live tool call and autonomy's extraction) never becomes two runs."""
+    one request (seen by both the live tool call and autonomy's extraction) never becomes two runs.
+    exclude_id = the job making this call: a self-rescheduling check must not be "already scheduled" because of
+    itself (debug report 2026-10-19: a battery watch checked once, then every follow-up hit its own running row)."""
     instruction = re.sub(r"\s+", " ", (instruction or "")).strip()[:2000]
     if not instruction:
         return None, "Nothing to schedule: say what Jarvis should do."
@@ -130,6 +133,8 @@ def schedule(store: Store, instruction: str, due_at: datetime, source_quote: str
     hi = (due_at + timedelta(minutes=DEDUPE_WINDOW_MIN)).isoformat(timespec="seconds")
     for j in store.q("SELECT id, instruction FROM autonomy_deferred_jobs WHERE status IN ('pending','running') "
                      "AND kind=? AND due_at BETWEEN ? AND ?", (kind, lo, hi)):
+        if exclude_id is not None and j["id"] == exclude_id:
+            continue
         if _similar(j["instruction"], instruction):
             return j["id"], f"Already scheduled as job #{j['id']}."
     start_line = re.sub(r"\s+", " ", str(start_line or "")).strip()[:140]
