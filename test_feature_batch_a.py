@@ -66,6 +66,18 @@ def test_clipboard_history_caps_dedupes_and_hides_secrets(db, monkeypatch):
     assert clip.record(connect, lock, "__jarvis_sel_123__") is None  # Jarvis's own sentinel
 
 
+def test_read_clipboard_describes_a_copied_picture(jarvis, monkeypatch):
+    sent = []
+    monkeypatch.setattr(jarvis, "_read_clipboard", lambda: "")
+    monkeypatch.setattr(jarvis, "_clipboard_image_jpeg_b64", lambda: "QUJD")
+    monkeypatch.setattr(jarvis, "_claude_request", lambda body, timeout=0: sent.append(body) or {"c": 1})
+    monkeypatch.setattr(jarvis, "_claude_text", lambda d: "A red square.")
+    assert jarvis.read_clipboard_and_describe("what is this") == "A red square."
+    assert sent[0]["messages"][0]["content"][0]["source"]["data"] == "QUJD"
+    monkeypatch.setattr(jarvis, "_clipboard_image_jpeg_b64", lambda: None)
+    assert jarvis.read_clipboard_and_describe("x") == "Your clipboard is empty."
+
+
 def test_clipboard_search_and_get(db):
     connect, lock = db
     clip.record(connect, lock, "KeyError: 'user_id' in handler.py line 42")
